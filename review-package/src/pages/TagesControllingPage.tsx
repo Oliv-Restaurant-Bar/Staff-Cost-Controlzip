@@ -29,15 +29,16 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, CalendarDays, Calendar, CalendarRange,
-  TrendingUp, TrendingDown, Loader2, FileDown, FileSpreadsheet, Pencil,
+  TrendingUp, TrendingDown, Loader2, FileDown, FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { useTenant } from '@/contexts/TenantContext';
-import { grossToNet } from '@/types/personnel';
-import { safeUpsertDailyBudgets, kvGet } from '@/lib/supabase-kv';
-import { computeMonthlyIstNet } from '@/lib/revenue-sync';
+import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
+import {
+  ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, type UmsatzTag,
+} from '@/lib/umsatz';
 import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import {
@@ -391,6 +392,9 @@ export default function TagesControllingPage() {
   const [period, setPeriod]   = useState<Period>('monat');
   const [anchor, setAnchor]   = useState(today);
   const [dailyBudgets, setDailyBudgets] = useState(() => readDailyBudgets(tenantKey));
+  // Kanonische Netto-Umsatz-Quelle (SSoT): gn_imports Tages-Z-Berichte via umsatz.ts.
+  // Tage ohne Import FEHLEN in der Map → Anzeige '–', niemals 0.
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag>>(new Map());
   const [employees, setEmployees]     = useState<EmployeeLite[]>([]);
   const [scheduleMap, setScheduleMap] = useState<Record<string, DaySchedule>>({});
   const [actualHoursMap, setActualHoursMap] = useState<Record<string, ActualHourEntry>>({});
@@ -561,19 +565,9 @@ export default function TagesControllingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  // ── Monatliches Take-Away (Kto. 3010 Netto) – für Gesamt-Korrektur ────────
-  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
-  useEffect(() => {
-    if (period !== 'monat') { setMonthlyTakeaway(0); return; }
-    const yr = anchor.getFullYear();
-    const mo = anchor.getMonth() + 1;
-    const mm = String(mo).padStart(2, '0');
-    kvGet(tenantKey(`takeaway-monthly-${yr}`)).then(raw => {
-      const val = (raw as Record<string, number> | null)?.[`${yr}-${mm}`] ?? 0;
-      setMonthlyTakeaway(val);
-    }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, anchor, tenantId]);
+  // Hinweis: Die frühere monatliche Take-Away-Korrektur (Kto. 3010) entfällt —
+  // der kanonische Netto-Umsatz (umsatz.ts) rechnet Take-Away pro Tag korrekt
+  // (TA/1.026) aus den Tages-Z-Berichten.
 
   // Tage der Periode
   const dates = useMemo(() => getPeriodDates(period, anchor), [period, anchor]);
@@ -625,6 +619,23 @@ export default function TagesControllingPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dates, tenantId]);
 
+  // ── Kanonischer IST-Umsatz (SSoT src/lib/umsatz.ts) für den Zeitraum laden ──
+  const umsatzGenRef = useRef(0);
+  useEffect(() => {
+    if (dates.length === 0) { setUmsatzTage(new Map()); return; }
+    const gen = ++umsatzGenRef.current;
+    const fromIso = format(dates[0], 'yyyy-MM-dd');
+    const toIso   = format(dates[dates.length - 1], 'yyyy-MM-dd');
+    ladeUmsatzTage(tenantId, fromIso, toIso).then(map => {
+      if (umsatzGenRef.current !== gen) return;
+      setUmsatzTage(map);
+      let netto = 0;
+      for (const t of map.values()) netto += nettoUmsatzTag(t);
+      console.log(`[UMSATZ][${tenantId}] umsatz.ts SSoT: ${map.size} Tage, Netto=${netto.toFixed(2)} CHF (${fromIso}…${toIso})`);
+    }).catch(() => { if (umsatzGenRef.current === gen) setUmsatzTage(new Map()); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, tenantId]);
+
   // WageMap aus employees
   const wageMap = useMemo(() => {
     const m: Record<string, number> = {};
@@ -641,15 +652,16 @@ export default function TagesControllingPage() {
     if (period !== 'monat') return null;
     const prefix = format(anchor, 'yyyy-MM');
     let lastDay = 0;
-    for (const [date, entry] of Object.entries(dailyBudgets)) {
+    // SSoT: letzter Tag mit importiertem Z-Bericht (gn_imports via umsatz.ts).
+    for (const [date, tag] of umsatzTage) {
       if (!date.startsWith(prefix)) continue;
-      if ((entry?.actualRevenue ?? 0) > 0) {
+      if (tag.gesamtBrutto > 0) {
         const day = parseInt(date.slice(8), 10);
         if (day > lastDay) lastDay = day;
       }
     }
     return lastDay > 0 ? lastDay : null;
-  }, [period, anchor, dailyBudgets]);
+  }, [period, anchor, umsatzTage]);
 
   // ── Pro-Rata: effektiver Stichtag ─────────────────────────────────────────
   const effectiveCutoffDay = useMemo(() => {
@@ -661,26 +673,25 @@ export default function TagesControllingPage() {
   // Zeilenberechnung (wesChf = echte Warenkosten aus supplier_invoice_entries)
   const rows = useMemo((): ControllingRow[] => {
     return dates.map(day => {
-      const d         = format(day, 'yyyy-MM-dd');
-      const grossRev  = dailyBudgets[d]?.actualRevenue   ?? 0;
-      const takeaway  = dailyBudgets[d]?.takeawayRevenue ?? 0;
-      const foodGross = dailyBudgets[d]?.foodRevenue     ?? 0;
-      const bevGross  = dailyBudgets[d]?.beverageRevenue ?? 0;
+      const d   = format(day, 'yyyy-MM-dd');
+      // Kanonische IST-Umsatz-Quelle: gn_imports Tages-Z-Berichte via umsatz.ts.
+      // Tage ohne Import fehlen in der Map → alle Umsatzwerte 0 → Anzeige '–'.
+      const tag = umsatzTage.get(d);
 
-      // Maison: Brutto ÷ 1.081 = Netto, 50 % Food / 50 % Beverage
+      // Netto via nettoUmsatzTag/foodBeverageSplit; Brutto via UmsatzTag-Felder.
+      const split = tag ? foodBeverageSplit(tag) : { food: 0, beverage: 0 };
+      const umsatzTotal = tag ? (showNetRevenue ? nettoUmsatzTag(tag) : tag.gesamtBrutto) : 0;
+      const umsatzFood  = tag ? (showNetRevenue ? split.food     : tag.foodBrutto)     : 0;
+      const umsatzBev   = tag ? (showNetRevenue ? split.beverage : tag.beverageBrutto) : 0;
+
+      // Maison/Marketing: Infospalte. NICHT zum IST-Umsatz addiert — die
+      // umsatz.ts-SSoT enthält Marketing bereits (gn_discounts «Marketing»);
+      // maison-daily ist dieselbe (manuell erfasste) Grösse, kein additiver
+      // Zusatzumsatz ausserhalb der Z-Berichte.
+      // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts):
+      // voller Wert, KEIN MwSt-Abzug — weder netto noch brutto umrechnen.
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
-      const maisonNet   = maisonGross / 1.081;
-      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonNet : maisonGross) : 0;
-
-      // Umsätze (netto oder brutto) + Maison (nur wenn nicht ausgeschlossen)
-      let umsatzTotal = showNetRevenue ? grossToNet(grossRev, takeaway) : grossRev;
-      let umsatzFood  = showNetRevenue ? foodGross / (1 + 0.081) : foodGross;
-      let umsatzBev   = showNetRevenue ? bevGross  / (1 + 0.081) : bevGross;
-      if (maisonDisp > 0 && !maisonExclude) {
-        umsatzTotal += maisonDisp;
-        umsatzFood  += maisonDisp * 0.5;
-        umsatzBev   += maisonDisp * 0.5;
-      }
+      const maisonDisp  = maisonGross > 0 ? maisonGross : 0;
 
       // Warenkosten
       const wk        = warenkostenMap[d] ?? { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };
@@ -700,7 +711,7 @@ export default function TagesControllingPage() {
       const pkIstChf  = actualMap[d] ?? 0;
       return { date: d, day, umsatz, umsatzFood, umsatzBev, umsatzTotal, maisonNet: maisonDisp, pkPlanChf, pkIstChf, wesChf, wesTotal, wesFood, wesBev };
     });
-  }, [dates, dailyBudgets, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter, maisonEnabled, maisonDaily, maisonExclude]);
+  }, [dates, umsatzTage, planMap, actualMap, warenkostenMap, showNetRevenue, viewMode, categoryFilter, maisonEnabled, maisonDaily]);
 
   // Total-Zeile (gewichtete Prozente; bei aktivem Pro-Rata nur bis Stichtag)
   // Wichtig: %-Werte nur auf Basis von Tagen mit vorhandenem Umsatz berechnen,
@@ -731,38 +742,21 @@ export default function TagesControllingPage() {
     const revRowsBev    = baseRows.filter(r => r.umsatzBev > 0);
     const revUmsatzBev  = revRowsBev.reduce((s, r) => s + r.umsatzBev, 0);
     const revWesBev     = revRowsBev.reduce((s, r) => s + r.wesBev, 0);
-    let pkPlanPct  = revUmsatz > 0 ? (revPkPlan / revUmsatz) * 100 : 0;
-    let pkIstPct   = revUmsatz > 0 ? (revPkIst  / revUmsatz) * 100 : 0;
-    let wesPct     = revUmsatz > 0 ? (revWes    / revUmsatz) * 100 : 0;
+    const pkPlanPct  = revUmsatz > 0 ? (revPkPlan / revUmsatz) * 100 : 0;
+    const pkIstPct   = revUmsatz > 0 ? (revPkIst  / revUmsatz) * 100 : 0;
+    const wesPct     = revUmsatz > 0 ? (revWes    / revUmsatz) * 100 : 0;
     const wesFoodPct = revUmsatzFood > 0 ? (revWesFood / revUmsatzFood) * 100 : 0;
     const wesBevPct  = revUmsatzBev  > 0 ? (revWesBev  / revUmsatzBev)  * 100 : 0;
-    // ── Monatliches Take-Away Korrektur (Kto. 3010 Netto) ──────────────────
-    // Wenn ein monatlicher Take-Away-Betrag erfasst ist, überschreibt der
-    // korrigierte Netto-Wert (computeMonthlyIstNet) die Tagessumme.
-    let correctedUmsatz      = sumUmsatz;
-    let correctedUmsatzTotal = sumUmsatzTotal;
-    if (showNetRevenue && period === 'monat' && monthlyTakeaway > 0) {
-      const yr = anchor.getFullYear();
-      const mo = anchor.getMonth() + 1;
-      const maisonArg = maisonEnabled && !maisonExclude ? maisonDaily : undefined;
-      const netCorrected = computeMonthlyIstNet(yr, mo, dailyBudgets, undefined, maisonArg, monthlyTakeaway);
-      if (netCorrected > 0) {
-        const diff = netCorrected - sumUmsatzTotal;
-        correctedUmsatzTotal = netCorrected;
-        correctedUmsatz      = sumUmsatz + diff;
-        if (correctedUmsatz > 0) {
-          pkPlanPct = (sumPkPlan / correctedUmsatz) * 100;
-          pkIstPct  = (sumPkIst  / correctedUmsatz) * 100;
-          wesPct    = (sumWes    / correctedUmsatz) * 100;
-        }
-      }
-    }
+    // IST-Umsatz (netto/brutto) kommt vollständig aus umsatz.ts (SSoT). Die
+    // frühere «Monatliches Take-Away»-Korrektur (computeMonthlyIstNet + grossToNet)
+    // entfällt — die kanonische Netto-Formel behandelt Take-Away (TA/1.026)
+    // bereits korrekt pro Tag.
     return {
-      sumUmsatz: correctedUmsatz, sumUmsatzTotal: correctedUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
+      sumUmsatz, sumUmsatzTotal, sumUmsatzFood, sumUmsatzBev,
       sumPkPlan, sumPkIst, sumWes, sumWesFood, sumWesBev, sumMaison,
       pkPlanPct, pkIstPct, wesPct, wesFoodPct, wesBevPct,
     };
-  }, [rows, effectiveCutoffDay, showNetRevenue, period, monthlyTakeaway, anchor, dailyBudgets, maisonEnabled, maisonDaily, maisonExclude]);
+  }, [rows, effectiveCutoffDay]);
 
   // Monatszeilen für Jahresansicht
   const monthRows = useMemo((): MonthRow[] => {
@@ -1489,10 +1483,9 @@ export default function TagesControllingPage() {
                     )}
                     {viewMode === 'personal' ? (<>
                       {/* ── Personal-Ansicht: Umsatz + PK + WES ─────────────────── */}
-                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="Klicken zum Bearbeiten (Brutto CHF)">
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatz')} title="IST-Umsatz aus Tages-Z-Berichten (gn_imports)">
                         <span className="inline-flex items-center gap-1 justify-end">
                           {categoryFilter === 'food' ? 'Ist-Umsatz Food' : categoryFilter === 'beverage' ? 'Ist-Umsatz Bev' : 'Ist-Umsatz CHF'}
-                          <Pencil className="h-2.5 w-2.5 opacity-40" />
                         </span>
                         <ResizeHandle col="umsatz" />
                       </th>
@@ -1530,8 +1523,8 @@ export default function TagesControllingPage() {
                       </th>
                     </>) : (<>
                       {/* ── Waren-Ansicht: Umsatz-Split + WK Food/Bev ────────── */}
-                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatzTotal')} title="Klicken zum Bearbeiten (Brutto CHF)">
-                        <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz Total<Pencil className="h-2.5 w-2.5 opacity-40" /></span>
+                      <th className="relative group px-3 py-2 text-right font-medium text-muted-foreground" style={colStyle('umsatzTotal')} title="IST-Umsatz aus Tages-Z-Berichten (gn_imports)">
+                        <span className="inline-flex items-center gap-1 justify-end">Ist-Umsatz Total</span>
                         <ResizeHandle col="umsatzTotal" />
                       </th>
                       <th className="relative group px-3 py-2 text-right font-medium text-emerald-700 dark:text-emerald-400 border-l border-border/50" style={colStyle('umsatzFood')}>
@@ -1744,34 +1737,11 @@ export default function TagesControllingPage() {
                               {WT_ABBR[row.day.getDay()]}
                             </td>
                             <td
-                              className={cn('px-0 py-0 text-right tabular-nums font-medium', row.umsatz === 0 && 'text-muted-foreground')}
+                              className={cn('px-3 py-1.5 text-right tabular-nums font-medium', row.umsatz === 0 && 'text-muted-foreground')}
                               style={colStyle('umsatz')}
+                              title="IST-Umsatz aus Tages-Z-Bericht (gn_imports)"
                             >
-                              {editingDate === row.date ? (
-                                <input
-                                  ref={editInputRef}
-                                  type="text"
-                                  inputMode="numeric"
-                                  value={editingValue}
-                                  onChange={e => setEditingValue(e.target.value)}
-                                  onBlur={() => commitUmsatzEdit(row.date)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') { e.currentTarget.blur(); }
-                                    if (e.key === 'Escape') { setEditingDate(null); }
-                                  }}
-                                  placeholder="Brutto CHF"
-                                  className="w-full h-full px-3 py-1.5 text-right bg-blue-50 dark:bg-blue-950/40 border border-blue-400 dark:border-blue-600 rounded focus:outline-none font-medium tabular-nums text-xs"
-                                  autoFocus
-                                />
-                              ) : (
-                                <button
-                                  onClick={() => startEditUmsatz(row.date)}
-                                  title="Klicken zum Bearbeiten (Brutto CHF)"
-                                  className="w-full px-3 py-1.5 text-right hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded transition-colors cursor-text"
-                                >
-                                  {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
-                                </button>
-                              )}
+                              {row.umsatz > 0 ? fmtN(row.umsatz) : '–'}
                             </td>
                             {viewMode === 'personal' ? (<>
                               {showMarketingCol && (

@@ -1065,9 +1065,9 @@ export const ActualHoursGrid = ({
                   isWeekView ? "w-[110px] min-w-[110px] max-w-[110px]" : "w-[140px] min-w-[140px] max-w-[140px]"
                 )}
               >
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" title="Ist-Kosten ALLER Mitarbeiter (inkl. Fixlohn-MA) × effektiver Stundenansatz. Nicht identisch mit dem «Flex Ist»-Scope in PersonalFix (nur variable MA).">
                   <span className="text-primary">Σ</span>
-                  Tages-Summen
+                  Tages-Summen (alle MA)
                 </div>
               </td>
               
@@ -1169,7 +1169,7 @@ export const ActualHoursGrid = ({
                   <span className="font-medium">CHF {stats.plannedRevenue.toFixed(0)}</span>
                   <span className="text-muted-foreground">Ist-Stunden total</span>
                   <span className="font-medium">{stats.totalHours.toFixed(1)} h</span>
-                  <span className="text-muted-foreground">Ist-Kosten total</span>
+                  <span className="text-muted-foreground" title="Ist-Kosten ALLER Mitarbeiter (inkl. Fixlohn-MA) × effektiver Stundenansatz. Anderer Scope als «Flex Ist» in PersonalFix (nur variable MA).">Ist-Kosten total (alle MA)</span>
                   <span className="font-medium">CHF {stats.totalCosts.toFixed(0)}</span>
                   <span className="text-muted-foreground">Personalkostenquote (PKQ)</span>
                   <span className="font-semibold text-red-600">

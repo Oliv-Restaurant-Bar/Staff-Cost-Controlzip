@@ -28,7 +28,6 @@ import { useParams, useNavigate, Navigate, useSearchParams } from 'react-router-
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -303,7 +302,6 @@ export default function GaesteDetailPage() {
   const { guestId } = useParams<{ guestId: string }>();
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -334,16 +332,14 @@ export default function GaesteDetailPage() {
   // Defaults überschreibt (das Formular zeigt sonst fälschlich „leer = gespeichert").
   const [crmLoadError, setCrmLoadError] = useState<string | null>(null);
 
-  // Schreibrechte: nur echte Admins, NICHT Gast-Sessions (read-only Links erhalten
-  // isAdmin lediglich für Lesezugriffe und dürfen keine CRM-Daten verändern); und
-  // niemals bei fehlgeschlagenem CRM-Load.
-  const canEditCrm = isAdmin && !isGuest && !crmLoadError;
+  // Schreibrechte: nur Admins; und niemals bei fehlgeschlagenem CRM-Load.
+  const canEditCrm = isAdmin && !crmLoadError;
 
   const today = useMemo(() => fmtDate(new Date(), 'yyyy-MM-dd'), []);
 
   const load = useCallback(async () => {
     if (!guestId) return;
-    if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
+    if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
     setLoading(true);
     setCrmLoadError(null);
     // Beim Gastwechsel (gleiche Route, neue guestId) zuerst den alten CRM-Stand
@@ -385,7 +381,7 @@ export default function GaesteDetailPage() {
       setCrmLoadError(e instanceof Error ? e.message : 'CRM-Profil konnte nicht geladen werden.');
     }
     setLoading(false);
-  }, [tenantId, guestId, isAdmin, isGuest]);
+  }, [tenantId, guestId, isAdmin]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -487,7 +483,7 @@ export default function GaesteDetailPage() {
     [reservations, historyFilter],
   );
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const name = profile ? guestDisplayName(profile) : 'Gast';
   const trendMeta = TREND_META[trend.direction];

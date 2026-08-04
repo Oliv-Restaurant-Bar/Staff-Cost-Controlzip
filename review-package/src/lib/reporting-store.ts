@@ -41,6 +41,8 @@ import {
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
 import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth, notifyKVBackupProblem } from './supabase-kv';
+import { readLocalRecord } from './kv-blob-utils';
+import { sameCategorySet } from './annual-cost-preview';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -49,11 +51,8 @@ export const STORAGE_KEY = 'reporting_v1';
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
 function loadAll(storeKey: string = STORAGE_KEY): Record<string, MonthlyFinancialRecord> {
-  try {
-    return JSON.parse(localStorage.getItem(storeKey) || '{}');
-  } catch {
-    return {};
-  }
+  // Parse-/Shape-Guard zentral (kv-blob-utils)
+  return readLocalRecord(storeKey) as unknown as Record<string, MonthlyFinancialRecord>;
 }
 
 function saveAll(data: Record<string, MonthlyFinancialRecord>, storeKey: string = STORAGE_KEY): void {
@@ -77,6 +76,41 @@ export function loadYear(year: number, storeKey: string = STORAGE_KEY): MonthlyF
 }
 
 /**
+ * Manuelles Abstimmungsfeld eines Monats LÖSCHEN (leeres Feld = kein Wert,
+ * nie 0 erzwingen). Nur für die manuellen Umsatzabstimmungs-Felder gedacht;
+ * schreibt wie saveMonth ein Import-Protokoll und sichert per Monats-Upsert.
+ * No-op, wenn der Monat nicht existiert oder das Feld bereits leer ist.
+ */
+export function clearManualUmsatzField(
+  year: number,
+  month: number,
+  field: 'grossRevenueManual' | 'takeAwayGrossManual',
+  storeKey: string = STORAGE_KEY,
+): void {
+  const all = loadAll(storeKey);
+  const id  = monthId(year, month);
+  const existing = all[id];
+  if (!existing || existing[field] === undefined) return;
+
+  const saved: MonthlyFinancialRecord = { ...existing };
+  delete saved[field];
+  saved.imports = [...saved.imports, {
+    importId:   uuidv4(),
+    importedAt: new Date().toISOString(),
+    source:     'manual',
+    mode:       'update',
+    note:       field === 'grossRevenueManual' ? 'Bruttoumsatz manuell gelöscht' : 'Take Away manuell gelöscht',
+    affectedFields: [field],
+  }];
+  saved.updatedAt = new Date().toISOString();
+  all[id] = saved;
+  saveAll(all, storeKey);
+  safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
+    console.error('[REPORTING] clearManualUmsatzField: safeUpsertReportingMonth fehlgeschlagen', err);
+  });
+}
+
+/**
  * Einzelnen Monat laden.
  * Gibt einen leeren Datensatz zurück, wenn noch keine Daten vorhanden.
  */
@@ -96,12 +130,18 @@ export function loadMonth(year: number, month: number, storeKey: string = STORAG
  *               (undefined-Felder im neuen Objekt werden ignoriert)
  *
  * In beiden Fällen wird ein ImportRecord angelegt.
+ *
+ * opts.skipKvBackup: NUR für Mehrmonats-Schleifen — parallele fire-and-forget
+ * safeUpserts desselben Blobs können sich gegenseitig mit veralteten Monats-
+ * werten überschreiben (Basis-Union bevorzugt remote pro Monat). Der Aufrufer
+ * MUSS danach selbst sequenziell sichern (retryReportingMonthsBackup) und
+ * Fehler sichtbar machen — nie still weglassen.
  */
 export function saveMonth(
   incoming: Partial<MonthlyFinancialRecord> & { year: number; month: number },
   source: ImportSource,
   mode: ImportMode,
-  opts?: { fileName?: string; note?: string },
+  opts?: { fileName?: string; note?: string; skipKvBackup?: boolean },
   storeKey: string = STORAGE_KEY,
 ): MonthlyFinancialRecord {
   const all      = loadAll(storeKey);
@@ -180,11 +220,101 @@ export function saveMonth(
   all[id] = saved;
   saveAll(all, storeKey);
   // Sicher nach Supabase schreiben: erst KV-Stand lesen, nur diesen Monat mergen,
-  // dann zurückschreiben — verhindert Datenverlust bei stale localStorage
-  safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
-    console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
-  });
+  // dann zurückschreiben — verhindert Datenverlust bei stale localStorage.
+  // skipKvBackup: Mehrmonats-Schleifen sichern danach selbst SEQUENZIELL
+  // (retryReportingMonthsBackup) — parallele Upserts desselben Blobs würden
+  // sich gegenseitig mit veralteten Monatswerten überschreiben.
+  if (!opts?.skipKvBackup) {
+    safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
+      console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
+    });
+  }
   return saved;
+}
+
+/**
+ * Undo-Wiederherstellung: einzelne FELDER pro Monat auf den Stand vor einem
+ * Import zurücksetzen (Import-Center «Letzten Import rückgängig machen»).
+ * `null` = Feld war vor dem Import nicht vorhanden → wird entfernt.
+ * Scope-treu: nur die genannten Felder der genannten Monate werden angefasst.
+ * Supabase-Sicherung SEQUENZIELL (retryReportingMonthsBackup-Disziplin).
+ */
+export async function restoreReportingFields(
+  storeKey: string,
+  months: Array<{ monthId: string; fields: Record<string, unknown | null> }>,
+): Promise<{ failedMonths: string[] }> {
+  const all = loadAll(storeKey);
+  const now = new Date().toISOString();
+  const touched: string[] = [];
+  for (const m of months) {
+    const existing = all[m.monthId];
+    // Monat existiert nicht (mehr) und alle Felder waren vorher leer → nichts zu tun.
+    const [y, mo] = m.monthId.split('-').map(Number);
+    const rec: MonthlyFinancialRecord = existing ?? createEmptyMonth(y, mo);
+    const restored: MonthlyFinancialRecord = { ...rec };
+    let changed = false;
+    for (const [field, prior] of Object.entries(m.fields)) {
+      const cur = (restored as unknown as Record<string, unknown>)[field];
+      const target = prior === null ? undefined : prior;
+      if (JSON.stringify(cur ?? null) === JSON.stringify(target ?? null)) continue;
+      if (target === undefined) {
+        delete (restored as unknown as Record<string, unknown>)[field];
+      } else {
+        (restored as unknown as Record<string, unknown>)[field] = target;
+      }
+      changed = true;
+    }
+    if (!changed) continue;
+    restored.updatedAt = now;
+    all[m.monthId] = restored;
+    touched.push(m.monthId);
+  }
+  if (touched.length === 0) return { failedMonths: [] };
+  saveAll(all, storeKey);
+  const res = await retryReportingMonthsBackup(touched, storeKey);
+  return { failedMonths: res.failedMonths };
+}
+
+/**
+ * Undo-Wiederherstellung: kompletten Monats-Record ersetzen (oder entfernen,
+ * wenn er vor dem Import nicht existierte) + optional Journalzeilen.
+ * Für Importe im replace-Modus (z. B. Ist Kosten Buchhaltung).
+ */
+export async function restoreReportingRecord(
+  storeKey: string,
+  monthId: string,
+  record: MonthlyFinancialRecord | null,
+  journal?: { year: number; month: number; entries: SageJournalEntry[]; tenantId?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const all = loadAll(storeKey);
+    if (record === null) {
+      delete all[monthId];
+      saveAll(all, storeKey);
+      await safeDeleteReportingMonth(monthId, storeKey);
+    } else {
+      all[monthId] = { ...record, updatedAt: new Date().toISOString() };
+      saveAll(all, storeKey);
+      const res = await retryReportingMonthsBackup([monthId], storeKey);
+      if (res.failedMonths.length > 0) {
+        return { ok: false, error: 'Lokal zurückgesetzt, aber Supabase-Sicherung fehlgeschlagen — bitte erneut versuchen.' };
+      }
+    }
+    if (journal) {
+      try {
+        await saveJournalEntriesStrict(journal.year, journal.month, journal.entries, journal.tenantId ?? 'oliv');
+      } catch (err) {
+        return {
+          ok: false,
+          error: 'Monat wiederhergestellt, aber das Journal konnte nicht nach Supabase gesichert werden — bitte «Rückgängig» erneut versuchen. '
+            + (err instanceof Error ? err.message : String(err)),
+        };
+      }
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /**
@@ -225,10 +355,77 @@ export interface ReplaceAnnualCostResult {
   /** Monate, in denen nur alte Kontodaten entfernt wurden */
   monthsCleared: number;
   /**
-   * Supabase-Backup-Ergebnis (localStorage ist bereits geschrieben).
-   * failedMonths ≠ [] → Backup unvollständig, Aufrufer muss es sichtbar machen.
+   * Monate, deren effektive Kategorien dem Bestand entsprechen (Dirty-Check):
+   * kein Write, kein updatedAt-Bump, kein KV-Backup — identisches Speichern
+   * ist ein No-op (verbindliche updatedAt-Regel).
    */
-  kvBackup: Promise<{ failedMonths: string[] }>;
+  monthsUnchanged: number;
+  /**
+   * Supabase-Backup-Ergebnis (localStorage ist bereits geschrieben).
+   * failedMonths ≠ [] → Backup unvollständig (nach 1 automatischem Retry),
+   * Aufrufer muss es actionable sichtbar machen (notifyKVBackupProblem + Retry).
+   */
+  kvBackup: Promise<{ failedMonths: string[]; lastError?: unknown }>;
+}
+
+/**
+ * Ergebnis der Backup-Prüfung (ImportHub «Backup prüfen»):
+ * missing = Monate, die lokal existieren und remote FEHLEN (Reparaturkandidaten).
+ */
+export interface BackupRepairDiff {
+  missing: string[];
+  localCount: number;
+  remoteCount: number;
+}
+
+/**
+ * REINE Kandidaten-Berechnung der Backup-Prüfung (kein IO — der Aufrufer
+ * liest lokal via readLocalRecord und remote via kvGetStrict):
+ * - Kandidaten sind ausschliesslich Monate, die lokal existieren und remote fehlen.
+ * - Tombstoned Monate (deleted:true) sind gewollte Löschungen → nie Kandidaten.
+ * - Inhaltliche Unterschiede werden bewusst NICHT angefasst (kein stilles
+ *   Überschreiben des Remote-Stands).
+ */
+export function computeBackupRepairCandidates(
+  local: Record<string, unknown>,
+  remote: Record<string, unknown>,
+): BackupRepairDiff {
+  const missing = Object.keys(local)
+    .filter(id => {
+      const rec = local[id];
+      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
+      if ((rec as { deleted?: boolean }).deleted === true) return false;
+      return remote[id] === undefined;
+    })
+    .sort();
+  return { missing, localCount: Object.keys(local).length, remoteCount: Object.keys(remote).length };
+}
+
+/**
+ * Nachsicherung fehlgeschlagener Monats-Backups: liest den LOKALEN Stand
+ * frisch (nie alte Snapshots) und schreibt jeden Monat sequenziell über
+ * safeUpsertReportingMonth ins Supabase-KV. Monate, die lokal nicht (mehr)
+ * existieren, werden übersprungen — Nachsicherung erfindet nie Daten.
+ */
+export async function retryReportingMonthsBackup(
+  monthIds: string[],
+  storeKey: string = STORAGE_KEY,
+): Promise<{ failedMonths: string[]; lastError?: unknown }> {
+  const current = loadAll(storeKey);
+  const failedMonths: string[] = [];
+  let lastError: unknown;
+  for (const id of monthIds) {
+    const rec = current[id];
+    if (!rec) continue;
+    try {
+      await safeUpsertReportingMonth(id, rec, storeKey);
+    } catch (err) {
+      console.error('[REPORTING] retryReportingMonthsBackup: Monat fehlgeschlagen', id, err);
+      failedMonths.push(id);
+      lastError = err;
+    }
+  }
+  return { failedMonths, lastError };
 }
 
 /**
@@ -290,6 +487,7 @@ export function replaceAnnualCostYear(
   const now = new Date().toISOString();
   let monthsWritten = 0;
   let monthsCleared = 0;
+  let monthsUnchanged = 0;
   const touchedIds: string[] = [];
 
   for (let month = 1; month <= 12; month++) {
@@ -303,6 +501,16 @@ export function replaceAnnualCostYear(
 
     const rec = existing ?? createEmptyMonth(year, month);
     const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    // Dirty-Check (verbindliche updatedAt-Regel): entspricht das Ergebnis
+    // [manuelle + neue Konten] fachlich exakt dem Bestand, ist der Monat ein
+    // No-op — kein Write, kein updatedAt-Bump, kein KV-Backup. Damit werden
+    // «unangetastet lassen»-Monate der Konfliktmodi (Pre-Merge liefert die
+    // bestehenden Kategorien) technisch garantiert nicht angefasst.
+    if (existing && sameCategorySet(existing.expenseCategories ?? [], [...keptManual, ...newCats])) {
+      monthsUnchanged++;
+      continue;
+    }
 
     const importRecord: ImportRecord = {
       importId: uuidv4(),
@@ -334,12 +542,14 @@ export function replaceAnnualCostYear(
   // überschreiben (last-writer-wins → Monatsverlust im KV-Backup).
   const kvBackup = (async () => {
     const failedMonths: string[] = [];
+    let lastError: unknown;
     for (const id of touchedIds) {
       try {
         await safeUpsertReportingMonth(id, next[id], storeKey);
       } catch (err) {
         console.error('[REPORTING] replaceAnnualCostYear: safeUpsertReportingMonth fehlgeschlagen', id, err);
         failedMonths.push(id);
+        lastError = err;
       }
     }
     // Fehlgeschlagene Monate lokal re-schreiben: nachfolgende erfolgreiche
@@ -354,11 +564,112 @@ export function replaceAnnualCostYear(
       } catch (err) {
         console.error('[REPORTING] replaceAnnualCostYear: lokales Re-Write fehlgeschlagen', err);
       }
+      // EIN automatischer Retry (sequenziell, liest den lokalen Stand frisch):
+      // transiente Netzwerkfehler sollen nicht sofort beim User landen.
+      const retry = await retryReportingMonthsBackup(failedMonths, storeKey);
+      return {
+        failedMonths: retry.failedMonths,
+        lastError: retry.failedMonths.length > 0 ? (retry.lastError ?? lastError) : undefined,
+      };
     }
-    return { failedMonths };
+    return { failedMonths, lastError };
   })();
 
-  return { monthsWritten, monthsCleared, kvBackup };
+  return { monthsWritten, monthsCleared, monthsUnchanged, kvBackup };
+}
+
+/**
+ * Upsert der numerischen Konto-Kategorien NUR für die übergebenen Monate
+ * (Mehrmonats-Import aus einem Kontoblatt, das nicht das ganze Jahr abdeckt).
+ *
+ * Unterschied zu replaceAnnualCostYear: Monate OHNE Daten in der Datei werden
+ * NICHT angefasst (kein Bereinigen anderer Monate). Innerhalb eines betroffenen
+ * Monats gilt Ersetzen: numerische Konto-Kategorien werden komplett durch die
+ * Datei ersetzt (idempotent, keine Verdoppelung), manuelle Kategorien und alle
+ * anderen Felder bleiben unberührt. Unveränderte Monate: kein Write.
+ */
+export function upsertCostMonths(
+  year: number,
+  categoriesByMonth: Map<number, ExpenseCategory[]>,
+  opts: { fileName?: string; note?: string; source?: ImportSource },
+  storeKey: string = STORAGE_KEY,
+): ReplaceAnnualCostResult {
+  const before = loadAll(storeKey);
+  const next: Record<string, MonthlyFinancialRecord> = { ...before };
+  const now = new Date().toISOString();
+  let monthsWritten = 0;
+  let monthsUnchanged = 0;
+  const touchedIds: string[] = [];
+
+  for (const [month, newCats] of categoriesByMonth.entries()) {
+    if (month < 1 || month > 12) continue;
+    const id = monthId(year, month);
+    const existing = next[id];
+    const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
+    if (newCats.length === 0 && !hadNumeric) continue;
+
+    const rec = existing ?? createEmptyMonth(year, month);
+    const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    if (existing && sameCategorySet(existing.expenseCategories ?? [], [...keptManual, ...newCats])) {
+      monthsUnchanged++;
+      continue;
+    }
+
+    const importRecord: ImportRecord = {
+      importId: uuidv4(),
+      importedAt: now,
+      source: opts.source ?? 'annual_cost_import',
+      mode: 'replace',
+      fileName: opts.fileName,
+      note: opts.note ?? `Mehrmonats-Kontoblatt ${year}: Konto-Kategorien ersetzt`,
+      affectedFields: ['expenseCategories'],
+    };
+
+    next[id] = {
+      ...rec,
+      expenseCategories: [...keptManual, ...newCats],
+      imports: [...rec.imports, importRecord],
+      updatedAt: now,
+    };
+    touchedIds.push(id);
+    monthsWritten++;
+  }
+
+  assertYearScopedChanges(before, next, year);
+  saveAll(next, storeKey);
+
+  // KV-Backup SEQUENZIELL (gleiches Muster wie replaceAnnualCostYear).
+  const kvBackup = (async () => {
+    const failedMonths: string[] = [];
+    let lastError: unknown;
+    for (const id of touchedIds) {
+      try {
+        await safeUpsertReportingMonth(id, next[id], storeKey);
+      } catch (err) {
+        console.error('[REPORTING] upsertCostMonths: safeUpsertReportingMonth fehlgeschlagen', id, err);
+        failedMonths.push(id);
+        lastError = err;
+      }
+    }
+    if (failedMonths.length > 0) {
+      try {
+        const current = loadAll(storeKey);
+        for (const id of failedMonths) current[id] = next[id];
+        localStorage.setItem(storeKey, JSON.stringify(current));
+      } catch (err) {
+        console.error('[REPORTING] upsertCostMonths: lokales Re-Write fehlgeschlagen', err);
+      }
+      const retry = await retryReportingMonthsBackup(failedMonths, storeKey);
+      return {
+        failedMonths: retry.failedMonths,
+        lastError: retry.failedMonths.length > 0 ? (retry.lastError ?? lastError) : undefined,
+      };
+    }
+    return { failedMonths, lastError };
+  })();
+
+  return { monthsWritten, monthsCleared: 0, monthsUnchanged, kvBackup };
 }
 
 /**
@@ -488,8 +799,14 @@ function mergeExpenseCategories(
 
 const JOURNAL_KEY = 'sage_journal_v1';
 
-function journalMonthKey(year: number, month: number): string {
-  return `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+/**
+ * Journal-Key, mandantenfähig: Oliv bleibt aus historischen Gründen OHNE
+ * Präfix (`sage_journal_v1_*`, alle Alt-Importe), andere Mandanten (Beaulieu)
+ * erhalten das übliche Tenant-Präfix (`beaulieu:sage_journal_v1_*`).
+ */
+function journalMonthKey(year: number, month: number, tenantId: string = 'oliv'): string {
+  const base = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  return tenantId === 'oliv' ? base : `${tenantId}:${base}`;
 }
 
 /**
@@ -501,13 +818,14 @@ export function saveJournalEntries(
   month: number,
   entries: SageJournalEntry[],
   mode: ImportMode = 'replace',
+  tenantId: string = 'oliv',
 ): void {
-  const key = journalMonthKey(year, month);
+  const key = journalMonthKey(year, month, tenantId);
   let final: SageJournalEntry[];
   if (mode === 'replace') {
     final = entries;
   } else {
-    final = [...loadJournalEntries(year, month), ...entries];
+    final = [...loadJournalEntries(year, month, tenantId), ...entries];
   }
   localStorage.setItem(key, JSON.stringify(final));
   // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
@@ -516,17 +834,43 @@ export function saveJournalEntries(
     console.error(`[Journal] KV-Backup fehlgeschlagen: ${key}`, err);
     void notifyKVBackupProblem(err, 'Buchungszeilen', {
       toastId: 'journal-kv-failed',
-      retry: () => kvSetStrict(key, final),
+      // Beim Retry FRISCH aus localStorage lesen — kein eingefrorener Snapshot,
+      // sonst würde ein inzwischen neuerer Save zurückgedreht. Der Key ist zur
+      // Save-Zeit gebunden und bleibt nach Tenant-/Monatswechsel korrekt.
+      retry: () => {
+        let fresh: SageJournalEntry[] = final;
+        try {
+          fresh = JSON.parse(localStorage.getItem(key) ?? '[]') as SageJournalEntry[];
+        } catch { /* localStorage unlesbar → Snapshot als letzter Fallback */ }
+        return kvSetStrict(key, fresh);
+      },
     });
   });
   console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);
 }
 
 /**
+ * Strikte Variante für Undo/Restore: schreibt localStorage UND wartet auf das
+ * Supabase-KV-Backup; wirft bei Backup-Fehlern (Aufrufer meldet dann Misserfolg,
+ * statt einen halb wiederhergestellten Zustand als Erfolg zu verbuchen).
+ */
+export async function saveJournalEntriesStrict(
+  year: number,
+  month: number,
+  entries: SageJournalEntry[],
+  tenantId: string = 'oliv',
+): Promise<void> {
+  const key = journalMonthKey(year, month, tenantId);
+  localStorage.setItem(key, JSON.stringify(entries));
+  await kvSetStrict(key, entries);
+  console.log(`[Journal] Strikt wiederhergestellt: ${key} (${entries.length} Einträge)`);
+}
+
+/**
  * Buchungszeilen für einen Monat aus localStorage laden (sync, sofort).
  */
-export function loadJournalEntries(year: number, month: number): SageJournalEntry[] {
-  const key = journalMonthKey(year, month);
+export function loadJournalEntries(year: number, month: number, tenantId: string = 'oliv'): SageJournalEntry[] {
+  const key = journalMonthKey(year, month, tenantId);
   try {
     return JSON.parse(localStorage.getItem(key) ?? '[]');
   } catch {
@@ -538,8 +882,8 @@ export function loadJournalEntries(year: number, month: number): SageJournalEntr
  * Buchungszeilen für einen Monat aus Supabase laden (async).
  * Führt einmalige Auto-Migration durch wenn Supabase leer ist aber localStorage Daten hat.
  */
-export async function loadJournalEntriesFromDB(year: number, month: number): Promise<SageJournalEntry[]> {
-  const key = journalMonthKey(year, month);
+export async function loadJournalEntriesFromDB(year: number, month: number, tenantId: string = 'oliv'): Promise<SageJournalEntry[]> {
+  const key = journalMonthKey(year, month, tenantId);
   try {
     const remote = await kvGet(key);
     if (remote !== null && Array.isArray(remote) && (remote as SageJournalEntry[]).length > 0) {
@@ -549,7 +893,7 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
       return entries;
     }
     // Supabase leer — localStorage prüfen und ggf. migrieren
-    const local = loadJournalEntries(year, month);
+    const local = loadJournalEntries(year, month, tenantId);
     if (local.length > 0) {
       console.log(`[Journal] Supabase leer – sync localStorage→Supabase: ${key} (${local.length} Einträge)`);
       kvSet(key, local).catch(err => console.error(`[Journal] Auto-Migration nach Supabase fehlgeschlagen: ${key}`, err));
@@ -559,17 +903,17 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
     return local;
   } catch (err) {
     console.error(`[Journal] loadJournalEntriesFromDB Fehler: ${key}`, err);
-    return loadJournalEntries(year, month);
+    return loadJournalEntries(year, month, tenantId);
   }
 }
 
 /**
  * Buchungszeilen für ein ganzes Jahr laden (alle 12 Monate, sync).
  */
-export function loadJournalYear(year: number): SageJournalEntry[] {
+export function loadJournalYear(year: number, tenantId: string = 'oliv'): SageJournalEntry[] {
   const all: SageJournalEntry[] = [];
   for (let m = 1; m <= 12; m++) {
-    all.push(...loadJournalEntries(year, m));
+    all.push(...loadJournalEntries(year, m, tenantId));
   }
   return all;
 }
@@ -578,9 +922,9 @@ export function loadJournalYear(year: number): SageJournalEntry[] {
  * Ganzes Journal-Jahr aus Supabase laden und in localStorage synchronisieren.
  * Für Auto-Migration beim Seitenaufruf.
  */
-export async function syncJournalYearFromDB(year: number): Promise<void> {
+export async function syncJournalYearFromDB(year: number, tenantId: string = 'oliv'): Promise<void> {
   for (let m = 1; m <= 12; m++) {
-    await loadJournalEntriesFromDB(year, m);
+    await loadJournalEntriesFromDB(year, m, tenantId);
   }
 }
 

@@ -2,12 +2,13 @@ import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
-import { Navigate, Link, useNavigate } from 'react-router-dom';
+import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
   ChevronLeft, ChevronRight, ChevronDown, Calendar, BarChart2, Lightbulb, Target,
-  Repeat, FileText, Download, TrendingDown,
+  Repeat, TrendingDown,
 } from 'lucide-react';
 import {
   exportPersonalFixToPDF,
@@ -24,7 +25,7 @@ import {
 } from '@/lib/extra-cost-people-db';
 import type { ActualHourEntry } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
-import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
+import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
@@ -33,13 +34,11 @@ import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
-import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { ControllingDrilldownDialog, type DrilldownFocus } from '@/components/personal-fix/ControllingDrilldownDialog';
 import { buildFactCells } from '@/lib/personal-controlling-drilldown';
 import type {
   DrilldownInput, DrilldownDayValue, DrilldownAbsenceDay, DrilldownShiftTimes,
 } from '@/lib/personal-controlling-drilldown';
-import { PlanungsempfehlungenSection } from '@/components/personal-fix/PlanungsempfehlungenSection';
 import {
   buildStaffingRecommendations, type StaffingRecoResult,
 } from '@/lib/staffing-recommendations';
@@ -51,6 +50,7 @@ import { resolvePositionKey } from '@/lib/position-utils';
 import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { personsPerDay, type ReservationAnalyticsRow } from '@/lib/reservation-analytics';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -68,7 +68,6 @@ import {
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { KpiCard as DsKpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { InfoTip } from '@/components/ui/info-tip';
 import { TONE_TEXT } from '@/components/ui/tones';
 import { StatusPill } from '@/components/ui/status-pill';
@@ -83,6 +82,21 @@ import {
   buildPkqBreakdown,
   type ComparisonTone,
 } from '@/lib/personal-fix-reconciliation';
+import {
+  ladePersonalkostenDaten, personalkosten, personalquote, umsatz,
+  fixKosten, flexKostenProTag, letzterVergangenerTag, budget, budgetZielQuote,
+  type PersonalkostenDaten,
+} from '@/lib/personalkosten';
+import {
+  LineChart, Line as RLine, XAxis, YAxis, CartesianGrid,
+  Tooltip as RTooltip, ReferenceLine, ResponsiveContainer,
+} from 'recharts';
+import {
+  buildPkqBruecke, buildKumulierterVerlauf,
+} from '@/lib/personalkosten-darstellung';
+import { PkHeadline } from '@/components/personalkosten/PkHeadline';
+import { exportPersonalkostenExcel } from '@/lib/personalkosten-excel-export';
+import { PkVerlaufChart } from '@/components/personalkosten/PkVerlaufChart';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -262,6 +276,15 @@ function getFixCost(emp: Employee): number {
     return emp.monthlySalary;
   return 0;
 }
+
+/**
+ * Split-Monat (Lohnart-Wechsel): FLEX-Pseudo-Zeilen tragen eine EIGENE id
+ * (`<empId>::flexsplit`), damit fixe und variable Liste nie dieselbe id führen.
+ * Stunden-/Rate-Lookups laufen über die Basis-id.
+ */
+const FLEX_SPLIT_SUFFIX = '::flexsplit';
+const splitBaseId = (id: string): string =>
+  id.endsWith(FLEX_SPLIT_SUFFIX) ? id.slice(0, -FLEX_SPLIT_SUFFIX.length) : id;
 
 /** Ob der Mitarbeiter einen fixen Monatslohn hat */
 function hasFixedSalary(emp: Employee): boolean {
@@ -1456,9 +1479,12 @@ function FlexPeriodPopup({
           <div className="flex items-start gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
               <h2 className="text-base font-bold leading-tight">Flex-Auswertung — {label}</h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Scope: nur Flex-Arbeit (variable MA) — ohne Zusatzkosten Fixlohn-MA und ohne Ferien.
+              </p>
               <div className="flex flex-wrap gap-3 mt-2">
-                <span className="text-xs text-muted-foreground">Plan <span className="text-blue-700 dark:text-blue-400 font-mono font-semibold">{fmtCHF(planTotal)}</span></span>
-                <span className="text-xs text-muted-foreground">Ist <span className="text-orange-700 dark:text-orange-400 font-mono font-semibold">{fmtCHF(istTotal)}</span></span>
+                <span className="text-xs text-muted-foreground">Flex-Arbeit Plan <span className="text-blue-700 dark:text-blue-400 font-mono font-semibold">{fmtCHF(planTotal)}</span></span>
+                <span className="text-xs text-muted-foreground">Flex-Arbeit Ist <span className="text-orange-700 dark:text-orange-400 font-mono font-semibold">{fmtCHF(istTotal)}</span></span>
                 <span className={cn('text-xs font-bold font-mono', diffCls(diff))}>{fmtD(diff)}</span>
                 {diffPct !== null && <span className={cn('text-xs font-mono', diffCls(diff))}>({diffPct > 0.005 ? '+' : ''}{diffPct.toFixed(1)} %)</span>}
               </div>
@@ -1484,8 +1510,8 @@ function FlexPeriodPopup({
                     <th className={cn(thCls, 'text-left')}>Mitarbeiter</th>
                     <th className={cn(thCls, 'text-right text-muted-foreground')}>Plan Std</th>
                     <th className={cn(thCls, 'text-right text-muted-foreground')}>Ist Std</th>
-                    <th className={cn(thCls, 'text-right text-blue-600')}>Flex Plan CHF</th>
-                    <th className={cn(thCls, 'text-right text-orange-600')}>Flex Ist CHF</th>
+                    <th className={cn(thCls, 'text-right text-blue-600')} title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA / Ferien">Flex-Arbeit Plan CHF</th>
+                    <th className={cn(thCls, 'text-right text-orange-600')} title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA / Ferien">Flex-Arbeit Ist CHF</th>
                     <th className={cn(thCls, 'text-right')}>Diff CHF</th>
                   </tr>
                 </thead>
@@ -1668,10 +1694,10 @@ function WeekDetailPopup({ data, onClose }: { data: WeekDetailData | null; onClo
           {/* FLEX Section */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400">Personal FLEX</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400" title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA und ohne Ferien">Personal FLEX (nur Flex-Arbeit)</p>
               <div className="flex gap-3 text-xs font-mono">
                 <span className="text-blue-600 dark:text-blue-400">Plan {fmtCHF(totalFlexPlan)}</span>
-                <span className="text-orange-600 dark:text-orange-400">Ist {fmtCHF(totalFlexIst)}</span>
+                <span className="text-orange-600 dark:text-orange-400" title="Nur Flex-Arbeit, ohne Zusatzkosten Fixlohn-MA / Ferien">Ist {fmtCHF(totalFlexIst)}</span>
                 <span className={cn('font-semibold', diffCls(totalFlexIst - totalFlexPlan))}>{fmtD(totalFlexIst - totalFlexPlan)}</span>
               </div>
             </div>
@@ -2085,7 +2111,7 @@ function FlexBreakdownModal({ target, onClose }: {
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
-  const { isAdmin, isGuest, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
+  const { isAdmin, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const { rates: socialCostRates } = useSocialCostRates();
@@ -2094,14 +2120,21 @@ export default function PersonalFixPage() {
   if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
   const today = new Date();
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [selectedYear, setSelectedYear] = useState(monatParam?.year ?? today.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(monatParam?.month ?? today.getMonth() + 1);
   // Überstundenkosten in Total/PKQ einbeziehen (Toggle der Überstunden-Karte)
   const [includeOvertime, setIncludeOvertime] = useState(false);
   // Pro Mitarbeiter dauerhaft deaktivierte Überstundenberechnung (Supabase KV, mandanten-prefixed)
   const [overtimeDisabledIds, setOvertimeDisabledIds] = useState<Set<string>>(new Set());
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
+  // ── Zentrale Berechnungsquelle (src/lib/personalkosten.ts) ─────────────────
+  // Einzige Quelle für Schlagzeile/KPI/Budget/PKQ. Detailtabellen behalten ihre
+  // bestehende Logik; hier werden nur die Kopf-Kennzahlen daraus gespeist.
+  const [pkDaten, setPkDaten] = useState<PersonalkostenDaten | null>(null);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [loading, setLoading] = useState(true);
@@ -2113,6 +2146,8 @@ export default function PersonalFixPage() {
   const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
+  /** Lohnart-Wechsel MITTEN im Anzeigemonat (empId → Split mit Tage-Anteilen). */
+  const [wageSplits, setWageSplits] = useState<Record<string, MonthWageSplit>>({});
   // empId → Anzahl FE-Tage im Ist (absenceType='FE' in actual-hours-* localStorage)
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
@@ -2123,6 +2158,8 @@ export default function PersonalFixPage() {
   const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
   // Ferienabbau Drill-down aufgeklappt
   const [showFerienDetail, setShowFerienDetail] = useState(false);
+  // Kranken-/Unfallkosten-Detail (Side-Info, default zu)
+  const [showKuSection, setShowKuSection] = useState(false);
   // Ferien Detail-Daten (welche Tage genau)
   const [ferienPlanDetail, setFerienPlanDetail] = useState<Record<string, { date: string }[]>>({});
   const [ferienIstDetail, setFerienIstDetail]   = useState<Record<string, { date: string }[]>>({});
@@ -2191,6 +2228,8 @@ export default function PersonalFixPage() {
   const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
+  /** Abteilungs-Filter der gemeinsamen FIX-Tabelle: alle / nur Küche / nur Service. */
+  const [fixDeptFilter, setFixDeptFilter] = useState<'alle' | 'service' | 'küche'>('alle');
   // Incremented whenever schedule-v2-* localStorage changes (schedule-updated event)
   // so that pfixPerEmp and planHours re-read the latest data without a page reload.
   const [scheduleRefreshTick, setScheduleRefreshTick] = useState(0);
@@ -2263,9 +2302,12 @@ export default function PersonalFixPage() {
     ]).then(async ([emps, extraPeople]) => {
       setExtraCostPeople(extraPeople.filter(p => p.isActive));
       if (emps) {
-        const effectiveDate = firstOfMonth(selectedYear, selectedMonth);
-        const enriched = await applyEffectiveWages(emps, effectiveDate, tenantId);
+        // SSOT Lohnart: im ANZEIGEMONAT aktive Vertragsphase (Monatslohn = FIX,
+        // Stundenlohn = FLEX); employees-Stammsatz nur als Fallback ohne Historie.
+        const { employees: enriched, splits } =
+          await applyEffectiveWagesForMonth(emps, selectedYear, selectedMonth, tenantId);
         setEmployees(enriched);
+        setWageSplits(splits);
         console.log(`[EMPLOYEE LOAD] count: ${enriched.length} + ${extraPeople.length} ExtraCost`);
         // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
@@ -2292,12 +2334,15 @@ export default function PersonalFixPage() {
         }
       } else {
         setEmployees([]);
+        setWageSplits({});
         console.log(`[CONSISTENCY] personal_fix employees: 0 (keine Daten von Supabase)`);
       }
       setLoading(false);
     });
+  // WICHTIG: selectedYear/selectedMonth als Deps — die FIX/FLEX-Einordnung folgt
+  // der im ANZEIGEMONAT aktiven Vertragsphase (vorher blieb sie am Lade-Monat kleben).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, selectedYear, selectedMonth]);
 
 
   // Tagesumsätze bei Monatswechsel neu laden
@@ -2445,6 +2490,95 @@ export default function PersonalFixPage() {
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick]);
+
+  // ── Zentrale Personalkosten-Daten laden (SSOT für Kopf-Kennzahlen) ─────────
+  // Analog zu PersonalkostenNeu.tsx: bei Monats-/Tenant-Wechsel und bei
+  // scheduleRefreshTick (Dienstplan-/Ist-/Umsatz-Sync) neu laden.
+  useEffect(() => {
+    if (!socialCostRates) return;
+    let alive = true;
+    setPkDaten(null);
+    ladePersonalkostenDaten(selectedYear, selectedMonth, tenantId, tenantKey, socialCostRates)
+      .then(d => { if (alive) setPkDaten(d); })
+      .catch(err => { if (alive) { setPkDaten(null); console.error('[PK-SSOT] Laden fehlgeschlagen:', err); } });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick, socialCostRates]);
+
+  // Kanonische Kennzahlen (Hochrechnung/Ist/PKQ/Umsatz/Stichtag) aus der SSOT.
+  const pkZentral = useMemo(() => {
+    if (!pkDaten) return null;
+    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    const kHr = personalkosten(pkDaten, 'hochrechnung', { stichtag });
+    const kIst = personalkosten(pkDaten, 'istBisHeute', { stichtag });
+    const pkq = personalquote(pkDaten, { stichtag });
+    const ums = umsatz(pkDaten, { stichtag });
+    // Budget LIVE aus dem Budget-Modul (SSoT); null = kein PK-Budget hinterlegt.
+    const pkBudget = budget(selectedYear, selectedMonth, pkDaten.gewichte, pkDaten.pkBudgetMonat);
+    const zielQuote = budgetZielQuote(pkDaten);
+    return { stichtag, kHr, kIst, pkq, ums, pkBudget, zielQuote };
+  }, [pkDaten, selectedYear, selectedMonth]);
+
+  // ── PKQ-Verlauf (kumuliert) — ausschliesslich aus der zentralen Quelle ─────
+  // Pro Tag d (1..stichtag): kumulierte PKQ % = (Fix anteilig d/daysInMonth +
+  // Σ Flex-effektivKosten der Tage ≤ d) ÷ (Σ Ist-Netto-Umsatz der Tage ≤ d) × 100.
+  // Fix wird linear anteilig gerechnet (identisch zu fixKosten.kostenBisStichtag);
+  // flexKostenProTag wird EINMAL berechnet und kumuliert (keine 31 Lib-Aufrufe).
+  const pkqVerlauf = useMemo(() => {
+    if (!pkDaten) return null;
+    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    if (stichtag <= 0) return null;
+    const fixMonat = fixKosten(pkDaten).totalMonat; // voller Monat, einmalig
+    const tage = flexKostenProTag(pkDaten, { stichtag }); // einmalig
+    const mm = String(selectedMonth).padStart(2, '0');
+    let flexKum = 0;
+    let umsatzKum = 0;
+    const rows: { label: string; pkq: number | null }[] = [];
+    for (let d = 1; d <= stichtag; d++) {
+      const date = `${selectedYear}-${mm}-${String(d).padStart(2, '0')}`;
+      const tag = tage.find(t => t.date === date);
+      // Nur vergangene Ist-Tage tragen Ist-Flex bei; sonst Plan (Lib-Tag-Regel).
+      flexKum += tag ? tag.effektivKosten : 0;
+      umsatzKum += pkDaten.umsatzIstProTag[date] ?? 0;
+      const fixKum = fixMonat * (d / pkDaten.daysInMonth);
+      const kostenKum = fixKum + flexKum;
+      rows.push({
+        label: `${String(d).padStart(2, '0')}.${mm}.`,
+        pkq: umsatzKum > 0 ? Math.round((kostenKum / umsatzKum) * 1000) / 10 : null,
+      });
+    }
+    // Sinnvolle Y-Domain-Obergrenze: mind. 45, sonst höchster Punkt + Puffer.
+    const maxPkq = rows.reduce((m, r) => (r.pkq != null && r.pkq > m ? r.pkq : m), 0);
+    const yMax = Math.max(45, Math.ceil((maxPkq + 5) / 5) * 5);
+    return { rows, yMax };
+  }, [pkDaten, selectedYear, selectedMonth]);
+
+  // ── NEUE Darstellung (Etappe 4): reine Ableitungen aus dem Kern ───────────
+  // PKQ-Brücke (Wasserfall) — Ziel → Umsatz-Effekt → Zwischen → Personal-Effekt
+  // → PKQ-Hochrechnung. Alle Eingaben aus pkZentral (SSOT), keine neue Rechnung.
+  const pkBruecke = useMemo(() => {
+    if (!pkZentral) return null;
+    return buildPkqBruecke({
+      zielQuotePct: pkZentral.zielQuote * 100,
+      pkBudgetCHF: pkZentral.pkBudget?.total ?? null,
+      personalHochrechnungCHF: pkZentral.kHr.total,
+      umsatzHochrechnungCHF: pkZentral.ums.hochrechnung,
+    });
+  }, [pkZentral]);
+
+  // Kumulierter Kostenverlauf (Ist bis heute / Plan ab morgen / Budget-Linie).
+  const pkVerlauf = useMemo(() => {
+    if (!pkDaten || !pkZentral) return null;
+    return buildKumulierterVerlauf({
+      year: selectedYear,
+      month: selectedMonth,
+      daysInMonth: pkDaten.daysInMonth,
+      stichtag: pkZentral.stichtag,
+      fixMonatCHF: fixKosten(pkDaten).totalMonat,
+      flexTage: flexKostenProTag(pkDaten, { stichtag: pkZentral.stichtag }),
+      budgetProTag: pkZentral.pkBudget?.proTag ?? [],
+    });
+  }, [pkDaten, pkZentral, selectedYear, selectedMonth]);
 
   // ── K/U-Plan-Eintrag direkt bearbeiten ────────────────────────────────────
   const handleKuPlanEdit = useCallback((empId: string, date: string, action: 'delete' | 'frei') => {
@@ -2638,13 +2772,30 @@ export default function PersonalFixPage() {
   const variableEmployees = useMemo(() => {
     const fromEmployees = employees
       .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth));
-    const existingIds = new Set(fromEmployees.map(e => e.id));
+    // Lohnart-Wechsel mitten im Monat: Stundenlohn-Anteil erscheint zusätzlich
+    // in FLEX (pro rata, Stunden × hourlyFraction) — der Fix-Anteil bleibt in FIX.
+    const splitFlex = employees
+      .filter(e => wageSplits[e.id] && hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
+      .map(e => {
+        const s = wageSplits[e.id];
+        const dd = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+        return {
+          ...e,
+          id: `${e.id}${FLEX_SPLIT_SUFFIX}`,
+          name: `${e.name} (${dd(s.hourlyFrom)}–${dd(s.hourlyTo)})`,
+          contractType: 'hourly' as const,
+          hourlyWage: s.hourly.hourlyWage,
+          monthlySalary: 0,
+          monthlySalaryWith13th: 0,
+        };
+      });
+    const existingIds = new Set([...fromEmployees, ...splitFlex].map(e => e.id));
     const fromExtraCost = extraCostPeople
       .map(extraCostPersonToEmployee)
       .filter(e => !existingIds.has(e.id));
-    return [...fromEmployees, ...fromExtraCost]
+    return [...fromEmployees, ...splitFlex, ...fromExtraCost]
       .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  }, [employees, extraCostPeople, selectedYear, selectedMonth]);
+  }, [employees, extraCostPeople, selectedYear, selectedMonth, wageSplits]);
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
   const missingWageEmployees = useMemo(() =>
@@ -2657,16 +2808,20 @@ export default function PersonalFixPage() {
 
   // ── Hilfsfunktion: Stunden je nach Ansicht ─────────────────────────────────
 
-  const getVarHoursFor = useCallback((empId: string): number => {
-    if (varView === 'plan') return planHours[empId] ?? 0;
-    if (varView === 'ist')  return istHours[empId] ?? 0;
+  const getVarHoursFor = useCallback((rawEmpId: string): number => {
+    // Split-Pseudo-Zeilen: Stunden über die Basis-id, skaliert mit dem
+    // Stundenlohn-Tage-Anteil (Lohnart-Wechsel im Monat).
+    const empId = splitBaseId(rawEmpId);
+    const splitFactor = wageSplits[empId]?.hourlyFraction ?? 1;
+    if (varView === 'plan') return (planHours[empId] ?? 0) * splitFactor;
+    if (varView === 'ist')  return (istHours[empId] ?? 0) * splitFactor;
     // Manuell: manual monthly entry takes priority; weekly baseline as fallback
     const manual  = varHours[empId];
     const weekly  = varWeekly[empId];
-    if (manual != null && manual > 0) return manual;
-    if (weekly?.hours)  return Math.round(weekly.hours * WEEKS_PER_MONTH * 10) / 10;
+    if (manual != null && manual > 0) return manual * splitFactor;
+    if (weekly?.hours)  return Math.round(weekly.hours * WEEKS_PER_MONTH * 10) / 10 * splitFactor;
     return 0;
-  }, [varView, planHours, istHours, varHours, varWeekly]);
+  }, [varView, planHours, istHours, varHours, varWeekly, wageSplits]);
 
   /** Returns monthly cost regardless of pricing mode. */
   const getVarMonthlyCostFor = useCallback((empId: string, emp?: Employee): number => {
@@ -2696,6 +2851,21 @@ export default function PersonalFixPage() {
   const fixedWithCost = useMemo(() => {
     const agFactor = socialCostFactorFromRates(socialCostRates);
     return fixedEmployees.map(emp => {
+      // Lohnart-Wechsel LAUT LOHNHISTORIE (SSOT) mitten im Monat → Fix-Anteil pro rata
+      const wageSplit = wageSplits[emp.id];
+      if (wageSplit) {
+        const dd = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+        const full = getFixCost(emp);
+        return {
+          emp,
+          cost: Math.round(full * wageSplit.monthlyFraction * agFactor * 100) / 100,
+          label: `Pro rata ${dd(wageSplit.monthlyFrom)}–${dd(wageSplit.monthlyTo)} (Lohnart-Wechsel)`,
+          excluded: false,
+          yearlyCost: Math.round(getYearlyFixCost(emp, selectedYear) * agFactor * 100) / 100,
+          hasMidMonthSwitch: true,
+        };
+      }
+
       const phases     = contractHistoryMap[emp.id] ?? [];
       const midSwitch  = getMidMonthSwitchInMonth(phases, selectedYear, selectedMonth);
 
@@ -2725,7 +2895,7 @@ export default function PersonalFixPage() {
         hasMidMonthSwitch: false,
       };
     });
-  }, [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap, socialCostRates]);
+  }, [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap, socialCostRates, wageSplits]);
 
   const activeFixedEmployees = useMemo(() =>
     fixedWithCost.filter(r => !r.excluded),
@@ -2778,12 +2948,18 @@ export default function PersonalFixPage() {
   // ── Stichtag-Controlling: Plan + Ist getrennt (varView-unabhängig) ─────────
   // Variable Kosten immer aus Plan-Stunden (Dienstplan) bzw. Ist-Stunden (Mirus)
   const varPlanTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (planHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
-    [variableEmployees, planHours, socialCostRates],
+    variableEmployees.reduce((s, e) => {
+      const base = splitBaseId(e.id);
+      return s + (planHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
+    }, 0),
+    [variableEmployees, planHours, socialCostRates, wageSplits],
   );
   const varIstTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
-    [variableEmployees, istHours, socialCostRates],
+    variableEmployees.reduce((s, e) => {
+      const base = splitBaseId(e.id);
+      return s + (istHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
+    }, 0),
+    [variableEmployees, istHours, socialCostRates, wageSplits],
   );
 
   // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
@@ -3201,12 +3377,13 @@ export default function PersonalFixPage() {
     : monthRevenue;
   const revenueIsAssumed = revenueAssumption !== null && revenueAssumption > 0;
 
-  // PKQ = Personalkosten / Umsatz × 100
-  const pkqPlan = effectiveRevenue > 0 ? (pfix.active.planTotal / effectiveRevenue) * 100 : null;
-  const pkqIst  = effectiveRevenue > 0 ? (pfix.active.istTotal  / effectiveRevenue) * 100 : null;
-  const pkqFlexPlan = effectiveRevenue > 0 ? (pfix.active.planWork / effectiveRevenue) * 100 : null;
-  const pkqFlexIst  = effectiveRevenue > 0 ? (pfix.active.istWork  / effectiveRevenue) * 100 : null;
-  const pkqFix      = effectiveRevenue > 0 ? (pfix.active.fix      / effectiveRevenue) * 100 : null;
+  // ── PKQ — AUSSCHLIESSLICH zeitkonsistent aus dem Kern (personalkosten.ts) ──
+  // Es gibt nur EINE PKQ-Definition (personalquote()): Zähler und Nenner immer
+  // auf gleicher Zeitbasis. KEINE Quote «volle Monatskosten ÷ Teilumsatz» mehr.
+  //  • pkqIst  = Hochrechnung ÷ Hochrechnungs-Umsatz  (pkq.pkqHochrechnung)
+  //  • pkqPlan = Ziel-Personalquote (zentrale Einstellung, konstant)
+  const pkqIst  = pkZentral?.pkq.pkqHochrechnung != null ? pkZentral.pkq.pkqHochrechnung * 100 : null;
+  const pkqPlan = pkZentral?.zielQuote != null ? pkZentral.zielQuote * 100 : null;
   const revenueLabel = revenueIsAssumed
     ? 'Annahme'
     : maisonOn
@@ -3245,33 +3422,37 @@ export default function PersonalFixPage() {
 
   // Ist vs. Erfolgsrechnung Ist: berechneter Personalaufwand (Ist) ↔ Erfolgsrechnung
   // (Löhne + Sozialleistungen), EXAKT wie in der Erfolgsrechnung dargestellt.
+  // App-Ist = Hochrechnung aus dem Kern (zeitkonsistent), Quoten-Nenner =
+  // Hochrechnungs-Umsatz aus dem Kern — KEIN Teilumsatz mehr.
   const erVergleich = useMemo(() => buildErfolgsrechnungVergleich({
-    berechnetCHF: pfix.active.istTotal,
+    berechnetCHF: pkZentral?.kHr.total ?? 0,
     fibuCHF: erfolgsrechnung.plPersonnelActual,
     plNetRevenue: erfolgsrechnung.plNetRevenue,
-    effectiveRevenue,
-  }), [erfolgsrechnung, pfix.active.istTotal, effectiveRevenue]);
+    effectiveRevenue: pkZentral?.ums.hochrechnung ?? 0,
+  }), [erfolgsrechnung, pkZentral]);
 
-  // Budget vs. Ist (Block A des Personalcontrollings): App-Budget (planTotal) ↔ App-Ist
-  // (istTotal), beide Quoten auf demselben effektiven Umsatz → Prozentpunkte vergleichbar.
-  // Zentrale, richtungsabhängige Differenz (Ist − Budget) — SSOT für KPI-Karte + Block A,
-  // keine Parallelberechnung (Werte kommen aus pfix.active + pkqPlan/pkqIst).
+  // Budget vs. Ist (Block A des Personalcontrollings): dieselbe SSOT wie die
+  // Kopf-Boxen — Budget = Ziel-Personalquote × Umsatz-Budget (pkZentral.pkBudget),
+  // Ist = Hochrechnung (pkZentral.kHr, zeitkonsistent), Quoten aus dem Kern
+  // (pkqPlan = Ziel-Quote, pkqIst = Hochrechnungs-PKQ). KEINE Parallelberechnung
+  // und KEIN «volle Kosten ÷ Teilumsatz» mehr.
   const budgetVsIst = useMemo(() => buildBudgetVsIst({
-    budgetCHF: pfix.active.planTotal,
-    istCHF: pfix.active.istTotal,
+    budgetCHF: pkZentral?.pkBudget?.total ?? 0,
+    istCHF: pkZentral?.kHr.total ?? 0,
     budgetPct: pkqPlan,
     istPct: pkqIst,
-  }), [pfix.active.planTotal, pfix.active.istTotal, pkqPlan, pkqIst]);
+  }), [pkZentral, pkqPlan, pkqIst]);
+  const hasCoreBudget = pkZentral?.pkBudget?.total != null;
 
   // PKQ-Herleitung für InfoTip (echte Werte + Quelle, nichts hartcodiert)
   const pkqBreakdown = useMemo(() => buildPkqBreakdown({
-    personalIst: pfix.active.istTotal,
-    revenue: effectiveRevenue,
+    personalIst: pkZentral?.kHr.total ?? 0,
+    revenue: pkZentral?.ums.hochrechnung ?? 0,
     revenueIsAssumed,
     revenueLabel,
     monthLabel: getMonthLabel(selectedYear, selectedMonth),
     cutoffDay: proRataDay,
-  }), [pfix.active.istTotal, effectiveRevenue, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
+  }), [pkZentral, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
 
   // ── Drilldown-Daten (Ursachenanalyse) ─────────────────────────────────────
   // Nur bei geöffnetem Dialog aufgebaut (gated memo). Nutzt dieselben Loader
@@ -3513,16 +3694,21 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [flexByWeek, totalFixCost, daysInSelectedMonth, activeFixedEmployees]);
 
-  // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (Brutto ÷ 1.081) ────────
+  // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (MwSt-Split: TA 2.6 %,
+  // übriger Umsatz 8.1 % — via grossToNet; ohne TA-Daten = 8.1 % pauschal) ──
   // Fallback: Wenn keine Ist-Daten vorhanden, Budget-Umsatz pro rata verwenden.
   const weekActualNetRevenue = useMemo((): Record<string, number> => {
     const result: Record<string, number> = {};
     for (const w of flexByWeek) {
-      const gross = w.dates.reduce(
-        (sum, d) => sum + (monthlyRevenues[d]?.actualRevenue ?? 0), 0,
-      );
+      let gross = 0, net = 0;
+      for (const d of w.dates) {
+        const g = monthlyRevenues[d]?.actualRevenue ?? 0;
+        if (!(g > 0)) continue;
+        gross += g;
+        net += grossToNet(g, monthlyRevenues[d]?.takeawayRevenue ?? 0);
+      }
       if (gross > 0) {
-        result[w.weekKey] = gross / 1.081;
+        result[w.weekKey] = net;
       } else if (weekRevOverrides[w.weekKey] != null) {
         result[w.weekKey] = weekRevOverrides[w.weekKey];
       } else {
@@ -3688,20 +3874,23 @@ export default function PersonalFixPage() {
 
     const rows = variableEmployees.map(emp => {
       const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
+      // Split-Pseudo-Zeilen: Stunden über Basis-id, skaliert mit Stundenlohn-Anteil
+      const baseId = splitBaseId(emp.id);
+      const splitF = wageSplits[baseId]?.hourlyFraction ?? 1;
       let planH: number, istH: number, planWork: number, istWork: number;
 
       if (proRataDay !== null) {
         // ── Cutoff mode: actual day filtering (identical to FlexPeriodPopup) ──
-        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
-        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
-        planH    = planW.reduce((s, r) => s + r.hours, 0);
-        istH     = istW.reduce((s, r) => s + r.hours, 0);
-        planWork = planW.reduce((s, r) => s + r.cost,  0);
-        istWork  = istW.reduce((s, r) => s + r.cost,   0);
+        const planW = loadDailyPlanDetails(baseId, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        const istW  = loadDailyIstDetails(baseId, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        planH    = planW.reduce((s, r) => s + r.hours, 0) * splitF;
+        istH     = istW.reduce((s, r) => s + r.hours, 0) * splitF;
+        planWork = planW.reduce((s, r) => s + r.cost,  0) * splitF;
+        istWork  = istW.reduce((s, r) => s + r.cost,   0) * splitF;
       } else {
         // ── Full-month mode: pre-aggregated totals ─────────────────────────
-        planH    = planHours[emp.id] ?? 0;
-        istH     = istHours[emp.id]  ?? 0;
+        planH    = (planHours[baseId] ?? 0) * splitF;
+        istH     = (istHours[baseId]  ?? 0) * splitF;
         planWork = planH * wage;
         istWork  = istH  * wage;
       }
@@ -3965,7 +4154,12 @@ export default function PersonalFixPage() {
 
   // ── Stundensaldo aller Mitarbeiter ────────────────────────────────────────
 
-  const allEmployees = useMemo(() => [...fixedEmployees, ...variableEmployees], [fixedEmployees, variableEmployees]);
+  // Stundensaldo: reale Personen genau EINMAL — Split-Pseudo-Zeilen ausschliessen
+  // (der Mitarbeiter ist im Split-Monat bereits über fixedEmployees vertreten).
+  const allEmployees = useMemo(
+    () => [...fixedEmployees, ...variableEmployees.filter(e => splitBaseId(e.id) === e.id)],
+    [fixedEmployees, variableEmployees],
+  );
 
   const hourBalances = useMemo(() =>
     buildHourBalances(
@@ -4006,6 +4200,50 @@ export default function PersonalFixPage() {
   };
 
   // ── PDF-Export ────────────────────────────────────────────────────────────
+
+  // ── Excel-Export (einfach): Übersicht + Fix- + Flex-Lohnkosten ───────────
+  // Nur Darstellung: alle Zahlen kommen aus den bestehenden Tabellen (byDept,
+  // pfixPerEmp) bzw. der SSOT (pkZentral) — keine neue Berechnung.
+  const handleExportExcel = async () => {
+    try {
+      const fixRows = Object.entries(byDept).flatMap(([dept, rows]) =>
+        rows.map(({ emp, cost, yearlyCost }) => ({
+          department: DEPT_LABEL[dept] ?? dept,
+          name: emp.name,
+          anstellung: EMP_TYPE_LABEL[emp.employmentType] ?? emp.employmentType,
+          basisMt: emp.monthlySalary ?? 0,
+          inkl13Mt: emp.monthlySalaryWith13th ?? 0,
+          agMt: cost,
+          agJahr: yearlyCost,
+        })));
+      const flexRows = pfixPerEmp.map((r) => ({
+        name: r.name,
+        department: DEPT_LABEL[r.dept] ?? r.dept,
+        agProStunde: r.hourlyWage,
+        planStd: r.planH,
+        istStd: r.istH,
+        flexPlan: r.planWork,
+        flexIst: r.istWork,
+        diff: r.diffWork,
+      }));
+      const tenantLabel = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+      await exportPersonalkostenExcel({
+        tenantLabel,
+        monthKey: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
+        monthLabel: getMonthLabel(selectedYear, selectedMonth),
+        totalFix: pkZentral?.kHr.fix ?? totalFixCost,
+        totalFlex: pkZentral?.kHr.flex ?? 0,
+        totalPersonalkosten: pkZentral?.kHr.total ?? totalFixCost,
+        pkqProzent: pkZentral?.pkq.pkqHochrechnung != null ? pkZentral.pkq.pkqHochrechnung * 100 : null,
+        fixRows,
+        flexRows,
+      });
+      toast.success('Excel-Export erstellt.');
+    } catch (e) {
+      console.error('[PFIX] Excel-Export fehlgeschlagen:', e);
+      toast.error('Excel-Export fehlgeschlagen.');
+    }
+  };
 
   const handleExportPDF = () => {
     try {
@@ -4052,17 +4290,19 @@ export default function PersonalFixPage() {
         proRataVarByEmp,
         daysInSelectedMonth,
         // PKQ
+        // PKQ nur zeitkonsistent (Total): Ziel-Quote vs. Hochrechnungs-PKQ.
+        // Keine Teil-Quoten je Ebene mehr (volle Kosten ÷ Teilumsatz entfernt).
         pkqPlan,
         pkqIst,
-        pkqFlexPlan,
-        pkqFlexIst,
-        pkqFix,
-        monthRevenue,
-        revenueLabel,
+        pkqFlexPlan: null,
+        pkqFlexIst: null,
+        pkqFix: null,
+        monthRevenue: pkZentral?.ums.hochrechnung ?? 0,
+        revenueLabel: 'Hochrechnungs-Umsatz',
         pfixPlanWork:  pfix.active.planWork,
         pfixIstWork:   pfix.active.istWork,
-        pfixPlanTotal: pfix.active.planTotal,
-        pfixIstTotal:  pfix.active.istTotal,
+        pfixPlanTotal: pkZentral?.pkBudget?.total ?? pfix.active.planTotal,
+        pfixIstTotal:  pkZentral?.kHr.total ?? pfix.active.istTotal,
       });
       toast.success('PDF erfolgreich exportiert');
     } catch (err) {
@@ -4219,16 +4459,13 @@ export default function PersonalFixPage() {
             </Button>
           </div>
 
-          {/* PDF Export Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportPDF}
-            className="h-8 gap-1.5 text-xs border-rose-200 text-rose-700 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">PDF Export</span>
-          </Button>
+          <UnifiedExportButton
+            data-testid="pfix-export"
+            actions={[
+              { key: 'excel', label: 'Excel-Export (Personalkosten)', kind: 'excel', onSelect: handleExportExcel },
+              { key: 'pdf', label: 'Personal FIX (PDF)', kind: 'pdf', onSelect: handleExportPDF },
+            ]}
+          />
         </div>
       </header>
 
@@ -4254,294 +4491,161 @@ export default function PersonalFixPage() {
           data-testid="pfix-total-summary"
           className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3"
         >
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              Total Personal FIX + VARIABEL Ist — {getMonthLabel(selectedYear, selectedMonth)}
-              {proRataDay !== null ? ` (bis ${proRataDay}.)` : ''}
-            </h2>
-          </div>
-          <KpiGrid>
-            <DsKpiCard
-              label="Total Ist"
-              value={fmtCHF(pfix.active.istTotal)}
-              sub={`FIX ${fmtCHF(pfix.active.fix)} + Flex ${fmtCHF(pfix.active.istTotalVar)}`}
-              tone={personnelBudget > 0
-                ? (pfix.active.istTotal <= personnelBudget * (proRataDay !== null ? proRataFactor : 1) ? 'good' : 'critical')
-                : 'neutral'}
-              onClick={() => setDrilldownFocus('ist')}
+          {/* ── Etappe 4: Schlagzeile + 4 Kacheln + Ist-Zeile (SSOT: personalkosten.ts) ── */}
+          {pkZentral && pkDaten ? (
+            <PkHeadline
+              monthLabel={getMonthLabel(selectedYear, selectedMonth)}
+              hrTotalCHF={pkZentral.kHr.total}
+              hrFixCHF={pkZentral.kHr.fix}
+              hrFlexCHF={pkZentral.kHr.flex}
+              budgetCHF={pkZentral.pkBudget?.total ?? null}
+              umsatzBudgetCHF={pkDaten.umsatzBudgetMonat ?? 0}
+              zielQuote={pkZentral.zielQuote}
+              pkqHochrechnung={pkZentral.pkq.pkqHochrechnung}
+              umsatzHochrechnungCHF={pkZentral.ums.hochrechnung}
+              istTotalCHF={pkZentral.kIst.total}
+              umsatzIstCHF={pkZentral.ums.istBisHeute}
+              pkqIst={pkZentral.pkq.pkqIst}
+              istTage={pkZentral.ums.istTage}
+              daysInMonth={pkDaten.daysInMonth}
+              stichtag={pkZentral.stichtag}
+              year={selectedYear}
+              month={selectedMonth}
+              fmtCHF={fmtCHF}
+              onFocus={(f) => setDrilldownFocus(f)}
             />
-            <DsKpiCard
-              label="Total Budget"
-              value={fmtCHF(pfix.active.planTotal)}
-              sub="FIX + Flex (Budget)"
-              tone="info"
-              onClick={() => setDrilldownFocus('budget')}
-            />
-            <DsKpiCard
-              label="Abweichung Ist − Budget"
-              value={signCHF(budgetVsIst.diffCHF)}
-              sub={budgetDeltaText(budgetVsIst.diffCHF)}
-              tone={budgetVsIst.tone}
-              trend={{
-                direction: budgetVsIst.direction === 'over' ? 'up' : budgetVsIst.direction === 'under' ? 'down' : 'flat',
-                tone: budgetVsIst.tone,
-                label: 'Ist − Budget',
-              }}
-              onClick={() => setDrilldownFocus('abweichung')}
-            />
-            <DsKpiCard
-              label="PKQ Ist"
-              value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-              sub={
-                <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
-                  {pkqPlan !== null ? `Budget ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
-                  <InfoTip
-                    side="top"
-                    text={
-                      pkqBreakdown.hasRevenue && pkqBreakdown.pkq !== null ? (
-                        <span>
-                          <b>PKQ Ist = Total Personal Ist ÷ Nettoumsatz</b>
-                          <br />
-                          {fmtCHF(pkqBreakdown.personalIst)} ÷ {fmtCHF(pkqBreakdown.revenue)} = {pkqBreakdown.pkq.toFixed(1)} %
-                          <br />
-                          Umsatz: {pkqBreakdown.revenueLabel}
-                          {pkqBreakdown.revenueIsAssumed ? ' (manuelle Annahme)' : ''}, netto (nach MWST).
-                          <br />
-                          Periode: {pkqBreakdown.monthLabel}
-                          {pkqBreakdown.cutoffDay !== null ? ` (bis ${pkqBreakdown.cutoffDay}.)` : ''}.
-                        </span>
-                      ) : (
-                        <span>
-                          PKQ Ist = Total Personal Ist ÷ Nettoumsatz. Für {pkqBreakdown.monthLabel} ist kein
-                          Umsatz erfasst — die Quote ist nicht berechenbar.
-                        </span>
-                      )
-                    }
-                  />
-                </span>
-              }
-              tone={pkqIst !== null && pkqPlan !== null
-                ? (pkqIst > pkqPlan + 1 ? 'critical' : pkqIst < pkqPlan - 1 ? 'good' : 'neutral')
-                : 'neutral'}
-              onClick={() => setDrilldownFocus('quote')}
-            />
-          </KpiGrid>
-
-          {/* ── Personalcontrolling: Budget vs. Ist (Betrieb) + App vs. Erfolgsrechnung (Kontrolle) ─ */}
-          {/* Nur ganzer Monat: die Erfolgsrechnung liegt monatsweise vor, ein
-              Stichtag-Vergleich (pro rata) wäre irreführend. */}
-          {proRataDay === null && (
-            <div
-              data-testid="pfix-personalcontrolling"
-              className="rounded-lg border border-border bg-muted/10 p-3 space-y-3"
-            >
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Personalcontrolling
-                </h3>
-                <InfoTip
-                  side="top"
-                  text={
-                    <span>
-                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)}:{' '}
-                      <b>Budget vs. Ist</b> zeigt betriebswirtschaftlich, ob der Ist-Personalaufwand
-                      unter oder über dem geplanten Budget liegt (Richtung = gut/schlecht).{' '}
-                      <b>App vs. Erfolgsrechnung</b> ist eine technische Kontrolle, ob der von der App
-                      berechnete Ist-Aufwand mit dem Personalaufwand der Erfolgsrechnung (FIBU-Konten
-                      5000–5999, voller Arbeitgeberaufwand) übereinstimmt — hier zählt nur die
-                      Grösse der Abweichung. Quoten auf {fmtCHF(effectiveRevenue)} ({revenueLabel}).
-                    </span>
-                  }
-                />
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
-                <ControllingBlock
-                  testid="pfix-pc-budget-ist"
-                  title="Budget vs. Ist"
-                  colLeft="Budget"
-                  colRight="Ist App"
-                  colDiff="Ist − Budget"
-                  onClick={() => setDrilldownFocus('abweichung')}
-                  pill={
-                    <StatusPill tone={budgetVsIst.tone} size="xs">
-                      {budgetDeltaText(budgetVsIst.diffCHF)}
-                    </StatusPill>
-                  }
-                  chf={{
-                    left: fmtCHF(budgetVsIst.budgetCHF),
-                    right: fmtCHF(budgetVsIst.istCHF),
-                    diff: signCHF(budgetVsIst.diffCHF),
-                    tone: budgetVsIst.tone,
-                  }}
-                  pct={{
-                    left: fmtQuote(budgetVsIst.budgetPct),
-                    right: fmtQuote(budgetVsIst.istPct),
-                    diff: budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
-                    tone: budgetVsIst.tone,
-                  }}
-                />
-
-                {/* Block B — App vs. Erfolgsrechnung (technische Kontrolle, betragsbasiert) */}
-                {erVergleich.status === 'ok' ? (
-                  <ControllingBlock
-                    testid="pfix-pc-app-er"
-                    title="App vs. Erfolgsrechnung"
-                    colLeft="Ist App"
-                    colRight="Ist ER"
-                    colDiff="App − ER"
-                    onClick={() => setDrilldownFocus('er')}
-                    info={
-                      <InfoTip
-                        side="top"
-                        text={
-                          <span>
-                            Kontrolle: der von der App berechnete Ist-Personalaufwand (Total
-                            Arbeitgeberkosten) gegenüber „Löhne (Total)" + „Sozialleistungen" der
-                            Erfolgsrechnung (exakt dieselben Werte wie dort, FIBU 5000–5999). Diese
-                            enthalten bereits den vollen Arbeitgeberaufwand und werden <b>nicht</b>{' '}
-                            nochmals mit Sozialkosten multipliziert. Ist-Quote auf{' '}
-                            {fmtCHF(effectiveRevenue)} ({revenueLabel}).
-                            {erVergleich.revenueMismatch
-                              ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
-                              : ''}
-                          </span>
-                        }
-                      />
-                    }
-                    pill={
-                      <StatusPill tone={erVergleich.tone} size="xs">
-                        {ER_STATUS_LABEL[erVergleich.tone]}
-                      </StatusPill>
-                    }
-                    footer={
-                      <span className={TONE_TEXT[erVergleich.tone]}>
-                        {appVsErText(erVergleich.diffCHF)}
-                      </span>
-                    }
-                    chf={{
-                      left: fmtCHF(pfix.active.istTotal),
-                      right: fmtCHF(erVergleich.fibuCHF),
-                      diff: signCHF(erVergleich.diffCHF),
-                      tone: erVergleich.tone,
-                    }}
-                    pct={{
-                      left: fmtQuote(erVergleich.berechnetPct),
-                      right: fmtQuote(erVergleich.fibuPct),
-                      diff: erVergleich.diffPp !== null ? `${signPp(erVergleich.diffPp)} Pp` : '—',
-                      tone: erVergleich.tone,
-                    }}
-                  />
-                ) : (
-                  <div
-                    data-testid="pfix-pc-app-er"
-                    className="rounded-md border border-border bg-card p-2.5 space-y-2"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        App vs. Erfolgsrechnung
-                      </span>
-                    </div>
-                    <div
-                      data-testid="pfix-pc-app-er-missing"
-                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-                    >
-                      <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
-                      {!isGuest && (
-                        <Link
-                          to="/reporting"
-                          data-testid="pfix-er-import-link"
-                          className="font-medium text-primary underline underline-offset-2"
-                        >
-                          Erfolgsrechnung importieren →
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground py-4">Lade Personalkosten …</p>
           )}
 
-          {/* ── Planungsempfehlungen: regelbasiert, read-only, lokale Simulation ── */}
-          <PlanungsempfehlungenSection
-            open={planungOpen}
-            onOpenChange={setPlanungOpen}
-            result={recoResult}
-            loading={planungOpen && recoResult === null}
-            season={recoSeason}
-            onSeasonChange={setRecoSeason}
-            hasRequirements={staffingRequirements.length > 0}
-            monthLabel={getMonthLabel(selectedYear, selectedMonth)}
-            onOpenSchedule={() => navigate('/personal')}
-          />
 
-          <MoreKpis label="Alle Kennzahlen (Budget + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
-        {/* ── KPI-Block (8 Karten: Budget + Ist für alle 4 Ebenen) ───────────── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Budget bis ${proRataDay}.` : 'Flex Arbeit Budget'}
-            value={fmtCHF(pfix.active.planWork)}
-            sub="Dienstplan-Stunden × Lohn"
-            icon={<Clock className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Ist (inkl. Zusatzk.) bis ${proRataDay}.` : 'Flex Arbeit Ist (inkl. Zusatzk.)'}
-            value={fmtCHF(pfix.active.istWork)}
-            sub="Mirus-Ist-Std × Lohn + Zusatzkosten Fixlohn-MA"
-            icon={<Clock className="h-5 w-5" />}
-            color={pfix.active.istWork > 0 ? 'orange' : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `PKQ Budget bis ${proRataDay}.` : 'PKQ Budget'}
-            value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
-            icon={<TrendingDown className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
-            value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(effectiveRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
-            icon={<TrendingDown className="h-5 w-5" />}
-            color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Total Flex Budget bis ${proRataDay}.` : 'Total Flex Budget'}
-            value={fmtCHF(pfix.active.planTotalVar)}
-            sub="Flex Arbeit + Ferien (Budget)"
-            icon={<TrendingUp className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Total Flex Ist (inkl. Ferien) bis ${proRataDay}.` : 'Total Flex Ist (inkl. Ferien)'}
-            value={fmtCHF(pfix.active.istTotalVar)}
-            sub="Flex Arbeit + Zusatzkosten + Ferien (Ist)"
-            icon={<TrendingUp className="h-5 w-5" />}
-            color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Diff. Arbeit bis ${proRataDay}.` : 'Diff. Arbeit'}
-            value={fmtCHF(Math.abs(pfix.active.diffWork))}
-            sub={pfix.active.diffWork === 0 ? 'Im Budget' : pfix.active.diffWork > 0 ? '↑ Ist über Budget' : '✓ Ist unter Budget'}
-            icon={<BarChart2 className="h-5 w-5" />}
-            color={pfix.active.diffWork > 0 ? 'red' : pfix.active.diffWork < 0 ? 'green' : 'default'}
-            delta={pfix.active.diffWork}
-            deltaLabel="Ist − Budget (Arbeit)"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Personal FIX bis ${proRataDay}.` : 'Personal FIX / Monat'}
-            value={fmtCHF(pfix.active.fix)}
-            sub={`${activeFixedEmployees.length} MA · Fixlohn`}
-            icon={<DollarSign className="h-5 w-5" />}
-            color="blue"
-          />
-        </div>
-          </MoreKpis>
+
+
+
         </section>
+
+        {/* ── FIX-Lohnkosten: EINE gemeinsame Tabelle mit Abteilungs-Spalte + Filter ──
+            Spalten Anstellung und Total AG/Jahr bewusst entfernt; Total im Fuss
+            synchronisiert sich mit dem Abteilungs-Filter (Alle/Küche/Service). */}
+        {Object.keys(byDept).length > 0 && (() => {
+          const deptOrder = ['service', 'küche'];
+          const allRows = Object.entries(byDept)
+            .flatMap(([dept, rows]) => rows.map(r => ({ ...r, dept })))
+            .sort((a, b) => {
+              const da = deptOrder.indexOf(a.dept); const db = deptOrder.indexOf(b.dept);
+              if (da !== db) return (da === -1 ? 99 : da) - (db === -1 ? 99 : db);
+              return a.emp.name.localeCompare(b.emp.name, 'de');
+            });
+          const filtered = fixDeptFilter === 'alle' ? allRows : allRows.filter(r => r.dept === fixDeptFilter);
+          const tBase = filtered.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const t13   = filtered.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0);
+          const tMt   = filtered.reduce((s, r) => s + r.cost, 0);
+          const FILTERS: { key: 'alle' | 'küche' | 'service'; label: string }[] = [
+            { key: 'alle', label: 'Alle' },
+            { key: 'küche', label: 'nur Küche' },
+            { key: 'service', label: 'nur Service' },
+          ];
+          return (
+            <section data-testid="pfix-fix-table" className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-muted/30 border-b border-border">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <DollarSign className="h-4 w-4 text-blue-600" />
+                  Fix-Lohnkosten
+                  <Badge variant="secondary" className="text-xs">{filtered.length}</Badge>
+                </div>
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  {EMPLOYER_COST_LABELS_SHORT.total}/Mt <strong className="text-blue-700 dark:text-blue-300 font-mono">{fmtCHF(tMt)}</strong>
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                {/* Kompakt: kleine Schrift/enge Zeilen — alle Fix-MA ohne Scrollen sichtbar. */}
+                <table className="w-full text-xs min-w-[520px]">
+                  <thead>
+                    <tr className="text-[11px] text-muted-foreground border-b border-border bg-muted/10">
+                      <th className="text-left px-3 py-1 font-medium">Name</th>
+                      <th className="text-left px-3 py-1 font-medium">
+                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                          Abteilung
+                          <span className="inline-flex rounded-md border border-border overflow-hidden" data-testid="pfix-fix-dept-filter">
+                            {FILTERS.map(f => (
+                              <button
+                                key={f.key}
+                                onClick={() => setFixDeptFilter(f.key)}
+                                data-testid={`pfix-fix-filter-${f.key}`}
+                                className={cn(
+                                  'px-1.5 py-0.5 text-[10px] font-normal transition-colors',
+                                  fixDeptFilter === f.key
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background hover:bg-muted text-muted-foreground',
+                                )}
+                              >
+                                {f.label}
+                              </button>
+                            ))}
+                          </span>
+                        </span>
+                      </th>
+                      <th className="text-right px-3 py-1 font-medium">Basis-Lohn/Mt</th>
+                      <th className="text-right px-3 py-1 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-3 py-1 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                        </Tooltip>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filtered.map(({ emp, cost, label, dept }, i) => {
+                      const isProRata = label !== null;
+                      // Kleine visuelle Trennung beim Abteilungswechsel (statt grosser Blöcke)
+                      const deptBreak = fixDeptFilter === 'alle' && i > 0 && filtered[i - 1].dept !== dept;
+                      return (
+                        <tr key={emp.id} className={cn('hover:bg-muted/30 transition-colors', deptBreak && 'border-t-2 border-border')}>
+                          <td className="px-3 py-1 font-medium whitespace-nowrap">
+                            {emp.name}
+                            {isProRata && (
+                              <span className="ml-1.5 text-[10px] font-normal px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                                {label}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1 text-muted-foreground whitespace-nowrap">{DEPT_LABEL[dept] ?? dept}</td>
+                          <td className="px-3 py-1 text-right font-mono">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</td>
+                          <td className="px-3 py-1 text-right font-mono">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</td>
+                          <td className="px-3 py-1 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
+                            {cost > 0
+                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-[10px] font-normal text-amber-600 ml-1">*</span>}</span>
+                              : <span className="text-muted-foreground">–</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/20 font-semibold border-t-2 border-border" data-testid="pfix-fix-total">
+                      <td className="px-3 py-1.5" colSpan={2}>
+                        Total FIX{fixDeptFilter !== 'alle' ? ` — ${DEPT_LABEL[fixDeptFilter]}` : ''}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(tBase)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(t13)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(tMt)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* ── C: Flex Kosten pro Mitarbeiter ─────────────────────────────── */}
         {pfixPerEmp.length > 0 && (
@@ -4653,1384 +4757,7 @@ export default function PersonalFixPage() {
           </section>
         )}
 
-        {/* ── D: Überstundenkosten Festangestellte (einklappbar) ──────────────── */}
-        <CollapsibleSection
-          testid="pfix-section-overtime"
-          icon={<Clock />}
-          title="Überstundenkosten Festangestellte"
-        >
-          <OvertimeCostCard
-            analysis={overtimeAnalysis}
-            weeklyAnalysis={weeklyOvertimeAnalysis}
-            dayDetailEntries={dayDetailEntries}
-            regularCost={pfix.month.istTotal}
-            netRevenue={effectiveRevenue}
-            includeOvertime={includeOvertime}
-            onIncludeOvertimeChange={setIncludeOvertime}
-            canSeeIndividualRates={canSeeHourlyWages}
-            canSeeTotals={canSeePersonnelCostTotals}
-            periodLabel={new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
-            onToggleEmployeeDisabled={handleToggleOvertimeDisabled}
-            canManageDisable={canSeePersonnelCostTotals}
-          />
-        </CollapsibleSection>
 
-        {/* ── E: Monatsansicht (einklappbar) ───────────────────────────────── */}
-        <CollapsibleSection
-          testid="pfix-section-monatsansicht"
-          icon={<Calendar />}
-          title={`Monatsansicht — ${getMonthLabel(selectedYear, selectedMonth)}`}
-          status={proRataDay !== null ? `Stichtag aktiv — bis ${proRataDay}. · ${(proRataFactor * 100).toFixed(0)} %` : 'Monatsansicht'}
-        >
-
-        {/* ── Modus-Steuerung (Pro-Rata Toggle) ────────────────────────────── */}
-        <div className="rounded-xl border border-border bg-card shadow-sm p-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Target className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-semibold">
-              {proRataDay !== null
-                ? `Stichtag — bis ${proRataDay}. ${getMonthLabel(selectedYear, selectedMonth)}`
-                : `Monatsansicht — ${getMonthLabel(selectedYear, selectedMonth)}`}
-            </span>
-            {proRataDay !== null && (
-              <Badge variant="secondary" className="text-xs tabular-nums">
-                {proRataDay}/{daysInSelectedMonth} · {Math.round(proRataFactor * 100)} %
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {proRataDay !== null && (
-              <>
-                <span className="text-xs text-muted-foreground">Tag:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={daysInSelectedMonth}
-                  value={proRataDay}
-                  onChange={e => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v >= 1 && v <= daysInSelectedMonth) setProRataDay(v);
-                  }}
-                  className="w-16 h-8 rounded border border-border text-center text-sm font-mono bg-background"
-                />
-                <span className="text-xs text-muted-foreground">/ {daysInSelectedMonth}</span>
-              </>
-            )}
-            <Button
-              size="sm"
-              variant={proRataDay !== null ? 'default' : 'outline'}
-              className="h-8 text-xs gap-1.5"
-              onClick={() => {
-                if (proRataDay !== null) {
-                  setProRataDay(null);
-                } else {
-                  const isCurrentMonth = selectedYear === today.getFullYear() && selectedMonth === today.getMonth() + 1;
-                  setProRataDay(isCurrentMonth ? today.getDate() : daysInSelectedMonth);
-                }
-              }}
-            >
-              <Repeat className="h-3.5 w-3.5" />
-              {proRataDay !== null ? 'Abgrenzung aus' : 'Abgrenzen'}
-            </Button>
-          </div>
-        </div>
-
-        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
-        {Object.entries(byDept).map(([dept, rows]) => {
-          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
-          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
-          const isCollapsed = expandedFixDepts.has(dept);
-          const toggleDept  = () => setExpandedFixDepts(prev => {
-            const next = new Set(prev);
-            if (next.has(dept)) next.delete(dept); else next.add(dept);
-            return next;
-          });
-          return (
-            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-              <button
-                onClick={toggleDept}
-                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                aria-expanded={!isCollapsed}
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  {DEPT_ICON[dept]}
-                  {DEPT_LABEL[dept] ?? dept} — FIX
-                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
-                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
-                </div>
-                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
-                </div>
-              </button>
-
-              {!isCollapsed && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[540px]">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                      <th className="text-left px-4 py-2 font-medium">Name</th>
-                      <th className="text-left px-4 py-2 font-medium">Anstellung</th>
-                      <th className="text-right px-4 py-2 font-medium">Basis-Lohn/Mt</th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {rows.map(({ emp, cost, label, yearlyCost }) => {
-                      const isSavingThis = saving === emp.id;
-                      const isProRata = label !== null;
-                      return (
-                        <tr
-                          key={emp.id}
-                          className={cn('hover:bg-muted/30 transition-colors', isSavingThis && 'opacity-50')}
-                        >
-                          <td className="px-4 py-2.5 font-medium">
-                            <div className="flex items-center gap-2">
-                              {emp.name}
-                              {isProRata && (
-                                <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
-                                  {label}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
-                            {cost > 0
-                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-xs font-normal text-amber-600 ml-1">*</span>}</span>
-                              : <span className="text-muted-foreground">–</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
-                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
-                      <td className="px-4 py-2.5 text-sm" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(deptBase)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">
-                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-              )}
-            </section>
-          );
-        })}
-
-        {/* ── Ferienabbau Drill-down ──────────────────────────────────────── */}
-        {(ferienIstTotalCHF > 0 || ferienPlanTotalCHF > 0) && (
-          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-            <button
-              onClick={() => setShowFerienDetail(v => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-blue-50/40 dark:bg-blue-950/10 hover:bg-blue-50/70 dark:hover:bg-blue-950/20 transition-colors text-left"
-            >
-              <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
-                <Calendar className="h-4 w-4 text-blue-500" />
-                Ferienabbau — Mitarbeiter-Detail
-                <Badge variant="secondary" className="text-xs">
-                  {[...fixedEmployees, ...variableEmployees].filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
-                </Badge>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="hidden sm:inline">Plan: <strong className="font-mono text-blue-600 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</strong></span>
-                <span className="hidden sm:inline">Ist: <strong className="font-mono text-orange-600 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</strong></span>
-                <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', showFerienDetail && 'rotate-180')} />
-              </div>
-            </button>
-            {showFerienDetail && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[520px]">
-                  <thead>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
-                      <th className="px-3 py-2 text-right font-medium text-blue-500">Tage Plan</th>
-                      <th className="px-3 py-2 text-right font-medium text-orange-500">Tage Ist</th>
-                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
-                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
-                      <th className="px-3 py-2 text-right font-medium text-blue-600">Plan CHF</th>
-                      <th className="px-3 py-2 text-right font-medium text-orange-600">Ist CHF</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {[...fixedEmployees, ...variableEmployees]
-                      .filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0)
-                      .map((emp, i) => {
-                        const isFixed   = fixedEmployees.some(fe => fe.id === emp.id);
-                        const planDays = ferienPlanDays[emp.id] ?? 0;
-                        const istDays  = ferienIstDays[emp.id] ?? 0;
-                        const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                        const wage     = emp.hourlyWage ?? 0;
-                        const planCHF  = planDays * dailyH * wage;
-                        const istCHF   = istDays  * dailyH * wage;
-                        const hasPlanDetail = (ferienPlanDetail[emp.id]?.length ?? 0) > 0;
-                        const hasIstDetail  = (ferienIstDetail[emp.id]?.length ?? 0) > 0;
-                        return (
-                          <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                            <td className="px-4 py-2 font-medium">
-                              <div className="flex items-center gap-1.5">
-                                {emp.name}
-                                {isFixed && (
-                                  <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
-                                    Fixlohn
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">
-                              {planDays > 0 ? (
-                                <button
-                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
-                                  className={cn(
-                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
-                                    hasPlanDetail ? 'cursor-pointer' : 'no-underline cursor-default',
-                                  )}
-                                  title={hasPlanDetail ? 'Tage anzeigen' : undefined}
-                                  disabled={!hasPlanDetail}
-                                >
-                                  {planDays}
-                                </button>
-                              ) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">
-                              {istDays > 0 ? (
-                                <button
-                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
-                                  className={cn(
-                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
-                                    hasIstDetail ? 'cursor-pointer' : 'no-underline cursor-default',
-                                  )}
-                                  title={hasIstDetail ? 'Tage anzeigen' : undefined}
-                                  disabled={!hasIstDetail}
-                                >
-                                  {istDays}
-                                </button>
-                              ) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
-                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
-                            <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{planCHF > 0 ? fmtCHF(planCHF) : '–'}</td>
-                            <td className="px-3 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{istCHF > 0 ? fmtCHF(istCHF) : '–'}</td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30 font-bold">
-                      <td className="px-4 py-2 text-sm" colSpan={5}>Total Ferienabbau</td>
-                      <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
-        {(() => {
-          const empWithKU = [...fixedEmployees, ...variableEmployees].filter(e =>
-            (kuPlanDays[e.id] ?? 0) > 0 || (kuIstDays[e.id] ?? 0) > 0
-          );
-          if (empWithKU.length === 0) return null;
-          return (
-            <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20">
-                <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
-                  <AlertCircle className="h-4 w-4 text-amber-500" />
-                  Kranken-/Unfallkosten (80 %)
-                  <Badge variant="secondary" className="text-xs">{empWithKU.length} MA mit K/U-Tagen</Badge>
-                </div>
-                {totalKuCHF > 0 && (
-                  <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
-                    {fmtCHF(totalKuCHF)}
-                  </span>
-                )}
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[600px]">
-                  <thead>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Mitarbeiter</th>
-                      <th className="px-2 py-1 text-center font-medium text-orange-600 border-b border-border/40" colSpan={2}>Krank (K)</th>
-                      <th className="px-2 py-1 text-center font-medium text-red-600 border-b border-border/40" colSpan={2}>Unfall (U)</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>h / Tag</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>CHF / h</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>80 % CHF</th>
-                    </tr>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-2 py-1 text-right font-medium text-orange-500">Plan</th>
-                      <th className="px-2 py-1 text-right font-medium text-orange-400/80">Ist</th>
-                      <th className="px-2 py-1 text-right font-medium text-red-500">Plan</th>
-                      <th className="px-2 py-1 text-right font-medium text-red-400/80">Ist</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {empWithKU.map((emp, i) => {
-                      const planBrk   = kuPlanBreakdown[emp.id] ?? { krank: 0, unfall: 0 };
-                      const istBrk    = kuIstBreakdown[emp.id]  ?? { krank: 0, unfall: 0 };
-                      const planDays  = kuPlanDays[emp.id] ?? 0;
-                      const istDays   = kuIstDays[emp.id]  ?? 0;
-                      const basisDays = planDays > 0 ? planDays : istDays;
-                      const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                      const wage      = emp.hourlyWage ?? 0;
-                      const chf80     = basisDays * dailyH * wage * 0.8;
-                      const hasKPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => SICK_CODES.has(e.type));
-                      const hasKIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => SICK_CODES.has(e.type));
-                      const hasUPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => ACCIDENT_CODES.has(e.type));
-                      const hasUIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => ACCIDENT_CODES.has(e.type));
-                      const mkBtn = (
-                        val: number,
-                        src: 'plan'|'ist',
-                        tf: 'krank'|'unfall',
-                        hasDetail: boolean,
-                        cls: string,
-                      ) => val > 0 ? (
-                        <button
-                          onClick={() => setShowKuDetail({ empId: emp.id, empName: emp.name, typeFilter: tf })}
-                          className={cn('tabular-nums', hasDetail ? 'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity' : 'cursor-default')}
-                          title={hasDetail ? 'Tage anzeigen' : undefined}
-                          disabled={!hasDetail}
-                        >
-                          <span className={cls}>{val}</span>
-                        </button>
-                      ) : <span className="text-muted-foreground/40">–</span>;
-                      return (
-                        <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                          <td className="px-4 py-2.5 font-medium">{emp.name}</td>
-                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.krank, 'plan', 'krank', hasKPlanDetail, 'text-orange-600 dark:text-orange-400')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.krank,  'ist',  'krank', hasKIstDetail,  'text-orange-500/70 dark:text-orange-400/60')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.unfall, 'plan', 'unfall', hasUPlanDetail, 'text-red-600 dark:text-red-400')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.unfall, 'ist',  'unfall', hasUIstDetail,  'text-red-500/70 dark:text-red-400/60')}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-700 dark:text-amber-400">
-                            {chf80 > 0 ? fmtCHF(chf80) : '–'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  {totalKuCHF > 0 && (() => {
-                    const totKP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.krank  ?? 0), 0);
-                    const totKI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.krank   ?? 0), 0);
-                    const totUP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.unfall  ?? 0), 0);
-                    const totUI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.unfall   ?? 0), 0);
-                    return (
-                      <tfoot>
-                        <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold text-xs">
-                          <td className="px-4 py-2 text-amber-800 dark:text-amber-300">Total</td>
-                          <td className="px-2 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{totKP > 0 ? totKP : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-orange-500/70">{totKI > 0 ? totKI : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-red-600 dark:text-red-400">{totUP > 0 ? totUP : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-red-500/70">{totUI > 0 ? totUI : '–'}</td>
-                          <td colSpan={2} />
-                          <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
-                        </tr>
-                      </tfoot>
-                    );
-                  })()}
-                </table>
-              </div>
-              <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × Total AG/h × 80 % (bei fehlendem Plan: Ist-Tage).
-              </p>
-            </section>
-          );
-        })()}
-
-        {/* ── Erklärung ────────────────────────────────────────────────────── */}
-        <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
-          <Info className="h-4 w-4 shrink-0 mt-0.5" />
-          <p>
-            <strong>Personal FIX</strong>: {EMPLOYER_COST_LABELS.total} = Bruttolohn (inkl. amortisiertem 13. Monatslohn) + {EMPLOYER_COST_LABELS.social}.
-            Mitarbeiter die im gewählten Monat austreten werden <em>pro rata</em> (Arbeitstage ÷ Monatstage) abgerechnet.
-            Bereits ausgetretene Mitarbeiter werden ausgeblendet.{' '}
-            <strong>Personal FLEX</strong>: Stunden × {EMPLOYER_COST_LABELS.total}/h.
-            Wähle Plan- oder Ist-Stunden direkt aus dem Dienstplan — oder trage Stunden manuell ein.
-            Tagessatz-Einträge sind All-in-Beträge und werden nicht zusätzlich mit AG-Sozialkosten beaufschlagt.
-          </p>
-        </div>
-
-        {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
-        {pfix.active.istTotalVar > 0 && (
-          <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <Users className="h-4 w-4 text-emerald-600" />
-              Total Personal FIX + VARIABEL Ist{proRataDay !== null ? ` bis ${proRataDay}.` : ''} · {getMonthLabel(selectedYear, selectedMonth)}
-            </div>
-            <div className="flex flex-wrap items-center gap-6 text-sm">
-              <span className="text-muted-foreground">
-                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(pfix.active.fix)}</strong>
-              </span>
-              <span className="text-muted-foreground">+</span>
-              <span className="text-muted-foreground">
-                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istTotalVar)}</strong>
-              </span>
-              <span className="text-muted-foreground">=</span>
-              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(pfix.active.istTotal)}/Mt</span>
-              {personnelBudget > 0 && (() => {
-                const budget = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
-                return (
-                  <span className={cn(
-                    'text-xs font-medium px-2 py-0.5 rounded-full',
-                    pfix.active.istTotal <= budget
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                      : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-                  )}>
-                    {pfix.active.istTotal <= budget ? '✓ im Budget' : `↑ ${fmtCHF(pfix.active.istTotal - budget)} über Budget`}
-                  </span>
-                );
-              })()}
-            </div>
-          </div>
-        )}
-        </CollapsibleSection>
-
-        {/* ── F: Budget-Auswertung (einklappbar) ───────────────────────────── */}
-        <CollapsibleSection
-          testid="pfix-section-budget"
-          icon={<Target />}
-          title={`Budget-Auswertung — ${getMonthLabel(selectedYear, selectedMonth)}`}
-          status={budgetRevenue != null ? 'Szenario aktiv' : undefined}
-        >
-        <div className="overflow-hidden -m-4">
-          <div className="flex items-center justify-between px-4 py-3 bg-violet-50/40 dark:bg-violet-950/20 border-b border-border">
-            <div className="flex items-center gap-2">
-              {budgetRevenue != null && (
-                <span className="ml-1 text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-700">
-                  Szenario aktiv
-                </span>
-              )}
-            </div>
-            {flexByWeek.length > 0 && (
-              <button
-                onClick={() => setShowWeekSummary(v => !v)}
-                className={cn(
-                  'text-[10px] font-semibold px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1',
-                  showWeekSummary
-                    ? 'border-violet-400 dark:border-violet-600 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
-                    : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-violet-300',
-                )}
-              >
-                <BarChart2 className="h-3 w-3" />
-                Wochenansicht
-              </button>
-            )}
-          </div>
-
-          {/* ── 3-Spalten-Vergleichstabelle ──────────────────────────────────── */}
-          <div className="px-4 pt-4 pb-2">
-            {/* Spalten-Header */}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 mb-2 pb-1.5 border-b border-border">
-              <div />
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground text-right min-w-[110px]">Geplantes Budget</div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 text-right min-w-[180px]">Szenario</div>
-            </div>
-
-            {/* Zeile: Umsatz */}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-start py-2.5 border-b border-dashed border-border">
-              <span className="text-sm text-muted-foreground self-center">Umsatz</span>
-              {/* Plan */}
-              <div className="text-right self-center">
-                <span className="font-mono font-semibold text-sm">
-                  {budgetData.revenueBudget > 0 ? fmtCHF(budgetData.revenueBudget) : <span className="italic text-xs text-muted-foreground">—</span>}
-                </span>
-              </div>
-              {/* Szenario: quick buttons + input */}
-              <div className="min-w-[180px] space-y-1.5">
-                <div className="flex flex-wrap justify-end gap-1">
-                  {[-20000, -10000, +10000, +20000].map(delta => {
-                    const base = budgetRevenue ?? budgetData.revenueBudget;
-                    const target = base + delta;
-                    if (target <= 0) return null;
-                    return (
-                      <button key={delta} onClick={() => {
-                        setBudgetRevenue(target); setBudgetRevenueInput(String(target));
-                        saveBudgetRevenue(selectedYear, selectedMonth, target, tenantKey);
-                      }} className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded border transition-colors cursor-pointer',
-                        delta > 0 ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100'
-                          : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100')}>
-                        {delta > 0 ? '+' : ''}{(delta / 1000).toFixed(0)}k
-                      </button>
-                    );
-                  })}
-                  {budgetRevenue != null && (
-                    <button onClick={() => { setBudgetRevenue(null); setBudgetRevenueInput(''); saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey); }}
-                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-border bg-muted text-muted-foreground hover:text-foreground cursor-pointer">
-                      ↩
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">CHF</span>
-                    <Input className="pl-8 h-7 text-xs font-mono" placeholder={String(Math.round(budgetData.revenueBudget || 0))}
-                      value={budgetRevenueInput} onChange={e => setBudgetRevenueInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); } }} />
-                  </div>
-                  <button
-                    type="button"
-                    title="Wert übernehmen"
-                    onClick={() => { const v = parseFloat(budgetRevenueInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setBudgetRevenue(val); saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey); }}
-                    className={cn(
-                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
-                      budgetRevenue != null
-                        ? 'border-emerald-500 bg-emerald-500 text-white'
-                        : 'border-border bg-background text-transparent hover:border-emerald-400',
-                    )}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                {budgetRevenue != null && (
-                  <div className="text-right">
-                    <span className={cn('text-[10px] font-semibold font-mono', budgetRevenue > budgetData.revenueBudget ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                      {budgetRevenue > budgetData.revenueBudget ? '+' : ''}{fmtCHF(budgetRevenue - budgetData.revenueBudget)} vs. Plan
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Zeile: Personalkosten */}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-start py-2.5 border-b border-dashed border-border">
-              <span className="text-sm text-muted-foreground self-center">Personalkosten</span>
-              {/* Plan */}
-              <div className="text-right self-center space-y-0.5">
-                <div className="font-mono font-semibold text-sm">{personnelBudget > 0 ? fmtCHF(personnelBudget) : '—'}</div>
-                {basePkqPct != null && (
-                  <div className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded text-right',
-                    basePkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400' : basePkqPct < 40 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>
-                    {basePkqPct.toFixed(1)} % des Umsatzes
-                  </div>
-                )}
-              </div>
-              {/* Szenario: CHF-Eingabe + %-Eingabe (linked) */}
-              <div className="min-w-[180px] space-y-1.5">
-                {/* CHF-Eingabe */}
-                <div className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">CHF</span>
-                    <Input className={cn('pl-8 h-7 text-xs font-mono', scenarioPkCost != null && 'border-amber-400 dark:border-amber-600')}
-                      placeholder={String(Math.round(adjustedPersonnelBudget || 0))}
-                      value={scenarioPkCostInput}
-                      onChange={e => {
-                        setScenarioPkCostInput(e.target.value);
-                        const v = parseFloat(e.target.value.replace(/['\s]/g,'').replace(',','.'));
-                        if (!isNaN(v) && v > 0 && effectiveBudgetRevenue > 0) {
-                          setScenarioPkqInput(((v / effectiveBudgetRevenue) * 100).toFixed(2));
-                        }
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); } }} />
-                  </div>
-                  <button
-                    type="button"
-                    title="CHF-Wert übernehmen"
-                    onClick={() => { const v = parseFloat(scenarioPkCostInput.replace(/['\s]/g,'').replace(',','.')); const val = !isNaN(v) && v > 0 ? v : null; setScenarioPkCost(val); saveScenarioPkCost(selectedYear, selectedMonth, val, tenantKey); }}
-                    className={cn(
-                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
-                      scenarioPkCost != null
-                        ? 'border-amber-500 bg-amber-500 text-white'
-                        : 'border-border bg-background text-transparent hover:border-amber-400',
-                    )}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                {/* %-Eingabe */}
-                <div className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">%</span>
-                    <Input className="pl-6 h-7 text-xs font-mono"
-                      placeholder={basePkqPct != null ? basePkqPct.toFixed(1) : ''}
-                      value={scenarioPkqInput}
-                      onChange={e => {
-                        setScenarioPkqInput(e.target.value);
-                        const pct = parseFloat(e.target.value.replace(',','.'));
-                        if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) {
-                          const chf = Math.round(effectiveBudgetRevenue * pct / 100);
-                          setScenarioPkCostInput(String(chf));
-                        }
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } } }} />
-                  </div>
-                  <button
-                    type="button"
-                    title="%-Wert übernehmen"
-                    onClick={() => { const pct = parseFloat(scenarioPkqInput.replace(',','.')); if (!isNaN(pct) && pct > 0 && effectiveBudgetRevenue > 0) { const chf = Math.round(effectiveBudgetRevenue * pct / 100); setScenarioPkCost(chf); setScenarioPkCostInput(String(chf)); saveScenarioPkCost(selectedYear, selectedMonth, chf, tenantKey); } }}
-                    className={cn(
-                      'h-7 w-7 shrink-0 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
-                      scenarioPkCost != null
-                        ? 'border-amber-500 bg-amber-500 text-white'
-                        : 'border-border bg-background text-transparent hover:border-amber-400',
-                    )}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                {scenarioPkCost != null && (
-                  <div className="flex items-center justify-between">
-                    <span className={cn('text-[10px] font-semibold font-mono', adjustedPersonnelBudget - personnelBudget >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                      {adjustedPersonnelBudget - personnelBudget >= 0 ? '+' : ''}{fmtCHF(adjustedPersonnelBudget - personnelBudget)} vs. Plan
-                    </span>
-                    <button onClick={() => { setScenarioPkCost(null); setScenarioPkCostInput(''); setScenarioPkqInput(''); saveScenarioPkCost(selectedYear, selectedMonth, null, tenantKey); }}
-                      className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer">↩ Reset</button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Zeile: PKQ % */}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-center py-2">
-              <span className="text-sm text-muted-foreground">PKQ %</span>
-              {/* Plan */}
-              <div className="text-right">
-                {basePkqPct != null ? (
-                  <span className={cn('text-sm font-bold font-mono',
-                    basePkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400' : basePkqPct < 40 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>
-                    {basePkqPct.toFixed(1)} %
-                  </span>
-                ) : <span className="text-muted-foreground text-xs italic">—</span>}
-              </div>
-              {/* Szenario */}
-              <div className="min-w-[180px] text-right">
-                {effectiveScenarioPkqPct != null ? (
-                  <div className="flex items-center justify-end gap-2">
-                    {scenarioActive && basePkqPct != null && Math.abs(effectiveScenarioPkqPct - basePkqPct) > 0.05 && (
-                      <span className={cn('text-[10px] font-semibold',
-                        effectiveScenarioPkqPct < basePkqPct ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                        {effectiveScenarioPkqPct < basePkqPct ? '▼' : '▲'} {Math.abs(effectiveScenarioPkqPct - basePkqPct).toFixed(1)} Pkt
-                      </span>
-                    )}
-                    <span className={cn('text-sm font-bold font-mono',
-                      effectiveScenarioPkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400'
-                        : effectiveScenarioPkqPct < 40 ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-red-600 dark:text-red-400')}>
-                      {effectiveScenarioPkqPct.toFixed(1)} %
-                    </span>
-                  </div>
-                ) : <span className="text-muted-foreground text-xs italic">—</span>}
-              </div>
-            </div>
-          </div>
-
-          {/* ── Aufstellung ──────────────────────────────────────────────────── */}
-          {(personnelBudget > 0 || effectiveBudgetRevenue > 0) && (
-            <div className="border-t border-border px-4 pt-3 pb-4 space-y-0">
-
-              {/* Spalten-Header der Aufstellung */}
-              <div className="grid grid-cols-[1fr_52px_120px] items-center pb-1 mb-0.5">
-                <div />
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/60 text-right pr-3">%</div>
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/60 text-right">CHF</div>
-              </div>
-
-              {/* Zeile 1: Budget Personalkosten */}
-              <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-border/40">
-                <span className="text-xs text-muted-foreground">Budget Personalkosten</span>
-                <span className="text-right pr-3 text-[10px] font-mono tabular-nums text-muted-foreground/70">
-                  {effectiveBudgetRevenue > 0 && adjustedPersonnelBudget > 0
-                    ? `${((adjustedPersonnelBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %`
-                    : ''}
-                </span>
-                <span className="text-right text-xs font-mono font-semibold tabular-nums">
-                  {adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}
-                </span>
-              </div>
-
-              {/* Zeile 2: Personal FIX Ist gesamt */}
-              <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-border/40">
-                <span className="text-xs text-muted-foreground">− Personal FIX Ist</span>
-                <span className="text-right pr-3 text-[10px] font-mono tabular-nums text-muted-foreground/70">
-                  {effectiveBudgetRevenue > 0 && pfix.active.fix > 0
-                    ? `${((pfix.active.fix / effectiveBudgetRevenue) * 100).toFixed(1)} %`
-                    : ''}
-                </span>
-                <span className="text-right text-xs font-mono tabular-nums text-blue-600 dark:text-blue-400">
-                  − {fmtCHF(pfix.active.fix)}
-                </span>
-              </div>
-
-              {/* Zeile 3: Verfügbar für Flex */}
-              <div className={cn(
-                'grid grid-cols-[1fr_52px_120px] items-center py-1.5 px-2 mt-1 rounded',
-                verfügbarFlexBudget >= 0
-                  ? 'bg-emerald-50/60 dark:bg-emerald-950/20'
-                  : 'bg-red-50/60 dark:bg-red-950/20',
-              )}>
-                <span className={cn('text-xs font-semibold',
-                  verfügbarFlexBudget >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                  = Verfügbar Flex
-                </span>
-                <span className={cn('text-right pr-3 text-[10px] font-mono tabular-nums',
-                  verfügbarFlexBudget >= 0 ? 'text-emerald-600/70 dark:text-emerald-500/70' : 'text-red-500/70 dark:text-red-400/70')}>
-                  {effectiveBudgetRevenue > 0
-                    ? `${((verfügbarFlexBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %`
-                    : ''}
-                </span>
-                <span className={cn('text-right text-xs font-mono font-bold tabular-nums',
-                  verfügbarFlexBudget >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                  {fmtCHF(verfügbarFlexBudget)}
-                </span>
-              </div>
-
-              {/* Ferienabbau-Zeile: optional per Checkbox aktivierbar */}
-              {totalFerienabbauCHF > 0 && (
-                <div className={cn(
-                  'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
-                  ferienInBudget
-                    ? 'border-blue-200 dark:border-blue-800/40'
-                    : 'border-border/30',
-                )}>
-                  <label htmlFor="ferien-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      id="ferien-in-budget"
-                      checked={ferienInBudget}
-                      onChange={e => {
-                        const v = e.target.checked;
-                        setFerienInBudget(v);
-                        saveFerienInBudget(tenantId, selectedYear, selectedMonth, v);
-                      }}
-                      className="h-3.5 w-3.5 accent-blue-500 cursor-pointer shrink-0"
-                    />
-                    <span className={cn('text-xs transition-colors',
-                      ferienInBudget ? 'text-blue-700 dark:text-blue-400' : 'text-muted-foreground/50',
-                    )}>
-                      − Ferienabbau (FE)
-                    </span>
-                  </label>
-                  <div />
-                  <span className={cn(
-                    'text-right text-xs font-mono tabular-nums transition-colors',
-                    ferienInBudget
-                      ? 'font-semibold text-blue-700 dark:text-blue-400'
-                      : 'font-normal text-muted-foreground/40',
-                  )}>
-                    {fmtCHF(totalFerienabbauCHF)}
-                  </span>
-                </div>
-              )}
-
-              {/* K/U-Zeilen: Krank (grün) + Unfall (grün), optional als Einsparung aktivierbar */}
-              {(totalKrankCHF > 0 || totalUnfallCHF > 0) && (
-                <>
-                  {totalKrankCHF > 0 && (
-                    <div className={cn(
-                      'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
-                      krankInBudget ? 'border-emerald-200 dark:border-emerald-800/40' : 'border-border/30',
-                    )}>
-                      <label htmlFor="krank-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          id="krank-in-budget"
-                          checked={krankInBudget}
-                          onChange={e => {
-                            const v = e.target.checked;
-                            setKrankInBudget(v);
-                            saveKrankInBudget(tenantId, selectedYear, selectedMonth, v);
-                          }}
-                          className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer shrink-0"
-                        />
-                        <span className={cn('text-xs transition-colors',
-                          krankInBudget ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
-                        )}>
-                          {krankInBudget ? '+ Krankenkosten (Einsparung)' : '− Krankenkosten (80 %)'}
-                        </span>
-                      </label>
-                      <div />
-                      <span className={cn(
-                        'text-right text-xs font-mono tabular-nums transition-colors',
-                        krankInBudget
-                          ? 'font-semibold text-emerald-700 dark:text-emerald-400'
-                          : 'font-normal text-muted-foreground/40',
-                      )}>
-                        {krankInBudget ? '+' : ''}{fmtCHF(totalKrankCHF)}
-                      </span>
-                    </div>
-                  )}
-                  {totalUnfallCHF > 0 && (
-                    <div className={cn(
-                      'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
-                      unfallInBudget ? 'border-emerald-200 dark:border-emerald-800/40' : 'border-border/30',
-                    )}>
-                      <label htmlFor="unfall-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          id="unfall-in-budget"
-                          checked={unfallInBudget}
-                          onChange={e => {
-                            const v = e.target.checked;
-                            setUnfallInBudget(v);
-                            saveUnfallInBudget(tenantId, selectedYear, selectedMonth, v);
-                          }}
-                          className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer shrink-0"
-                        />
-                        <span className={cn('text-xs transition-colors',
-                          unfallInBudget ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
-                        )}>
-                          {unfallInBudget ? '+ Unfallkosten (Einsparung)' : '− Unfallkosten (80 %)'}
-                        </span>
-                      </label>
-                      <div />
-                      <span className={cn(
-                        'text-right text-xs font-mono tabular-nums transition-colors',
-                        unfallInBudget
-                          ? 'font-semibold text-emerald-700 dark:text-emerald-400'
-                          : 'font-normal text-muted-foreground/40',
-                      )}>
-                        {unfallInBudget ? '+' : ''}{fmtCHF(totalUnfallCHF)}
-                      </span>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Wochen-Übersicht — KW-Boxen + Zusammenfassung + aufklappbare Tabelle */}
-              {flexByWeek.length > 0 && (
-                <div className="pt-3 pb-1 space-y-3">
-
-                  {/* 1. Personal Flex Zusammenfassung */}
-                  <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-border/50 mt-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-muted-foreground">− Personal Flex</span>
-                      <span className="text-[10px] text-muted-foreground/50">
-                        ({weekIstSet.size === 0 ? 'Plan' : weekIstSet.size === flexByWeek.length ? 'Ist' : `${weekIstSet.size}×Ist`})
-                      </span>
-                    </div>
-                    <span className="text-right pr-3 text-[10px] font-mono tabular-nums text-muted-foreground/70">
-                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0
-                        ? `${((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %`
-                        : ''}
-                    </span>
-                    <span className={cn('text-right text-xs font-mono tabular-nums',
-                      totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
-                      − {fmtCHF(totalFlexForBudget)}
-                    </span>
-                  </div>
-
-                  {/* 2. Resultat */}
-                  <div className={cn(
-                    'grid grid-cols-[1fr_52px_120px] items-center py-2 px-2.5 rounded-lg mt-1',
-                    budgetResultat >= 0
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
-                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800',
-                  )}>
-                    <span className={cn('text-sm font-bold',
-                      budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
-                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
-                    </span>
-                    <span className={cn('text-right pr-3 text-[10px] font-mono tabular-nums font-semibold',
-                      budgetResultat >= 0 ? 'text-emerald-600/80 dark:text-emerald-400/80' : 'text-red-500/80 dark:text-red-400/80')}>
-                      {effectiveBudgetRevenue > 0
-                        ? `${((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %`
-                        : ''}
-                    </span>
-                    <span className={cn('text-right font-mono font-bold text-base tabular-nums',
-                      budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                      {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
-                    </span>
-                  </div>
-
-                  {/* 3. KW-Boxen */}
-                  <div className="flex flex-wrap gap-2">
-                    {flexByWeek.map((w, i) => {
-                      const useIst  = weekIstSet.has(w.weekKey);
-                      const pctDiff = w.planFlex > 0 ? ((w.istFlex - w.planFlex) / w.planFlex) * 100 : null;
-                      const fixW    = fixByWeek[i]?.fixCost ?? 0;
-                      const toggleWeek = (e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        const next = new Set(weekIstSet);
-                        if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
-                        setWeekIstSet(next);
-                        saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
-                      };
-                      const openDetail = (e: React.MouseEvent) => {
-                        e.stopPropagation();
-                        setWeekDetailTarget(w.weekKey);
-                      };
-                      return (
-                        <div
-                          key={w.weekKey}
-                          className={cn(
-                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold min-w-[120px] relative',
-                            useIst
-                              ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
-                              : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
-                          )}
-                        >
-                          <div className="flex items-center justify-between w-full gap-1 mb-0.5">
-                            <span className="font-bold">{w.label}</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={openDetail}
-                                title="Kostendetail anzeigen"
-                                className={cn('p-0.5 rounded transition-colors cursor-pointer',
-                                  useIst ? 'hover:bg-orange-200 dark:hover:bg-orange-900/40' : 'hover:bg-blue-200 dark:hover:bg-blue-900/40')}
-                              >
-                                <Info className="h-3 w-3 opacity-70" />
-                              </button>
-                              <button
-                                onClick={toggleWeek}
-                                className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded cursor-pointer transition-colors',
-                                  useIst ? 'bg-orange-200 dark:bg-orange-900/40 hover:bg-orange-300' : 'bg-blue-200 dark:bg-blue-900/40 hover:bg-blue-300')}
-                              >
-                                {useIst ? 'Ist ✓' : 'Plan'}
-                              </button>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
-                          {(() => {
-                            const budgetW   = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
-                              ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
-                            const totalIst  = fixW + w.istFlex;
-                            const totalPlan = fixW + w.planFlex;
-                            const deltaB    = budgetW > 0 ? (useIst ? totalIst : totalPlan) - budgetW : null;
-                            return (
-                              <div className="mt-1.5 w-full space-y-0.5">
-                                <div className="flex justify-between text-[10px] text-muted-foreground">
-                                  <span>Fix</span><span className="font-mono">{fmtCHF(fixW)}</span>
-                                </div>
-                                <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
-                                  <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
-                                  <span className="font-mono">{fmtCHF(w.planFlex)}</span>
-                                </div>
-                                <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
-                                  <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
-                                  <span className="font-mono">{fmtCHF(w.istFlex)}</span>
-                                </div>
-                                {budgetW > 0 && (
-                                  <div className="flex justify-between text-[10px] text-violet-600 dark:text-violet-400 border-t border-dashed border-current/20 pt-0.5 mt-0.5">
-                                    <span>Budget</span><span className="font-mono">{fmtCHF(budgetW)}</span>
-                                  </div>
-                                )}
-                                <div className="flex justify-end gap-1 flex-wrap pt-0.5">
-                                  {pctDiff != null && (
-                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
-                                      pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
-                                        : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                                        : 'bg-muted text-muted-foreground')}>
-                                      Flex {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
-                                    </span>
-                                  )}
-                                  {deltaB != null && (
-                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
-                                      deltaB > 0.5  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
-                                      : deltaB < -0.5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
-                                      : 'bg-muted text-muted-foreground')}>
-                                      vs Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000 ? Math.round(Math.abs(deltaB)) : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* 4. Wochenübersicht Tabelle (toggle im Header) */}
-                  {showWeekSummary && (
-                  <div className="rounded-lg border border-border overflow-hidden text-xs">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-muted/60 border-b border-border">
-                          <th className="px-3 py-2 text-left font-semibold text-muted-foreground w-[90px]">Woche</th>
-                          <th className="px-2 py-2 text-left font-semibold text-muted-foreground">Zeitraum</th>
-                          {hasAnyWeekRevenue && (
-                            <th className="px-2 py-2 text-right font-semibold text-emerald-600 dark:text-emerald-400 text-[10px]">
-                              Ist-Ums.<br />netto
-                            </th>
-                          )}
-                          <th className="px-2 py-2 text-right font-semibold text-muted-foreground">
-                            Fix
-                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-muted-foreground/60">% Ist-Ums.</div>}
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">
-                            Flex Plan
-                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-blue-400/70 dark:text-blue-500/70">% Ist-Ums.</div>}
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">
-                            Flex Ist
-                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-orange-400/70 dark:text-orange-500/70">% Ist-Ums.</div>}
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-foreground">
-                            Total
-                            {hasAnyWeekRevenue && <div className="text-[9px] font-normal text-muted-foreground/70">% Ist-Ums.</div>}
-                          </th>
-                          {adjustedPersonnelBudget > 0 && (
-                            <>
-                              <th className="px-2 py-2 text-right font-semibold text-violet-600 dark:text-violet-400">Budget</th>
-                              <th className="px-2 py-2 text-right font-semibold text-muted-foreground">Δ Budget</th>
-                            </>
-                          )}
-                          <th className="px-2 py-2 text-center font-semibold text-muted-foreground w-[60px]">Detail</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {flexByWeek.map((w, i) => {
-                          const fix      = fixByWeek[i]?.fixCost ?? 0;
-                          const totalP   = fix + w.planFlex;
-                          const totalI   = fix + w.istFlex;
-                          const useIst   = weekIstSet.has(w.weekKey);
-                          const activeTotal = useIst ? totalI : totalP;
-                          const budgetW  = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
-                            ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
-                          const deltaB   = budgetW > 0 ? activeTotal - budgetW : null;
-                          const weekNetRev  = weekActualNetRevenue[w.weekKey] ?? null;
-                          const isEstimate  = weekRevenueIsEstimate[w.weekKey] ?? false;
-                          const isManual    = weekRevenueIsManual[w.weekKey] ?? false;
-
-                          const toggleWeek = () => {
-                            const next = new Set(weekIstSet);
-                            if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
-                            setWeekIstSet(next);
-                            saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
-                          };
-
-                          return (
-                            <tr
-                              key={w.weekKey}
-                              className={cn(
-                                'border-t border-border transition-colors',
-                                useIst ? 'bg-orange-50/40 dark:bg-orange-950/10' : '',
-                              )}
-                            >
-                              {/* KW + Toggle */}
-                              <td className="px-3 py-2">
-                                <div className="flex flex-col gap-1">
-                                  <span className="font-bold text-foreground">{w.label}</span>
-                                  <button
-                                    onClick={toggleWeek}
-                                    title="Zwischen Plan und Ist wechseln"
-                                    className={cn(
-                                      'text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border cursor-pointer transition-colors w-fit',
-                                      useIst
-                                        ? 'border-orange-400 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 hover:bg-orange-200'
-                                        : 'border-blue-300 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100',
-                                    )}
-                                  >
-                                    {useIst ? '● Ist' : '○ Plan'}
-                                  </button>
-                                </div>
-                              </td>
-
-                              {/* Zeitraum */}
-                              <td className="px-2 py-2 text-muted-foreground">{w.dateRange}</td>
-
-                              {/* Ist-Umsatz netto (Berechnungsbasis) — ganz links, editierbar für Schätzwochen */}
-                              {hasAnyWeekRevenue && (
-                                <td className="px-2 py-1.5 text-right font-mono">
-                                  {weekRevEditKey === w.weekKey ? (
-                                    /* ── Inline-Editor ── */
-                                    <div className="flex items-center justify-end gap-1">
-                                      <input
-                                        type="text"
-                                        inputMode="decimal"
-                                        className="w-24 text-xs text-right font-mono border border-border rounded px-1.5 py-0.5 bg-background focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                                        value={weekRevEditVal}
-                                        autoFocus
-                                        placeholder="z.B. 42000"
-                                        onChange={e => setWeekRevEditVal(e.target.value)}
-                                        onKeyDown={e => {
-                                          if (e.key === 'Enter')  commitWeekRevEdit(w.weekKey, weekRevEditVal);
-                                          if (e.key === 'Escape') { setWeekRevEditKey(null); setWeekRevEditVal(''); }
-                                        }}
-                                        onBlur={() => commitWeekRevEdit(w.weekKey, weekRevEditVal)}
-                                      />
-                                    </div>
-                                  ) : (
-                                    /* ── Anzeige ── */
-                                    isEstimate ? (
-                                      /* Klickbarer Bereich für Budget-Fallback oder manuelle Werte */
-                                      <div
-                                        className={cn(
-                                          'group flex flex-col items-end gap-0.5 rounded px-1 py-0.5 -mx-1',
-                                          'cursor-pointer transition-colors',
-                                          isManual
-                                            ? 'text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30'
-                                            : 'text-muted-foreground/70 hover:bg-muted hover:text-foreground',
-                                        )}
-                                        title="Klicken um Umsatz manuell zu setzen"
-                                        onClick={() => {
-                                          setWeekRevEditKey(w.weekKey);
-                                          setWeekRevEditVal(weekNetRev != null ? String(Math.round(weekNetRev)) : '');
-                                        }}
-                                      >
-                                        <div className="flex items-center gap-1">
-                                          <Edit2 className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" />
-                                          <span className="text-xs font-mono">
-                                            {weekNetRev != null ? fmtCHF(weekNetRev) : '+ Umsatz setzen'}
-                                          </span>
-                                        </div>
-                                        <span className="text-[9px] italic opacity-70">
-                                          {isManual ? 'Manuell — klicken' : 'Budget p.r. — klicken'}
-                                        </span>
-                                        {isManual && (
-                                          <button
-                                            title="Override löschen (zurück zu Budget)"
-                                            className="text-[9px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-500 transition-opacity"
-                                            onClick={e => { e.stopPropagation(); commitWeekRevEdit(w.weekKey, ''); }}
-                                          >
-                                            ✕ zurücksetzen
-                                          </button>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      /* Actual Ist-Umsatz — nicht editierbar */
-                                      <span className="text-xs font-mono text-emerald-700 dark:text-emerald-400">
-                                        {weekNetRev != null ? fmtCHF(weekNetRev) : <span className="opacity-30">—</span>}
-                                      </span>
-                                    )
-                                  )}
-                                </td>
-                              )}
-
-                              {/* Fix */}
-                              <td className="px-2 py-2 text-right font-mono text-muted-foreground">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(fix)}</span>
-                                  {weekNetRev != null && weekNetRev > 0 && fix > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-muted-foreground/60">
-                                      {((fix / weekNetRev) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* Flex Plan */}
-                              <td className={cn('px-2 py-2 text-right font-mono', !useIst ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-muted-foreground')}>
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(w.planFlex)}</span>
-                                  {weekNetRev != null && weekNetRev > 0 && w.planFlex > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-blue-500/80 dark:text-blue-400/70">
-                                      {((w.planFlex / weekNetRev) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* Flex Ist */}
-                              <td className={cn('px-2 py-2 text-right font-mono', useIst ? 'font-semibold text-orange-700 dark:text-orange-300' : 'text-muted-foreground')}>
-                                <div className="flex flex-col items-end gap-0.5">
-                                  {w.istFlex > 0 ? <span>{fmtCHF(w.istFlex)}</span> : <span className="opacity-40">—</span>}
-                                  {weekNetRev != null && weekNetRev > 0 && w.istFlex > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-orange-500/80 dark:text-orange-400/70">
-                                      {((w.istFlex / weekNetRev) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* Total (aktiver Wert) */}
-                              <td className="px-2 py-2 text-right font-mono">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span className={cn('font-bold', useIst ? 'text-orange-700 dark:text-orange-300' : 'text-blue-700 dark:text-blue-300')}>
-                                    {fmtCHF(activeTotal)}
-                                  </span>
-                                  {weekNetRev != null && weekNetRev > 0 ? (
-                                    <span className={cn(
-                                      'text-[11px] font-bold tabular-nums px-1 py-0.5 rounded',
-                                      deltaB == null
-                                        ? 'text-muted-foreground'
-                                        : deltaB <= 0
-                                          ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40'
-                                          : deltaB <= budgetW * 0.03
-                                            ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
-                                            : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40',
-                                    )}>
-                                      {((activeTotal / weekNetRev) * 100).toFixed(1)} %
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] text-muted-foreground opacity-60">{useIst ? 'Ist' : 'Plan'}</span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* Budget + Δ */}
-                              {adjustedPersonnelBudget > 0 && (
-                                <>
-                                  <td className="px-2 py-2 text-right font-mono text-violet-700 dark:text-violet-300">
-                                    {fmtCHF(budgetW)}
-                                  </td>
-                                  <td className={cn('px-2 py-2 text-right font-mono',
-                                    deltaB == null ? 'text-muted-foreground'
-                                      : deltaB > 0.5 ? 'text-red-600 dark:text-red-400'
-                                      : deltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-muted-foreground')}>
-                                    {deltaB == null ? '—' : (
-                                      <span className="font-semibold">
-                                        {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}
-                                      </span>
-                                    )}
-                                  </td>
-                                </>
-                              )}
-
-                              {/* Detail-Popup */}
-                              <td className="px-2 py-2 text-center">
-                                <button
-                                  onClick={() => setWeekDetailTarget(w.weekKey)}
-                                  title="Kostendetail anzeigen"
-                                  className="p-1 rounded hover:bg-muted transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-                                >
-                                  <Info className="h-3.5 w-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-
-                        {/* Total-Zeile */}
-                        {(() => {
-                          const totalFlexPlan    = flexByWeek.reduce((s, w) => s + w.planFlex, 0);
-                          const totalFlexIst     = flexByWeek.reduce((s, w) => s + w.istFlex, 0);
-                          const grandTotal       = totalFixCost + totalFlexForBudget;
-                          const grandDeltaB      = adjustedPersonnelBudget > 0 ? grandTotal - adjustedPersonnelBudget : null;
-                          const totalNetRevenue  = hasAnyWeekRevenue
-                            ? Object.values(weekActualNetRevenue).reduce((s, v) => s + v, 0)
-                            : null;
-                          return (
-                            <tr className="border-t-2 border-border bg-muted/50 font-bold">
-                              <td className="px-3 py-2.5 text-foreground" colSpan={2}>Total Monat</td>
-                              {/* Ist-Umsatz netto total — ganz links */}
-                              {hasAnyWeekRevenue && (
-                                <td className="px-2 py-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                                  {totalNetRevenue != null ? fmtCHF(totalNetRevenue) : '—'}
-                                </td>
-                              )}
-                              {/* Fix total + % */}
-                              <td className="px-2 py-2.5 text-right font-mono text-muted-foreground">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(totalFixCost)}</span>
-                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFixCost > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-muted-foreground/60">
-                                      {((totalFixCost / totalNetRevenue) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              {/* Flex Plan/Eff. total + % */}
-                              <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(weekIstSet.size > 0 ? totalFlexForBudget : totalFlexPlan)}</span>
-                                  {weekIstSet.size > 0 && Math.abs(totalFlexForBudget - totalFlexPlan) > 0.5 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-blue-400/70 dark:text-blue-500/60">
-                                      Plan {fmtCHF(totalFlexPlan)}
-                                    </span>
-                                  )}
-                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexForBudget > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-blue-500/70 dark:text-blue-400/60">
-                                      {(((weekIstSet.size > 0 ? totalFlexForBudget : totalFlexPlan) / totalNetRevenue) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              {/* Flex Ist total + % */}
-                              <td className="px-2 py-2.5 text-right font-mono text-orange-700 dark:text-orange-300">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(totalFlexIst)}</span>
-                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexIst > 0 && (
-                                    <span className="text-[9px] font-normal tabular-nums text-orange-500/70 dark:text-orange-400/60">
-                                      {((totalFlexIst / totalNetRevenue) * 100).toFixed(1)} %
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              {/* Grand Total + % */}
-                              <td className="px-2 py-2.5 text-right font-mono text-foreground">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(grandTotal)}</span>
-                                  {totalNetRevenue != null && totalNetRevenue > 0 ? (
-                                    <span className={cn(
-                                      'text-xs font-bold tabular-nums px-1.5 py-0.5 rounded',
-                                      grandDeltaB == null
-                                        ? 'text-muted-foreground'
-                                        : grandDeltaB <= 0
-                                          ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40'
-                                          : grandDeltaB <= adjustedPersonnelBudget * 0.03
-                                            ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40'
-                                            : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40',
-                                    )}>
-                                      {((grandTotal / totalNetRevenue) * 100).toFixed(1)} %
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] font-normal text-muted-foreground">
-                                      {weekIstSet.size === 0 ? 'Plan' : weekIstSet.size === flexByWeek.length ? 'Ist' : `${weekIstSet.size}×Ist`}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              {adjustedPersonnelBudget > 0 && (
-                                <>
-                                  <td className="px-2 py-2.5 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(adjustedPersonnelBudget)}</td>
-                                  <td className={cn('px-2 py-2.5 text-right font-mono',
-                                    grandDeltaB == null ? 'text-muted-foreground'
-                                      : grandDeltaB > 0.5 ? 'text-red-600 dark:text-red-400'
-                                      : grandDeltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-muted-foreground')}>
-                                    {grandDeltaB == null ? '—' : `${grandDeltaB > 0.5 ? '+' : grandDeltaB < -0.5 ? '−' : ''}${fmtCHF(Math.abs(grandDeltaB)).replace('CHF\u00a0','')}`}
-                                  </td>
-                                </>
-                              )}
-                              <td />
-                            </tr>
-                          );
-                        })()}
-                      </tbody>
-                    </table>
-                  </div>
-                  )}
-
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        </CollapsibleSection>
 
         {/* ── Einheitliche Flex-Auswertung ───────────────────────────────────── */}
         {(pfixAbw.days.length > 0 || pfixPerEmp.length > 0) && (() => {
@@ -6067,17 +4794,6 @@ export default function PersonalFixPage() {
             { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0,  pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
           ];
 
-          const empTotal = pfixPerEmp.reduce((s, r) => s + r.planWork, 0);
-          const empIst   = pfixPerEmp.reduce((s, r) => s + r.istWork, 0);
-          console.log(`[FLEX] summary total plan: ${monthPlan.toFixed(2)}`);
-          console.log(`[FLEX] summary total ist: ${monthIst.toFixed(2)}`);
-          console.log(`[FLEX] employee table total plan: ${empTotal.toFixed(2)}`);
-          console.log(`[FLEX] employee table total ist: ${empIst.toFixed(2)}`);
-          if (monthPlan > 0 && Math.abs(empTotal - monthPlan) > 0.10)
-            console.error(`[FLEX] plan cross-check MISMATCH: periodTable=${monthPlan.toFixed(2)} empTable=${empTotal.toFixed(2)} Δ=${(empTotal-monthPlan).toFixed(2)}`);
-          if (monthIst > 0 && Math.abs(empIst - monthIst) > 0.10)
-            console.error(`[FLEX] ist cross-check MISMATCH: periodTable=${monthIst.toFixed(2)} empTable=${empIst.toFixed(2)} Δ=${(empIst-monthIst).toFixed(2)}`);
-
           return (
             <section className={cn('rounded-xl border-2 bg-card shadow-sm overflow-hidden', mA.border)}>
               {/* ── Header ────────────────────────────────────────────────────── */}
@@ -6091,107 +4807,21 @@ export default function PersonalFixPage() {
                   {mA.label}
                 </div>
                 <div className="flex items-center gap-1 ml-auto">
-                  <Button size="sm" variant="ghost" onClick={handleFlexExportPDF}
-                    className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
-                    title="Flex-Auswertung als PDF exportieren">
-                    <Download className="h-3 w-3" />PDF
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={handleFlexExportExcel}
-                    className="h-7 px-2 text-xs gap-1 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
-                    title="Flex-Auswertung als Excel exportieren">
-                    <Download className="h-3 w-3" />Excel
-                  </Button>
+                  <UnifiedExportButton
+                    className="h-7 px-2 text-xs gap-1"
+                    data-testid="pfix-flex-export"
+                    actions={[
+                      { key: 'pdf', label: 'Flex-Auswertung (PDF)', kind: 'pdf', onSelect: handleFlexExportPDF },
+                      { key: 'excel', label: 'Flex-Auswertung (Excel)', kind: 'excel', onSelect: () => { void handleFlexExportExcel(); } },
+                    ]}
+                  />
                 </div>
                 {proRataDay !== null && (
                   <Badge variant="secondary" className="text-xs">bis {proRataDay}. · {Math.round(proRataFactor * 100)} %</Badge>
                 )}
               </div>
 
-              {/* ── KPI Chips ─────────────────────────────────────────────────── */}
-              <div className="flex flex-wrap gap-3 px-4 py-3 border-b border-border bg-muted/10">
-                {kpiChips.map(({ label, val, plan: chipPlan, pct }) => {
-                  const st = ampelStatus(val, chipPlan);
-                  const a  = AMPEL[st];
-                  return (
-                    <div key={label} className={cn('flex flex-col items-start rounded-lg border px-3 py-2 min-w-[148px]', a.border, a.bg || 'bg-background')}>
-                      <div className="flex items-center gap-1.5 w-full">
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex-1">{label}</span>
-                        <span className={cn('inline-block w-2 h-2 rounded-full shrink-0', a.dot)} />
-                      </div>
-                      <span className={cn('text-base font-bold font-mono tabular-nums mt-0.5', a.text)}>{fmtDiff(val)}</span>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {pct !== null && <span className={cn('text-xs font-mono tabular-nums', a.text)}>{fmtPct(pct)}</span>}
-                        <span className={cn('text-[9px] font-semibold uppercase', a.text)}>{a.label}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Flex Arbeit Plan</span>
-                  <span className="text-base font-bold font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-0.5">{fmtCHF(monthPlan)}</span>
-                </div>
-                <div className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Flex Arbeit Ist</span>
-                    <InfoTip
-                      side="top"
-                      text={
-                        <span>
-                          Nur die Ist-Arbeitskosten der <b>variablen</b> MA (Stunden × Lohn). OHNE Zusatzkosten von
-                          Fixlohn-MA und OHNE Ferienabbau — daher tiefer als „Flex Ist" in der Tabelle „Flex Kosten
-                          pro Mitarbeiter". Siehe Abstimmung unten.
-                        </span>
-                      }
-                    />
-                  </div>
-                  <span className="text-base font-bold font-mono tabular-nums text-orange-700 dark:text-orange-400 mt-0.5">{fmtCHF(monthIst)}</span>
-                </div>
-              </div>
 
-              {/* ── Abstimmung „Flex Ist": drei Grössen, eine Quelle ──────────── */}
-              {proRataDay === null && (flexScopes.zusatzDelta > 0.005 || flexScopes.ferienDelta > 0.005) && (
-                <div
-                  data-testid="pfix-flex-reconciliation"
-                  className="px-4 py-2.5 border-b border-border bg-muted/5 text-xs"
-                >
-                  <div className="mb-1 flex items-center gap-1.5 font-medium text-muted-foreground">
-                    <span>Abstimmung „Flex Ist" (ganzer Monat)</span>
-                    <InfoTip
-                      side="top"
-                      text={
-                        <span>
-                          Die drei „Flex Ist"-Werte der Seite unterscheiden sich nur im Umfang und werden aus
-                          denselben Bausteinen abgeleitet: die Flex-Auswertung zeigt reine Arbeitskosten variabler
-                          MA, die Tabelle „Flex Kosten pro Mitarbeiter" zählt zusätzlich die Zusatzkosten von
-                          Fixlohn-MA, das Total zusätzlich den Ferienabbau.
-                        </span>
-                      }
-                    />
-                  </div>
-                  <div className="space-y-0.5 font-mono tabular-nums">
-                    <div className="flex justify-between gap-4">
-                      <span>Flex Arbeit Ist (nur variable MA)</span>
-                      <span data-testid="pfix-recon-arbeit">{fmtCHF(flexScopes.flexArbeitIst)}</span>
-                    </div>
-                    <div className="flex justify-between gap-4 text-muted-foreground">
-                      <span>+ Zusatzkosten Fixlohn-MA</span>
-                      <span data-testid="pfix-recon-zusatz">+ {fmtCHF(flexScopes.zusatzDelta)}</span>
-                    </div>
-                    <div className="flex justify-between gap-4 border-t border-border/60 pt-0.5">
-                      <span>= Flex Ist inkl. Zusatzkosten (Tabelle „Flex Kosten pro MA")</span>
-                      <span data-testid="pfix-recon-mitzusatz">{fmtCHF(flexScopes.flexMitZusatzIst)}</span>
-                    </div>
-                    <div className="flex justify-between gap-4 text-muted-foreground">
-                      <span>+ Ferienabbau Ist</span>
-                      <span data-testid="pfix-recon-ferien">+ {fmtCHF(flexScopes.ferienDelta)}</span>
-                    </div>
-                    <div className="flex justify-between gap-4 border-t border-border/60 pt-0.5 font-semibold">
-                      <span>= Total Flex Ist (inkl. Ferien)</span>
-                      <span data-testid="pfix-recon-total">{fmtCHF(flexScopes.totalFlexIst)}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* ── Toggle + Legende ──────────────────────────────────────────── */}
               <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-border bg-muted/5">
@@ -6225,7 +4855,6 @@ export default function PersonalFixPage() {
                         <th className="text-right px-4 py-2 font-medium text-orange-600">Flex Arbeit Ist</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. %</th>
-                        <th className="text-left px-3 py-2 font-medium">Status</th>
                         <th className="text-right px-4 py-2 font-medium">Kum. Abw. CHF</th>
                       </tr>
                     </thead>
@@ -6264,7 +4893,6 @@ export default function PersonalFixPage() {
                               <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
-                              <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold text-xs', cumCls)}>
                                 {cumDiff > 0.005 ? '+' : cumDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiff))}
                               </td>
@@ -6282,7 +4910,6 @@ export default function PersonalFixPage() {
                           <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
-                          <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold text-xs', mA.text)}>
                             {monthDiff > 0.005 ? '+' : monthDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(monthDiff))}
                           </td>
@@ -6295,6 +4922,79 @@ export default function PersonalFixPage() {
             </section>
           );
         })()}
+
+
+
+        {/* ── Verlaufs-Diagramme (ganz unten, standardmässig eingeklappt) ── */}
+        <CollapsibleSection
+          testid="pfix-section-verlauf"
+          icon={<TrendingUp />}
+          title="Verlauf — kumulierte Personalkosten & PKQ"
+          status="Diagramme"
+        >
+          {/* ── Etappe 4: Verlaufsgrafik — kumulierte Personalkosten ─────────── */}
+          {pkVerlauf && pkVerlauf.length > 0 && (
+            <PkVerlaufChart punkte={pkVerlauf} fmtCHF={fmtCHF} />
+          )}
+
+          {/* ── PKQ-Verlauf (kumuliert) — nur bis Stichtag, ausschliesslich SSOT ── */}
+          {pkDaten && pkqVerlauf && pkqVerlauf.rows.length > 0 && (
+            <div
+              data-testid="pfix-pkq-verlauf"
+              className="rounded-lg border border-border bg-card p-3 space-y-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  PKQ-Verlauf (kumuliert)
+                </h3>
+                <span className="text-[11px] text-muted-foreground">
+                  Kumulierte Personalkosten ÷ kumulierter Netto-Umsatz
+                </span>
+              </div>
+              <div style={{ width: '100%', height: 220 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={pkqVerlauf.rows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={16} />
+                    <YAxis
+                      domain={[0, pkqVerlauf.yMax]}
+                      tick={{ fontSize: 10 }}
+                      tickFormatter={(v: number) => `${v} %`}
+                      width={40}
+                    />
+                    <RTooltip
+                      formatter={(v: number | null) => [v == null ? '—' : `${v.toFixed(1)} %`, 'PKQ']}
+                      labelFormatter={(l: string) => `Datum: ${l}`}
+                    />
+                    {pkZentral?.zielQuote != null && (
+                      <ReferenceLine
+                        y={pkZentral.zielQuote * 100}
+                        stroke="hsl(142, 76%, 36%)"
+                        strokeDasharray="5 4"
+                        label={{ value: `Ziel ${(pkZentral.zielQuote * 100).toFixed(1)} %`, position: 'insideBottomLeft', fill: 'hsl(142, 76%, 36%)', fontSize: 10 }}
+                      />
+                    )}
+                    <ReferenceLine
+                      y={40}
+                      stroke="hsl(0, 72%, 51%)"
+                      strokeDasharray="5 4"
+                      label={{ value: 'Obergrenze 40 %', position: 'insideTopLeft', fill: 'hsl(0, 72%, 51%)', fontSize: 10 }}
+                    />
+                    <RLine
+                      type="monotone"
+                      dataKey="pkq"
+                      name="PKQ"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </CollapsibleSection>
 
       </main>
 
@@ -6329,6 +5029,8 @@ export default function PersonalFixPage() {
           manualVarHours={varView === 'manual'}
           overtimeCostCHF={overtimeAnalysis.totalOvertimeCost}
           er={erVergleich}
+          coreFixCHF={pkZentral?.kHr.fix ?? 0}
+          coreFlexCHF={pkZentral?.kHr.flex ?? 0}
           onOpenSchedule={() => navigate('/personal')}
         />
       )}

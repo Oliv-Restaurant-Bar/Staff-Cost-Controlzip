@@ -9,7 +9,7 @@
  * sind per RLS auf `authenticated` beschränkt (siehe Migration).
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Database, Users, Clock, MapPin, CalendarRange, UserPlus, UserCheck,
@@ -23,18 +23,23 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { parseReservationsCsv } from '@/lib/reservation-import-parser';
+import { parseReservationsCsv, checkTenantMatch, TENANT_LABELS } from '@/lib/reservation-import-parser';
+import { CsvPasteBox } from '@/components/import/CsvPasteBox';
 import type {
   ReservationParseResult, ReservationStatusNormalized,
 } from '@/lib/reservation-import-parser';
 import {
   checkReservationTablesExist, classifyGuests, saveReservationImport,
-  fetchReservationImports,
+  fetchReservationImports, previewReservationDiff, fetchPriorReservationRows,
 } from '@/lib/reservation-import-db';
-import type { GuestClassification, ReservationImportRow } from '@/lib/reservation-import-db';
+import type { GuestClassification, ReservationImportRow, ReservationDiffPreview } from '@/lib/reservation-import-db';
+import { recordImportRun } from '@/lib/import-undo-store';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { logImportRun } from '@/lib/import-runs-db';
 import { buildReservationRunStats } from '@/lib/import-runs';
 import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
+import { ReservationCountingSettingsCard } from '@/components/reservations/ReservationCountingSettingsCard';
+import { TakeAwayOfferedSettingsCard } from '@/components/reservations/TakeAwayOfferedSettingsCard';
 
 type WizardStep = 'upload' | 'preview' | 'saving' | 'done';
 type Tab = 'import' | 'history';
@@ -45,9 +50,9 @@ export default function ReservationenImportPage(
   { embedded = false, onImported }: { embedded?: boolean; onImported?: () => void } = {},
 ) {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const [tab, setTab] = useState<Tab>('import');
   const [step, setStep] = useState<WizardStep>('upload');
@@ -58,6 +63,8 @@ export default function ReservationenImportPage(
   const [parsed, setParsed] = useState<ReservationParseResult | null>(null);
   const [guestClass, setGuestClass] = useState<GuestClassification | null>(null);
   const [classifying, setClassifying] = useState(false);
+  /** Upsert-Vorschau «X neu · Y aktualisiert · Z unverändert» (Diff gegen DB). */
+  const [diff, setDiff] = useState<ReservationDiffPreview | null>(null);
 
   const [history, setHistory] = useState<ReservationImportRow[]>([]);
   const [histLoading, setHistLoading] = useState(false);
@@ -85,19 +92,20 @@ export default function ReservationenImportPage(
   const resetWizard = useCallback(() => {
     setParsed(null);
     setGuestClass(null);
+    setDiff(null);
     setParseError(null);
     setStep('upload');
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
-  // ── CSV verarbeiten ─────────────────────────────────────────────────────────
-  const processCSV = useCallback(async (file: File) => {
+  // ── CSV verarbeiten (gemeinsamer Kern für Datei, Drag & Drop und Einfügen) ──
+  const processText = useCallback(async (text: string, sourceName: string) => {
     setParseError(null);
     setParsed(null);
     setGuestClass(null);
+    setDiff(null);
     try {
-      const text = await file.text();
-      const result = parseReservationsCsv(file.name, text);
+      const result = parseReservationsCsv(sourceName, text);
       if (!result.headerOk) {
         setParseError(result.errors[0]?.message
           ?? 'Datei konnte nicht als Foratable-Reservationsexport erkannt werden.');
@@ -109,6 +117,11 @@ export default function ReservationenImportPage(
       }
       setParsed(result);
       setStep('preview');
+
+      // Upsert-Vorschau (Diff über Res.Nr. gegen den DB-Bestand, ohne zu schreiben).
+      previewReservationDiff(tenantId, result.reservations)
+        .then(setDiff)
+        .catch(() => setDiff(null)); // Vorschau optional — Import bleibt möglich.
 
       // Neue / wiederkehrende Gäste klassifizieren (DB-Abfrage, ohne zu schreiben).
       setClassifying(true);
@@ -123,17 +136,22 @@ export default function ReservationenImportPage(
         setClassifying(false);
       }
     } catch (e) {
-      setParseError('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e)));
+      setParseError('Fehler beim Verarbeiten der Daten: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [tenantId]);
 
   const handleFileSelect = (file: File | undefined) => {
-    if (!file) return;
+    if (!file) {
+      setParseError('Keine Datei erkannt — bitte eine .csv-Datei wählen oder hierher ziehen.');
+      return;
+    }
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setParseError('Bitte eine CSV-Datei auswählen.');
       return;
     }
-    processCSV(file);
+    file.text()
+      .then(text => processText(text, file.name))
+      .catch(e => setParseError('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e))));
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -145,8 +163,52 @@ export default function ReservationenImportPage(
   // ── Speichern ─────────────────────────────────────────────────────────────
   const handleConfirm = async () => {
     if (!parsed) return;
+    // Mandanten-Schutz: erkannter, abweichender Mandant blockiert den Import
+    // hart — auch als letzter Riegel, falls der Button-disabled umgangen würde.
+    const guard = checkTenantMatch(parsed.dominantRestaurantName, tenantId);
+    if (guard.block) {
+      toast.error(guard.message ?? 'Import blockiert: Datei gehört zu einem anderen Mandanten.');
+      return;
+    }
     const startedAt = new Date().toISOString();
     setStep('saving');
+
+    // Backup VOR dem Schreiben: Vorzustand aller betroffenen Res.Nr. sichern
+    // UND im Undo-Protokoll ablegen — Grundlage für «Letzter Import rückgängig
+    // machen». Scheitert Backup oder Protokoll, wird NICHT importiert
+    // (kein Import ohne Rückweg).
+    const extIds = [...new Set(parsed.reservations.map(r => r.externalReservationId))];
+    try {
+      const priorRows = await fetchPriorReservationRows(tenantId, extIds);
+      const snapshot = {
+        kind: 'reservation-records' as const,
+        restaurantId: tenantId, extIds, priorRows,
+      };
+      // Grössen-Schutz: der Snapshot landet in einem app_settings-Blob —
+      // unbegrenzt grosse Backups würden dort scheitern (und der Import hätte
+      // keinen Rückweg). Lieber sauber abbrechen mit Handlungsanweisung.
+      if (JSON.stringify(snapshot).length > 2_000_000) {
+        toast.error('Import abgebrochen — die Datei betrifft zu viele bestehende Reservationen für ein Undo-Backup. Bitte den Export in kleinere Zeiträume aufteilen.');
+        setStep('preview');
+        return;
+      }
+      await recordImportRun(tenantId, {
+        source: 'reservationen-foratable',
+        periodLabel: parsed.stats?.periodFrom && parsed.stats?.periodTo
+          ? `${parsed.stats.periodFrom} – ${parsed.stats.periodTo}` : '—',
+        itemCount: extIds.length,
+        itemLabel: 'Reservationen',
+        fileName: parsed.fileName,
+        details: diff ? `${diff.neu} neu · ${diff.aktualisiert} aktualisiert · ${diff.unveraendert} unverändert` : undefined,
+        snapshot,
+      });
+    } catch (e) {
+      toast.error('Import abgebrochen — Undo-Backup konnte nicht erstellt werden: '
+        + (e instanceof Error ? e.message : String(e)));
+      setStep('preview');
+      return;
+    }
+
     const result = await saveReservationImport(tenantId, parsed);
     if (result.error) {
       void logImportRun(tenantId, {
@@ -192,6 +254,16 @@ export default function ReservationenImportPage(
   // ── Vorschau-Werte ──────────────────────────────────────────────────────────
   const stats = parsed?.stats ?? null;
   const skippedRows = parsed?.errors.filter(e => e.rowNumber > 0).length ?? 0;
+
+  // ── Mandanten-Schutz ──────────────────────────────────────────────────────
+  // Abgleich Datei-Restaurant ↔ aktiver Mandant. Erkannter, abweichender
+  // Mandant → harter Stopp (Import-Button blockiert). Unbekannter/fehlender
+  // Restaurant-Name → nur Warnung (Import bleibt möglich). Reine Logik.
+  const tenantMatch = useMemo(
+    () => parsed ? checkTenantMatch(parsed.dominantRestaurantName, tenantId) : null,
+    [parsed, tenantId],
+  );
+  const importBlocked = tenantMatch?.block ?? false;
 
   // ── Tabellen fehlen → Hinweisbanner ─────────────────────────────────────────
   const tablesMissingBanner = tablesOk === false && (
@@ -285,12 +357,35 @@ export default function ReservationenImportPage(
                 />
               </div>
 
+              {/* «CSV einfügen» — Alternative, falls der Datei-Dialog in der
+                  eingebetteten Vorschau blockiert ist. */}
+              <div className="rounded-xl border p-4 space-y-2">
+                <p className="text-sm font-medium">… oder CSV-Inhalt einfügen</p>
+                <CsvPasteBox
+                  disabled={tablesOk === false}
+                  testIdPrefix="reservation-csv-paste"
+                  onText={(text, label) => processText(text, label)}
+                />
+              </div>
+
               {parseError && (
                 <div className="rounded-lg border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-3 flex gap-2 text-sm text-red-700 dark:text-red-300">
                   <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                   <span>{parseError}</span>
                 </div>
               )}
+
+              {/* Letzter Import + «Rückgängig» (Snapshot der betroffenen Res.Nr.). */}
+              <LastImportPanel
+                source="reservationen-foratable"
+                undoHint="Setzt die beim letzten Import geschriebenen Res.Nr. auf ihren Vorzustand zurück (neu importierte werden entfernt, ersetzte wiederhergestellt) und berechnet die Gäste-Statistik neu."
+              />
+
+              {/* Zentrale Zählregel für die Cockpit-Kennzahlen (pro Tenant). */}
+              <ReservationCountingSettingsCard />
+
+              {/* Take-Away-Angebot pro Tenant (steuert die TA-Cockpit-Zeilen). */}
+              <TakeAwayOfferedSettingsCard />
             </div>
           )}
 
@@ -301,6 +396,57 @@ export default function ReservationenImportPage(
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 <span className="font-medium">{parsed.fileName}</span>
               </div>
+
+              {/* Mandanten-Schutz: IMMER Datei-Restaurant + Ziel-Mandant zeigen. */}
+              {tenantMatch && (
+                <div
+                  data-testid="banner-tenant-check"
+                  className={cn(
+                    'rounded-lg border p-3 text-sm',
+                    tenantMatch.block
+                      ? 'border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-200'
+                      : tenantMatch.warn
+                        ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200'
+                        : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    {tenantMatch.block
+                      ? <Ban className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                      : tenantMatch.warn
+                        ? <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        : <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+                    <div className="space-y-0.5">
+                      <p>
+                        Datei-Restaurant:{' '}
+                        <span className="font-semibold" data-testid="text-file-restaurant">
+                          {tenantMatch.fileRestaurant ?? '— (kein Wert)'}
+                        </span>
+                        {' · '}Ziel-Mandant:{' '}
+                        <span className="font-semibold" data-testid="text-target-tenant">
+                          {TENANT_LABELS[tenantId]}
+                        </span>
+                      </p>
+                      {tenantMatch.message && (
+                        <p className="font-medium" data-testid="text-tenant-message">{tenantMatch.message}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Upsert-Vorschau: dublettensicher über Res.Nr. (Ersetzen statt Duplikat) */}
+              {diff && (
+                <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" data-testid="banner-upsert-preview">
+                  <p className="font-semibold" data-testid="text-upsert-counts">
+                    {diff.neu} neu · {diff.aktualisiert} aktualisiert · {diff.unveraendert} unverändert
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Schlüssel = Res.Nr. — dieselbe Res.Nr. wird ERSETZT, nie doppelt angelegt
+                    (wiederholter Import ist gefahrlos). Vor dem Schreiben wird ein Backup erstellt.
+                  </p>
+                </div>
+              )}
 
               <ReservationSummary
                 stats={stats}
@@ -316,7 +462,9 @@ export default function ReservationenImportPage(
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleConfirm}
-                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                  disabled={importBlocked}
+                  data-testid="button-import-reservations"
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Database className="h-4 w-4" />
                   {stats.reservationCount} Reservationen importieren

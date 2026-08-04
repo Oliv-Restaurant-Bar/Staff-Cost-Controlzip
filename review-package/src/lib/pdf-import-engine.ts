@@ -27,15 +27,10 @@ import * as XLSX from 'xlsx';
 import type { ParsedCSVRow } from './csv-import-engine';
 import { parseAmount } from './csv-import-engine';
 import type { SageJournalEntry } from '@/types/reporting';
+import { ensurePdfWorkerConfigured } from './pdf-worker-setup';
 
-// ─── Worker-Konfiguration ─────────────────────────────────────────────────────
-
-// Wir nutzen den CDN-Worker, um Bundler-Kompatibilitätsprobleme zu vermeiden.
-// Version muss zur installierten pdfjs-dist-Version passen.
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-}
+// ─── Worker-Konfiguration (zentral in pdf-worker-setup.ts) ────────────────────
+ensurePdfWorkerConfigured();
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -52,6 +47,23 @@ export interface PDFParseResult {
   pageCount: number;
   rawLines: string[];    // Alle extrahierten Textzeilen (für Debug)
   warnings: string[];
+  /** Sage Kontoblatt: Buchungszeilen (Lieferanten-Journal für den FIBU-Abgleich). */
+  journalEntries?: SageJournalEntry[];
+  /** Sage Kontoblatt: Firmenname aus dem Kopf (z. B. «Oliv Gastro AG»). */
+  detectedCompany?: string;
+  /** Aus dem Firmennamen abgeleiteter Mandant (Mandanten-Check beim Import). */
+  detectedTenant?: 'oliv' | 'beaulieu';
+  /**
+   * Mehrmonats-Kontoblatt (Kopf-Zeitraum über Monatsgrenzen, gleiches Jahr):
+   * Buchungszeilen nach Buchungsmonat gruppiert — Konten-Netto (Soll−Haben)
+   * und Journal pro Monat. Nur gesetzt, wenn der Zeitraum >1 Monat umfasst
+   * UND Buchungszeilen vorhanden sind.
+   */
+  monthly?: {
+    year: number;
+    rowsByMonth: Map<number, ParsedCSVRow[]>;
+    journalByMonth: Map<number, SageJournalEntry[]>;
+  };
 }
 
 // ─── Monats-Erkennung ─────────────────────────────────────────────────────────
@@ -224,6 +236,54 @@ function isSageKontoblatt(rawLines: string[]): boolean {
 }
 
 /**
+ * Kopf-Metadaten des Sage-Kontoblatts: Firmenname («Kontoblatt <Firma> Seite: N»)
+ * und Zeitraum («vom: TT.MM.JJ bis TT.MM.JJ») → Mandant + Monat/Jahr.
+ * Firmen-Zuordnung: «Oliv Gastro AG» → oliv, «Restaurant Beaulieu AG» → beaulieu.
+ */
+export function parseSageHeaderMeta(rawLines: string[]): {
+  company?: string;
+  tenant?: 'oliv' | 'beaulieu';
+  month?: number;
+  year?: number;
+  /** Ende des Kopf-Zeitraums («bis TT.MM.JJ») — für Mehrmonats-/Jahresdateien. */
+  monthTo?: number;
+  yearTo?: number;
+} {
+  const head = rawLines.slice(0, 12);
+  let company: string | undefined;
+  let month: number | undefined;
+  let year: number | undefined;
+  let monthTo: number | undefined;
+  let yearTo: number | undefined;
+
+  for (const line of head) {
+    if (!company) {
+      const m = /kontoblatt\s+(.+?)\s+seite\s*:?/i.exec(line);
+      if (m) company = m[1].trim();
+    }
+    if (month === undefined) {
+      // «vom: 01.03.26 bis 31.03.26» (2- oder 4-stelliges Jahr)
+      const p = /vom:?\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s+bis\s+(\d{1,2})\.(\d{1,2})\.(\d{2,4})/i.exec(line);
+      if (p) {
+        month = Number(p[2]);
+        const y = Number(p[3]);
+        year = y < 100 ? 2000 + y : y;
+        monthTo = Number(p[5]);
+        const yt = Number(p[6]);
+        yearTo = yt < 100 ? 2000 + yt : yt;
+      }
+    }
+  }
+
+  let tenant: 'oliv' | 'beaulieu' | undefined;
+  if (company) {
+    if (/beaulieu/i.test(company)) tenant = 'beaulieu';
+    else if (/oliv/i.test(company)) tenant = 'oliv';
+  }
+  return { company, tenant, month, year, monthTo, yearTo };
+}
+
+/**
  * State-Machine-Parser für Sage Kontoblatt-PDFs.
  *
  * Format:
@@ -270,7 +330,11 @@ function isSageKontoblatt(rawLines: string[]): boolean {
  * FALLBACK:
  *   Falls saldoVortrag oder finalSaldo fehlen → totalSoll − totalHaben (alte Formel)
  */
-function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
+export function parseSageKontoblatt(lines: TextLine[]): {
+  rows: ParsedCSVRow[];
+  journalEntries: SageJournalEntry[];
+  warnings: string[];
+} {
   interface AccountEntry {
     name: string;
     saldoVortrag: number | null;  // Eröffnungssaldo (nur erstes Auftreten, Seite-2-Wiederholung ignorieren)
@@ -293,7 +357,83 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
   }
 
   const accountData = new Map<string, AccountEntry>();
+  const journalEntries: SageJournalEntry[] = [];
+  const parserWarnings: string[] = [];
   let currentAccount: { number: string; name: string } | null = null;
+  /** Laufender (signierter) Saldo je Konto — klassifiziert Soll vs. Haben über die Saldo-Bewegung. */
+  const runningSaldo = new Map<string, number>();
+  /** Signierter Saldo-Vortrag je Konto (für die Plausibilitäts-Gegenrechnung). */
+  const vortragSigned = new Map<string, number>();
+  /** Letzte Buchungszeile (für Referenz-/Rechnungsnummern auf der Folgezeile). */
+  let lastBooking: SageJournalEntry | null = null;
+
+  /** Signierter Betrag: «1'234.56-» (Sage-Trailing-Minus) → −1234.56. */
+  function parseSigned(raw: string): number | null {
+    const neg = /-\s*$/.test(raw);
+    const v = parseAmount(raw.replace(/-\s*$/, ''));
+    if (v === null) return null;
+    return neg ? -Math.abs(v) : v;
+  }
+
+  /**
+   * Buchungszeile: «TT.MM.JJJJ Blg Text… G-Konto Betrag Saldo».
+   * Im PDF-Text steht nur EINE Betragsspalte (Soll ODER Haben) plus Saldo;
+   * die Zuordnung erfolgt über die Saldo-Bewegung (steigt → Soll, fällt → Haben).
+   */
+  function tryParseBookingLine(line: string): boolean {
+    if (!currentAccount) return false;
+    const m = /^(\d{2}\.\d{2}\.\d{4})\s+(\S+)\s+(.+)$/.exec(line.trim());
+    if (!m) return false;
+    const [, date, blg, rest] = m;
+    const amts = findAllAmounts(rest);
+    if (amts.length < 2) return false;              // braucht Betrag + Saldo
+    const saldoRaw  = amts[amts.length - 1];
+    const betragRaw = amts[amts.length - 2];
+    const saldo  = parseSigned(saldoRaw);
+    const betrag = parseSigned(betragRaw);
+    if (saldo === null || betrag === null) return false;
+
+    // Text = alles vor dem Betrag; G-Konto = letztes Token davor (Zahl oder «div»)
+    const betragPos = rest.lastIndexOf(betragRaw);
+    let textPart = rest.slice(0, betragPos).trim();
+    textPart = textPart.replace(/\s+(\d{3,5}|div\.?)$/i, '').trim();
+    if (!textPart) return false;
+
+    // Soll/Haben über die Saldo-Bewegung (Aufwandskonto: Soll erhöht den Saldo).
+    // Ohne bekannten Vor-Saldo (fehlender Vortrag) gilt Soll als Default.
+    const prev = runningSaldo.get(currentAccount.number);
+    const isSoll = prev === undefined ? true : (saldo - prev) >= 0;
+    runningSaldo.set(currentAccount.number, saldo);
+
+    const abs = Math.abs(betrag);
+    const entry: SageJournalEntry = {
+      date,
+      belegNr: blg,
+      text: textPart,
+      accountNumber: currentAccount.number.padStart(4, '0'),
+      accountName: currentAccount.name,
+      soll:  isSoll ? abs : 0,
+      haben: isSoll ? 0 : abs,
+      amount: abs,
+    };
+    journalEntries.push(entry);
+    lastBooking = entry;
+    return true;
+  }
+
+  /** Referenz-/Rechnungsnummer unterhalb der Buchung → an die letzte Buchung anhängen. */
+  function tryAttachReference(line: string): boolean {
+    if (!lastBooking) return false;
+    const t = line.trim();
+    if (!t || t.length > 60) return false;
+    if (/^\d{2}\.\d{2}\.\d{4}\b/.test(t)) return false;
+    if (/^(total|saldo|kontoblatt|datum)\b/i.test(t)) return false;
+    if (/^\d{4}\s+[A-Za-zäöüÄÖÜ]/.test(t)) return false;      // Konto-Header
+    if (!/^[\wÄÖÜäöüß .,\/()-]+$/.test(t)) return false;
+    lastBooking.belegNr = lastBooking.belegNr ? `${lastBooking.belegNr} · ${t}` : t;
+    lastBooking = null;                                        // nur EINE Referenzzeile
+    return true;
+  }
 
   for (let i = 0; i < lines.length; i++) {
     const { text } = lines[i];
@@ -301,11 +441,20 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
 
     // ── "Saldo Vortrag X" → Eröffnungssaldo (nur einmal pro Konto, nicht bei Seitenanfang-Wiederholungen)
     if (/^saldo\s+vortrag\b/i.test(trimmed) && currentAccount) {
+      lastBooking = null;
       const prev = accountData.get(currentAccount.number);
       if (!prev || prev.saldoVortrag === null) {
         const combined = textWithLookahead(i);
         const lastAmt  = findLastAmount(combined);
         const sv       = lastAmt ? (parseAmount(lastAmt.raw) ?? null) : 0; // 0 bei neuen Konten ohne Saldo-Vortrag-Angabe
+        // Signierter Start-Saldo für die Soll/Haben-Klassifikation der Buchungszeilen
+        if (lastAmt && runningSaldo.get(currentAccount.number) === undefined) {
+          const signed = parseSigned(lastAmt.raw);
+          if (signed !== null) {
+            runningSaldo.set(currentAccount.number, signed);
+            vortragSigned.set(currentAccount.number, signed);
+          }
+        }
 
         accountData.set(currentAccount.number, {
           ...(prev ?? {
@@ -320,6 +469,7 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
 
     // ── "Total Soll X" → Debit-Summe des Monats (kumulativ: späterer Wert überschreibt)
     if (/^total\s+soll\b/i.test(trimmed) && currentAccount) {
+      lastBooking = null;
       const combined = textWithLookahead(i);
       const lastAmt  = findLastAmount(combined);
       if (lastAmt) {
@@ -351,6 +501,7 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
     //
     // FALLBACK: totalSoll − haben  (wenn saldoVortrag/finalSaldo nicht verfügbar)
     if (/^total\s+haben\b/i.test(trimmed) && currentAccount) {
+      lastBooking = null;
       const combined = textWithLookahead(i);
       const allAmts  = findAllAmounts(combined);
 
@@ -365,18 +516,49 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
       const totalSoll    = prev?.totalSoll ?? 0;
       const saldoVortrag = prev?.saldoVortrag ?? null;
 
+      // PRIMÄRFORMEL (Spec): monatswert = Total Soll − Total Haben.
+      //   Voraussetzung: Haben-Spalte eindeutig lesbar (≥2 Beträge auf der Zeile
+      //   ODER Haben implizit 0 mit vorhandenem Total Soll).
+      // FALLBACK: finalSaldo − saldoVortrag (mathematisch identisch, robust
+      //   wenn die Haben-Spalte im PDF-Text fehlt).
+      // Plausibilität: liefern beide Formeln unterschiedliche Werte → Warnung.
       let monatswert: number;
       let usedFallback = false;
-      if (finalSaldo !== null && saldoVortrag !== null) {
-        monatswert = finalSaldo - saldoVortrag;      // Robuste Primärformel
-      } else {
-        monatswert   = totalSoll - haben;            // Fallback
+      // Haben-Spalte nur eindeutig, wenn BEIDE Werte (Haben + Endsaldo) auf der
+      // Zeile lesbar sind. Bei nur EINEM Betrag ist unklar, ob es der Endsaldo
+      // oder der Haben-Wert ist (Y-Koordinaten-Split) → Saldo-Formel bevorzugen.
+      const habenEindeutig = allAmts.length >= 2;
+      // Signierte Werte für die Gegenrechnung (negative Salden mit führendem
+      // oder Sage-typischem nachgestelltem Minus korrekt behandeln)
+      const finalSaldoSigned = allAmts.length > 0
+        ? parseSigned(allAmts[allAmts.length - 1]) : null;
+      const vortragS = vortragSigned.get(currentAccount.number);
+      const viaSaldo = (finalSaldoSigned !== null && vortragS !== undefined)
+        ? finalSaldoSigned - vortragS
+        : ((finalSaldo !== null && saldoVortrag !== null) ? finalSaldo - saldoVortrag : null);
+      if (habenEindeutig) {
+        monatswert = totalSoll - haben;
+        if (viaSaldo !== null && Math.abs(viaSaldo - monatswert) > 0.05) {
+          parserWarnings.push(
+            `Konto ${currentAccount.number}: Plausibilitätswarnung — Total Soll−Haben (${monatswert.toFixed(2)}) ` +
+            `weicht von Endsaldo−Vortrag (${viaSaldo.toFixed(2)}) ab. Bitte Beträge prüfen.`,
+          );
+        }
+      } else if (viaSaldo !== null) {
+        monatswert   = viaSaldo;
         usedFallback = true;
+      } else {
+        monatswert   = totalSoll - haben;
+        usedFallback = true;
+        parserWarnings.push(
+          `Konto ${currentAccount.number}: Haben-Spalte nicht eindeutig lesbar und kein Saldo-Vortrag/Endsaldo verfügbar — ` +
+          `Monatswert ${monatswert.toFixed(2)} bitte manuell prüfen.`,
+        );
       }
 
       accountData.set(currentAccount.number, {
         ...(prev ?? {
-          name: currentAccount.name, saldoVortrag: null,
+          name: currentAccount.name, saldoVortrag: null, totalSoll: 0,
           lineIndex: i + 1, raw: '', pageCount: 0,
         }),
         name:        currentAccount.name,
@@ -390,6 +572,12 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
       // currentAccount bleibt aktiv für mehrseitige Konten
       continue;
     }
+
+    // ── Buchungszeile (Datum + Blg + Text + Betrag + Saldo) → Lieferanten-Journal
+    if (tryParseBookingLine(text)) continue;
+
+    // ── Referenz-/Rechnungsnummer direkt unter der Buchungszeile
+    if (tryAttachReference(text)) continue;
 
     // ── Konto-Header: 4-stellige Zahl am Anfang, gefolgt von Name (kein echter CHF-Betrag)
     const accM = /^\s*(\d{4})\s+(.+)/.exec(text);
@@ -418,6 +606,7 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
         const hasRealWord = /[a-zA-ZäöüÄÖÜß]{2,}/.test(cleanName);
 
         if (hasRealWord && cleanName.length >= 2) {
+          lastBooking = null;
           if (accountNum !== currentAccount?.number) {
             currentAccount = { number: accountNum, name: cleanName };
           } else {
@@ -442,16 +631,18 @@ function parseSageKontoblatt(lines: TextLine[]): ParsedCSVRow[] {
   }
   console.groupEnd();
 
-  return Array.from(accountData.entries())
+  const rows = Array.from(accountData.entries())
     .filter(([, v]) => Math.abs(v.saldo) > 0.005 || v.totalSoll > 0 || v.totalHaben > 0)
     .map(([accNum, v]) => ({
       lineIndex:     v.lineIndex,
-      rawLine:       `${accNum} ${v.name}  SaldoVortrag:${(v.saldoVortrag ?? 0).toFixed(2)} Endsaldo:${(v.finalSaldo ?? 0).toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
+      rawLine:       `${accNum} ${v.name}  TotalSoll:${v.totalSoll.toFixed(2)} TotalHaben:${v.totalHaben.toFixed(2)} = Monatswert:${v.saldo.toFixed(2)}`,
       accountNumber: accNum.padStart(4, '0'),
       accountName:   v.name,
       rawAmount:     v.saldo.toFixed(2),
       amount:        v.saldo,
     }));
+
+  return { rows, journalEntries, warnings: parserWarnings };
 }
 
 // ─── Zeilen-Parser ────────────────────────────────────────────────────────────
@@ -607,16 +798,47 @@ export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
   allLines.forEach(l => rawLines.push(l.text));
 
   // Monat/Jahr erkennen
-  const { month: detectedMonth, year: detectedYear } = detectMonthYear(rawLines);
+  let { month: detectedMonth, year: detectedYear } = detectMonthYear(rawLines);
+  let journalEntries: SageJournalEntry[] | undefined;
+  let detectedCompany: string | undefined;
+  let detectedTenant: 'oliv' | 'beaulieu' | undefined;
+  let monthly: PDFParseResult['monthly'];
 
   // Format-Erkennung: Sage Kontoblatt vs. generisches Kontenblatt
   if (isSageKontoblatt(rawLines)) {
+    // Kopf: Firmenname (Mandanten-Check) + Zeitraum «vom … bis …» (Monat/Jahr)
+    const meta = parseSageHeaderMeta(rawLines);
+    detectedCompany = meta.company;
+    detectedTenant  = meta.tenant;
+    if (meta.month !== undefined) detectedMonth = meta.month;
+    if (meta.year  !== undefined) detectedYear  = meta.year;
+
     // Sage Kontoblatt: State-Machine — ein Saldo pro Konto via "Total Haben"-Zeile
-    const sageRows = parseSageKontoblatt(allLines);
-    rows.push(...sageRows);
-    if (sageRows.length > 0) {
+    const sage = parseSageKontoblatt(allLines);
+    rows.push(...sage.rows);
+    journalEntries = sage.journalEntries;
+    warnings.push(...sage.warnings);
+    if (sage.rows.length > 0) {
+      const je = sage.journalEntries.length > 0 ? `, ${sage.journalEntries.length} Buchungszeilen (Lieferanten-Journal)` : '';
       warnings.push(
-        `Sage Kontoblatt erkannt: ${sageRows.length} Konten mit Netto-Saldo importiert.`,
+        `Sage Kontoblatt erkannt: ${sage.rows.length} Konten importiert${je}.`,
+      );
+    }
+
+    // ── Mehrmonats-PDF: Kopf-Zeitraum über Monatsgrenzen (gleiches Jahr) ──
+    // Buchungszeilen nach Buchungsmonat gruppieren → pro Monat Konten-Netto
+    // + Journal. Plausibilität: Summe über alle Monate je Konto muss dem
+    // Totals-basierten Kontowert entsprechen (sonst Warnung).
+    const spansMultipleMonths =
+      meta.month !== undefined && meta.monthTo !== undefined &&
+      meta.year !== undefined && meta.yearTo === meta.year &&
+      meta.monthTo !== meta.month;
+    if (spansMultipleMonths && sage.journalEntries.length > 0) {
+      monthly = buildMonthlyFromJournal(meta.year!, sage.journalEntries, sage.rows, warnings);
+    } else if (spansMultipleMonths) {
+      warnings.push(
+        'Zeitraum umfasst mehrere Monate, aber es wurden keine Buchungszeilen erkannt — ' +
+        'eine Aufteilung pro Monat ist nicht möglich. Bitte Monats-PDFs oder das Jahres-Excel verwenden.',
       );
     }
   } else {
@@ -640,7 +862,85 @@ export async function parsePDF(buffer: ArrayBuffer): Promise<PDFParseResult> {
     );
   }
 
-  return { rows, detectedMonth, detectedYear, pageCount, rawLines, warnings };
+  return {
+    rows, detectedMonth, detectedYear, pageCount, rawLines, warnings,
+    ...(journalEntries !== undefined ? { journalEntries } : {}),
+    ...(detectedCompany !== undefined ? { detectedCompany } : {}),
+    ...(detectedTenant  !== undefined ? { detectedTenant }  : {}),
+    ...(monthly !== undefined ? { monthly } : {}),
+  };
+}
+
+/**
+ * Gruppiert Sage-Buchungszeilen nach Buchungsmonat (nur Buchungen des
+ * Zieljahres) und baut daraus pro Monat Konten-Netto-Zeilen (Soll−Haben)
+ * plus das Monats-Journal. Plausibilität: Summe der Monatswerte je Konto
+ * wird gegen den Totals-basierten Kontowert (Endsaldo−Vortrag) geprüft.
+ */
+function buildMonthlyFromJournal(
+  year: number,
+  journal: SageJournalEntry[],
+  totalsRows: ParsedCSVRow[],
+  warnings: string[],
+): PDFParseResult['monthly'] {
+  const journalByMonth = new Map<number, SageJournalEntry[]>();
+  const sums = new Map<number, Map<string, { name: string; net: number }>>();
+  let skippedOutOfYear = 0;
+
+  for (const e of journal) {
+    const m = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/.exec(e.date.trim());
+    if (!m) { skippedOutOfYear++; continue; }
+    const month = parseInt(m[2]);
+    const y = expandYear(parseInt(m[3]));
+    if (y !== year || month < 1 || month > 12) { skippedOutOfYear++; continue; }
+    if (!journalByMonth.has(month)) journalByMonth.set(month, []);
+    journalByMonth.get(month)!.push(e);
+    if (!sums.has(month)) sums.set(month, new Map());
+    const acc = sums.get(month)!;
+    const prev = acc.get(e.accountNumber) ?? { name: e.accountName, net: 0 };
+    acc.set(e.accountNumber, { name: prev.name, net: prev.net + e.soll - e.haben });
+  }
+
+  if (skippedOutOfYear > 0) {
+    warnings.push(`${skippedOutOfYear} Buchung(en) mit Datum ausserhalb ${year} für die Monats-Aufteilung übersprungen.`);
+  }
+
+  const rowsByMonth = new Map<number, ParsedCSVRow[]>();
+  const perAccountTotal = new Map<string, number>();
+  for (const [month, accounts] of sums.entries()) {
+    const rows: ParsedCSVRow[] = [];
+    let lineIndex = 0;
+    for (const [accNum, { name, net }] of accounts.entries()) {
+      perAccountTotal.set(accNum, (perAccountTotal.get(accNum) ?? 0) + net);
+      // net === 0 bewusst BEHALTEN: eine 0-Zeile ersetzt beim Re-Import
+      // veraltete Kontowerte des Monats (sonst blieben stale Daten stehen).
+      rows.push({
+        lineIndex:     ++lineIndex,
+        rawLine:       `${accNum} ${name} → ${net.toFixed(2)} (${String(month).padStart(2, '0')}.${year})`,
+        accountNumber: accNum,
+        accountName:   name,
+        rawAmount:     net.toFixed(2),
+        amount:        net,
+      });
+    }
+    // Jeden Buchungsmonat aufnehmen (auch mit 0-Netto) — Monat gehört zum Zeitraum
+    rowsByMonth.set(month, rows);
+  }
+
+  // Plausibilität gegen die Totals-basierten Kontowerte des ganzen Zeitraums
+  for (const r of totalsRows) {
+    const viaBookings = perAccountTotal.get(r.accountNumber) ?? 0;
+    if (Math.abs(viaBookings - r.amount) > 0.05) {
+      warnings.push(
+        `Konto ${r.accountNumber}: Summe der Buchungszeilen über alle Monate (${viaBookings.toFixed(2)}) ` +
+        `weicht vom Kontowert laut Totals (${r.amount.toFixed(2)}) ab — Monats-Aufteilung bitte prüfen.`,
+      );
+    }
+  }
+
+  if (rowsByMonth.size === 0) return undefined;
+  warnings.push(`Mehrmonats-Kontoblatt: ${rowsByMonth.size} Monate mit Buchungsdaten (Jahr ${year}).`);
+  return { year, rowsByMonth, journalByMonth };
 }
 
 // ─── Sage Kontoblatt Excel-Parser ─────────────────────────────────────────────
@@ -827,6 +1127,12 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
 export interface AnnualKostenResult {
   /** Monat (1–12) → ParsedCSVRow[] (summiert pro Konto) */
   byMonth: Map<number, ParsedCSVRow[]>;
+  /** Monat (1–12) → Buchungszeilen (Lieferanten-Journal für den FIBU-Abgleich) */
+  journalByMonth: Map<number, SageJournalEntry[]>;
+  /** Firmenname aus dem Dateikopf (z. B. «Oliv Gastro AG») */
+  detectedCompany?: string;
+  /** Aus dem Firmennamen abgeleiteter Mandant (Mandanten-Check beim Import) */
+  detectedTenant?: 'oliv' | 'beaulieu';
   /** Erkanntes Geschäftsjahr — null wenn uneindeutig/nicht erkennbar (dann NICHT speichern) */
   detectedYear: number | null;
   /** Woher stammt das Jahr: Dateizeitraum-Kopf, Buchungsdaten oder nicht erkennbar */
@@ -882,6 +1188,7 @@ export async function parseAnnualSageKontoblattByMonth(
   const warnings: string[] = [];
   const emptyResult = (failureReason: string, debugPartial?: Partial<AnnualKostenResult['debug']>): AnnualKostenResult => ({
     byMonth: new Map(),
+    journalByMonth: new Map(),
     detectedYear: null,
     yearSource: 'none',
     ambiguousYear: false,
@@ -955,8 +1262,28 @@ export async function parseAnnualSageKontoblattByMonth(
     }
   }
 
+  // ── Firma/Mandant aus den Kopfzeilen (Mandanten-Check beim Import) ──
+  let detectedCompany: string | undefined;
+  for (const line of headerLines) {
+    const m = /kontoblatt\s+(.+?)(?:\s+seite\s*:?.*)?$/i.exec(line);
+    if (m && m[1].trim().length >= 3) { detectedCompany = m[1].trim(); break; }
+  }
+  if (!detectedCompany) {
+    // Fallback: Firmenname steht als eigene Kopfzeile ohne «Kontoblatt»-Präfix
+    const hit = headerLines.find(l => /beaulieu|oliv/i.test(l));
+    if (hit) detectedCompany = hit.replace(/\s*seite\s*:?.*$/i, '').trim();
+  }
+  let detectedTenant: 'oliv' | 'beaulieu' | undefined;
+  if (detectedCompany) {
+    if (/beaulieu/i.test(detectedCompany)) detectedTenant = 'beaulieu';
+    else if (/oliv/i.test(detectedCompany)) detectedTenant = 'oliv';
+  }
+
   // ── Buchungszeilen einsammeln (Phase 1: rohe Buchungen mit vollem Datum) ──
-  interface RawBooking { account: string; name: string; month: number; year: number; soll: number; haben: number }
+  interface RawBooking {
+    account: string; name: string; month: number; year: number; soll: number; haben: number;
+    dateStr: string; belegNr?: string; text: string;
+  }
   const rawBookings: RawBooking[] = [];
   const bookingYearCounts: Record<string, number> = {};
   const sampleSkippedRows: string[] = [];
@@ -1024,6 +1351,7 @@ export async function parseAnnualSageKontoblattByMonth(
     if (soll === 0 && haben === 0) continue;
 
     bookingYearCounts[String(bookingYear)] = (bookingYearCounts[String(bookingYear)] ?? 0) + 1;
+    const belegRaw = row[1];
     rawBookings.push({
       account: currentAccount.number,
       name: currentAccount.name,
@@ -1031,6 +1359,10 @@ export async function parseAnnualSageKontoblattByMonth(
       year: bookingYear,
       soll,
       haben,
+      dateStr,
+      belegNr: belegRaw !== null && belegRaw !== undefined && String(belegRaw).trim() !== ''
+        ? String(belegRaw).trim() : undefined,
+      text: col3 || currentAccount.name,
     });
   }
 
@@ -1086,6 +1418,7 @@ export async function parseAnnualSageKontoblattByMonth(
 
   // ── Phase 2: nur Buchungen im erkannten Jahr aggregieren ──
   const monthAccountSums = new Map<number, Map<string, { name: string; soll: number; haben: number }>>();
+  const journalByMonth = new Map<number, SageJournalEntry[]>();
   let bookingCount = 0;
   let skippedOutOfYear = 0;
 
@@ -1096,6 +1429,18 @@ export async function parseAnnualSageKontoblattByMonth(
     const accounts = monthAccountSums.get(b.month)!;
     const prev = accounts.get(b.account) ?? { name: b.name, soll: 0, haben: 0 };
     accounts.set(b.account, { name: prev.name, soll: prev.soll + b.soll, haben: prev.haben + b.haben });
+    // Journal pro Monat (Lieferanten-FIBU-Abgleich): Einzelbuchung mit Soll/Haben
+    if (!journalByMonth.has(b.month)) journalByMonth.set(b.month, []);
+    journalByMonth.get(b.month)!.push({
+      date:          b.dateStr,
+      belegNr:       b.belegNr,
+      text:          b.text,
+      accountNumber: b.account.padStart(4, '0'),
+      accountName:   b.name,
+      soll:          b.soll,
+      haben:         b.haben,
+      amount:        b.soll > 0 ? b.soll : b.haben,
+    });
   }
 
   if (skippedOutOfYear > 0) {
@@ -1136,6 +1481,9 @@ export async function parseAnnualSageKontoblattByMonth(
 
   return {
     byMonth,
+    journalByMonth,
+    ...(detectedCompany !== undefined ? { detectedCompany } : {}),
+    ...(detectedTenant  !== undefined ? { detectedTenant }  : {}),
     detectedYear,
     yearSource,
     periodFrom,

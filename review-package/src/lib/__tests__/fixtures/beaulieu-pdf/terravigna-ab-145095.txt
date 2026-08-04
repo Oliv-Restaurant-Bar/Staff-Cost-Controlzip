@@ -1,0 +1,17 @@
+TERRAVIGNA AG                                       Restaurant Beaulieu AG
+Weinhandlung                                        Erlachstrasse 3
+CHE-108.008.709 MWST                                3012 Bern
+
+
+                     Verkauf Auftragsbestätigung 145095
+
+Kunden-Nr. 50955                                    Belegdatum 28.07.26
+
+Pos  Artikel        Menge          Bezeichnung                 Preis   Rab.%   Betrag
+1    21111-24-075   12 75 cl       Chardonnay Réserve          14.50           174.00
+2    21354-23-075   24 75 cl       Pinot Noir Tradition        18.90           453.60
+3    21402-24-075   12 75 cl       Sauvignon Blanc             16.73           200.79
+
+                                       Total CHF ohne MwSt.                    828.39
+                                       8.1% MwSt.                               67.10
+                                       Gesamtbetrag CHF                        895.49

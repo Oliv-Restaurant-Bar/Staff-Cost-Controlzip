@@ -47,7 +47,15 @@ export function computeMonthlyIstNet(
   const mm   = String(month).padStart(2, '0');
   let total  = 0;
 
-  if (monthlyTakeaway !== undefined && monthlyTakeaway > 0) {
+  // Tägliche Take-Away-Werte aus dem manuellen Tagesumsatz-Import haben
+  // Vorrang vor dem monatlichen Buchhaltungs-Override.
+  let hasDailyTakeaway = false;
+  for (let d = 1; d <= days; d++) {
+    const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+    if ((dailyBudgets[key]?.takeawayRevenue ?? 0) > 0) { hasDailyTakeaway = true; break; }
+  }
+
+  if (!hasDailyTakeaway && monthlyTakeaway !== undefined && monthlyTakeaway > 0) {
     // Monats-Takeaway-Override: Tagesbrutto summieren, dann Split-MwSt anwenden.
     // monthlyTakeaway ist der NETTO-Betrag aus der Buchhaltung (Kontoblatt Haben).
     // Umrechnung: Netto → Brutto mit 2.6%-Satz, damit grossToNet() korrekt splittet.
@@ -71,16 +79,17 @@ export function computeMonthlyIstNet(
       total += grossToNet(gross, takeaway);
     }
   }
-  // Marketing/Maison-Umsatz: Tageswerte haben Priorität über monatlichen Blob
+  // Marketing-Umsatz (maison-daily): Nennwert = NETTO — zählt 1:1, KEINE
+  // MwSt-Umrechnung. Tageswerte haben Priorität über monatlichen Blob.
   if (maisonDaily) {
     for (let d = 1; d <= days; d++) {
-      const key   = `${year}-${mm}-${String(d).padStart(2, '0')}`;
-      const gross = maisonDaily[key] ?? 0;
-      if (gross > 0) total += gross / 1.081;
+      const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+      const mkt = maisonDaily[key] ?? 0;
+      if (mkt > 0) total += mkt;
     }
   } else if (maisonMonthly) {
     const maison = maisonMonthly[`${year}-${mm}`] ?? 0;
-    if (maison > 0) total += grossToNet(maison, 0);
+    if (maison > 0) total += maison;
   }
   return total;
 }
@@ -93,23 +102,17 @@ export function computeMonthlyIstGross(
   year:           number,
   month:          number,
   dailyBudgets:   Record<string, DailyEntry>,
-  maisonMonthly?: Record<string, number>,
-  maisonDaily?:   Record<string, number>,
+  _maisonMonthly?: Record<string, number>,
+  _maisonDaily?:   Record<string, number>,
 ): number {
+  // Brutto = Kassen-Gesamtumsatz («Gesamt»-Zeile des manuellen Imports).
+  // Marketing (netto-Nennwert) gehört NICHT zum Bruttoumsatz.
   const days = new Date(year, month, 0).getDate();
   const mm   = String(month).padStart(2, '0');
   let total  = 0;
   for (let d = 1; d <= days; d++) {
     const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
     total += dailyBudgets[key]?.actualRevenue ?? 0;
-  }
-  if (maisonDaily) {
-    for (let d = 1; d <= days; d++) {
-      const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
-      total += maisonDaily[key] ?? 0;
-    }
-  } else if (maisonMonthly) {
-    total += maisonMonthly[`${year}-${mm}`] ?? 0;
   }
   return total;
 }

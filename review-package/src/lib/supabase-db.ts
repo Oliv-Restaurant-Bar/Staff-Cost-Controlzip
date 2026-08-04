@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -53,6 +54,13 @@ const employeeToDb = (emp: Employee) => ({
   monthly_salary_with_13th: emp.monthlySalaryWith13th   ?? null,
   social_cost_factor:       emp.socialCostFactor        ?? 1.03,
   has_13th_salary:          emp.has13thSalary           ?? false,
+  // ── Ist-Quelle (Migration: employees.ist_quelle, nullable text) ───────────
+  // Presence-Guard: nur schreiben, wenn das Feld im Objekt vorhanden ist
+  // (undefined = Feld nicht im Formular → bestehenden DB-Wert BEWAHREN, nie
+  // via ?? null clobbern — vgl. Ali-Reactivation-Bug).
+  ...('istQuelle' in emp ? { ist_quelle: emp.istQuelle ?? null } : {}),
+  // ── Erfassungsart (MIRUS-Import-Kennzeichnung, nullable text) ─────────────
+  ...('erfassungsart' in emp ? { erfassungsart: emp.erfassungsart ?? null } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hours_balance:            emp.hoursBalance            ?? null,
   vacation_balance:         emp.vacationBalance         ?? null,
@@ -129,6 +137,10 @@ const dbToEmployee = (row: any): Employee => {
   monthlySalaryWith13th:  row.monthly_salary_with_13th  ?? undefined,
   socialCostFactor:       row.social_cost_factor        != null ? Number(row.social_cost_factor) : undefined,
   has13thSalary:          row.has_13th_salary           ?? undefined,
+  // ── Ist-Quelle: pre-migration-tolerant (Spalte kann in anderen Umgebungen
+  //    fehlen → nur konditional spreaden, nie einen undefined-Key erzeugen). ──
+  ...(row.ist_quelle != null ? { istQuelle: row.ist_quelle as Employee['istQuelle'] } : {}),
+  ...(row.erfassungsart != null ? { erfassungsart: row.erfassungsart as Employee['erfassungsart'] } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hoursBalance:           row.hours_balance             ?? undefined,
   vacationBalance:        row.vacation_balance          ?? undefined,
@@ -210,6 +222,58 @@ async function saveEmployeeStationsBestEffort(emp: Employee): Promise<void> {
     }
     // Echte Fehler propagieren → upsertEmployee gibt false zurück (kein stilles Maskieren).
     throw new Error(`Stationsfelder konnten nicht gespeichert werden: ${error.message ?? 'unbekannter Fehler'}`);
+  }
+}
+
+/**
+ * Gezieltes Update NUR der Stations-/Positionsfelder eines Mitarbeiters.
+ *
+ * Employees-Write-Gate: Die employees-Tabelle wird grundsätzlich nur vom
+ * Personalstamm-Formular geschrieben. Dieser Pfad ist eine BEWUSST sanktionierte
+ * Ausnahme (analog daysOff/preferredWorkDays im Dienstplan): Er schreibt
+ * ausschliesslich primary_station/secondary_stations eines EXISTIERENDEN
+ * Mitarbeiters (Positions-Pop-up auf der Personalbedarf-Seite) — dieselbe
+ * Zuordnung wie Personalstamm → «Positionen/Qualifikationen» (SSOT), kein
+ * voller Datensatz-Upsert, daher keine Reaktivierungs-/Clobber-Gefahr.
+ * Merge-Verhalten: Aufrufer lesen den MA frisch aus der DB und übergeben nur
+ * die neuen Stationswerte; andere Felder bleiben unberührt.
+ *
+ * Mandanten-Scope: Die employees-Tabelle hat KEINE restaurant_id-Spalte —
+ * Tenant = ID-Präfix (b-* = Beaulieu). Das UPDATE wird deshalb zusätzlich zum
+ * id-Match auf das Präfix des übergebenen Mandanten eingeschränkt (analog
+ * loadEmployees); 0 aktualisierte Zeilen gelten als Fehler. Das ist dieselbe
+ * TS-seitige Tenant-Isolation wie bei allen anderen employees-Schreibpfaden
+ * (vgl. Memory «Tenant-safe upsert under RLS»); echte DB-erzwungene Trennung
+ * bräuchte eine restaurant_id-Spalte + RLS (bekannte, app-weite Grenze).
+ */
+export async function updateEmployeeStations(
+  empId: string,
+  patch: { primaryStation?: string; secondaryStations?: string[] },
+  tenantId: TenantId,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    // Tenant-Präfix-Guard: falsche Mandanten-IDs gar nicht erst anfragen.
+    const isBeaulieuId = empId.startsWith('b-');
+    if ((tenantId === 'beaulieu') !== isBeaulieuId) {
+      return { ok: false, error: `Mitarbeiter-ID ${empId} gehört nicht zum Mandanten ${tenantId}` };
+    }
+    const dbPatch: Record<string, unknown> = {};
+    if ('primaryStation' in patch)    dbPatch.primary_station    = patch.primaryStation ?? null;
+    if ('secondaryStations' in patch) dbPatch.secondary_stations = patch.secondaryStations ?? [];
+    if (Object.keys(dbPatch).length === 0) return { ok: true };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (supabase as any)
+      .from('employees')
+      .update(dbPatch)
+      .eq('id', empId);
+    // Zusätzlich in der Query verankern (id UND Tenant-Präfix müssen passen).
+    q = tenantId === 'beaulieu' ? q.like('id', 'b-%') : q.not('id', 'like', 'b-%');
+    const { data, error } = await q.select('id');
+    if (error) return { ok: false, error: error.message ?? 'unbekannter Fehler' };
+    if (!data || data.length === 0) return { ok: false, error: 'Mitarbeiter nicht gefunden (0 Zeilen aktualisiert)' };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -328,57 +392,6 @@ export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'ol
     console.error('[supabase-db] upsertEmployee exception:', e);
     return false;
   }
-}
-
-/**
- * Selbst-Anmeldung in einen echten Mitarbeiterdatensatz umwandeln.
- * Verwendet NUR die garantiert vorhandenen Basisspalten der employees-Tabelle.
- * Funktioniert auch wenn die erweiterten HR-Migrationen (20260315_*.sql) noch
- * nicht ausgeführt wurden.
- *
- * Rückgabe: { id, errorMessage }
- *   id           — UUID des neu angelegten Mitarbeiters (null bei Fehler)
- *   errorMessage — Exakter Supabase-Fehler für Toast/Logging (null bei Erfolg)
- */
-export async function activateSubmissionAsEmployee(
-  sub: OnboardingSubmission,
-): Promise<{ id: string | null; errorMessage: string | null }> {
-  const fd = sub.formData;
-
-  // ── Schritt 1: Nur Basisspalten schreiben (existieren immer) ──────────────
-  const baseRow = {
-    id:               sub.id,
-    name:             sub.name,
-    department:       'service' as const,
-    employment_type:  ((fd.preferredEmploymentType as string) || 'aushilfe') as 'aushilfe' | 'vollzeit' | 'teilzeit' | 'minijob',
-    hourly_wage:      0,
-    weekly_hours:     null as number | null,
-    days_off:         [] as string[],
-    preferred_work_days: [] as string[],
-  };
-
-  const { error: insertErr } = await supabase
-    .from('employees')
-    .upsert(baseRow, { onConflict: 'id' });
-
-  if (insertErr) {
-    const msg = `${insertErr.code}: ${insertErr.message}`;
-    console.error('[activateSubmissionAsEmployee] INSERT fehlgeschlagen:', insertErr);
-    return { id: null, errorMessage: msg };
-  }
-
-  // ── Schritt 2: Submission löschen ─────────────────────────────────────────
-  const { error: delErr } = await supabase
-    .from('onboarding_submissions')
-    .delete()
-    .eq('id', sub.id);
-
-  if (delErr) {
-    console.warn('[activateSubmissionAsEmployee] Submission konnte nicht gelöscht werden:', delErr);
-    // Kein hard failure — Mitarbeiter ist bereits angelegt
-  }
-
-  return { id: sub.id, errorMessage: null };
 }
 
 /**
@@ -1286,32 +1299,6 @@ export async function loadActualHourEntriesForMonth(
 // ─── Re-Import: prüfen + löschen ──────────────────────────────────────────────
 
 /**
- * Gibt die IDs aller bestätigten Mitarbeiter (status = 'confirmed') für den Monat zurück.
- * Wird vor dem Re-Import aufgerufen um bestätigte Arbeitszeitblätter zu schützen.
- */
-export async function checkConfirmedEmployees(
-  employeeIds: string[],
-  year: number,
-  month: number,
-): Promise<Set<string>> {
-  if (!employeeIds.length) return new Set();
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('employee_timesheet_confirmations')
-      .select('employee_id')
-      .in('employee_id', employeeIds)
-      .eq('year', year)
-      .eq('month', month)
-      .eq('status', 'confirmed');
-    if (error) return new Set();
-    return new Set((data ?? []).map((r: { employee_id: string }) => r.employee_id));
-  } catch {
-    return new Set();
-  }
-}
-
-/**
  * Prüft ob für die angegebenen Mitarbeiter im Monat bereits actual_hours-Daten existieren.
  * Wird vor dem Import aufgerufen um Re-Import zu erkennen.
  */
@@ -1463,8 +1450,7 @@ export async function deleteMonthDataForEmployees(
 
 export async function loadSetting<T>(key: string): Promise<T | null> {
   try {
-    const { data, error } = await supabase
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', key)
       .maybeSingle();
@@ -1478,7 +1464,7 @@ export async function loadSetting<T>(key: string): Promise<T | null> {
 
 export async function saveSetting<T>(key: string, value: T): Promise<void> {
   try {
-    await supabase.from('app_settings').upsert(
+    await appSettingsTable().upsert(
       { key, value: value as object },
       { onConflict: 'key' }
     );
@@ -1487,326 +1473,6 @@ export async function saveSetting<T>(key: string, value: T): Promise<void> {
   }
 }
 
-// ─── Onboarding-Flow ──────────────────────────────────────────────────────────
-
-export interface OnboardingDoc {
-  type: string;
-  name: string;
-  path: string;
-  url?: string;
-  uploadedAt: string;
-}
-
-export interface OnboardingPublicEmployee {
-  id: string;
-  name: string;
-  department: string;
-  onboardingStatus: string;
-  positionTitle?: string;
-  contractStart?: string;
-  contractType?: string;
-  // Pre-fillable personal fields
-  birthDate?: string;
-  nationality?: string;
-  permitType?: string;
-  maritalStatus?: string;
-  spouseEmployed?: boolean;
-  spouseLivesInSwitzerland?: boolean;
-  phone?: string;
-  email?: string;
-  addressStreet?: string;
-  addressZip?: string;
-  addressCity?: string;
-  ahvNumber?: string;
-  iban?: string;
-}
-
-/** Mitarbeiter anhand des Onboarding-Tokens laden (ohne Login) */
-export async function findEmployeeByToken(token: string): Promise<OnboardingPublicEmployee | null> {
-  try {
-    const { data, error } = await supabase
-      .from('employees')
-      .select(`
-        id, name, department, onboarding_status,
-        position_title, contract_start, contract_type,
-        birth_date, nationality, permit_type, marital_status,
-        spouse_employed, spouse_lives_in_switzerland,
-        phone, email,
-        address_street, address_zip, address_city,
-        ahv_number, iban
-      `)
-      .eq('onboarding_token', token)
-      .single();
-
-    if (error || !data) {
-      console.warn('[findEmployeeByToken] not found or error:', error?.message);
-      return null;
-    }
-
-    return {
-      id:                      data.id,
-      name:                    data.name,
-      department:              data.department,
-      onboardingStatus:        data.onboarding_status,
-      positionTitle:           data.position_title           ?? undefined,
-      contractStart:           data.contract_start           ?? undefined,
-      contractType:            data.contract_type            ?? undefined,
-      birthDate:               data.birth_date               ?? undefined,
-      nationality:             data.nationality              ?? undefined,
-      permitType:              data.permit_type              ?? undefined,
-      maritalStatus:           data.marital_status           ?? undefined,
-      spouseEmployed:          data.spouse_employed          ?? undefined,
-      spouseLivesInSwitzerland: data.spouse_lives_in_switzerland ?? undefined,
-      phone:                   data.phone                    ?? undefined,
-      email:                   data.email                    ?? undefined,
-      addressStreet:           data.address_street           ?? undefined,
-      addressZip:              data.address_zip              ?? undefined,
-      addressCity:             data.address_city             ?? undefined,
-      ahvNumber:               data.ahv_number               ?? undefined,
-      iban:                    data.iban                     ?? undefined,
-    };
-  } catch (e) {
-    console.error('[findEmployeeByToken] exception:', e);
-    return null;
-  }
-}
-
-/** Onboarding-Status auf in_progress setzen (Link wurde geöffnet) */
-export async function markOnboardingInProgress(employeeId: string): Promise<void> {
-  try {
-    await supabase
-      .from('employees')
-      .update({ onboarding_status: 'in_progress' })
-      .eq('id', employeeId);
-  } catch (e) {
-    console.error('[markOnboardingInProgress] exception:', e);
-  }
-}
-
-/** Onboarding-Daten speichern und Status auf completed setzen */
-export async function submitOnboardingData(
-  employeeId: string,
-  formData: {
-    birthDate?: string;
-    nationality?: string;
-    phone?: string;
-    email?: string;
-    addressStreet?: string;
-    addressZip?: string;
-    addressCity?: string;
-    ahvNumber?: string;
-    iban?: string;
-    permitType?: string;
-    maritalStatus?: string;
-    spouseEmployed?: boolean | null;
-    spouseLivesInSwitzerland?: boolean | null;
-  },
-  documents: OnboardingDoc[]
-): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('employees')
-      .update({
-        birth_date:                  formData.birthDate        || null,
-        nationality:                 formData.nationality      || null,
-        phone:                       formData.phone            || null,
-        email:                       formData.email            || null,
-        address_street:              formData.addressStreet    || null,
-        address_zip:                 formData.addressZip       || null,
-        address_city:                formData.addressCity      || null,
-        ahv_number:                  formData.ahvNumber        || null,
-        iban:                        formData.iban             || null,
-        permit_type:                 formData.permitType       || null,
-        marital_status:              formData.maritalStatus    || null,
-        spouse_employed:             formData.spouseEmployed   ?? null,
-        spouse_lives_in_switzerland: formData.spouseLivesInSwitzerland ?? null,
-        onboarding_documents:        documents.length > 0 ? JSON.stringify(documents) : null,
-        onboarding_status:           'completed',
-      })
-      .eq('id', employeeId);
-
-    if (error) {
-      console.error('[submitOnboardingData] error:', error);
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.error('[submitOnboardingData] exception:', e);
-    return false;
-  }
-}
-
-// ─── Onboarding Submissions (standalone Tabelle, kein Abhängigkeit von employees) ───
-
-/** Typ für eine eingegangene Selbst-Anmeldung */
-export interface OnboardingSubmission {
-  id:          string;
-  submittedAt: string;
-  name:        string;
-  formData:    Record<string, unknown>;
-}
-
-/**
- * Neue Selbst-Anmeldung in die `onboarding_submissions`-Tabelle schreiben.
- * Gibt { id, error } zurück — error enthält den genauen Supabase-Fehler als String.
- *
- * VORAUSSETZUNG: Migration 20260316_onboarding_submissions.sql muss in Supabase
- * ausgeführt worden sein (einmalig im SQL-Editor).
- */
-export async function createOnboardingSubmission(data: {
-  name:     string;
-  formData: Record<string, unknown>;
-}): Promise<{ id: string | null; error: string | null }> {
-  try {
-    const id = crypto.randomUUID();
-    const { error } = await supabase.from('onboarding_submissions').insert({
-      id,
-      name:      data.name,
-      form_data: data.formData,
-    });
-
-    if (error) {
-      const isPermissionError = error.code === '42501' || error.code === '42000';
-      const msg = isPermissionError
-        ? `BERECHTIGUNG: Anon-INSERT auf onboarding_submissions ist blockiert. Führen Sie die SQL-Migration im Supabase SQL-Editor aus (GRANT INSERT ON TABLE public.onboarding_submissions TO anon). [${error.code}]`
-        : `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`;
-      console.error('[createOnboardingSubmission] Supabase-Fehler:', error);
-      return { id: null, error: msg };
-    }
-
-    console.log('[createOnboardingSubmission] Gespeichert, id=', id);
-    return { id, error: null };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error('[createOnboardingSubmission] Exception:', e);
-    return { id: null, error: msg };
-  }
-}
-
-/**
- * Alle Selbst-Anmeldungen laden (nur für eingeloggte Admins).
- * Prüft zusätzlich ob:
- *  - die Tabelle existiert (tableExists)
- *  - anonyme Benutzer neue Anmeldungen einreichen können (anonInsertBlocked)
- *  - der employee_status-Spalte in employees fehlt (employeeStatusMissing)
- */
-export async function loadOnboardingSubmissions(): Promise<{
-  data: OnboardingSubmission[];
-  tableExists: boolean;
-  permissionError: boolean;
-  anonInsertBlocked: boolean;
-  employeeStatusMissing: boolean;
-}> {
-  // ── Admin-SELECT ──────────────────────────────────────────────────────────
-  console.log('[Banner-Check] start — Tabelle: onboarding_submissions');
-  let tableExists     = true;
-  let permissionError = false;
-  let submissions: OnboardingSubmission[] = [];
-
-  try {
-    console.log('[Banner-Check] führe SELECT auf onboarding_submissions aus...');
-    const { data, error } = await supabase
-      .from('onboarding_submissions')
-      .select('*')
-      .order('submitted_at', { ascending: false });
-
-    if (error) {
-      tableExists     = error.code !== 'PGRST205';
-      permissionError = error.code === '42501';
-      console.warn('[Banner-Check] SELECT Fehler:', { code: error.code, message: error.message, tableExists, permissionError });
-    } else {
-      submissions = (data ?? []).map(row => ({
-        id:          row.id as string,
-        submittedAt: row.submitted_at as string,
-        name:        row.name as string,
-        formData:    (row.form_data ?? {}) as Record<string, unknown>,
-      }));
-      console.log('[Banner-Check] SELECT OK — Anzahl Submissions:', submissions.length, '| tableExists: true | permissionError: false');
-    }
-  } catch (e) {
-    console.error('[loadOnboardingSubmissions] Exception:', e);
-    tableExists = false;
-  }
-
-  // ── Anon-INSERT Test ──────────────────────────────────────────────────────
-  // Kein separater Supabase-Client mehr (würde Auth-State korrumpieren).
-  // Wenn SELECT erfolgreich war, nehmen wir an, dass RLS korrekt konfiguriert ist.
-  // anonInsertBlocked = false bedeutet: kein Problem, Banner nicht nötig.
-  const anonInsertBlocked = false;
-  console.log('[Banner-Check] anonInsertBlocked:', anonInsertBlocked, '(wird nicht mehr live getestet — RLS als korrekt angenommen wenn SELECT OK)');
-
-  // ── employee_status Spalte prüfen ─────────────────────────────────────────
-  let employeeStatusMissing = false;
-  try {
-    console.log('[Banner-Check] prüfe employee_status-Spalte in employees...');
-    const { error: colErr } = await supabase
-      .from('employees')
-      .update({ employee_status: 'active' })
-      .eq('id', '00000000-0000-0000-0000-000000000000'); // non-existent row
-    // If the column doesn't exist, Supabase returns PGRST204
-    employeeStatusMissing = colErr?.code === 'PGRST204';
-    console.log('[Banner-Check] employee_status Spalte fehlend:', employeeStatusMissing, colErr ? `(Fehler: ${colErr.code})` : '(kein Fehler)');
-  } catch {
-    // ignore
-  }
-
-  console.log('[Banner-Check] Ergebnis:', { tableExists, permissionError, anonInsertBlocked, employeeStatusMissing });
-
-  return {
-    data:                 submissions,
-    tableExists,
-    permissionError,
-    anonInsertBlocked,
-    employeeStatusMissing,
-  };
-}
-
-/** Selbst-Anmeldung löschen (nach Aktivierung oder Ablehnung) */
-export async function deleteOnboardingSubmission(id: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('onboarding_submissions')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('[deleteOnboardingSubmission] Fehler:', error);
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.error('[deleteOnboardingSubmission] Exception:', e);
-    return false;
-  }
-}
-
-/** @deprecated Verwende createOnboardingSubmission(). Neuen Mitarbeiter aus Selbst-Anmeldung anlegen (pending_review) */
-export async function createPendingEmployee(data: {
-  name: string;
-  employmentType?: string;
-  positionTitle?: string;
-  contractStart?: string;
-  birthDate?: string;
-  nationality?: string;
-  phone?: string;
-  email?: string;
-  addressStreet?: string;
-  addressZip?: string;
-  addressCity?: string;
-  ahvNumber?: string;
-  iban?: string;
-  permitType?: string;
-  maritalStatus?: string;
-  spouseEmployed?: boolean | null;
-  spouseLivesInSwitzerland?: boolean | null;
-  documents?: OnboardingDoc[];
-}): Promise<string | null> {
-  const result = await createOnboardingSubmission({
-    name: data.name,
-    formData: { ...data },
-  });
-  return result.id;
-}
 
 /** Mitarbeiter aktivieren (pending_review → active) */
 export async function activateEmployee(id: string): Promise<boolean> {
@@ -1820,42 +1486,6 @@ export async function activateEmployee(id: string): Promise<boolean> {
   } catch (e) {
     console.error('[activateEmployee] exception:', e);
     return false;
-  }
-}
-
-/** Datei in Supabase Storage hochladen */
-export async function uploadOnboardingFile(
-  employeeId: string,
-  file: File,
-  docType: string
-): Promise<OnboardingDoc | null> {
-  try {
-    const ext = file.name.split('.').pop() ?? 'bin';
-    const path = `${employeeId}/${docType}_${Date.now()}.${ext}`;
-
-    const { data, error } = await supabase.storage
-      .from('onboarding-docs')
-      .upload(path, file, { cacheControl: '3600', upsert: false });
-
-    if (error) {
-      console.error('[uploadOnboardingFile] storage error:', error);
-      return null;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from('onboarding-docs')
-      .getPublicUrl(data.path);
-
-    return {
-      type:       docType,
-      name:       file.name,
-      path:       data.path,
-      url:        urlData.publicUrl,
-      uploadedAt: new Date().toISOString(),
-    };
-  } catch (e) {
-    console.error('[uploadOnboardingFile] exception:', e);
-    return null;
   }
 }
 
@@ -2677,67 +2307,107 @@ export async function saveManualDayCorrection(params: {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Schedule Change Log + Publication Snapshots
-// Tabellen: schedule_change_log, schedule_publication_snapshots
-// Migration: supabase/migrations/20260529_schedule_change_log.sql
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── MIRUS-Import: Erfassungsart & Dienstplan-Ist-Backup ─────────────────────
 
-export interface ScheduleChangeLogEntry {
-  tenant_id:   string;
+/**
+ * Chirurgisches Einzelspalten-Update employees.erfassungsart.
+ * Bewusst KEIN employeeToDb/upsert (Employees-Write-Gate: nur das
+ * Personalstamm-Formular schreibt volle Datensätze) — hier wird ausschliesslich
+ * die Kennzeichnungs-Spalte gesetzt, kein anderes Feld kann geclobbert werden.
+ */
+export async function updateEmployeeErfassungsart(
+  employeeId: string,
+  erfassungsart: 'MIRUS' | 'MANUELL',
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('employees')
+    .update({ erfassungsart } as never)
+    .eq('id', employeeId);
+  if (error) {
+    console.error('[supabase-db] updateEmployeeErfassungsart:', error.message);
+    return false;
+  }
+  return true;
+}
+
+export interface DienstplanIstBackupRow {
   employee_id: string;
-  date:        string;   // 'yyyy-MM-dd'
-  department:  string | null;
-  field_name:  string;
-  old_value:   string | null;
-  new_value:   string | null;
-  changed_by:  string;
-  change_type: 'first_publish' | 'update_after_publish';
-  note?:       string;
-  revision:    number;
+  date: string;               // ISO
+  hours: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  absence_type?: string | null;
+  is_additional_cost_ist?: boolean;
+  source?: string | null;
 }
 
-/**
- * Schreibt mehrere Änderungseinträge in schedule_change_log.
- * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
- */
-export async function insertScheduleChangeLogs(
-  entries: ScheduleChangeLogEntry[],
-): Promise<void> {
-  if (entries.length === 0) return;
-  const { error } = await supabase
-    .from('schedule_change_log')
-    .insert(entries);
+export interface DienstplanIstBackup {
+  id: string;
+  tenant_id: string;
+  month: string;              // 'YYYY-MM'
+  created_at: string;
+  label: string | null;
+  /** Abgedeckter Bereich: alle (employeeIds × dates)-Zellen sind im Snapshot enthalten
+   *  — fehlt eine Zelle in rows, war sie zum Backup-Zeitpunkt LEER. */
+  scope: { employeeIds: string[]; dates: string[] };
+  rows: DienstplanIstBackupRow[];
+}
+
+// dienstplan_ist_backup ist (noch) nicht in den generierten Supabase-Typen —
+// einzelner isolierter Cast analog appSettingsTable-Muster.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dienstplanIstBackupTable = () => (supabase as any).from('dienstplan_ist_backup');
+
+/** Snapshot VOR einem MIRUS-Import speichern. Liefert die Backup-ID oder null. */
+export async function saveDienstplanIstBackup(
+  tenantId: string,
+  month: string,
+  label: string,
+  scope: { employeeIds: string[]; dates: string[] },
+  rows: DienstplanIstBackupRow[],
+): Promise<string | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .insert({ tenant_id: tenantId, month, label, scope, rows })
+    .select('id')
+    .single();
   if (error) {
-    console.error('[supabase-db] insertScheduleChangeLogs error:', error.message, error.code);
-  } else {
-    console.log(`[supabase-db] insertScheduleChangeLogs OK — ${entries.length} rows`);
+    console.error('[supabase-db] saveDienstplanIstBackup:', error.message);
+    return null;
   }
+  return data?.id ?? null;
 }
 
-export interface SchedulePublicationSnapshot {
-  tenant_id:     string;
-  year:          number;
-  month:         number;
-  department:    string;
-  published_by:  string;
-  revision:      number;
-  snapshot_json: Record<string, unknown>;
-}
-
-/**
- * Speichert einen vollständigen Publikations-Snapshot in schedule_publication_snapshots.
- * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
- */
-export async function insertSchedulePublicationSnapshot(
-  snap: SchedulePublicationSnapshot,
-): Promise<void> {
-  const { error } = await supabase
-    .from('schedule_publication_snapshots')
-    .insert(snap);
+/** Neuestes Backup für Mandant+Monat laden (für «Rückgängig»). */
+export async function loadLatestDienstplanIstBackup(
+  tenantId: string,
+  month: string,
+): Promise<DienstplanIstBackup | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('month', month)
+    .order('created_at', { ascending: false })
+    .limit(1);
   if (error) {
-    console.error('[supabase-db] insertSchedulePublicationSnapshot error:', error.message, error.code);
-  } else {
-    console.log(`[supabase-db] insertSchedulePublicationSnapshot OK — ${snap.tenant_id} ${snap.year}-${String(snap.month).padStart(2, '0')} dept=${snap.department} rev=${snap.revision}`);
+    console.error('[supabase-db] loadLatestDienstplanIstBackup:', error.message);
+    return null;
   }
+  return (data && data[0]) ? (data[0] as DienstplanIstBackup) : null;
+}
+
+/** Backup per ID laden (Import-Center-Undo referenziert das Backup des Laufs). */
+export async function loadDienstplanIstBackupById(id: string): Promise<DienstplanIstBackup | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .select('*').eq('id', id).maybeSingle();
+  if (error) {
+    console.error('[supabase-db] loadDienstplanIstBackupById:', error.message);
+    return null;
+  }
+  return (data as DienstplanIstBackup | null) ?? null;
+}
+
+/** Verbrauchtes Backup nach erfolgreichem Undo entfernen. */
+export async function deleteDienstplanIstBackup(id: string): Promise<void> {
+  const { error } = await dienstplanIstBackupTable().delete().eq('id', id);
+  if (error) console.error('[supabase-db] deleteDienstplanIstBackup:', error.message);
 }

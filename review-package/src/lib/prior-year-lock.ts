@@ -20,7 +20,7 @@
  *   [PRIOR-YEAR] values preserved: yes
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 // ── Typen ──────────────────────────────────────────────────────────────────
 
@@ -47,8 +47,7 @@ export async function getLockState(
   year: number,
 ): Promise<PriorYearLockState> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', lockKey(tenantId, year))
       .maybeSingle();
@@ -62,6 +61,24 @@ export async function getLockState(
   } catch {
     return { locked: false };
   }
+}
+
+/**
+ * Strikte Lock-Prüfung für Schreibpfade: wirft bei Lesefehlern statt
+ * {locked:false} zurückzugeben (fail-closed). Nur ein erfolgreicher Read mit
+ * locked:false darf einen Import freigeben.
+ */
+export async function getLockStateStrict(
+  tenantId: string,
+  year: number,
+): Promise<PriorYearLockState> {
+  const { data, error } = await appSettingsTable()
+    .select('value')
+    .eq('key', lockKey(tenantId, year))
+    .maybeSingle();
+  if (error) throw new Error(`Jahres-Sperre konnte nicht geprüft werden: ${error.message}`);
+  if (!data) return { locked: false };
+  return (data.value as PriorYearLockState) ?? { locked: false };
 }
 
 export async function isLocked(tenantId: string, year: number): Promise<boolean> {
@@ -78,8 +95,7 @@ export async function setLockState(
 ): Promise<{ error: string | null }> {
   const key = lockKey(tenantId, year);
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert(
         { key, value: { ...state, tenantId, year } as unknown as Record<string, unknown> },
         { onConflict: 'key' },

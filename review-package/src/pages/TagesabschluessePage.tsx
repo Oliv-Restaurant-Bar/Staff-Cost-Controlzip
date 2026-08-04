@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { Info, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -7,6 +7,7 @@ import { AdyenAbgleichSection } from '@/components/umsatzabstimmung/AdyenAbgleic
 import { TagesabschlussSection } from '@/components/umsatzabstimmung/TagesabschlussSection';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 
 const currentYear = new Date().getFullYear();
 const YEAR_OPTIONS = [currentYear, currentYear - 1, currentYear - 2];
@@ -20,7 +21,12 @@ const YEAR_OPTIONS = [currentYear, currentYear - 1, currentYear - 2];
 export default function TagesabschluessePage() {
   const { isAdmin, isBeaulieuManager } = usePermissions();
   const { tenantId } = useTenant();
-  const [year, setYear] = useState(currentYear);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM ⇒ Jahresauswahl)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year, setYear] = useState(
+    monatParam && YEAR_OPTIONS.includes(monatParam.year) ? monatParam.year : currentYear,
+  );
 
   if (isBeaulieuManager || !isAdmin) return <Navigate to="/" replace />;
 

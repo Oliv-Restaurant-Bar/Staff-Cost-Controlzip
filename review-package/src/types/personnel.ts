@@ -23,6 +23,27 @@ export interface Employee {
   socialCostFactor?: number;        // AG-Sozialkostenanteil z.B. 1.13 = 13%
   has13thSalary?: boolean;          // 13. Monatslohn vereinbart?
 
+  /**
+   * Ist-Quelle für die Personalkosten-Tagesregel (employees.ist_quelle):
+   *   'mirus'   = importierte Ist-Stunden aus MIRUS
+   *   'manuell' = manuell nachgetragenes Ist (gleiches Ist-Feld im Dienstplan)
+   *   'plan'    = Plan gilt als Ist (keine Ist-Erfassung nötig)
+   * Fehlt der Wert, greift getEffectiveIstQuelle() mit einer Default-Ableitung:
+   *   Monatslohn-MA ('fix') → 'mirus'; Stundenlohn/Aushilfe → 'plan'.
+   * Der Default wird NICHT in die DB zurückgeschrieben.
+   */
+  istQuelle?: 'mirus' | 'manuell' | 'plan';
+
+  /**
+   * Erfassungsart für den MIRUS-Ist-Import (employees.erfassungsart):
+   *   'MIRUS'   = gestempelter Mitarbeiter — wird vom MIRUS-Import geschrieben
+   *   'MANUELL' = Aushilfe / nicht gestempelt — Import fasst diese MA NIE an
+   * Default (falls NULL): Wer in einem MIRUS-Import vorkommt = 'MIRUS',
+   * alle anderen = 'MANUELL'. Reine Kennzeichnung/Filter — keine Auswirkung
+   * auf Abteilungen, Sortierung oder Kostenrechnung (dafür gilt istQuelle).
+   */
+  erfassungsart?: 'MIRUS' | 'MANUELL';
+
   // ─── Persönliche Daten (für Onboarding / Vertrag) ──────────────────────
   birthDate?: string;               // ISO-Datum
   nationality?: string;
@@ -121,12 +142,21 @@ export interface DailyBudget {
   actualBeverage?: number;
   previousYearFood?: number;
   previousYearBeverage?: number;
+  /**
+   * ISO-Zeitstempel des letzten Updates dieses Tages — wird von
+   * safeUpsertDailyBudgets gesetzt und steuert den zeitbasierten Merge
+   * (jüngerer Stand gewinnt; stale Geräte verdrängen nichts mehr).
+   */
+  updatedAt?: string;
 }
 
-// MWST rates for revenue calculation
+// MWST rates for revenue calculation — konfigurierbar über src/lib/mwst.ts
+// (KV-Key mwst_rates_v1, Defaults 8.1 % / 2.6 %). Live-Getter, damit alle
+// Konsumenten automatisch die konfigurierten Sätze verwenden.
+import { getMwstRates } from '@/lib/mwst';
 export const VAT_RATES = {
-  standard: 0.081, // 8.1% for regular revenue
-  takeaway: 0.026, // 2.6% for takeaway revenue
+  get standard(): number { return getMwstRates().standard; }, // Default 8.1 %
+  get takeaway(): number { return getMwstRates().takeaway; }, // Default 2.6 %
 };
 
 // Helper to convert gross to net revenue

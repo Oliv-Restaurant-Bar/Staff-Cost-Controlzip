@@ -31,7 +31,26 @@ vi.mock('@/hooks/useStaffingRequirements', () => ({
 vi.mock('@/hooks/useDayDemandContext', () => ({
   useDayDemandContext: () => demandState.value,
 }));
-
+// Neue Profil-/Event-Hooks (Tenant-abhängig) — mit Defaults ohne Zuschlag mocken.
+vi.mock('@/hooks/useStaffingProfiles', () => ({
+  useStaffingProfiles: () => ({
+    tenantId: 'beaulieu',
+    config: {
+      profiles: [
+        { key: 'standard', label: 'Standard', activeFrom: null, activeTo: null, locked: false, baseKey: null },
+        { key: 'winter', label: 'Winter/UG', activeFrom: '10-01', activeTo: '03-31', locked: false, baseKey: 'standard' },
+      ],
+      cdsPriority: [],
+      revenueBudgetByWeekday: {},
+      ugSurcharge: { enabled: true, entries: [], weekdays: [5, 6] },
+    },
+    loading: false,
+    save: async () => {},
+  }),
+}));
+vi.mock('@/hooks/useUgEventDays', () => ({
+  useUgEventDays: () => ({ eventDays: new Set<string>(), loading: false, toggle: async () => {} }),
+}));
 import { StaffingComparisonPanel } from '@/components/schedule-planner/StaffingComparisonPanel';
 
 // Montag → getISODay = 1 (passt zur Standard-Saison + weekday 1 der Fixtures).

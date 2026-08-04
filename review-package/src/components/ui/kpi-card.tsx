@@ -17,6 +17,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { InfoTip } from '@/components/ui/info-tip';
 import { TONE_DOT, TONE_TEXT, type Tone } from '@/components/ui/tones';
 
 export function KpiCard({
@@ -25,6 +26,7 @@ export function KpiCard({
   sub,
   tone = 'neutral',
   trend,
+  info,
   className,
   onClick,
   'data-testid': dataTestid,
@@ -36,6 +38,8 @@ export function KpiCard({
   tone?: Tone;
   /** Expliziter Trend: Pfeilrichtung + Bewertung + Text, z. B. {direction:'up', tone:'good', label:'+4.2 %'} */
   trend?: { direction: 'up' | 'down' | 'flat'; tone: Tone; label: string };
+  /** Optionaler InfoTip oben rechts (bei klickbaren Karten AUSSERHALB des Buttons — kein Button-in-Button). */
+  info?: string;
   className?: string;
   /** Optional: macht die Karte klickbar (rendert als Button, z. B. für Drilldown-Dialoge). */
   onClick?: () => void;
@@ -64,8 +68,14 @@ export function KpiCard({
 
   const base = 'flex min-h-[80px] flex-col gap-1 rounded-lg border border-border bg-card p-3';
 
+  const infoEl = info ? (
+    <span className="absolute right-1.5 top-1.5 z-10">
+      <InfoTip text={info} />
+    </span>
+  ) : null;
+
   if (onClick) {
-    return (
+    const btn = (
       <button
         type="button"
         onClick={onClick}
@@ -73,17 +83,25 @@ export function KpiCard({
         className={cn(
           base,
           'text-left transition-colors hover:border-primary/60 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-          className,
+          info ? 'h-full w-full pr-7' : className,
         )}
       >
         {inner}
       </button>
     );
+    if (!infoEl) return btn;
+    return (
+      <div className={cn('relative', className)}>
+        {btn}
+        {infoEl}
+      </div>
+    );
   }
 
   return (
-    <div className={cn(base, className)} data-testid={dataTestid}>
+    <div className={cn(base, info && 'relative pr-7', className)} data-testid={dataTestid}>
       {inner}
+      {infoEl}
     </div>
   );
 }

@@ -85,6 +85,8 @@ const CATEGORY_TO_ROW: Record<string, string> = {
   beverage_cost:          'cogs_bev',
   wareneinsatz_diverses:  'cogs_other',
   warenaufwand_diverses:  'cogs_other',
+  veraenderung_warenvorrat: 'cogs_lager',
+  lagerveraenderung:        'cogs_lager',
   // Sozialleistungen
   sozialleistungen:       'personnel_social',
   ahv:                    'personnel_social',
@@ -197,11 +199,26 @@ export const PL_STRUCTURE: PLRowDef[] = [
     indent: 0, showPercent: false, valueRole: 'negative',
     computedFrom: { type: 'sum', rowIds: ['cogs_other'] },
   },
-  // Gesamtwarenaufwand (id bleibt `total_cogs` — alle Konsumenten referenzieren ihn per id).
+  // Wareneinkauf = direkter + übriger Warenaufwand, OHNE Lagerveränderung (4900).
+  // Basis der reinen Einkaufs-WKQ (financial-metrics: cogs_ratio).
   {
-    id: 'total_cogs', type: 'subtotal', label: 'Gesamtwarenaufwand',
+    id: 'total_cogs_einkauf', type: 'subtotal', label: 'Wareneinkauf (ohne Lagerveränderung)',
     indent: 0, showPercent: false, valueRole: 'negative',
     computedFrom: { type: 'sum', rowIds: ['total_cogs_direct', 'total_cogs_uebrig'] },
+  },
+  // Veränderung Warenvorrat (Konto 4900): Lagerveränderung, fliesst in den
+  // Wareneinsatz (WES), NICHT in den Wareneinkauf/die Einkaufs-WKQ.
+  {
+    id: 'cogs_lager', type: 'line', label: 'Veränderung Warenvorrat',
+    indent: 1, showPercent: false, valueRole: 'negative',
+    categoryIds: ['veraenderung_warenvorrat', 'lagerveraenderung'],
+  },
+  // Wareneinsatz inkl. Lagerveränderung (id bleibt `total_cogs` — alle
+  // Konsumenten referenzieren ihn per id; Wert unverändert = Einkauf + 4900).
+  {
+    id: 'total_cogs', type: 'subtotal', label: 'Wareneinsatz (inkl. Lagerveränderung)',
+    indent: 0, showPercent: false, valueRole: 'negative',
+    computedFrom: { type: 'sum', rowIds: ['total_cogs_einkauf', 'cogs_lager'] },
   },
   {
     id: 'gross_profit_1', type: 'result', label: 'Bruttogewinn 1',
@@ -432,6 +449,71 @@ export function buildCogsBudgetSplitForMonth(
   return any ? { direct, uebrig } : undefined;
 }
 
+/**
+ * Baut die `prevYearByRow`-Map (PL-Zeilen-ID → Vorjahreswert-CHF) für EINEN
+ * Monat — EXAKT die VJ-Logik der Erfolgsrechnung (extrahiert aus PLView,
+ * Single Source of Truth). Alle VJ-Konsumenten (PLView-Monatssicht,
+ * Financial-Metrics-Registry/Dashboard) leiten die VJ-Spalte hierüber ab,
+ * damit überall dieselben Vorjahreszahlen erscheinen.
+ *
+ * Prioritäten:
+ *   1. VJ-Umsatz: `effRec.revenuePreviousYear` (Tagesansicht-VJ-Netto, wird
+ *      vorgängig auf den effektiven Record gesetzt) schlägt
+ *      `prevRec.revenueActual` (reporting_v1 des Vorjahres).
+ *   2. Kosten: Konto-Kategorien (3-5-stellig) des Vorjahres-Records per
+ *      Kontenzuordnung auf PL-Zeilen; personnelCostActual des Vorjahres
+ *      → personnel_wages.
+ *   3. Fallbacks aus dem effektiven Record: personnelCostPreviousYear bzw.
+ *      (nur ohne Vorjahres-Record) expenseCategoriesPreviousYear.
+ *
+ * `lookupFn` ist injizierbar (Default = `lookupAccount`), damit die Funktion
+ * ohne localStorage rein getestet werden kann.
+ */
+export function buildPrevYearByRowForMonth(
+  prevRec: MonthlyFinancialRecord | undefined,
+  effRec:  MonthlyFinancialRecord | undefined,
+  lookupFn: (accountNumber: string) => { mapping?: { plCategory: string } | null } = lookupAccount,
+): Map<string, number> {
+  const prevYearByRow = new Map<string, number>();
+
+  // ── VJ-Umsatz: Tagesansicht hat höchste Priorität ─────────────────────────
+  if (effRec?.revenuePreviousYear) {
+    prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
+  } else if (prevRec?.revenueActual) {
+    prevYearByRow.set('revenue_total', prevRec.revenueActual);
+  }
+
+  const addAccountCategories = (cats: { categoryId?: string; amount?: number }[]) => {
+    for (const cat of cats) {
+      if (!cat.categoryId || !cat.amount) continue;
+      if (/^\d{3,5}$/.test(cat.categoryId)) {
+        const res = lookupFn(cat.categoryId);
+        if (res.mapping) {
+          const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory as keyof typeof PL_CATEGORY_TO_ROW_ID] ?? null;
+          if (rowId && rowId !== 'revenue_total') {
+            prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+          }
+        }
+      }
+    }
+  };
+
+  if (prevRec) {
+    if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
+    addAccountCategories(prevRec.expenseCategories ?? []);
+  }
+  // Fallback: personnelCostPreviousYear aus den effektiven Records
+  if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
+    prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
+  }
+  // Fallback: expenseCategoriesPreviousYear aus den effektiven Records
+  if (!prevRec) {
+    addAccountCategories(effRec?.expenseCategoriesPreviousYear ?? []);
+  }
+
+  return prevYearByRow;
+}
+
 // ─── Haupt-Berechnungslogik ───────────────────────────────────────────────────
 
 /**
@@ -654,7 +736,7 @@ export function computePLForMonth(
       if (!cogsWarnedAccounts.has(accountId)) {
         cogsWarnedAccounts.add(accountId);
         dataQualityWarnings.push(
-          `Konto ${accountId} ist dem Warenaufwand zugeordnet, liegt aber ausserhalb des Bereichs 4000–4900 — ` +
+          `Konto ${accountId} ist dem Warenaufwand zugeordnet, liegt aber ausserhalb des Bereichs 4000–4899 — ` +
           `Zwischentotal folgt der Kontenzuordnung (${catGroup === 'direct' ? 'Direkter' : 'Übriger'} Warenaufwand).`,
         );
       }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Check, UserPlus, Link2, AlertTriangle, RefreshCw, X, Ban, Sparkles, Save, History, Zap, Lightbulb } from 'lucide-react';
+import { Check, UserPlus, Link2, AlertTriangle, RefreshCw, X, Ban, Sparkles, Save, History, Zap, Lightbulb, Inbox } from 'lucide-react';
 import { Employee } from '@/types/personnel';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
@@ -30,7 +30,12 @@ export interface NameMatchInfo {
 
 export interface NameMatchOverride {
   importedName: string;
-  selectedEmployeeId: string | 'new' | 'skip';
+  /**
+   * 'park'   = Stunden als «Offene Stunden» parken (nichts wird zugeschrieben)
+   * 'create' = wie 'park', zusätzlich Hinweis auf Personalstamm-Anlage (nur allowPark)
+   * 'new'    = Alt-Semantik der Legacy-Importer (ohne allowPark)
+   */
+  selectedEmployeeId: string | 'new' | 'skip' | 'park' | 'create';
 }
 
 interface ImportMatchPreviewDialogProps {
@@ -40,6 +45,8 @@ interface ImportMatchPreviewDialogProps {
   existingEmployees: Employee[];
   onConfirm: (overrides: NameMatchOverride[]) => void;
   onCancel: () => void;
+  /** Option «Als offene Stunden parken» anbieten (nur MIRUS-Reconcile-Import). */
+  allowPark?: boolean;
 }
 
 export function ImportMatchPreviewDialog({
@@ -48,7 +55,8 @@ export function ImportMatchPreviewDialog({
   nameMatches,
   existingEmployees,
   onConfirm,
-  onCancel
+  onCancel,
+  allowPark = false,
 }: ImportMatchPreviewDialogProps) {
   // Track manual overrides
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -140,7 +148,9 @@ export function ImportMatchPreviewDialog({
         if (savedMapping && existingEmployees.find(e => e.id === savedMapping.employeeId)) {
           initialOverrides[match.importedName] = savedMapping.employeeId;
         } else if (match.matchType === 'new') {
-          initialOverrides[match.importedName] = 'new';
+          // MIRUS-Reconcile: sicherer Standard ist Parken (nichts geht verloren,
+          // nichts wird stillschweigend einem MA zugeschrieben).
+          initialOverrides[match.importedName] = allowPark ? 'park' : 'new';
         } else if (match.matchedEmployee) {
           initialOverrides[match.importedName] = match.matchedEmployee.id;
         }
@@ -159,8 +169,9 @@ export function ImportMatchPreviewDialog({
     
     nameMatches.forEach(match => {
       const selectedId = overrides[match.importedName];
-      // Only save if user manually selected an existing employee (not 'new' or 'skip')
-      if (selectedId && selectedId !== 'new' && selectedId !== 'skip') {
+      // Only save if user manually selected an existing employee
+      // (not 'new'/'skip'/'park'/'create' — das sind keine Mitarbeiter-IDs)
+      if (selectedId && selectedId !== 'new' && selectedId !== 'skip' && selectedId !== 'park' && selectedId !== 'create') {
         const employee = existingEmployees.find(e => e.id === selectedId);
         if (employee) {
           // Check if this is a new manual mapping (not exact match)
@@ -193,7 +204,8 @@ export function ImportMatchPreviewDialog({
   const currentOverrides = Object.entries(overrides);
   const skippedCount = currentOverrides.filter(([_, v]) => v === 'skip').length;
   const newCount = currentOverrides.filter(([_, v]) => v === 'new').length;
-  const matchedCount = currentOverrides.filter(([_, v]) => v !== 'skip' && v !== 'new').length;
+  const parkedCount = currentOverrides.filter(([_, v]) => v === 'park' || v === 'create').length;
+  const matchedCount = currentOverrides.filter(([_, v]) => v !== 'skip' && v !== 'new' && v !== 'park' && v !== 'create').length;
 
   // Check how many new employees are using saved suggestions
   const usingSavedCount = newEmployees.filter(m => {
@@ -216,6 +228,15 @@ export function ImportMatchPreviewDialog({
     const newOverrides = { ...overrides };
     newEmployees.forEach(match => {
       newOverrides[match.importedName] = 'skip';
+    });
+    setOverrides(newOverrides);
+  };
+
+  // Park all unmatched names (nur MIRUS-Reconcile mit allowPark)
+  const handleParkAllUnmatched = () => {
+    const newOverrides = { ...overrides };
+    newEmployees.forEach(match => {
+      newOverrides[match.importedName] = 'park';
     });
     setOverrides(newOverrides);
   };
@@ -295,8 +316,9 @@ export function ImportMatchPreviewDialog({
     const currentValue = overrides[match.importedName] || (match.matchedEmployee?.id || 'new');
     const isOverridden = match.matchedEmployee && currentValue !== match.matchedEmployee.id;
     const isSkipped = currentValue === 'skip';
-    const isAssignedToExisting = currentValue !== 'skip' && currentValue !== 'new';
-    const isResolved = isSkipped || isAssignedToExisting;
+    const isParked = currentValue === 'park' || currentValue === 'create';
+    const isAssignedToExisting = currentValue !== 'skip' && currentValue !== 'new' && currentValue !== 'park' && currentValue !== 'create';
+    const isResolved = isSkipped || isParked || isAssignedToExisting;
     
     // Get suggestions for this name
     const suggestionData = suggestionsMap[match.importedName];
@@ -370,18 +392,35 @@ export function ImportMatchPreviewDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              {allowPark && (
+                <SelectItem value="park" className="text-sky-700">
+                  <span className="flex items-center gap-2">
+                    <Inbox className="h-3 w-3" />
+                    Als offene Stunden parken (Standard, später zuweisen)
+                  </span>
+                </SelectItem>
+              )}
               <SelectItem value="skip" className="text-muted-foreground">
                 <span className="flex items-center gap-2">
                   <X className="h-3 w-3" />
-                  Überspringen
+                  Überspringen (Stunden werden NICHT importiert)
                 </span>
               </SelectItem>
-              <SelectItem value="new" className="text-amber-600">
-                <span className="flex items-center gap-2">
-                  <UserPlus className="h-3 w-3" />
-                  Neu erstellen
-                </span>
-              </SelectItem>
+              {allowPark ? (
+                <SelectItem value="create" className="text-amber-600">
+                  <span className="flex items-center gap-2">
+                    <UserPlus className="h-3 w-3" />
+                    Neuen Mitarbeiter anlegen (Stunden werden geparkt)
+                  </span>
+                </SelectItem>
+              ) : (
+                <SelectItem value="new" className="text-amber-600">
+                  <span className="flex items-center gap-2">
+                    <UserPlus className="h-3 w-3" />
+                    Neu erstellen
+                  </span>
+                </SelectItem>
+              )}
               
               {/* Saved suggestion */}
               {savedSuggestion && (
@@ -505,15 +544,27 @@ export function ImportMatchPreviewDialog({
                         <Ban className="h-3 w-3 mr-1" />
                         Alle überspringen
                       </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={handleCreateAllUnmatched}
-                        className="border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      >
-                        <UserPlus className="h-3 w-3 mr-1" />
-                        Alle neu erstellen
-                      </Button>
+                      {allowPark ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleParkAllUnmatched}
+                          className="border-sky-500/50 hover:bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                        >
+                          <Inbox className="h-3 w-3 mr-1" />
+                          Alle parken
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCreateAllUnmatched}
+                          className="border-amber-500/50 hover:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        >
+                          <UserPlus className="h-3 w-3 mr-1" />
+                          Alle neu erstellen
+                        </Button>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -563,6 +614,17 @@ export function ImportMatchPreviewDialog({
               <div className="text-xs text-muted-foreground">Übersprungen</div>
             </div>
           </div>
+
+          {allowPark && parkedCount > 0 && (
+            <Alert className="border-sky-300 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+              <Inbox className="h-4 w-4 text-sky-700" />
+              <AlertDescription className="text-sm">
+                <span className="font-medium">{parkedCount} Name(n) werden als «Offene Stunden» geparkt.</span>{' '}
+                Die Stunden gehen nicht verloren, werden aber NICHT in die Ist-Werte geschrieben —
+                sie lassen sich später im Import-Center unter «Offene Stunden» einem Mitarbeiter zuweisen.
+              </AlertDescription>
+            </Alert>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Klicke auf den Dropdown um die Zuordnung anzupassen. Manuelle Zuordnungen werden für zukünftige Imports gespeichert.

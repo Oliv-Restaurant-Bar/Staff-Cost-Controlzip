@@ -13,19 +13,19 @@ import { AlertTriangle, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/hooks/useAuth';
 import type { TenantId } from '@/contexts/TenantContext';
 import { parseAdyenPaymentsCsv } from '@/lib/adyen-csv-parser';
 import {
+  applyDayConfirmation,
   buildDayComparison,
   emptyAdyenBlob,
   mergeAdyenImport,
   setComment,
-  setDayConfirmation,
   setOverride,
   type AdyenAbstimmungBlob,
   type DayComparison,
-  type DayConfirmation,
+  type DayConfirmationInput,
 } from '@/lib/adyen-abstimmung';
 import {
   ADYEN_ABSTIMMUNG_UPDATED_EVENT,
@@ -46,8 +46,10 @@ interface AdyenAbgleichSectionProps {
 }
 
 export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionProps) {
-  const { isGuest } = usePermissions();
-  const readOnly = isGuest;
+  const { user } = useAuth();
+  // Audit-Benutzer für Bestätigungs-Stempel (gemeinsamer Store mit
+  // Tagesabschlüsse — dieselbe Kennung wie dort).
+  const currentUser = user?.email ?? 'unbekannt';
 
   const today = new Date();
   const [month, setMonth] = useState<number>(() =>
@@ -120,7 +122,6 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
   // ── Import ──────────────────────────────────────────────────────────────────
 
   const handleFile = useCallback(async (file: File) => {
-    if (readOnly) return;
     setImporting(true);
     setImportError(null);
     try {
@@ -169,7 +170,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
       setImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [readOnly, tenantId, persist, year, isDayClosed]);
+  }, [tenantId, persist, year, isDayClosed]);
 
   // ── Mutationen ──────────────────────────────────────────────────────────────
 
@@ -178,19 +179,24 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
   // (gemeinsame Bestätigungen) auf derselben Seite.
 
   const handleOverride = useCallback((fieldKey: string, originalValue: number, corrected: number | null, comment: string) => {
-    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
+    if (rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setOverride(loadAdyenAbstimmungLocal(tenantId), fieldKey, originalValue, corrected, comment, new Date().toISOString()));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+  }, [rejectLocked, tenantId, persist]);
 
   const handleComment = useCallback((fieldKey: string, text: string) => {
-    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
+    if (rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setComment(loadAdyenAbstimmungLocal(tenantId), fieldKey, text, new Date().toISOString()));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+  }, [rejectLocked, tenantId, persist]);
 
-  const handleConfirm = useCallback((date: string, confirmation: DayConfirmation | null) => {
-    if (readOnly || rejectLocked(date)) return;
-    void persist(setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+  const handleConfirm = useCallback((date: string, confirmation: DayConfirmationInput) => {
+    if (rejectLocked(date)) return;
+    // Audit-Stempel + Dirty-Check zentral in applyDayConfirmation:
+    // keine fachliche Änderung ⇒ kein Write.
+    const cur = loadAdyenAbstimmungLocal(tenantId);
+    const next = applyDayConfirmation(cur, date, confirmation, currentUser, new Date().toISOString());
+    if (next === cur) return;
+    void persist(next);
+  }, [rejectLocked, tenantId, currentUser, persist]);
 
   // ── Tagesliste des Monats ───────────────────────────────────────────────────
 
@@ -239,7 +245,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
               className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
             />
-            <Button size="sm" className="h-7 text-xs" disabled={readOnly || importing}
+            <Button size="sm" className="h-7 text-xs" disabled={importing}
               onClick={() => fileInputRef.current?.click()}>
               <Upload className="h-3.5 w-3.5 mr-1" />
               {importing ? 'Importiere…' : 'Adyen-CSV importieren'}
@@ -264,7 +270,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
           <div className="overflow-x-auto">
             <AdyenDayTable
               days={days}
-              disabled={readOnly}
+              disabled={false}
               onOverride={handleOverride}
               onComment={handleComment}
               onConfirm={handleConfirm}

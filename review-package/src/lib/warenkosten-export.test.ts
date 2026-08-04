@@ -16,14 +16,14 @@ function inv(p: Partial<WarenkostenExportInvoice> & { id: string; amountNet: num
 }
 
 describe('warenkostenExportFileName', () => {
-  it('nutzt langen Monatsnamen bei genau einem Kalendermonat', () => {
-    expect(warenkostenExportFileName('2026-07-01', '2026-07-31')).toBe('Warenkosten_Juli_2026.xlsx');
-    expect(warenkostenExportFileName('2026-02-01', '2026-02-28')).toBe('Warenkosten_Februar_2026.xlsx');
-    expect(warenkostenExportFileName('2026-12-05', '2026-12-20')).toBe('Warenkosten_Dezember_2026.xlsx');
+  it('nutzt Warenkosten_<Mandant>_<yyyy-MM> bei genau einem Kalendermonat', () => {
+    expect(warenkostenExportFileName('2026-07-01', '2026-07-31', 'Oliv')).toBe('Warenkosten_Oliv_2026-07.xlsx');
+    expect(warenkostenExportFileName('2026-02-01', '2026-02-28', 'Le Beaulieu')).toBe('Warenkosten_LeBeaulieu_2026-02.xlsx');
+    expect(warenkostenExportFileName('2026-12-05', '2026-12-20')).toBe('Warenkosten_2026-12.xlsx');
   });
 
   it('fällt auf ISO-Zeitraum zurück, wenn der Zeitraum mehrere Monate umfasst', () => {
-    expect(warenkostenExportFileName('2026-07-01', '2026-08-31')).toBe('Warenkosten_2026-07-01_bis_2026-08-31.xlsx');
+    expect(warenkostenExportFileName('2026-07-01', '2026-08-31', 'Oliv')).toBe('Warenkosten_Oliv_2026-07-01_bis_2026-08-31.xlsx');
     expect(warenkostenExportFileName('2025-12-15', '2026-01-15')).toBe('Warenkosten_2025-12-15_bis_2026-01-15.xlsx');
   });
 });
@@ -112,7 +112,7 @@ describe('buildWarenkostenExport – Detailzeilen', () => {
       revenue: null,
       invoices: [],
     });
-    expect(data.fileName).toBe('Warenkosten_Juli_2026.xlsx');
+    expect(data.fileName).toBe('Warenkosten_Oliv_2026-07.xlsx');
     expect(data.rows).toEqual([]);
     expect(data.summary.relevantNet).toBe(0);
   });

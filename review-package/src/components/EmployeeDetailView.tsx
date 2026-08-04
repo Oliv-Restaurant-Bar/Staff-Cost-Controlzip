@@ -8,8 +8,6 @@ import {
   planPauseMinutes,
   MONTH_NAMES_DE,
   type DayComparisonEntry,
-  type TimesheetConfirmation,
-  type TimesheetStatus,
 } from '@/lib/timesheet-store';
 import {
   loadActualHourEntriesForMonth,
@@ -33,7 +31,6 @@ export interface EmployeeDetailProps {
   vacationTaken:    number | null;
   holidayBalance:   number | null;
   holidayTaken:     number | null;
-  confirmation:     TimesheetConfirmation | null;
   year:             number;
   month:            number;
   onBack:           () => void;
@@ -42,15 +39,6 @@ export interface EmployeeDetailProps {
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
 const WEEKDAY_LONG = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
-
-const STATUS_META: Record<TimesheetStatus, { label: string; cls: string }> = {
-  open:         { label: 'Offen',         cls: 'text-muted-foreground bg-muted' },
-  link_created: { label: 'Link erstellt', cls: 'text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-950/50' },
-  sent:         { label: 'Gesendet',      cls: 'text-purple-700 bg-purple-100 dark:text-purple-300 dark:bg-purple-950/50' },
-  confirmed:    { label: 'Bestätigt',     cls: 'text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-950/50' },
-  rejected:     { label: 'Rückfrage',     cls: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-950/50' },
-  expired:      { label: 'Abgelaufen',    cls: 'text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-950/50' },
-};
 
 const ABSENCE_META: Record<string, { label: string; cls: string }> = {
   vacation: { label: 'Ferien',   cls: 'text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-950/60' },
@@ -202,12 +190,10 @@ function IstCell({ blocks, e }: { blocks: HourBlockEntry[]; e: DayComparisonEntr
 
 function SummaryCards({
   sollHours, dienstplanHours, istHours,
-  vacationBalance, vacationTaken, holidayBalance, holidayTaken, confirmation,
-}: Pick<EmployeeDetailProps, 'sollHours' | 'dienstplanHours' | 'istHours' | 'vacationBalance' | 'vacationTaken' | 'holidayBalance' | 'holidayTaken' | 'confirmation'>) {
+  vacationBalance, vacationTaken, holidayBalance, holidayTaken,
+}: Pick<EmployeeDetailProps, 'sollHours' | 'dienstplanHours' | 'istHours' | 'vacationBalance' | 'vacationTaken' | 'holidayBalance' | 'holidayTaken'>) {
   const diffSoll      = istHours > 0 && sollHours > 0 ? istHours - sollHours : null;
   const diffDienstplan = istHours > 0 && dienstplanHours > 0 ? istHours - dienstplanHours : null;
-  const status        = confirmation?.status ?? 'open';
-  const statusM       = STATUS_META[status];
 
   const cards = [
     { label: 'Soll',              value: fmtH(sollHours || null),       color: 'text-foreground' },
@@ -243,11 +229,6 @@ function SummaryCards({
       value: fmtH(holidayBalance, 'nicht erkannt'),
       color: holidayBalance != null ? 'text-purple-500 dark:text-purple-300' : 'text-muted-foreground',
     },
-    {
-      label: 'Status AZB',
-      value: statusM.label,
-      color: statusM.cls.split(' ')[0],
-    },
   ];
 
   return (
@@ -267,7 +248,7 @@ function SummaryCards({
 export default function EmployeeDetailView({
   employeeId, employeeName, department,
   sollHours, dienstplanHours, istHours,
-  vacationBalance, vacationTaken, holidayBalance, holidayTaken, confirmation,
+  vacationBalance, vacationTaken, holidayBalance, holidayTaken,
   year, month, onBack,
 }: EmployeeDetailProps) {
   const [entries, setEntries]               = useState<DayComparisonEntry[]>([]);
@@ -354,7 +335,6 @@ export default function EmployeeDetailView({
         vacationTaken={vacationTaken}
         holidayBalance={holidayBalance}
         holidayTaken={holidayTaken}
-        confirmation={confirmation}
       />
 
       {/* Migration-Hinweis: actual_hour_entries Tabelle nicht verfügbar */}

@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { DaySchedule } from './ScheduleGrid';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
-import { getEffectiveHourlyRate, ABSENCE_CODES } from './ActualHoursGrid';
+import { getEffectiveHourlyRate } from './ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -39,7 +39,7 @@ interface IstDayDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   date: Date | null;
   employees: Employee[];
-  actualHoursData: Record<string, { hours: number; start?: string; end?: string; absenceType?: string }>;
+  actualHoursData: Record<string, { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean }>;
   actualRevenue?: number;
   plannedRevenue?: number;
   laborCostThreshold: number;
@@ -67,10 +67,29 @@ function calcSlotHours(slot: { start?: string; end?: string } | null | undefined
   return Math.round(h * 100) / 100;
 }
 
+// Rundung r2 pro Zelle — identisch zur zentralen Quelle personalkosten.ts
+// (flexKostenProTag: istKosten = r2(istStd × chfProStd)).
+const r2 = (v: number) => Math.round(v * 100) / 100;
+
+// Ausschlussregel exakt wie im zentralen Datenlader ladePersonalkostenDaten:
+// Absenz-Markierung (FE/K/U …) ODER Zusatzkosten-Eintrag (isAdditionalCost)
+// zählen NICHT als Arbeits-Ist. ABSENCE_CODES fängt zusätzlich die legacy
+// Fälle ab, in denen der Code direkt statt in absenceType steht.
+function isWorkIst(
+  entry: { hours: number; absenceType?: string; isAdditionalCost?: boolean } | undefined,
+): entry is { hours: number; absenceType?: string; isAdditionalCost?: boolean } {
+  if (!entry) return false;
+  // Jede Absenz-Markierung (auch legacy Codes direkt in absenceType) schliesst
+  // den Tag als Arbeits-Ist aus — identisch zum zentralen Datenlader.
+  if (entry.absenceType) return false;
+  if (entry.isAdditionalCost) return false;
+  return true;
+}
+
 function computeStats(
   dept: DeptFilter,
   employees: Employee[],
-  actualHoursData: Record<string, { hours: number; start?: string; end?: string; absenceType?: string }>,
+  actualHoursData: Record<string, { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean }>,
   scheduleData: Record<string, DaySchedule> | undefined,
   dateStr: string,
   socialCostRates: SocialCostRates,
@@ -79,23 +98,23 @@ function computeStats(
 
   const hours = emps.reduce((s, e) => {
     const entry = actualHoursData[`${e.id}-${dateStr}`];
-    if (!entry || entry.absenceType || ABSENCE_CODES.has(entry.absenceType as string)) return s;
+    if (!isWorkIst(entry)) return s;
     return s + (entry.hours ?? 0);
   }, 0);
 
   const cost = emps.reduce((s, e) => {
     const entry = actualHoursData[`${e.id}-${dateStr}`];
-    if (!entry || entry.absenceType) return s;
-    return s + (entry.hours ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
+    if (!isWorkIst(entry)) return s;
+    return s + r2((entry.hours ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0));
   }, 0);
 
   const empBreakdown = emps
     .map(e => {
       const entry = actualHoursData[`${e.id}-${dateStr}`];
-      if (!entry || entry.absenceType) return null;
+      if (!isWorkIst(entry)) return null;
       const h = entry.hours ?? 0;
       if (h === 0) return null;
-      return { emp: e, hours: h, cost: h * (getEffectiveHourlyRate(e, socialCostRates) ?? 0) };
+      return { emp: e, hours: h, cost: r2(h * (getEffectiveHourlyRate(e, socialCostRates) ?? 0)) };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .sort((a, b) => b.cost - a.cost);
@@ -144,6 +163,12 @@ export function IstDayDetailDialog({
   if (!date) return null;
 
   const dateStr = format(date, 'yyyy-MM-dd');
+  // PKQ-Nenner = NETTO-Tagesumsatz. `actualRevenue` wird vom Aufrufer aus dem
+  // Tagesbudget-Store (dailyBudgets[date].actualRevenue) gespeist, der aus der
+  // kanonischen Umsatzquelle (src/lib/umsatz.ts → nettoUmsatzTag/ladeUmsatzTage)
+  // befüllt wird. Zähler (PK-Kosten) und Nenner (Netto-Umsatz) haben damit
+  // dieselbe Basis wie personalquote() in personalkosten.ts. Fehlt der Wert,
+  // wird die PKQ nicht ausgewiesen (null) statt mit einem Fremdnenner verzerrt.
   const istRevenue = (actualRevenue ?? 0) > 0 ? (actualRevenue as number) : null;
   const hasRevenue = istRevenue !== null;
 

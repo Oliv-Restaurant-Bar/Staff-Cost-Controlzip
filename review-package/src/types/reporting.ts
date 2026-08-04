@@ -72,6 +72,7 @@ export type ImportSource =
   | 'csv_current'       // CSV-Import: laufendes Jahr
   | 'csv_previous_year' // CSV-Import: Vorjahr
   | 'annual_cost_import' // Sage Jahres-Kontoblatt (Replace-Scope pro Geschäftsjahr)
+  | 'vj_daily_transfer' // Kontrollierte Übernahme: vj_daily-Tageswerte → Monats-Umsatz (Brutto Σ + Netto)
   | 'gastronovi'        // Zukünftig: Umsatz-Import aus gastronovi-Kassensystem
   | 'supabase_sync';    // Zukünftig: Sync aus Supabase-Tabelle
 

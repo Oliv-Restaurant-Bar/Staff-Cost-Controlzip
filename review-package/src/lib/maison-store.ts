@@ -99,6 +99,35 @@ export async function saveMaisonDaily(
   await kvSet(dailyKey(tk), merged);
 }
 
+/**
+ * Massgeblicher Jahres-Ersatz (dublettensicher): die Datei ERSETZT alle
+ * Marketing-Tageswerte der betroffenen Jahre — gleiche Tage werden ersetzt,
+ * Alt-Tage der Jahre, die nicht in der Datei stehen, werden ENTFERNT
+ * (nie addieren). Andere Jahre bleiben unberührt.
+ *
+ * Merge-Basis wird STRIKT frisch aus dem KV gelesen (Lesefehler ≠ leer):
+ * schlägt das Lesen fehl, wird NICHT geschrieben — sonst würde eine leere/
+ * stale Basis die übrigen Jahre im Remote-Blob wegwischen.
+ */
+export async function saveMaisonDailyReplaceYears(
+  tk: (k: string) => string,
+  years: number[],
+  incoming: Record<string, number>,
+): Promise<void> {
+  const remote = await kvGet(dailyKey(tk)); // wirft bei KV-Fehler → kein Write
+  const base: Record<string, number> =
+    remote && typeof remote === 'object' && !Array.isArray(remote)
+      ? { ...(remote as Record<string, number>) }
+      : {};
+  const yearSet = new Set(years.map(String));
+  for (const d of Object.keys(base)) {
+    if (yearSet.has(d.slice(0, 4))) delete base[d];
+  }
+  const next = { ...base, ...incoming };
+  localStorage.setItem(dailyKey(tk), JSON.stringify(next));
+  await kvSet(dailyKey(tk), next);
+}
+
 // ── Monthly: Schreiben ────────────────────────────────────────────────────────
 
 export async function saveMaisonMonth(

@@ -22,34 +22,41 @@ import {
   Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useStartOverview } from '@/hooks/useStartOverview';
+import { useStartOverview, type StartOverviewState } from '@/hooks/useStartOverview';
 
 interface QuickAction {
   label: string;
   route: string;
   icon: React.FC<{ className?: string }>;
-  /** Für Gast-Sessions ausblenden (Schreibaktion oder PII-Seite). */
-  hiddenForGuest?: boolean;
 }
 
 const QUICK_ACTIONS: QuickAction[] = [
-  { label: 'Import starten', route: '/import', icon: Upload, hiddenForGuest: true },
-  { label: 'Tagesabschluss öffnen', route: '/tagesabschluesse', icon: ClipboardCheck, hiddenForGuest: true },
+  { label: 'Import starten', route: '/import', icon: Upload },
+  { label: 'Tagesabschluss öffnen', route: '/tagesabschluesse', icon: ClipboardCheck },
   { label: 'Dienstplan öffnen', route: '/personal', icon: CalendarClock },
-  { label: 'Reservationen öffnen', route: '/gaeste', icon: Contact, hiddenForGuest: true },
+  { label: 'Reservationen öffnen', route: '/gaeste', icon: Contact },
 ];
 
+/**
+ * Eigenständige Variante mit eigenem Lade-Hook (bestehende Verwendungen).
+ * Auf dem Dashboard stattdessen `HeuteWichtigBannerView` mit dem EINEN
+ * gemeinsamen useStartOverview-State verwenden (kein Doppel-Fetch).
+ */
 export function HeuteWichtigBanner() {
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { state } = useStartOverview(isAdmin);
+  return <HeuteWichtigBannerView state={state} />;
+}
 
-  // Nur für Admins (inkl. Gast-Lesezugriff) — Manager sehen das Dashboard ohne Banner.
+/** Reine Darstellung — der Overview-State kommt vom Aufrufer (EIN Fetch pro Seite). */
+export function HeuteWichtigBannerView({ state }: { state: StartOverviewState }) {
+  const { isAdmin } = usePermissions();
+
+  // Nur für Admins — Manager sehen das Dashboard ohne Banner.
   if (!isAdmin) return null;
 
-  const actions = QUICK_ACTIONS.filter((a) => !(isGuest && a.hiddenForGuest));
+  const actions = QUICK_ACTIONS;
 
   return (
     <section aria-label="Heute wichtig" className="space-y-2" data-testid="heute-wichtig">

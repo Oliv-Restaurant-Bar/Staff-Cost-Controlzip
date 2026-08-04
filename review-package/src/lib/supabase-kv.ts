@@ -9,8 +9,9 @@
  * erhalten, weil sie im Supabase-Backend gespeichert werden.
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 import type { TenantId } from '@/contexts/TenantContext';
+import { asRecordBlob, readLocalRecord } from './kv-blob-utils';
 
 type Listener = () => void;
 
@@ -31,21 +32,30 @@ export class KVUnavailableError extends Error {
 }
 
 const NETWORK_ERROR_RE =
-  /failed to fetch|networkerror|network request failed|fetch failed|load failed|err_internet_disconnected|err_network/i;
+  /failed to fetch|networkerror|network request failed|fetch failed|load failed|err_internet_disconnected|err_network|err_name_not_resolved|err_connection|err_timed_out|econnrefused|econnreset|etimedout|enotfound|timed out|timeout|abort|dns|socket hang up|supabaseurl is required|supabasekey is required/i;
+
+// Server-seitige Timeouts (Postgres statement timeout) bedeuten: Verbindung
+// steht, die OPERATION war zu langsam — das ist ein echter DB-Fehler (Fall B),
+// kein Offline-Signal.
+const SERVER_SIDE_TIMEOUT_RE =
+  /statement timeout|canceling statement|transaction is aborted|idle.?in.?transaction/i;
 
 /**
  * Klassifiziert einen Fehler als «Supabase nicht verfügbar» (Fall A: offline /
- * nicht konfiguriert / Netzwerkausfall) — alles andere ist ein echter
+ * nicht konfiguriert / Netzwerkausfall / Timeout) — alles andere ist ein echter
  * Lese-/Schreibfehler trotz Verbindung (Fall B).
  */
 export function isKvUnavailable(err: unknown): boolean {
   if (err instanceof KVUnavailableError) return true;
+  // Browser meldet explizit offline → jede fehlgeschlagene Operation ist Fall A.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
   const msg =
     err instanceof Error
       ? err.message
       : err && typeof err === 'object' && 'message' in err
         ? String((err as { message: unknown }).message)
         : String(err);
+  if (SERVER_SIDE_TIMEOUT_RE.test(msg)) return false;
   return NETWORK_ERROR_RE.test(msg);
 }
 
@@ -56,6 +66,41 @@ export function isKvUnavailable(err: unknown): boolean {
 export function resetKVAvailabilityCache(): void {
   _available = null;
   _unavailableUntil = 0;
+}
+
+/**
+ * Aktueller Verfügbarkeits-Zustand (T002-Semantik) — read-only, für Tests
+ * und Diagnose. 'unknown' = noch nie geprüft, 'available' = erreichbar,
+ * 'unavailable' = zuletzt nicht erreichbar (Negativ-Cache-Fenster aktiv oder
+ * abgelaufen — der nächste Zugriff prüft nach Ablauf neu).
+ */
+export function getKVAvailabilityState(): 'unknown' | 'available' | 'unavailable' {
+  if (_available === null) return 'unknown';
+  return _available ? 'available' : 'unavailable';
+}
+
+/**
+ * Erfolgreicher Supabase-Zugriff → Verfügbarkeit bestätigen.
+ * Verfügbarkeit ist FLÜCHTIG: sie gilt nur bis zum nächsten Netzwerkfehler.
+ */
+function markKVSuccess(): void {
+  _available = true;
+  _unavailableUntil = 0;
+}
+
+/**
+ * Fehlgeschlagener Supabase-Zugriff klassifizieren:
+ * - Netzwerk-/Timeout-/Offline-Fehler (Fall A) → Cache invalidieren
+ *   (unavailable + 30s-Negativ-Fenster), damit ein einmal gesetztes
+ *   «verfügbar» NIE dauerhaft eingefroren bleibt.
+ * - Echter DB-Fehler (Fall B, z. B. RLS/Constraint): Verbindung steht —
+ *   Verfügbarkeit bleibt unangetastet, der Fehler bleibt sichtbar.
+ */
+function markKVFailure(err: unknown): void {
+  if (isKvUnavailable(err)) {
+    _available = false;
+    _unavailableUntil = Date.now() + 30_000;
+  }
 }
 
 /**
@@ -114,17 +159,25 @@ function notifyKV(key: string) {
 }
 
 async function isAvailable(): Promise<boolean> {
-  // «verfügbar» wird dauerhaft gecacht; «nicht verfügbar» nur 30 s —
+  // Verfügbarkeit ist FLÜCHTIG: «verfügbar» gilt nur, bis eine spätere
+  // Operation an einem Netzwerkfehler scheitert (markKVFailure invalidiert);
+  // «nicht verfügbar» wird nur 30 s gecacht — danach wird neu geprüft,
   // damit sich die App nach einem transienten Ausfall wieder erholt.
   if (_available === true) return true;
   if (_available === false && Date.now() < _unavailableUntil) return false;
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .select('key')
       .limit(1);
-    _available = !error;
+    if (!error || !isKvUnavailable(error)) {
+      // Kein Fehler ODER echter DB-Fehler (z. B. RLS): Verbindung steht —
+      // Supabase ist erreichbar, der fachliche Fehler bleibt Sache der Operation.
+      markKVSuccess();
+    } else {
+      _available = false;
+    }
   } catch {
+    // Geworfene Fehler im Probe-Pfad sind praktisch immer Netzwerk-/Fetch-Fehler.
     _available = false;
   }
   if (_available === false) _unavailableUntil = Date.now() + 30_000;
@@ -134,17 +187,22 @@ async function isAvailable(): Promise<boolean> {
 export async function kvGet(key: string): Promise<unknown | null> {
   if (!(await isAvailable())) return null;
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', key)
       .maybeSingle();
-    if (error) return null;
+    if (error) {
+      markKVFailure(error);
+      return null;
+    }
+    markKVSuccess();
     return data?.value ?? null;
-  } catch {
+  } catch (err) {
+    markKVFailure(err);
     return null;
   }
 }
+
 
 /**
  * Wie kvGet, wirft aber bei Nichtverfügbarkeit oder Lesefehler statt still
@@ -155,24 +213,39 @@ export async function kvGetStrict(key: string): Promise<unknown | null> {
   if (!(await isAvailable())) {
     throw new KVUnavailableError();
   }
-  const { data, error } = await (supabase as any)
-    .from('app_settings')
-    .select('value')
-    .eq('key', key)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.value ?? null;
+  let res: { data: { value: unknown } | null; error: unknown };
+  try {
+    res = await appSettingsTable()
+      .select('value')
+      .eq('key', key)
+      .maybeSingle();
+  } catch (err) {
+    markKVFailure(err);
+    throw err;
+  }
+  if (res.error) {
+    markKVFailure(res.error);
+    throw res.error;
+  }
+  markKVSuccess();
+  return res.data?.value ?? null;
 }
 
 export async function kvSet(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) return;
   try {
-    await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert({ key, value }, { onConflict: 'key' });
+    if (error) {
+      markKVFailure(error);
+      return;
+    }
+    markKVSuccess();
     notifyKV(key);
-  } catch {
-    // silently fail – localStorage bleibt primärer Speicher
+  } catch (err) {
+    // still scheitern (localStorage bleibt Primärspeicher) — aber Netzwerkfehler
+    // invalidieren den Availability-Cache, damit «verfügbar» nie einfriert.
+    markKVFailure(err);
   }
 }
 
@@ -185,10 +258,19 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) {
     throw new KVUnavailableError();
   }
-  const { error } = await (supabase as any)
-    .from('app_settings')
-    .upsert({ key, value }, { onConflict: 'key' });
-  if (error) throw error;
+  let res: { error: unknown };
+  try {
+    res = await appSettingsTable()
+      .upsert({ key, value }, { onConflict: 'key' });
+  } catch (err) {
+    markKVFailure(err);
+    throw err;
+  }
+  if (res.error) {
+    markKVFailure(res.error);
+    throw res.error;
+  }
+  markKVSuccess();
   notifyKV(key);
 }
 
@@ -214,6 +296,19 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
  * @param updates     Map { 'YYYY-MM-DD' → DailyBudget-Felder } – nur diese Tage werden geändert
  * @param onlyIfZero  Wenn true: Tag wird nur gesetzt wenn kein Wert (> 0) vorhanden
  */
+/**
+ * Merged-Basis der dailyBudgets STRICT lesen (localStorage + KV, gleiche
+ * Merge-Regel wie safeUpsertDailyBudgets). Für Undo-Snapshots im Import-Center:
+ * wirft bei KV-Lesefehler (Lesefehler ≠ leer) — dann wird KEIN Snapshot erhoben.
+ */
+export async function loadDailyBudgetsBaseStrict(
+  storageKey: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const local = readLocalRecord(storageKey) as Record<string, Record<string, unknown>>;
+  const remote = asRecordBlob(await kvGetStrict(storageKey)) as Record<string, Record<string, unknown>>;
+  return mergeDailyBudgets(local, remote);
+}
+
 export async function safeUpsertDailyBudgets(
   storageKey: string,
   updates: Record<string, Record<string, unknown>>,
@@ -221,12 +316,8 @@ export async function safeUpsertDailyBudgets(
 ): Promise<Record<string, Record<string, unknown>>> {
   type Blob = Record<string, Record<string, unknown>>;
 
-  // 1. localStorage (Schnellpfad)
-  let local: Blob = {};
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) local = JSON.parse(raw) as Blob;
-  } catch { /* ignore */ }
+  // 1. localStorage (Schnellpfad) — Parse-/Shape-Guard zentral (kv-blob-utils)
+  const local = readLocalRecord(storageKey) as Blob;
 
   // 2. KV (Master-Stand) — STRIKT lesen: ein Lesefehler darf NIE wie
   //    «Remote ist leer» aussehen, sonst würden remote-only Tage beim
@@ -235,10 +326,7 @@ export async function safeUpsertDailyBudgets(
   let remote: Blob = {};
   let remoteReadError: unknown = null;
   try {
-    const kv = await kvGetStrict(storageKey);
-    if (kv && typeof kv === 'object' && !Array.isArray(kv)) {
-      remote = kv as Blob;
-    }
+    remote = asRecordBlob(await kvGetStrict(storageKey)) as Blob;
   } catch (err) {
     remoteReadError = err;
   }
@@ -246,21 +334,27 @@ export async function safeUpsertDailyBudgets(
   // 3. Merge: KV als Basis, Local-Werte > 0 gewinnen
   const base = mergeDailyBudgets(local, remote);
 
-  // 4. Updates anwenden
+  // 4. Updates anwenden — jeder geänderte Tag erhält einen updatedAt-Stempel,
+  //    damit mergeDailyBudgets künftig zeitbasiert entscheiden kann (stale
+  //    Stände dürfen echte nicht verdrängen). undefined-Werte werden
+  //    übersprungen (nie eine bestehende Aufteilung mit undefined nullen).
+  const stamp = new Date().toISOString();
   for (const [date, data] of Object.entries(updates)) {
     const existing = base[date] ?? ({} as Record<string, unknown>);
-    if (onlyIfZero) {
-      const patched: Record<string, unknown> = { ...existing };
-      for (const [field, value] of Object.entries(data)) {
+    const patched: Record<string, unknown> = { ...existing };
+    let changed = false;
+    for (const [field, value] of Object.entries(data)) {
+      if (value === undefined) continue; // Key weglassen ≠ Wert löschen
+      if (onlyIfZero) {
         const cur = existing[field];
         const curNum = typeof cur === 'number' ? cur : 0;
         if (curNum > 0) continue;
-        patched[field] = value;
       }
-      base[date] = patched;
-    } else {
-      base[date] = { ...existing, ...data };
+      patched[field] = value;
+      changed = true;
     }
+    if (changed) patched.updatedAt = stamp;
+    base[date] = patched;
   }
 
   // 5. Zurückschreiben: localStorage sofort (schnell), dann KV (persistent)
@@ -277,7 +371,7 @@ export async function safeUpsertDailyBudgets(
     console.error(`[SAFE-UPSERT] KV-Lesefehler für ${storageKey} — KV-Write übersprungen:`, remoteReadError);
     await notifyKVBackupProblem(remoteReadError, 'Umsatz', {
       toastId: 'kv-write-failed',
-      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+      retry: async () => { await safeUpsertDailyBudgets(storageKey, updates, onlyIfZero); },
     });
     return merged;
   }
@@ -292,7 +386,7 @@ export async function safeUpsertDailyBudgets(
     console.error(`[SAFE-UPSERT] KV-Schreibfehler für ${storageKey}:`, kvError);
     await notifyKVBackupProblem(kvError, 'Umsatz', {
       toastId: 'kv-write-failed',
-      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+      retry: async () => { await safeUpsertDailyBudgets(storageKey, updates, onlyIfZero); },
     });
   }
 
@@ -308,9 +402,21 @@ export async function safeUpsertDailyBudgets(
  * (z. B. 539) konnte einen korrekt importierten KV-Wert (23 767.30) dauerhaft
  * überschreiben, weil 539 > 0 als Bedingung erfüllt war.
  *
- * Neue Regel: KV ist der Master. local füllt nur Lücken (KV-Wert = 0 / fehlt).
- * Alle Schreibpfade gehen über safeUpsertDailyBudgets → KV wird immer zuerst
- * geschrieben, bevor local aktualisiert wird. Damit ist KV stets ≥ local.
+ * Neue Regel (zweistufig):
+ *   1. Haben BEIDE Tages-Records einen gültigen `updatedAt`-Stempel (wird von
+ *      safeUpsertDailyBudgets bei jedem Update gesetzt), gewinnt der JÜNGERE
+ *      Stand feldweise (Felder, die nur die ältere Seite kennt, bleiben
+ *      erhalten). So kann ein staler Stand einen echten nie verdrängen —
+ *      auch nicht eine echte 0.
+ *   2. Ohne Stempel (Altdaten): KV ist der Master. local füllt nur Lücken
+ *      (KV-Wert = 0 / fehlt). Alle Schreibpfade gehen über
+ *      safeUpsertDailyBudgets → KV wird immer zuerst geschrieben.
+ *
+ * BEKANNTE GRENZE: Der Stempel gilt pro TAG, nicht pro Feld. Ändern zwei
+ * Geräte verschiedene Felder desselben Tages, gewinnt der jüngere Tag als
+ * Ganzes (ältere Felder bleiben nur erhalten, wenn der jüngere sie nicht
+ * kennt). Feld-genaue Konfliktauflösung bräuchte Versionsstempel pro Feld —
+ * bewusst nicht eingeführt (Blob-Format-Verdopplung).
  */
 function mergeDailyBudgets(
   local: Record<string, Record<string, unknown>>,
@@ -321,9 +427,16 @@ function mergeDailyBudgets(
   for (const date of allDates) {
     const l = local[date] ?? {};
     const r = remote[date] ?? {};
-    // Start from local, then let remote fields win (KV is master)
+    // Stufe 1: zeitbasiert, wenn beide Seiten gestempelt sind
+    const lTs = typeof l.updatedAt === 'string' ? Date.parse(l.updatedAt) : NaN;
+    const rTs = typeof r.updatedAt === 'string' ? Date.parse(r.updatedAt) : NaN;
+    if (Number.isFinite(lTs) && Number.isFinite(rTs)) {
+      // Jüngere Seite gewinnt feldweise; ältere liefert nur fehlende Felder.
+      result[date] = lTs > rTs ? { ...r, ...l } : { ...l, ...r };
+      continue;
+    }
+    // Stufe 2 (Altdaten ohne Stempel): Start from local, remote (KV) gewinnt
     const merged: Record<string, unknown> = { ...l };
-    // Alle Felder aus remote übernehmen — remote gewinnt
     for (const field of Object.keys(r)) {
       const lv = l[field];
       const rv = r[field];
@@ -362,76 +475,87 @@ export async function safeUpsertReportingMonth(
   monthRecord: unknown,
   storeKey: string,
 ): Promise<void> {
-  if (!(await isAvailable())) return;
-  try {
-    // 1. Aktuellen Supabase-Stand laden (Master)
-    const remote = await kvGet(storeKey);
-    const base: Record<string, unknown> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, unknown>)
-        : {};
-    // 1b. Schutz: kvGet liefert bei Lese-Fehlern null (nicht unterscheidbar von
-    //     «noch kein Blob»). Damit ein fehlgeschlagener Remote-Read nie Monate
-    //     verwirft, werden lokale Monate als Basis-Union ergänzt (remote gewinnt
-    //     pro Monat — nur der Ziel-Monat wird ersetzt).
-    let localBase: Record<string, unknown> = {};
-    try {
-      const rawLocal = JSON.parse(localStorage.getItem(storeKey) || '{}');
-      if (rawLocal && typeof rawLocal === 'object' && !Array.isArray(rawLocal)) {
-        localBase = rawLocal as Record<string, unknown>;
-      }
-    } catch { /* localStorage unlesbar → nur remote als Basis */ }
-    // 2. Nur den einen Monat aktualisieren — alle anderen Monate bleiben erhalten
-    const merged = { ...localBase, ...base, [monthId]: monthRecord };
-    // 3. Nach Supabase schreiben — Fehler explizit prüfen (Supabase wirft nicht)
-    const { error } = await (supabase as any)
-      .from('app_settings')
-      .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
-    if (error) throw error;
-    // 4. localStorage mit dem vollständigen Stand synchronisieren
-    localStorage.setItem(storeKey, JSON.stringify(merged));
-    notifyKV(storeKey);
-    console.log(`[REPORTING] safeUpsertReportingMonth: ${storeKey} / ${monthId} ✓`);
-  } catch (err) {
-    console.error(`[REPORTING] safeUpsertReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
-    // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
-    // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
-    // Blob-Replace). localStorage bleibt Primärspeicher — der Fehler wird
-    // weitergereicht, damit der Aufrufer ihn sichtbar machen kann.
-    throw err;
-  }
+  return mergeAndWriteReportingBlob(
+    storeKey,
+    `safeUpsertReportingMonth`,
+    monthId,
+    base => ({ ...base, [monthId]: monthRecord }),
+  );
 }
 
 /**
  * Sicheres Löschen eines Monats aus reporting_v1.
- * Liest Supabase-Stand, entfernt NUR den angegebenen Monat, schreibt zurück.
- * Verhindert, dass andere Monate verschwinden.
+ * Gleicher Kern wie der Upsert: Basis = Remote-Stand ∪ lokale Monate,
+ * dann wird NUR der angegebene Monat entfernt. Verhindert, dass andere
+ * Monate verschwinden — auch wenn der Remote-Read still fehlschlägt
+ * (kvGet → null): ohne die Basis-Union würde dann ein leerer Blob
+ * geschrieben und ALLE übrigen Monate remote gelöscht (Befund Runde 2.7).
  */
 export async function safeDeleteReportingMonth(
   monthId: string,
   storeKey: string,
 ): Promise<void> {
+  return mergeAndWriteReportingBlob(
+    storeKey,
+    `safeDeleteReportingMonth`,
+    monthId,
+    base => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [monthId]: _removed, ...rest } = base;
+      return rest;
+    },
+  );
+}
+
+/**
+ * Gemeinsamer technischer Kern von safeUpsertReportingMonth und
+ * safeDeleteReportingMonth (Runde 2.7). Kapselt NUR den identischen Ablauf —
+ * die fachliche Mutation (Monat ersetzen bzw. entfernen) liefert der Aufrufer:
+ *
+ *   1. Verfügbarkeits-Gate (offline → no-op, localStorage bleibt Primärspeicher)
+ *   2. Remote-Stand laden (kvGet) + Shape-Guard
+ *   3. Basis-Union mit lokalen Monaten: kvGet liefert bei Lese-Fehlern null
+ *      (nicht unterscheidbar von «noch kein Blob») — damit ein fehlgeschlagener
+ *      Remote-Read nie Monate verwirft, ergänzen lokale Monate die Basis
+ *      (remote gewinnt pro Monat); erst DANACH wirkt die Mutation auf den
+ *      Ziel-Monat.
+ *   4. Nach Supabase schreiben — Fehler explizit prüfen (Supabase wirft nicht;
+ *      sonst gälte ein fehlgeschlagener Write still als Erfolg, T007)
+ *   5. Erst NACH Remote-Erfolg: localStorage synchronisieren + Listener
+ *      benachrichtigen (Reihenfolge verbindlich — notifyKV nie vor setItem)
+ *   6. Fehler: markKVFailure + weiterwerfen (kein destruktiver Fallback-Write;
+ *      der Aufrufer macht den Fehler sichtbar)
+ */
+async function mergeAndWriteReportingBlob(
+  storeKey: string,
+  label: string,
+  monthId: string,
+  mutate: (base: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
   if (!(await isAvailable())) return;
   try {
-    const remote = await kvGet(storeKey);
-    const base: Record<string, unknown> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, unknown>)
-        : {};
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { [monthId]: _removed, ...rest } = base;
-    // WICHTIG: Supabase wirft bei Schreibfehlern NICHT — { error } explizit prüfen,
-    // sonst gilt ein fehlgeschlagenes Löschen still als Erfolg (T007).
-    const { error } = await (supabase as any)
-      .from('app_settings')
-      .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
+    // 1. Aktuellen Supabase-Stand laden (Master) + Shape-Guard
+    const base = asRecordBlob(await kvGet(storeKey));
+    // 2. Basis-Union: lokale Monate ergänzen, remote gewinnt pro Monat
+    const localBase = readLocalRecord(storeKey);
+    // 3. Fachliche Mutation NUR auf dem Ziel-Monat
+    const merged = mutate({ ...localBase, ...base });
+    // 4. Nach Supabase schreiben — Fehler explizit prüfen
+    const { error } = await appSettingsTable()
+      .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
     if (error) throw error;
-    localStorage.setItem(storeKey, JSON.stringify(rest));
+    markKVSuccess();
+    // 5. localStorage mit dem vollständigen Stand synchronisieren
+    localStorage.setItem(storeKey, JSON.stringify(merged));
     notifyKV(storeKey);
-    console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
+    console.log(`[REPORTING] ${label}: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
-    console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
-    // Fehler weiterreichen — der Aufrufer muss ihn sichtbar machen (nie still scheitern).
+    markKVFailure(err);
+    console.error(`[REPORTING] ${label} Fehler für ${storeKey}/${monthId}:`, err);
+    // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
+    // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
+    // Blob-Replace). localStorage bleibt Primärspeicher — der Fehler wird
+    // weitergereicht, damit der Aufrufer ihn sichtbar machen kann.
     throw err;
   }
 }
@@ -778,7 +902,17 @@ export async function saveOvertimeDisabledIds(tenantId: TenantId, ids: string[])
     console.error(`[OVERTIME-DISABLED] KV-Schreibfehler für ${key}:`, err);
     await notifyKVBackupProblem(err, 'Überstunden-Einstellung', {
       toastId: 'overtime-disabled-write-failed',
-      retry: () => kvSetStrict(key, clean),
+      retry: () => {
+        // Beim Retry FRISCH aus localStorage lesen — kein eingefrorener
+        // Snapshot, sonst würde ein inzwischen neuerer Stand zurückgedreht.
+        // Der Key ist zur Save-Zeit gebunden (tenant-spezifisch) und bleibt
+        // auch nach einem späteren Tenant-Wechsel korrekt.
+        let fresh = clean;
+        try {
+          fresh = toStringIds(JSON.parse(localStorage.getItem(key) ?? '[]'));
+        } catch { /* localStorage unlesbar → Snapshot als letzter Fallback */ }
+        return kvSetStrict(key, fresh);
+      },
     });
   }
 }

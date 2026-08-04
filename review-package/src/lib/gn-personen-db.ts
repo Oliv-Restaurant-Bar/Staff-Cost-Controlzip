@@ -41,6 +41,10 @@ export async function checkPersonDuplicate(
   checksum: string,
   periodFrom: string,
   periodTo: string,
+  /** Optional: Perioden-Duplikat nur innerhalb desselben Berichtstyps suchen
+   *  (verhindert, dass z. B. «Anzahl Personen» einen «Umsatz pro Person»-Import
+   *  desselben Zeitraums ersetzt). */
+  csvType?: PersonCsvType,
 ): Promise<{ isDuplicate: boolean; existingId: string | null; existingImportedAt: string | null }> {
   try {
     if (checksum) {
@@ -54,14 +58,15 @@ export async function checkPersonDuplicate(
       if (data) return { isDuplicate: true, existingId: data.id, existingImportedAt: data.imported_at };
     }
     if (periodFrom && periodTo) {
-      const { data } = await (supabase as any)
+      let q = (supabase as any)
         .from('gn_person_imports')
         .select('id, imported_at')
         .eq('restaurant_id', restaurantId)
         .eq('period_from', periodFrom)
         .eq('period_to', periodTo)
-        .eq('status', 'active')
-        .single();
+        .eq('status', 'active');
+      if (csvType) q = q.eq('csv_type', csvType);
+      const { data } = await q.single();
       if (data) return { isDuplicate: true, existingId: data.id, existingImportedAt: data.imported_at };
     }
     return { isDuplicate: false, existingId: null, existingImportedAt: null };
@@ -80,8 +85,6 @@ export async function savePersonImport(
   csvTypeOverride?: PersonCsvType,
 ): Promise<{ importId: string; error: string | null }> {
   try {
-    if (replaceId) await deletePersonImport(replaceId);
-
     const csvType = csvTypeOverride ?? parsed.detectedCsvType ?? 'personen';
 
     const { data: imp, error: impErr } = await (supabase as any)
@@ -106,8 +109,12 @@ export async function savePersonImport(
 
     const importId: string = imp.id;
 
+    // Insert-first-Muster: Tageswerte schreiben und Fehler PRÜFEN. Schlägt ein
+    // Schritt fehl, wird der neue Import kompensierend als 'deleted' markiert —
+    // der bisherige Import (replaceId) bleibt unangetastet aktiv, es entsteht
+    // nie ein Zeitraum ohne aktiven Import und nie ein stiller Teilimport.
     if (parsed.rows.length > 0) {
-      await (supabase as any).from('gn_person_metrics').insert(
+      const { error: metricsErr } = await (supabase as any).from('gn_person_metrics').insert(
         parsed.rows.map(r => ({
           import_id:       importId,
           date:            r.date || null,
@@ -120,6 +127,19 @@ export async function savePersonImport(
           source_row_json: r.sourceRowJson,
         })),
       );
+      if (metricsErr) {
+        await deletePersonImport(importId);
+        return { importId: '', error: `Tageswerte konnten nicht gespeichert werden: ${metricsErr.message}` };
+      }
+    }
+
+    // Erst NACH vollständigem Erfolg den ersetzten Import deaktivieren.
+    if (replaceId) {
+      const { error: replErr } = await deletePersonImport(replaceId);
+      if (replErr) {
+        await deletePersonImport(importId);
+        return { importId: '', error: `Bestehender Import konnte nicht ersetzt werden: ${replErr}` };
+      }
     }
 
     return { importId, error: null };
@@ -287,6 +307,71 @@ export async function getAvgReceiptForPeriod(
     return { avgReceipt: avg, rowCount: validRows.length };
   } catch {
     return { avgReceipt: 0, rowCount: 0 };
+  }
+}
+
+// ── Tageswerte für gemeinsame Tagesanalyse ───────────────────────────────────
+
+export interface PersonDayValues {
+  /** date → Anzahl Personen */
+  personsByDate: Map<string, number>;
+  /** date → Umsatz pro Person */
+  revenuePerPersonByDate: Map<string, number>;
+}
+
+/**
+ * Liefert Personen- und Umsatz-pro-Person-Tageswerte für den Zeitraum
+ * (aus gn_person_metrics, nur aktive Importe).  Fehlende Tage fehlen —
+ * sie werden NIE als 0 erfunden.
+ */
+export async function getPersonDayValues(
+  restaurantId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<PersonDayValues> {
+  const empty: PersonDayValues = { personsByDate: new Map(), revenuePerPersonByDate: new Map() };
+  try {
+    const { data: imports } = await (supabase as any)
+      .from('gn_person_imports')
+      .select('id')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .lte('period_from', toIso)
+      .gte('period_to', fromIso);
+
+    if (!imports?.length) return empty;
+
+    const ids = (imports as { id: string }[]).map(i => i.id);
+    const { data: metrics } = await (supabase as any)
+      .from('gn_person_metrics')
+      .select('date, guests_count, revenue_per_person, metric_type')
+      .in('import_id', ids)
+      .gte('date', fromIso)
+      .lte('date', toIso);
+
+    if (!metrics?.length) return empty;
+
+    type Row = {
+      date: string | null;
+      guests_count: number | null;
+      revenue_per_person: number | null;
+      metric_type: string | null;
+    };
+    for (const r of metrics as Row[]) {
+      if (!r.date) continue;
+      const t = r.metric_type ?? '';
+      if ((t === 'anzahl_personen' || t === 'personen') &&
+          typeof r.guests_count === 'number' && r.guests_count >= 0) {
+        empty.personsByDate.set(r.date, r.guests_count);
+      }
+      if ((t === 'umsatz_pro_person' || t === 'personen') &&
+          typeof r.revenue_per_person === 'number' && r.revenue_per_person > 0) {
+        empty.revenuePerPersonByDate.set(r.date, r.revenue_per_person);
+      }
+    }
+    return empty;
+  } catch {
+    return empty;
   }
 }
 

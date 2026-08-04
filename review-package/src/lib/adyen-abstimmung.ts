@@ -52,17 +52,53 @@ export interface AdyenOverride {
   correctedByManualOverride: true;
   comment?: string;
   updatedAt: string; // ISO
+  /**
+   * Tombstone: Override wurde entfernt. Der Record bleibt (mit jüngerem
+   * updatedAt) erhalten, sonst würde der merge-on-save den gelöschten Key aus
+   * dem Remote-Stand wiederbeleben; alle Leser filtern `deleted`.
+   * Erst-Original bleibt auch über Tombstones hinweg verankert.
+   */
+  deleted?: true;
 }
 
 export interface AdyenComment {
   text: string;
   updatedAt: string; // ISO
+  /** Tombstone: Kommentar entfernt — Key bleibt für merge-on-save (jüngster gewinnt). */
+  deleted?: true;
 }
 
 export interface DayConfirmation {
+  /** Tagesabschluss geprüft (kompletter Tag kontrolliert). */
+  confirmed: boolean;
+  /** Bar kontrolliert (physischer Bargeldbestand gezählt und verglichen). */
+  cashCounted: boolean;
+  /** Audit: letzte Änderung des confirmed-Flags (Setzen UND Entfernen). */
+  confirmedAt?: string; // ISO
+  confirmedBy?: string;
+  /** Audit: letzte Änderung des cashCounted-Flags (Setzen UND Entfernen). */
+  cashCountedAt?: string; // ISO
+  cashCountedBy?: string;
+  comment?: string;
+  /**
+   * Letzte Änderung IRGENDEINES Teils (auch Kommentar-only) — Basis des
+   * merge-on-save (jüngster Stand je Tag gewinnt). Altdaten haben das Feld
+   * nicht: dann gilt max(confirmedAt, cashCountedAt).
+   */
+  updatedAt?: string; // ISO
+  /** Tombstone: Bestätigung entfernt — Key bleibt für merge-on-save (jüngster gewinnt). */
+  deleted?: true;
+}
+
+/**
+ * Gewünschter Zielzustand einer Tagesbestätigung aus der UI — OHNE
+ * Zeitstempel/Benutzer: Audit-Stempel vergibt ausschliesslich
+ * applyDayConfirmation. `comment === undefined` lässt den bestehenden
+ * Kommentar unverändert; leerer String entfernt ihn.
+ */
+export interface DayConfirmationInput {
   confirmed: boolean;
   cashCounted: boolean;
-  confirmedAt?: string; // ISO
   comment?: string;
 }
 
@@ -199,7 +235,7 @@ export function effectiveValue(
   autoValue: number,
 ): EffectiveValue {
   const ov = overrides[fieldKey];
-  if (ov && ov.correctedByManualOverride) {
+  if (ov && ov.correctedByManualOverride && !ov.deleted) {
     return { value: ov.correctedValue, original: ov.originalValue, overridden: true, override: ov };
   }
   return { value: autoValue, original: autoValue, overridden: false };
@@ -285,7 +321,13 @@ export function buildDayComparison(
   adyenDay: AdyenStoredDay | null,
   blob: AdyenAbstimmungBlob,
 ): DayComparison {
-  const { overrides, comments, confirmations, methodLabels } = blob;
+  const { overrides, confirmations, methodLabels } = blob;
+  // Tombstones (deleted) sind für Leser «nicht vorhanden» — sie existieren nur
+  // für den merge-on-save (jüngster Stand je Key gewinnt, keine Wiederbelebung).
+  const comments: Record<string, AdyenComment> = {};
+  for (const [k, c] of Object.entries(blob.comments)) {
+    if (!c.deleted) comments[k] = c;
+  }
 
   // Z-Bericht-Seite: pro (Key) summieren, Karten von Nicht-Karten trennen.
   const zCard = new Map<string, { label: string; amount: number }>();
@@ -361,7 +403,7 @@ export function buildDayComparison(
     });
 
   const prefix = `${date}:`;
-  const hasOverrides = Object.keys(overrides).some(k => k.startsWith(prefix));
+  const hasOverrides = Object.entries(overrides).some(([k, ov]) => k.startsWith(prefix) && !ov.deleted);
   const hasComments = Object.keys(comments).some(k => k.startsWith(prefix));
 
   return {
@@ -380,7 +422,7 @@ export function buildDayComparison(
     totalAdyenComment: comments[totalAKey],
     hasOverrides,
     hasComments,
-    confirmation: confirmations[date] ?? null,
+    confirmation: (confirmations[date] && !confirmations[date].deleted) ? confirmations[date] : null,
   };
 }
 
@@ -439,13 +481,23 @@ export function setOverride(
   now: string,
 ): AdyenAbstimmungBlob {
   const overrides = { ...blob.overrides };
+  const existing = overrides[fieldKey];
   if (correctedValue === null) {
-    delete overrides[fieldKey];
+    // Tombstone statt Key-Löschung: merge-on-save (Union je Key) würde einen
+    // hart gelöschten Key aus dem Remote-Stand wiederbeleben.
+    if (existing) {
+      overrides[fieldKey] = {
+        originalValue: existing.originalValue,
+        correctedValue: existing.originalValue,
+        correctedByManualOverride: true,
+        updatedAt: now,
+        deleted: true,
+      };
+    }
   } else {
-    const existing = overrides[fieldKey];
     overrides[fieldKey] = {
       // Original des ERSTEN Overrides behalten — nie den korrigierten Wert
-      // als neues "Original" verankern.
+      // als neues "Original" verankern (gilt auch über Tombstones hinweg).
       originalValue: existing ? existing.originalValue : originalValue,
       correctedValue,
       correctedByManualOverride: true,
@@ -456,7 +508,7 @@ export function setOverride(
   return { ...blob, overrides };
 }
 
-/** Setzt oder entfernt einen Kommentar (leerer Text entfernt). */
+/** Setzt oder entfernt einen Kommentar (leerer Text entfernt = Tombstone). */
 export function setComment(
   blob: AdyenAbstimmungBlob,
   fieldKey: string,
@@ -465,21 +517,153 @@ export function setComment(
 ): AdyenAbstimmungBlob {
   const comments = { ...blob.comments };
   const trimmed = text.trim();
-  if (trimmed === '') delete comments[fieldKey];
-  else comments[fieldKey] = { text: trimmed, updatedAt: now };
+  if (trimmed === '') {
+    // Tombstone statt Key-Löschung (siehe setOverride).
+    if (comments[fieldKey]) comments[fieldKey] = { text: '', updatedAt: now, deleted: true };
+  } else {
+    comments[fieldKey] = { text: trimmed, updatedAt: now };
+  }
   return { ...blob, comments };
 }
 
-/** Setzt die Tagesbestätigung (oder hebt sie auf). */
+/**
+ * Setzt die Tagesbestätigung (oder hebt sie auf — Tombstone statt
+ * Key-Löschung, siehe setOverride). `now` stempelt updatedAt fürs Merge.
+ */
 export function setDayConfirmation(
   blob: AdyenAbstimmungBlob,
   date: string,
   confirmation: DayConfirmation | null,
+  now?: string,
 ): AdyenAbstimmungBlob {
   const confirmations = { ...blob.confirmations };
-  if (confirmation === null) delete confirmations[date];
-  else confirmations[date] = confirmation;
+  if (confirmation === null) {
+    if (confirmations[date]) {
+      confirmations[date] = {
+        confirmed: false,
+        cashCounted: false,
+        ...(now ? { updatedAt: now } : {}),
+        deleted: true,
+      };
+    }
+  } else {
+    confirmations[date] = confirmation;
+  }
   return { ...blob, confirmations };
+}
+
+/**
+ * ZENTRALER Schreibpfad für Tagesbestätigungen (Tagesabschlüsse UND
+ * Adyen-Abgleich) mit Audit-Trail und Dirty-Check:
+ *   - Keine fachliche Änderung ⇒ es wird DIESELBE Blob-Referenz
+ *     zurückgegeben — der Aufrufer persistiert dann NICHT (kein unnötiger
+ *     Write, kein updatedAt-Bump).
+ *   - Benutzer + Zeitstempel werden NUR für Flags gestempelt, die sich
+ *     tatsächlich ändern — beim Setzen UND beim Entfernen; unveränderte
+ *     Flags behalten ihren bisherigen Stempel.
+ *   - `next.comment === undefined` lässt den Kommentar unverändert,
+ *     leerer/whitespace-String entfernt ihn; Kommentar-only-Änderungen
+ *     stempeln keine Flag-Audits.
+ */
+export function applyDayConfirmation(
+  blob: AdyenAbstimmungBlob,
+  date: string,
+  next: DayConfirmationInput,
+  user: string,
+  now: string,
+): AdyenAbstimmungBlob {
+  const rawPrev = blob.confirmations[date];
+  const prev = rawPrev && !rawPrev.deleted ? rawPrev : undefined;
+  const prevConfirmed = prev?.confirmed === true;
+  const prevCashCounted = prev?.cashCounted === true;
+  const trimmed = next.comment === undefined ? undefined : next.comment.trim();
+  const nextComment = trimmed === undefined
+    ? prev?.comment
+    : (trimmed === '' ? undefined : trimmed);
+
+  const confirmedChanged = prevConfirmed !== next.confirmed;
+  const cashCountedChanged = prevCashCounted !== next.cashCounted;
+  const commentChanged = (prev?.comment ?? undefined) !== nextComment;
+  if (!confirmedChanged && !cashCountedChanged && !commentChanged) return blob;
+
+  const entry: DayConfirmation = {
+    confirmed: next.confirmed,
+    cashCounted: next.cashCounted,
+    ...(cashCountedChanged
+      ? { cashCountedAt: now, cashCountedBy: user }
+      : {
+          ...(prev?.cashCountedAt ? { cashCountedAt: prev.cashCountedAt } : {}),
+          ...(prev?.cashCountedBy ? { cashCountedBy: prev.cashCountedBy } : {}),
+        }),
+    ...(confirmedChanged
+      ? { confirmedAt: now, confirmedBy: user }
+      : {
+          ...(prev?.confirmedAt ? { confirmedAt: prev.confirmedAt } : {}),
+          ...(prev?.confirmedBy ? { confirmedBy: prev.confirmedBy } : {}),
+        }),
+    ...(nextComment !== undefined ? { comment: nextComment } : {}),
+    // Merge-Stempel: JEDE fachliche Änderung (auch Kommentar-only) zählt.
+    updatedAt: now,
+  };
+  return { ...blob, confirmations: { ...blob.confirmations, [date]: entry } };
+}
+
+// ── Merge (safeUpsert-Prinzip) ────────────────────────────────────────────────
+
+/** ISO-Vergleich: a strikt jünger als b? Fehlende/leere Stempel gelten als älter. */
+function newer(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? '') > (b ?? '');
+}
+
+/** Merge-Stempel einer Tagesbestätigung (Altdaten ohne updatedAt). */
+function confirmationStamp(c: DayConfirmation): string {
+  return c.updatedAt ?? [c.confirmedAt ?? '', c.cashCountedAt ?? ''].sort().pop() ?? '';
+}
+
+/**
+ * Führt lokalen und Remote-Stand des Adyen-Blobs zusammen — Basis des
+ * merge-on-save in saveAdyenAbstimmung (und des Lesens in loadAdyenAbstimmung):
+ * Union je Key, der JÜNGERE Eintrag gewinnt (days: importedAt, Overrides/
+ * Kommentare: updatedAt, Bestätigungen: updatedAt bzw. Audit-Stempel).
+ * Tombstones (deleted) nehmen normal am Merge teil — so bleibt ein Löschen
+ * gegenüber einem älteren Remote-Stand bestehen. Bei fehlendem/gleichem
+ * Stempel gewinnt der LOKALE Stand (der die aktuelle Mutation trägt).
+ */
+export function mergeAdyenBlobs(
+  local: AdyenAbstimmungBlob,
+  remote: AdyenAbstimmungBlob,
+): AdyenAbstimmungBlob {
+  const days: AdyenAbstimmungBlob['days'] = { ...remote.days };
+  for (const [date, d] of Object.entries(local.days)) {
+    const r = days[date];
+    if (!r || !newer(r.importedAt, d.importedAt)) days[date] = d;
+  }
+
+  const overrides: AdyenAbstimmungBlob['overrides'] = { ...remote.overrides };
+  for (const [key, ov] of Object.entries(local.overrides)) {
+    const r = overrides[key];
+    if (!r || !newer(r.updatedAt, ov.updatedAt)) overrides[key] = ov;
+  }
+
+  const comments: AdyenAbstimmungBlob['comments'] = { ...remote.comments };
+  for (const [key, c] of Object.entries(local.comments)) {
+    const r = comments[key];
+    if (!r || !newer(r.updatedAt, c.updatedAt)) comments[key] = c;
+  }
+
+  const confirmations: AdyenAbstimmungBlob['confirmations'] = { ...remote.confirmations };
+  for (const [date, c] of Object.entries(local.confirmations)) {
+    const r = confirmations[date];
+    if (!r || !newer(confirmationStamp(r), confirmationStamp(c))) confirmations[date] = c;
+  }
+
+  return {
+    days,
+    methodLabels: { ...remote.methodLabels, ...local.methodLabels },
+    overrides,
+    comments,
+    confirmations,
+  };
 }
 
 // ── Cockpit-Signal-Helfer (read-only) ─────────────────────────────────────────

@@ -627,6 +627,43 @@ describe('umsatzabstimmungMonthsFromBlob', () => {
   });
 });
 
+// ── Gastronovi-PDF-Quellen (Cockpit-Umbau auf PDF-only) ─────────────────────
+
+describe('Gastronovi-PDF-Quellen im Cockpit', () => {
+  it('zbericht ist PDF-only (Upload-Label und Beispiel-Format nennen PDF)', () => {
+    const d = COCKPIT_SOURCES.find((s) => s.id === 'zbericht');
+    expect(d).toBeTruthy();
+    expect(d!.uploadLabel).toContain('PDF');
+    expect(d!.exampleFormat!.toLowerCase()).toContain('.pdf');
+    expect(d!.checklistLabel).toBe('Z-Bericht PDF importieren');
+  });
+
+  it('produktverkaeufe heisst Produktdetails und verweist auf den Gastronovi-Import', () => {
+    const d = COCKPIT_SOURCES.find((s) => s.id === 'produktverkaeufe');
+    expect(d).toBeTruthy();
+    expect(d!.label).toBe('Produktdetails');
+    expect(d!.route).toBe('/gastronovi-import');
+  });
+
+  it('enthält die 4 neuen Gastronovi-Quellen mit korrektem Intervall und Route', () => {
+    const expected: Array<[CockpitSourceDef['id'], 'daily' | 'weekly']> = [
+      ['zeitabschnitte', 'daily'],
+      ['anzahl_personen', 'weekly'],
+      ['umsatz_pro_person', 'weekly'],
+      ['durchschnittsbon', 'weekly'],
+    ];
+    for (const [id, interval] of expected) {
+      const d = COCKPIT_SOURCES.find((s) => s.id === id);
+      expect(d, id).toBeTruthy();
+      expect(d!.interval, id).toBe(interval);
+      expect(d!.route, id).toBe('/gastronovi-import');
+      expect(d!.section, id).toBe('import');
+      expect(d!.importType, id).toBe('file_upload');
+      expect(d!.checkable, id).toBe(true);
+    }
+  });
+});
+
 // ── Buchhaltungs-Export-Kontrollaufgabe (§11) ────────────────────────────────
 
 describe('Buchhaltungs-Export-Kontrollaufgabe', () => {

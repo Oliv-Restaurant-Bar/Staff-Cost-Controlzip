@@ -2,33 +2,43 @@
  * import-tasks-engine.ts — Zentrale, reine Import-Aufgaben-Engine
  *
  * Erzeugt für einen gewählten Monat/Jahr automatisch offene Import-Aufgaben
- * pro Importtyp anhand der Frequenz:
- *   - daily:   eine Aufgabe pro Kalendertag (Z-Bericht, Foratable)
- *   - range:   zeitraum-basiert mit Teilzeitraum-Restberechnung
- *              (Umsatz, Verkaufsdaten, Mirus, Marketing)
- *   - monthly: eine Aufgabe pro Monat (Erfolgsrechnung, IST-Kosten)
- *   - yearly:  eine Aufgabe pro Jahr (Budget)
+ * pro Importtyp anhand der KONFIGURIERBAREN Frequenz (import-settings.ts):
+ *   - taeglich:      eine Aufgabe pro Kalendertag (ohne Ruhetage)
+ *   - woechentlich:  eine Aufgabe pro abgeschlossener ISO-Woche; eine
+ *                    Monats-übergreifende Woche gehört zum Monat ihres SONNTAGS
+ *   - monatlich:     eine Aufgabe pro Monat (Tages-Quellen: Status aus der
+ *                    Tages-Abdeckung; Monats-Quellen: monthDone-Flag)
+ *   - bei_bedarf / deaktiviert: KEINE Aufgaben (Quelle erscheint nur im Datenstand)
+ *
+ * Erwartungsbasiert:
+ *   - Ruhetage (tenant-weit konfigurierte Wochentage) erzeugen keine
+ *     Tagesaufgaben und zählen nie zum Nenner.
+ *   - Karenz (delayDays je Quelle): Tag X ist erst ab X+1+delayDays fällig —
+ *     der Deckel je Typ ist min(Monatsende, heute − 1 − delayDays).
+ *   - Abhängigkeit (dependsOn): fehlt die Basis-Quelle (Z-Bericht) für Tag X,
+ *     wird die nachgelagerte Tagesaufgabe (Tagesabschluss) UNTERDRÜCKT
+ *     (`suppressedBy`) — es bleibt EINE Hauptwarnung. isOpenTask() ist der
+ *     einzige Chokepoint: unterdrückte Aufgaben gelten nicht als offen.
  *
  * WICHTIG: Diese Datei ist DOM-/Supabase-frei und rein (nur Datenlogik).
- * Coverage-Daten werden von src/lib/import-tasks-db.ts geliefert.
- * Erwartete Zeiträume sind IMMER auf min(Monatsende, gestern) gedeckelt —
- * für zukünftige Tage entstehen keine Aufgaben.
+ * Coverage-Daten liefert src/lib/import-tasks-db.ts. Für wöchentliche
+ * Auswertung MÜSSEN die Tages-Coverage-Loader auch die 6 Tage VOR dem
+ * Monatsersten mitliefern (Monats-übergreifende Wochen).
  */
+
+import {
+  CONFIGURABLE_IMPORT_TYPES,
+  IMPORT_TYPE_COVERAGE_KIND,
+  type ConfigurableImportType,
+  type EffectiveImportSettings,
+} from './import-settings';
 
 // ── Typen ────────────────────────────────────────────────────────────────
 
-export type ImportTaskType =
-  | 'zbericht'
-  | 'reservationen'
-  | 'umsatz'
-  | 'verkaufsdaten'
-  | 'mirus'
-  | 'marketing'
-  | 'erfolgsrechnung'
-  | 'istkosten'
-  | 'budget';
+export type ImportTaskType = ConfigurableImportType;
+export { CONFIGURABLE_IMPORT_TYPES };
 
-export type TaskFrequency = 'daily' | 'range' | 'monthly' | 'yearly';
+export type TaskFrequency = 'daily' | 'weekly' | 'monthly';
 
 /** Aufgabenstatus: offen / teilweise erledigt / erledigt / Fehler beim Ermitteln */
 export type ImportTaskStatus = 'open' | 'partial' | 'done' | 'error';
@@ -43,12 +53,14 @@ export interface TaskPeriod {
 
 /** Abdeckung eines Importtyps im gewählten Monat (Input der Engine). */
 export interface TypeCoverage {
-  /** Bereits importierte Tage (yyyy-MM-dd) — für daily- und range-Typen. */
+  /**
+   * Bereits importierte Tage (yyyy-MM-dd) — für Tages-Quellen.
+   * MUSS für wöchentliche Auswertung auch die 6 Tage vor dem Monatsersten
+   * enthalten (Loader-Vertrag, siehe import-tasks-db.ts).
+   */
   coveredDays?: readonly string[];
-  /** Monat vollständig importiert — für monthly-Typen. */
+  /** Monat vollständig importiert — für Monats-Quellen. */
   monthDone?: boolean;
-  /** Jahr vollständig importiert — für yearly-Typen. */
-  yearDone?: boolean;
   /** Letzter bekannter Importlauf (ISO-Timestamp), falls vorhanden. */
   lastImportAt?: string | null;
   /** Fehler beim Ermitteln der Abdeckung → Aufgabe mit Status 'error'. */
@@ -66,20 +78,27 @@ export interface ImportTask {
   id: string;
   type: ImportTaskType;
   frequency: TaskFrequency;
-  /** Anzeige-Label, z. B. „Z-Bericht 04.07.2026" oder „Umsatz 09.07.–31.07.2026" */
+  /** Anzeige-Label, z. B. „Z-Bericht 04.07.2026" oder „Foratable KW 27 (…)". */
   label: string;
   /** Erwarteter Zeitraum (yyyy-MM-dd) */
   from: string;
   to: string;
   status: ImportTaskStatus;
-  /** true bei monthly/yearly-Aufgaben, deren Periode noch läuft (dezent anzeigen). */
+  /** true bei Monats-Aufgaben, deren Periode noch läuft (dezent anzeigen). */
   notYetDue?: boolean;
-  /** Anzahl abgedeckter / erwarteter Tage (nur range-Typen, für Fortschrittstext). */
+  /** Anzahl abgedeckter / erwarteter Tage (weekly/monthly auf Tages-Quellen). */
   coveredDayCount?: number;
   expectedDayCount?: number;
   lastImportAt?: string | null;
   /** Fehlertext bei status 'error' (sichtbar machen, nie still verschlucken). */
   error?: string | null;
+  /**
+   * Gesetzt, wenn die Aufgabe durch eine fehlende Basis-Quelle unterdrückt ist
+   * (z. B. Tagesabschluss wartet auf Z-Bericht). Unterdrückte Aufgaben zählen
+   * NICHT als offen (isOpenTask) und mahnen nicht — die Hauptwarnung trägt die
+   * Basis-Quelle.
+   */
+  suppressedBy?: ImportTaskType;
 }
 
 export interface ImportTarget {
@@ -96,19 +115,22 @@ export interface ImportTarget {
 export interface TaskTypeDef {
   type: ImportTaskType;
   label: string;
-  frequency: TaskFrequency;
+  /** Tages- oder Monats-Abdeckung (bestimmt die Aufgaben-Ableitung). */
+  coverageKind: 'days' | 'month';
+  /** Basis-Quelle: fehlt sie für Tag X, wird die Tagesaufgabe unterdrückt. */
+  dependsOn?: ImportTaskType;
 }
 
 export const TASK_TYPE_DEFS: readonly TaskTypeDef[] = [
-  { type: 'zbericht', label: 'Z-Bericht', frequency: 'daily' },
-  { type: 'reservationen', label: 'Foratable / Reservationen', frequency: 'daily' },
-  { type: 'umsatz', label: 'Umsatz', frequency: 'range' },
-  { type: 'verkaufsdaten', label: 'Verkaufsdaten', frequency: 'range' },
-  { type: 'mirus', label: 'Mirus Stunden', frequency: 'range' },
-  { type: 'marketing', label: 'Marketing Umsatz', frequency: 'range' },
-  { type: 'erfolgsrechnung', label: 'Erfolgsrechnung / Kontoblätter', frequency: 'monthly' },
-  { type: 'istkosten', label: 'IST-Kosten Buchhaltung', frequency: 'monthly' },
-  { type: 'budget', label: 'Budget', frequency: 'yearly' },
+  { type: 'zbericht', label: 'Z-Bericht', coverageKind: 'days' },
+  { type: 'gaeste_bon', label: 'Gäste & Bonanalyse', coverageKind: 'days' },
+  { type: 'mirus', label: 'Mirus IST-Stunden', coverageKind: 'days' },
+  { type: 'tagesabschluss', label: 'Tagesabschluss', coverageKind: 'days', dependsOn: 'zbericht' },
+  { type: 'marketing', label: 'Marketing Umsatz', coverageKind: 'days' },
+  { type: 'reservationen', label: 'Foratable / Reservationen', coverageKind: 'days' },
+  { type: 'erfolgsrechnung', label: 'Erfolgsrechnung IST', coverageKind: 'month' },
+  { type: 'warenrechnungen', label: 'Warenrechnungen', coverageKind: 'month' },
+  { type: 'inventur', label: 'Inventur', coverageKind: 'month' },
 ] as const;
 
 export function getTaskTypeDef(type: ImportTaskType): TaskTypeDef {
@@ -119,12 +141,11 @@ export function getTaskTypeDef(type: ImportTaskType): TaskTypeDef {
 
 export const FREQUENCY_LABEL: Record<TaskFrequency, string> = {
   daily: 'Täglich',
-  range: 'Zeitraum-basiert',
+  weekly: 'Wöchentlich',
   monthly: 'Monatlich',
-  yearly: 'Jährlich',
 };
 
-export const FREQUENCY_ORDER: readonly TaskFrequency[] = ['daily', 'range', 'monthly', 'yearly'];
+export const FREQUENCY_ORDER: readonly TaskFrequency[] = ['daily', 'weekly', 'monthly'];
 
 export const TASK_STATUS_LABEL: Record<ImportTaskStatus, string> = {
   open: 'Offen',
@@ -151,6 +172,26 @@ export function monthStartIso(year: number, month: number): string {
 
 export function monthEndIso(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`;
+}
+
+/** ISO-Wochentag 1=Mo … 7=So. */
+export function isoWeekday(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  return ((new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7) + 1;
+}
+
+/** ISO-Wochen-ID, z. B. „2026-W27" (Woche des übergebenen Tages). */
+export function isoWeekId(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = (date.getUTCDay() + 6) % 7; // 0=Mo
+  date.setUTCDate(date.getUTCDate() - dayNum + 3); // Donnerstag dieser ISO-Woche
+  const isoYear = date.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+  const ftDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - ftDayNum + 3);
+  const week = 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 86_400_000));
+  return `${isoYear}-W${String(week).padStart(2, '0')}`;
 }
 
 /** yyyy-MM-dd → dd.MM.yyyy */
@@ -180,11 +221,26 @@ export function monthLabel(year: number, month: number): string {
 }
 
 /** Anzahl Kalendertage in [from, to] (beide inklusive). */
-function rangeDayCount(from: string, to: string): number {
+export function rangeDayCount(from: string, to: string): number {
   const [fy, fm, fd] = from.split('-').map(Number);
   const [ty, tm, td] = to.split('-').map(Number);
   const ms = Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd);
   return Math.round(ms / 86_400_000) + 1;
+}
+
+/** Erwartete Tage in [from, to] ohne Ruhetage (ISO-Wochentage). */
+export function expectedDaysInRange(
+  from: string,
+  to: string,
+  restWeekdays: readonly number[],
+): string[] {
+  if (from > to) return [];
+  const rest = new Set(restWeekdays);
+  const days: string[] = [];
+  for (let day = from; day <= to; day = addDaysIso(day, 1)) {
+    if (!rest.has(isoWeekday(day))) days.push(day);
+  }
+  return days;
 }
 
 // ── Kern: Restzeitraum-Berechnung ────────────────────────────────────────
@@ -230,16 +286,13 @@ export function coveredDaysInRange(
  * (Der eigentliche Behalten/Ersetzen-Flow bleibt in den bestehenden Importpfaden.)
  */
 export function checkImportConflict(
-  task: Pick<ImportTask, 'type' | 'frequency' | 'from' | 'to'>,
+  task: Pick<ImportTask, 'type' | 'from' | 'to'>,
   coverage: MonthCoverage,
 ): { hasConflict: boolean; coveredDays: string[] } {
   const cov = coverage[task.type];
   if (!cov) return { hasConflict: false, coveredDays: [] };
-  if (task.frequency === 'monthly') {
+  if (IMPORT_TYPE_COVERAGE_KIND[task.type] === 'month') {
     return { hasConflict: cov.monthDone === true, coveredDays: [] };
-  }
-  if (task.frequency === 'yearly') {
-    return { hasConflict: cov.yearDone === true, coveredDays: [] };
   }
   const days = coveredDaysInRange(task.from, task.to, cov.coveredDays ?? []);
   return { hasConflict: days.length > 0, coveredDays: days };
@@ -247,11 +300,11 @@ export function checkImportConflict(
 
 // ── Aufgaben-Erzeugung ───────────────────────────────────────────────────
 
-function errorTask(def: TaskTypeDef, from: string, to: string, error: string): ImportTask {
+function errorTask(def: TaskTypeDef, frequency: TaskFrequency, from: string, to: string, error: string): ImportTask {
   return {
     id: `${def.type}:error`,
     type: def.type,
-    frequency: def.frequency,
+    frequency,
     label: def.label,
     from,
     to,
@@ -260,11 +313,17 @@ function errorTask(def: TaskTypeDef, from: string, to: string, error: string): I
   };
 }
 
-function buildDailyTasks(def: TaskTypeDef, from: string, cap: string, cov: TypeCoverage): ImportTask[] {
+function buildDailyTasks(
+  def: TaskTypeDef,
+  from: string,
+  cap: string,
+  cov: TypeCoverage,
+  restWeekdays: readonly number[],
+): ImportTask[] {
   if (from > cap) return [];
   const covered = new Set(cov.coveredDays ?? []);
   const tasks: ImportTask[] = [];
-  for (let day = from; day <= cap; day = addDaysIso(day, 1)) {
+  for (const day of expectedDaysInRange(from, cap, restWeekdays)) {
     tasks.push({
       id: `${def.type}:${day}`,
       type: def.type,
@@ -279,50 +338,85 @@ function buildDailyTasks(def: TaskTypeDef, from: string, cap: string, cov: TypeC
   return tasks;
 }
 
-function buildRangeTasks(def: TaskTypeDef, from: string, cap: string, cov: TypeCoverage): ImportTask[] {
-  if (from > cap) return [];
-  const coveredDays = coveredDaysInRange(from, cap, cov.coveredDays ?? []);
-  const openRanges = computeOpenRanges(from, cap, coveredDays);
-  const expectedDayCount = rangeDayCount(from, cap);
-  const hasCoverage = coveredDays.length > 0;
-
-  if (openRanges.length === 0) {
-    // Alles abgedeckt → EINE erledigte Aufgabe für den ganzen erwarteten Zeitraum.
-    return [{
-      id: `${def.type}:${from}:${cap}`,
-      type: def.type,
-      frequency: 'range',
-      label: `${def.label} ${formatIsoRange(from, cap)}`,
-      from,
-      to: cap,
-      status: 'done',
-      coveredDayCount: coveredDays.length,
-      expectedDayCount,
-      lastImportAt: cov.lastImportAt ?? null,
-    }];
-  }
-
-  // Pro zusammenhängendem Restzeitraum eine Aufgabe; „partial" wenn der Typ im
-  // Monat schon Teilabdeckung hat (Teilimport erledigt Teilzeitraum).
-  return openRanges.map(r => ({
-    id: `${def.type}:${r.from}:${r.to}`,
-    type: def.type,
-    frequency: 'range' as const,
-    label: `${def.label} ${formatIsoRange(r.from, r.to)}`,
-    from: r.from,
-    to: r.to,
-    status: hasCoverage ? ('partial' as const) : ('open' as const),
-    coveredDayCount: coveredDays.length,
-    expectedDayCount,
-    lastImportAt: cov.lastImportAt ?? null,
-  }));
-}
-
-function buildMonthlyTask(
+/**
+ * Wöchentliche Aufgaben: eine pro ISO-Woche, deren SONNTAG im gewählten Monat
+ * liegt UND bereits vergangen ist (Aufgabe erst nach dem Wochenende, inkl.
+ * Karenz-Deckel). Erwartete Tage = ganze Woche (Mo–So) ohne Ruhetage — dafür
+ * müssen die Coverage-Loader die 6 Tage vor dem Monatsersten mitliefern.
+ */
+function buildWeeklyTasks(
   def: TaskTypeDef,
   period: TaskPeriod,
+  cap: string,
   cov: TypeCoverage,
-): ImportTask {
+  restWeekdays: readonly number[],
+): ImportTask[] {
+  const monthStart = monthStartIso(period.year, period.month);
+  const monthEnd = monthEndIso(period.year, period.month);
+  const covered = new Set(cov.coveredDays ?? []);
+  const tasks: ImportTask[] = [];
+
+  // Ersten Sonntag des Monats finden, dann in 7-Tages-Schritten weiter.
+  let sunday = monthStart;
+  while (isoWeekday(sunday) !== 7) sunday = addDaysIso(sunday, 1);
+  for (; sunday <= monthEnd && sunday <= cap; sunday = addDaysIso(sunday, 7)) {
+    const monday = addDaysIso(sunday, -6);
+    const expected = expectedDaysInRange(monday, sunday, restWeekdays);
+    if (expected.length === 0) continue; // Woche komplett aus Ruhetagen
+    const coveredCount = expected.filter(d => covered.has(d)).length;
+    const status: ImportTaskStatus =
+      coveredCount === expected.length ? 'done' : coveredCount > 0 ? 'partial' : 'open';
+    const weekId = isoWeekId(sunday);
+    tasks.push({
+      id: `${def.type}:week:${weekId}`,
+      type: def.type,
+      frequency: 'weekly',
+      label: `${def.label} KW ${weekId.slice(-2)} (${formatIsoRange(monday, sunday)})`,
+      from: monday,
+      to: sunday,
+      status,
+      coveredDayCount: coveredCount,
+      expectedDayCount: expected.length,
+      lastImportAt: cov.lastImportAt ?? null,
+    });
+  }
+  return tasks;
+}
+
+/** Monats-Aufgabe für Tages-Quellen: Status aus der Tages-Abdeckung bis zum Deckel. */
+function buildMonthlyTaskFromDays(
+  def: TaskTypeDef,
+  period: TaskPeriod,
+  cap: string,
+  cov: TypeCoverage,
+  restWeekdays: readonly number[],
+): ImportTask[] {
+  const from = monthStartIso(period.year, period.month);
+  const to = monthEndIso(period.year, period.month);
+  if (from > cap) return [];
+  const expected = expectedDaysInRange(from, cap, restWeekdays);
+  if (expected.length === 0) return [];
+  const covered = new Set(cov.coveredDays ?? []);
+  const coveredCount = expected.filter(d => covered.has(d)).length;
+  const status: ImportTaskStatus =
+    coveredCount === expected.length ? 'done' : coveredCount > 0 ? 'partial' : 'open';
+  return [{
+    id: `${def.type}:${period.year}-${String(period.month).padStart(2, '0')}`,
+    type: def.type,
+    frequency: 'monthly',
+    label: `${def.label} ${monthLabel(period.year, period.month)}`,
+    from,
+    to,
+    status,
+    notYetDue: status !== 'done' && period.today <= to,
+    coveredDayCount: coveredCount,
+    expectedDayCount: expected.length,
+    lastImportAt: cov.lastImportAt ?? null,
+  }];
+}
+
+/** Monats-Aufgabe für Monats-Quellen (monthDone-Flag). */
+function buildMonthlyTask(def: TaskTypeDef, period: TaskPeriod, cov: TypeCoverage): ImportTask {
   const from = monthStartIso(period.year, period.month);
   const to = monthEndIso(period.year, period.month);
   return {
@@ -338,51 +432,78 @@ function buildMonthlyTask(
   };
 }
 
-function buildYearlyTask(def: TaskTypeDef, period: TaskPeriod, cov: TypeCoverage): ImportTask {
-  return {
-    id: `${def.type}:${period.year}`,
-    type: def.type,
-    frequency: 'yearly',
-    label: `${def.label} ${period.year}`,
-    from: `${period.year}-01-01`,
-    to: `${period.year}-12-31`,
-    status: cov.yearDone ? 'done' : 'open',
-    lastImportAt: cov.lastImportAt ?? null,
-  };
+/**
+ * Abhängigkeits-Unterdrückung: offene TAGES-Aufgaben eines Typs mit
+ * `dependsOn` werden unterdrückt, wenn die Basis-Quelle für denselben Tag
+ * fehlt — EINE Hauptwarnung (Basis-Quelle) statt Doppel-Warnungen.
+ * Keine Unterdrückung, wenn die Basis-Quelle keine Aufgaben erzeugt
+ * (bei_bedarf/deaktiviert) oder ihre Abdeckung nicht ermittelbar war.
+ */
+function applyDependencySuppression(
+  tasks: ImportTask[],
+  coverage: MonthCoverage,
+  settings: EffectiveImportSettings,
+): void {
+  for (const def of TASK_TYPE_DEFS) {
+    const dep = def.dependsOn;
+    if (!dep) continue;
+    const depFrequency = settings.types[dep].frequency;
+    if (depFrequency === 'bei_bedarf' || depFrequency === 'deaktiviert') continue;
+    const depCov = coverage[dep];
+    if (depCov?.error) continue;
+    const depCovered = new Set(depCov?.coveredDays ?? []);
+    for (const task of tasks) {
+      if (task.type !== def.type || task.frequency !== 'daily') continue;
+      if (task.status !== 'open') continue;
+      if (!depCovered.has(task.from)) task.suppressedBy = dep;
+    }
+  }
 }
 
 /**
- * Erzeugt alle Import-Aufgaben für den gewählten Monat.
- * Tages-/Zeitraum-Aufgaben sind auf min(Monatsende, gestern) gedeckelt.
+ * Erzeugt alle Import-Aufgaben für den gewählten Monat anhand der effektiven
+ * Einstellungen (Frequenz, Karenz, Ruhetage). Tages-/Wochen-Aufgaben sind je
+ * Typ auf min(Monatsende, heute − 1 − delayDays) gedeckelt.
  */
-export function buildImportTasks(period: TaskPeriod, coverage: MonthCoverage): ImportTask[] {
+export function buildImportTasks(
+  period: TaskPeriod,
+  coverage: MonthCoverage,
+  settings: EffectiveImportSettings,
+): ImportTask[] {
   const from = monthStartIso(period.year, period.month);
   const monthEnd = monthEndIso(period.year, period.month);
-  const yesterday = addDaysIso(period.today, -1);
-  const cap = yesterday < monthEnd ? yesterday : monthEnd;
 
   const tasks: ImportTask[] = [];
   for (const def of TASK_TYPE_DEFS) {
+    const ts = settings.types[def.type];
+    if (ts.frequency === 'bei_bedarf' || ts.frequency === 'deaktiviert') continue;
     const cov: TypeCoverage = coverage[def.type] ?? {};
+    const capRaw = addDaysIso(period.today, -1 - ts.delayDays);
+    const cap = capRaw < monthEnd ? capRaw : monthEnd;
     if (cov.error) {
-      tasks.push(errorTask(def, from, monthEnd, cov.error));
+      const freq: TaskFrequency =
+        ts.frequency === 'taeglich' ? 'daily' : ts.frequency === 'woechentlich' ? 'weekly' : 'monthly';
+      tasks.push(errorTask(def, freq, from, monthEnd, cov.error));
       continue;
     }
-    switch (def.frequency) {
-      case 'daily':
-        tasks.push(...buildDailyTasks(def, from, cap, cov));
+    if (def.coverageKind === 'month') {
+      // Monats-Quellen kennen nur 'monatlich' (resolveImportSettings klemmt Rest).
+      tasks.push(buildMonthlyTask(def, period, cov));
+      continue;
+    }
+    switch (ts.frequency) {
+      case 'taeglich':
+        tasks.push(...buildDailyTasks(def, from, cap, cov, settings.restWeekdays));
         break;
-      case 'range':
-        tasks.push(...buildRangeTasks(def, from, cap, cov));
+      case 'woechentlich':
+        tasks.push(...buildWeeklyTasks(def, period, cap, cov, settings.restWeekdays));
         break;
-      case 'monthly':
-        tasks.push(buildMonthlyTask(def, period, cov));
-        break;
-      case 'yearly':
-        tasks.push(buildYearlyTask(def, period, cov));
+      case 'monatlich':
+        tasks.push(...buildMonthlyTaskFromDays(def, period, cap, cov, settings.restWeekdays));
         break;
     }
   }
+  applyDependencySuppression(tasks, coverage, settings);
   return tasks;
 }
 
@@ -390,18 +511,22 @@ export function buildImportTasks(period: TaskPeriod, coverage: MonthCoverage): I
 
 export interface ImportTaskGroups {
   daily: ImportTask[];
-  range: ImportTask[];
+  weekly: ImportTask[];
   monthly: ImportTask[];
-  yearly: ImportTask[];
 }
 
 export function groupImportTasks(tasks: readonly ImportTask[]): ImportTaskGroups {
-  const groups: ImportTaskGroups = { daily: [], range: [], monthly: [], yearly: [] };
+  const groups: ImportTaskGroups = { daily: [], weekly: [], monthly: [] };
   for (const t of tasks) groups[t.frequency].push(t);
   return groups;
 }
 
-export function isOpenTask(task: Pick<ImportTask, 'status'>): boolean {
+/**
+ * EINZIGER Chokepoint für „gilt als offen": offene/teilweise/fehlerhafte
+ * Aufgaben, die NICHT durch eine fehlende Basis-Quelle unterdrückt sind.
+ */
+export function isOpenTask(task: Pick<ImportTask, 'status' | 'suppressedBy'>): boolean {
+  if (task.suppressedBy) return false;
   return task.status === 'open' || task.status === 'partial' || task.status === 'error';
 }
 
@@ -429,11 +554,11 @@ export function buildImportTarget(
   task: Pick<ImportTask, 'type' | 'frequency' | 'from' | 'to'>,
 ): ImportTarget {
   const scope = task.frequency === 'daily' ? 'day'
-    : task.frequency === 'range' ? 'range'
-    : task.frequency === 'monthly' ? 'month'
-    : 'year';
+    : task.frequency === 'weekly' ? 'range'
+    : 'month';
   const year = task.from.slice(0, 4);
   const month = String(Number(task.from.slice(5, 7)));
+  const monat = `${task.from.slice(0, 4)}-${task.from.slice(5, 7)}`;
 
   let path: string;
   let params: Record<string, string>;
@@ -442,45 +567,46 @@ export function buildImportTarget(
       path = '/gastronovi-import';
       params = { from: task.from, to: task.to, scope };
       break;
-    case 'reservationen':
-      path = '/foratable-import';
-      params = { from: task.from, to: task.to, scope };
-      break;
-    case 'umsatz':
-      path = '/import';
-      params = { target: 'tagesumsatz', from: task.from, to: task.to, scope };
-      break;
-    case 'verkaufsdaten':
-      path = '/sales-upload';
-      params = { from: task.from, to: task.to, scope };
+    case 'gaeste_bon':
+      path = '/gastronovi-import';
+      params = { target: 'kpi', from: task.from, to: task.to, scope };
       break;
     case 'mirus':
       path = '/import';
       params = { target: 'mirus', from: task.from, to: task.to, scope };
       break;
+    case 'tagesabschluss':
+      path = '/tagesabschluesse';
+      params = { monat };
+      break;
     case 'marketing':
       path = '/import';
       params = { target: 'maison', from: task.from, to: task.to, scope };
+      break;
+    case 'reservationen':
+      path = '/foratable-import';
+      params = { from: task.from, to: task.to, scope };
       break;
     case 'erfolgsrechnung':
       path = '/reporting';
       params = { target: 'erfolgsrechnung', year, month };
       break;
-    case 'istkosten':
-      path = '/reporting';
-      params = { target: 'istkosten', year, month };
+    case 'warenrechnungen':
+      path = '/warenrechnungen';
+      params = { monat };
       break;
-    case 'budget':
-      path = '/budget';
-      params = { year };
+    case 'inventur':
+      // Kein Importpfad — manuelles Monats-Häkchen im Cockpit selbst.
+      path = '/import-cockpit';
+      params = {};
       break;
   }
   const search = new URLSearchParams(params).toString();
-  return { path, params, href: `${path}?${search}` };
+  return { path, params, href: search ? `${path}?${search}` : path };
 }
 
 /**
- * „Ganzen Monat importieren"-Aufgabe für einen zeitraum-basierten Typ
+ * „Ganzen Monat importieren"-Aufgabe für einen Tages-Typ
  * (immer verfügbar, auch wenn die Engine Restaufgaben vorschlägt).
  */
 export function buildFullMonthTask(
@@ -490,7 +616,7 @@ export function buildFullMonthTask(
   const def = getTaskTypeDef(type);
   return {
     type,
-    frequency: def.frequency,
+    frequency: 'monthly',
     from: monthStartIso(period.year, period.month),
     to: monthEndIso(period.year, period.month),
     label: `${def.label} ${monthLabel(period.year, period.month)}`,

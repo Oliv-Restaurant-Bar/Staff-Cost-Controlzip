@@ -32,9 +32,11 @@ describe('classifyWarenaufwandKonto — Bereichsgrenzen', () => {
     expect(classifyWarenaufwandKonto(4071)).toBe('uebrig');
   });
 
-  it('4. Obergrenze 4900 → uebrig (inklusive)', () => {
-    expect(classifyWarenaufwandKonto('4900')).toBe('uebrig');
-    expect(classifyWarenaufwandKonto(4900)).toBe('uebrig');
+  it('4. Obergrenze 4899 → uebrig (inklusive); 4900 = Lagerveränderung, eigene Zeile', () => {
+    expect(classifyWarenaufwandKonto('4899')).toBe('uebrig');
+    expect(classifyWarenaufwandKonto(4899)).toBe('uebrig');
+    expect(classifyWarenaufwandKonto('4900')).toBeNull();
+    expect(classifyWarenaufwandKonto(4900)).toBeNull();
   });
 
   it('5. 4901 und höher → null (nie stillschweigend zuordnen)', () => {
@@ -86,14 +88,14 @@ describe('classifyWarenaufwandKonto — Normalisierung & Robustheit', () => {
     }
   });
 
-  it('12. Bereichs-Konstanten decken lückenlos 4000–4900 ab (kein Konto doppelt/verloren)', () => {
+  it('12. Bereichs-Konstanten decken lückenlos 4000–4899 ab (4900 = Lagerveränderung, separat)', () => {
     expect(WARENAUFWAND_DIRECT_MIN).toBe(4000);
     expect(WARENAUFWAND_DIRECT_MAX).toBe(4070);
     expect(WARENAUFWAND_UEBRIG_MIN).toBe(4071);
-    expect(WARENAUFWAND_UEBRIG_MAX).toBe(4900);
+    expect(WARENAUFWAND_UEBRIG_MAX).toBe(4899);
     expect(WARENAUFWAND_UEBRIG_MIN).toBe(WARENAUFWAND_DIRECT_MAX + 1);
     // jedes Konto im Gesamtbereich landet in genau einer Gruppe
-    for (let n = 4000; n <= 4900; n++) {
+    for (let n = 4000; n <= 4899; n++) {
       const g = classifyWarenaufwandKonto(n);
       expect(g === 'direct' || g === 'uebrig', `Konto ${n}`).toBe(true);
     }

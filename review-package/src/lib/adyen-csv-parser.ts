@@ -2,6 +2,7 @@
  * adyen-csv-parser.ts — Parser für den Adyen-Report „Received payment details".
  * ============================================================================
  * Reine Logik: KEIN DOM, KEIN Supabase — synthetisch testbar (node-Umgebung).
+ * Betrag-Parsing über die zentrale parseBetragText-Logik (tagesdaten-zahlen).
  *
  * Aufgabe (Spec Umsatzabstimmung / Adyen-Abgleich):
  *   - CSV einlesen, nach Verkaufs-/Creation-Datum gruppieren (NIE Payout-Datum).
@@ -18,6 +19,8 @@
  * gelesen (nie `new Date()`), damit die TimeZone-Spalte bzw. die Runtime-TZ
  * Mitternachts-Transaktionen nicht in den Nachbartag verschiebt.
  */
+
+import { parseBetragText } from '@/lib/tagesdaten-zahlen';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -150,14 +153,14 @@ function extractIsoDay(raw: string): string | null {
   return null;
 }
 
-/** Betrag parsen: 1'234.50 / 1234,50 / "6471.60" → number, sonst null. */
+/**
+ * Betrag parsen: 1'234.50 / 1234,50 / "6471.60" → number, sonst null.
+ * Delegiert an die zentrale Betrag-Logik (parseBetragText: Apostroph-Tausender,
+ * Komma- ODER Punkt-Dezimal, EU/US-Formate) — nie stilles 0.
+ */
 function parseAmount(raw: string): number | null {
-  let s = raw.trim().replace(/['\u2019\s]/g, '');
-  if (s === '') return null;
-  if (s.includes(',') && !s.includes('.')) s = s.replace(',', '.');
-  else s = s.replace(/,/g, '');
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : null;
+  const z = parseBetragText(raw);
+  return z.ok ? z.value : null;
 }
 
 function round2(n: number): number {

@@ -13,7 +13,7 @@
  *   - Geldbeträge in der Kopfzeile werden NICHT als Datum erkannt
  */
 import { describe, it, expect } from 'vitest';
-import { parseGnAverageCheck } from '@/lib/gn-average-check-parser';
+import { parseGnAverageCheck, isAverageCheckReimportNoop } from '@/lib/gn-average-check-parser';
 
 describe('Durchschnittsbon Parser — Grundformat', () => {
   it('liest Tageswerte mit CHF + Punkt-Dezimaltrenner', () => {
@@ -465,5 +465,48 @@ describe('Durchschnittsbon Parser — Jahresbestimmung (Priorität & Quelle)', (
 
     expect(r.debug.usedYear).toBe(new Date().getFullYear());
     expect(r.debug.usedYearSource).toBe('Benutzerwahl');
+  });
+});
+
+describe('isAverageCheckReimportNoop — Idempotenz (reine Logik)', () => {
+  const parsed = [
+    { date: '2026-06-01', averageCheck: 54.07 },
+    { date: '2026-06-02', averageCheck: 61.9 },
+  ];
+
+  it('identische Werte ⇒ No-op', () => {
+    expect(isAverageCheckReimportNoop(parsed, [
+      { report_date: '2026-06-01', average_check_chf: 54.07 },
+      { report_date: '2026-06-02', average_check_chf: 61.9 },
+      { report_date: '2026-06-03', average_check_chf: 99 }, // zusätzlicher Bestand stört nicht
+    ])).toBe(true);
+  });
+
+  it('numeric-Rundung ±0.005 gilt als identisch', () => {
+    expect(isAverageCheckReimportNoop(parsed, [
+      { report_date: '2026-06-01', average_check_chf: 54.070000001 },
+      { report_date: '2026-06-02', average_check_chf: 61.9 },
+    ])).toBe(true);
+  });
+
+  it('geänderter Wert ⇒ KEIN No-op (Replace läuft)', () => {
+    expect(isAverageCheckReimportNoop(parsed, [
+      { report_date: '2026-06-01', average_check_chf: 54.07 },
+      { report_date: '2026-06-02', average_check_chf: 62.5 },
+    ])).toBe(false);
+  });
+
+  it('fehlender Tag oder null-Wert im Bestand ⇒ KEIN No-op', () => {
+    expect(isAverageCheckReimportNoop(parsed, [
+      { report_date: '2026-06-01', average_check_chf: 54.07 },
+    ])).toBe(false);
+    expect(isAverageCheckReimportNoop(parsed, [
+      { report_date: '2026-06-01', average_check_chf: 54.07 },
+      { report_date: '2026-06-02', average_check_chf: null },
+    ])).toBe(false);
+  });
+
+  it('leerer Parse ⇒ nie No-op (Fehlerpfad bleibt Fehler)', () => {
+    expect(isAverageCheckReimportNoop([], [])).toBe(false);
   });
 });

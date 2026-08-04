@@ -39,7 +39,7 @@ export interface SeasonOption {
 export const SEASONS: SeasonOption[] = [
   { key: 'standard', label: 'Standard', available: true },
   { key: 'sommer', label: 'Sommer', available: true },
-  { key: 'winter', label: 'Winter', available: true },
+  { key: 'winter', label: 'Winter/UG', available: true },
   { key: 'custom', label: 'Individuelle Saison', available: false },
 ];
 

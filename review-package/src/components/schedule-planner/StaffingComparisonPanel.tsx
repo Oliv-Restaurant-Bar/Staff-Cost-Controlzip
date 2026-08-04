@@ -2,13 +2,14 @@ import { useMemo, useState, useCallback } from 'react';
 import { format, getISODay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
-import { ClipboardList, ArrowRight, CalendarDays, ChevronDown } from 'lucide-react';
+import { ClipboardList, ArrowRight, CalendarDays, ChevronDown, UserCheck } from 'lucide-react';
 
 import type { Department, Employee } from '@/types/personnel';
 import type { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import type { StaffingSeason } from '@/types/staffing';
 
 import { usePositions } from '@/hooks/usePositions';
+import { positionDisplayName } from '@/lib/position-utils';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import {
   SEASONS,
@@ -24,6 +25,21 @@ import {
   type ShiftComparisonRow,
   type StaffingHeadline,
 } from '@/lib/staffing-comparison-utils';
+import {
+  computeCdsCheck,
+  computeKitchenColdCheck,
+  dynamicPositionOverrides,
+} from '@/lib/staffing-check-utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import type { KitchenColdRule, StaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
+import { buildEffectiveRequirements, cdsRuleForSeason, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
+import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
+import { useUgEventDays } from '@/hooks/useUgEventDays';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   StaffingKpiCards,
   StaffingStatusBadge,
@@ -58,6 +74,16 @@ interface StaffingComparisonPanelProps {
    */
   season?: StaffingSeason;
   onSeasonChange?: (season: StaffingSeason) => void;
+  /** Dynamische Profil-Liste (aus der Profil-Konfiguration); ohne = SEASONS. */
+  profiles?: { key: string; label: string }[];
+  /**
+   * Massgebliche Profil-Konfiguration der aufrufenden Seite (CdS-/Gastgeber-
+   * Regel, UG-Zuschlag …). Ohne Prop fällt das Panel auf den eigenen Hook
+   * zurück (Legacy-Aufrufer).
+   */
+  profilesConfig?: StaffingProfilesConfig;
+  /** Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS). */
+  kitchenCold?: KitchenColdRule | null;
 }
 
 const DEPARTMENT_LABEL: Record<Department, string> = {
@@ -110,7 +136,27 @@ function HeadlinePill({ headline }: { headline: StaffingHeadline }) {
   );
 }
 
-function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
+const VIA_LABEL: Record<string, string> = {
+  regel: 'Regel',
+  haupt: 'Hauptposition',
+  zweit: 'Zweitposition',
+  alias: 'Alt-Position',
+};
+
+/**
+ * Zeilen einer Position mit Drill-down: Klick auf die Ist-Zahl öffnet die
+ * Liste der zugeordneten Personen (Name + Schichtzeit + Zuordnungsweg);
+ * Klick auf die Soll-Zahl zeigt die hinterlegte Anforderung.
+ */
+function ShiftRows({
+  shifts,
+  positionName,
+  employeeName,
+}: {
+  shifts: ShiftComparisonRow[];
+  positionName: (key: string) => string;
+  employeeName: (id: string) => string;
+}) {
   return (
     <>
       {shifts.map((s, i) => (
@@ -118,8 +164,60 @@ function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
           <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap text-sm">
             {s.shiftStart}–{s.shiftEnd}
           </td>
-          <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.required}</td>
-          <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.planned}</td>
+          <td className="py-1.5 px-3 text-center tabular-nums text-sm">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-muted"
+                  data-testid={`soll-drilldown-${s.positionKey}-${s.shiftStart}`}
+                >
+                  {s.required}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 text-xs" align="center">
+                <p className="font-semibold mb-1">Hinterlegte Anforderung</p>
+                <p>
+                  {positionName(s.positionKey)} · {s.shiftStart}–{s.shiftEnd} ·{' '}
+                  {s.required} {s.required === 1 ? 'Person' : 'Personen'}
+                </p>
+              </PopoverContent>
+            </Popover>
+          </td>
+          <td className="py-1.5 px-3 text-center tabular-nums text-sm">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-muted"
+                  data-testid={`ist-drilldown-${s.positionKey}-${s.shiftStart}`}
+                >
+                  {s.planned}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-xs" align="center">
+                <p className="font-semibold mb-1">
+                  Zugeordnete Personen ({positionName(s.positionKey)} {s.shiftStart}–{s.shiftEnd})
+                </p>
+                {s.assigned.length === 0 ? (
+                  <p className="text-muted-foreground">Niemand zugeordnet.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {s.assigned.map((a) => (
+                      <li key={a.id} className="flex items-baseline justify-between gap-2">
+                        <span className="font-medium">{employeeName(a.id)}</span>
+                        <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                          {a.slots.map((sl) => `${sl.start}–${sl.end}`).join(' / ')}
+                          {' · '}
+                          {VIA_LABEL[a.via] ?? a.via}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </PopoverContent>
+            </Popover>
+          </td>
           <td className="py-1.5 px-3 text-right text-sm">
             <StaffingDiffCell data={{ required: s.required, planned: s.planned, diff: s.diff }} />
           </td>
@@ -139,9 +237,16 @@ export function StaffingComparisonPanel({
   departments,
   season: seasonProp,
   onSeasonChange,
+  profiles,
+  profilesConfig: profilesConfigProp,
+  kitchenCold,
 }: StaffingComparisonPanelProps) {
   const { positions, loading: posLoading } = usePositions();
   const { requirements, loading: reqLoading } = useStaffingRequirements();
+  const { config: hookProfilesConfig } = useStaffingProfiles();
+  // Massgeblich ist die Konfiguration der Seite; Hook nur als Legacy-Rückfall.
+  const profilesConfig = profilesConfigProp ?? hookProfilesConfig;
+  const { eventDays, toggle: toggleEventDay } = useUgEventDays();
 
   const [selectedDate, setSelectedDate] = useState<Date>(initialDate ?? new Date());
   const [internalSeason, setInternalSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
@@ -157,21 +262,54 @@ export function StaffingComparisonPanel({
     [employees, scheduleData, positions, dateStr],
   );
 
+  // Effektiver Bedarf: Winter/UG = Standard-Zeilen + UG-Zuschlag (Fr/Sa bzw.
+  // Tages-Flag «UG/Event offen», ganzjährig).
+  const eventOpen = eventDays.has(dateStr);
+  const effectiveRequirements = useMemo(
+    () => buildEffectiveRequirements({ requirements, config: profilesConfig, season, weekday, eventOpen }),
+    [requirements, profilesConfig, season, weekday, eventOpen],
+  );
+  const surchargeActive = ugSurchargeApplies({ config: profilesConfig, season, weekday, eventOpen });
+
+  // Chef-de-Service-Regel — profil-spezifisch aus der massgeblichen Config.
+  const cdsRule = useMemo(
+    () => cdsRuleForSeason(profilesConfig, season),
+    [profilesConfig, season],
+  );
+  const cdsCheck = useMemo(
+    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsRule.cdsPriority, weekday, cdsRule),
+    [plannedEmployees, cdsRule, weekday],
+  );
+  // Küchen-Stationsregel Kalte Küche/Sushi (nur wenn eine Regel konfiguriert ist).
+  const kitchenColdCheck = useMemo(
+    () => computeKitchenColdCheck(plannedEmployees.map((p) => p.id), kitchenCold),
+    [plannedEmployees, kitchenCold],
+  );
+
   const result = useMemo(
     () =>
       computeStaffingComparison({
         positions,
-        requirements,
+        requirements: effectiveRequirements,
         plannedEmployees,
         season,
         weekday,
         departments,
+        preferredKeysById: dynamicPositionOverrides(cdsCheck, kitchenColdCheck),
       }),
-    [positions, requirements, plannedEmployees, season, weekday, departments],
+    [positions, effectiveRequirements, plannedEmployees, season, weekday, departments, cdsCheck, kitchenColdCheck],
   );
 
   const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
   const headline = useMemo(() => staffingHeadline(result), [result]);
+  const employeeName = useCallback(
+    (id: string) => employees.find((e) => e.id === id)?.name ?? id,
+    [employees],
+  );
+  const positionName = useCallback(
+    (key: string) => positionDisplayName(positions, key),
+    [positions],
+  );
 
   const loading = posLoading || reqLoading;
 
@@ -241,12 +379,18 @@ export function StaffingComparisonPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SEASONS.map((s) => (
-                  <SelectItem key={s.key} value={s.key} disabled={!s.available}>
-                    {s.label}
-                    {!s.available ? ' (bald)' : ''}
-                  </SelectItem>
-                ))}
+                {profiles && profiles.length > 0
+                  ? profiles.map((p) => (
+                      <SelectItem key={p.key} value={p.key}>
+                        {p.label}
+                      </SelectItem>
+                    ))
+                  : SEASONS.map((s) => (
+                      <SelectItem key={s.key} value={s.key} disabled={!s.available}>
+                        {s.label}
+                        {!s.available ? ' (bald)' : ''}
+                      </SelectItem>
+                    ))}
               </SelectContent>
             </Select>
             <Button
@@ -257,7 +401,76 @@ export function StaffingComparisonPanel({
             >
               Heute
             </Button>
+            {/* Tages-Flag «UG/Event offen» — UG-Zuschlag ganzjährig aktivieren. */}
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+              <Checkbox
+                checked={eventOpen}
+                onCheckedChange={() => toggleEventDay(dateStr)}
+                data-testid="ug-event-toggle-panel"
+              />
+              UG/Event offen
+            </label>
+            {surchargeActive && (
+              <span className="inline-flex items-center rounded-full border border-violet-400 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-400 whitespace-nowrap">
+                UG-Zuschlag aktiv{eventOpen ? ' (Event)' : ' (Winter Fr/Sa)'}
+              </span>
+            )}
           </div>
+
+          {/* Chef-de-Service-Regel (Warnung bzw. aktiver CdS) */}
+          {cdsRule.cdsPriority.length > 0 && (
+            <div
+              data-testid="staffing-cds-status"
+              className={cn(
+                'mb-3 rounded-md border px-3 py-2 text-xs flex items-start gap-2',
+                cdsCheck.ok
+                  ? 'border-border bg-muted/30'
+                  : 'border-amber-300 bg-amber-50 dark:bg-amber-950/20',
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+              {cdsCheck.ok ? (
+                <span>
+                  Chef de Service: <strong>{employeeName(cdsCheck.activeCdsId!)}</strong>
+                  {cdsCheck.gastgeberId && (
+                    <> · Gastgeber/GF: <strong>{employeeName(cdsCheck.gastgeberId)}</strong></>
+                  )}
+                </span>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">{cdsCheck.warning}</span>
+              )}
+            </div>
+          )}
+
+          {/* Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS) */}
+          {kitchenColdCheck.mode !== 'not_configured' && (
+            <div
+              data-testid="staffing-kitchen-cold-status"
+              className={cn(
+                'mb-3 rounded-md border px-3 py-2 text-xs flex items-start gap-2',
+                kitchenColdCheck.ok
+                  ? 'border-border bg-muted/30'
+                  : 'border-amber-300 bg-amber-50 dark:bg-amber-950/20',
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+              {kitchenColdCheck.ok ? (
+                kitchenColdCheck.mode === 'weak_day' ? (
+                  <span>
+                    Kalte Küche/Sushi: keine eigene Station ({kitchenColdCheck.hotCookCount} Köche
+                    geplant — die Köche decken alles ab)
+                  </span>
+                ) : (
+                  <span>
+                    Kalte Küche/Sushi: <strong>{employeeName(kitchenColdCheck.coldId!)}</strong>
+                    {kitchenColdCheck.mode === 'fallback' && <> (Vertretung)</>}
+                  </span>
+                )
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">{kitchenColdCheck.warning}</span>
+              )}
+            </div>
+          )}
 
           {/* Nachfrage-Kontext (Reservationen) — nur geöffnet, admin-only. */}
           <StaffingDemandContext date={dateStr} className="mb-3" />
@@ -340,7 +553,7 @@ export function StaffingComparisonPanel({
                             </tr>
                           </thead>
                           <tbody>
-                            <ShiftRows shifts={pc.shifts} />
+                            <ShiftRows shifts={pc.shifts} positionName={positionName} employeeName={employeeName} />
                           </tbody>
                         </table>
                       </div>
@@ -373,7 +586,7 @@ export function StaffingComparisonPanel({
                         </tr>
                       </thead>
                       <tbody>
-                        <ShiftRows shifts={op.shifts} />
+                        <ShiftRows shifts={op.shifts} positionName={positionName} employeeName={employeeName} />
                       </tbody>
                     </table>
                   </div>
@@ -384,8 +597,9 @@ export function StaffingComparisonPanel({
             {/* Fußnote: Zählregel + Link */}
             <div className="flex flex-col gap-1.5 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Gezählt werden aktive Mitarbeitende mit dieser Position als Hauptposition,
-                deren Schicht den Zeitraum überschneidet.
+                Jeder Einsatz wird genau einem Soll-Block zugeordnet (Haupt- oder
+                Zweitposition bzw. Regel, grösste Zeitüberlappung) — keine Mehrfachzählung.
+                Klick auf eine Zahl zeigt Details.
               </span>
               <Link
                 to="/personalbedarf"

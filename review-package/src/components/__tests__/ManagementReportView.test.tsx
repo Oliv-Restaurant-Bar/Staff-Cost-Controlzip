@@ -63,7 +63,7 @@ describe('ManagementReportView', () => {
     expect(screen.getByTestId('mrv-report')).toBeTruthy();
     expect(screen.getByTestId('mrv-position')).toBeTruthy();
     expect(screen.getByTestId('mrv-years')).toBeTruthy();
-    expect(screen.getByTestId('mrv-export-pdf').textContent).toContain('Management Report PDF');
+    expect(screen.getByTestId('mrv-export').textContent).toContain('Exportieren');
   });
 
   it('Kopfbereich: Firma, Titel, Periode, Erstellungsdatum, Datenstand, YTD-Kennzeichnung', () => {

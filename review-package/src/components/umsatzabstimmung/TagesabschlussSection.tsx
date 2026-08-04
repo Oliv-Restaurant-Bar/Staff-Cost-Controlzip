@@ -8,8 +8,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Info, Lock, LockOpen, Plus } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Lock, LockOpen, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,12 +20,13 @@ import {
   loadAdyenAbstimmung, loadAdyenAbstimmungLocal, saveAdyenAbstimmung,
 } from '@/lib/adyen-abstimmung-db';
 import {
-  emptyAdyenBlob, setDayConfirmation,
-  type AdyenAbstimmungBlob, type DayConfirmation,
+  applyDayConfirmation, emptyAdyenBlob,
+  type AdyenAbstimmungBlob, type DayConfirmationInput,
 } from '@/lib/adyen-abstimmung';
 import {
   buildTagesabschlussRows,
   canCloseMonth,
+  canBulkCloseDay,
   closeDay,
   closeMonth,
   isMonthClosed,
@@ -55,6 +57,12 @@ import {
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
+import { ladeUmsatzTage } from '@/lib/umsatz';
+import {
+  DEFAULT_UMSATZ_DIFF_SCHWELLE, setUmsatzDiffSchwelle,
+  umsatzAbgleich, umsatzDiffSchwelle,
+} from '@/lib/tagesabschluss';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
 import { exportTagesabschlussExcel } from '@/lib/tagesabschluss-excel-export';
 import { BuchhaltungsExportSection } from './BuchhaltungsExportSection';
@@ -87,11 +95,11 @@ interface TagesabschlussSectionProps {
 }
 
 export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionProps) {
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const { user } = useAuth();
-  const readOnly = isGuest;
-  /** Wiederöffnen abgeschlossener Tage/Monate: NUR echte Admins, keine Gäste. */
-  const canReopen = isAdmin && !isGuest;
+  const readOnly = false;
+  /** Wiederöffnen abgeschlossener Tage/Monate: NUR echte Admins. */
+  const canReopen = isAdmin;
   /** Benutzer für Abschluss-Historie/Audit (E-Mail). */
   const currentUser = user?.email ?? 'unbekannt';
 
@@ -102,6 +110,12 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [blob, setBlob] = useState<TagesabschlussBlob | null>(null);
   const [adyenBlob, setAdyenBlob] = useState<AdyenAbstimmungBlob | null>(null);
   const [closings, setClosings] = useState<Record<string, GnDayClosing>>({});
+  /** Tagesumsatz (Brutto) aus dem Tagesumsätze-Import, Key = yyyy-MM-dd. */
+  const [umsatzImport, setUmsatzImport] = useState<Record<string, number>>({});
+  /** Offenes Umsatz-Differenz-Popup (Datum) — Klick auf die rote Umsatz-Zelle. */
+  const [umsatzDiffDate, setUmsatzDiffDate] = useState<string | null>(null);
+  /** Entwurfstext der konfigurierbaren Abgleich-Schwelle im Popup. */
+  const [schwelleText, setSchwelleText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [openDate, setOpenDate] = useState<string | null>(null);
   const [openExpensesDate, setOpenExpensesDate] = useState<string | null>(null);
@@ -149,6 +163,18 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
       if (!alive) return;
       setClosings(data);
       setLoading(false);
+    });
+    // Tagesumsätze-Import (massgebliche Umsatz-Anzeige) parallel laden —
+    // Tage ohne Import fehlen in der Map (leer statt 0, kein Abgleich).
+    setUmsatzImport({});
+    const p = (n: number) => String(n).padStart(2, '0');
+    const from = `${year}-${p(month)}-01`;
+    const to = `${year}-${p(month)}-31`;
+    ladeUmsatzTage(tenantId, from, to).then(map => {
+      if (!alive) return;
+      const rec: Record<string, number> = {};
+      for (const [datum, tag] of map) rec[datum] = tag.gesamtBrutto;
+      setUmsatzImport(rec);
     });
     return () => { alive = false; };
   }, [tenantId, year, month]);
@@ -299,15 +325,19 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   // ── Bestätigung (gemeinsamer Adyen-Store) ───────────────────────────────────
 
-  const handleConfirm = useCallback(async (date: string, confirmation: DayConfirmation | null) => {
+  const handleConfirm = useCallback(async (date: string, confirmation: DayConfirmationInput) => {
     if (readOnly || isDayLocked(date)) return;
     // IMMER den frischen Primärspeicher-Stand mutieren — NIE den Mount-Zeit-
     // State: sonst überschreibt diese Section stille Änderungen des
     // Adyen-Abgleichs (Importe/Overrides/Kommentare) auf derselben Seite.
-    const next = setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation);
+    // Audit-Stempel + Dirty-Check zentral in applyDayConfirmation:
+    // keine fachliche Änderung ⇒ kein Write.
+    const cur = loadAdyenAbstimmungLocal(tenantId);
+    const next = applyDayConfirmation(cur, date, confirmation, currentUser, new Date().toISOString());
+    if (next === cur) return;
     setAdyenBlob(next);
     await saveAdyenAbstimmung(tenantId, next);
-  }, [readOnly, isDayLocked, tenantId]);
+  }, [readOnly, isDayLocked, tenantId, currentUser]);
 
   // ── Zeilen bauen ────────────────────────────────────────────────────────────
 
@@ -342,6 +372,53 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
       console.error('[Tagesabschluss] Wiederöffnen nicht möglich:', e);
     }
   }, [canReopen, blob, currentUser, persist]);
+
+  /**
+   * Sammelaktion «Alle auf grün»: schliesst alle abschliessbaren Tage des
+   * angezeigten Monats auf einmal — setzt beide Bestätigungen (ein Write in
+   * den Adyen-Store) und sperrt die Tage (ein persist auf den Blob).
+   * Nur Tage, die canBulkCloseDay besteht (Daten vollständig, Differenz grün
+   * oder begründet); alle anderen bleiben unangetastet.
+   */
+  const handleCloseAllDays = useCallback(async () => {
+    if (readOnly || !blob) return;
+    const eligible = monthData.rows.filter(r => canBulkCloseDay(r).ok);
+    if (eligible.length === 0) return;
+    const now = new Date().toISOString();
+    // 1) ALLE Abschlüsse zuerst rein in-memory berechnen — wirft ein einziger
+    //    closeDay (stale Row/Race), passiert GAR KEIN Write in KEINEM Store.
+    let b: typeof blob;
+    try {
+      b = blob;
+      for (const r of eligible) {
+        const simulated = {
+          ...r,
+          confirmation: { ...(r.confirmation ?? {}), confirmed: true, cashCounted: true },
+        } as typeof r;
+        b = closeDay(b, simulated, currentUser, now);
+      }
+    } catch (e) {
+      console.error('[Tagesabschluss] «Alle auf grün» abgebrochen (kein Tag geschrieben):', e);
+      window.alert('«Alle auf grün» abgebrochen — es wurde nichts geändert. Bitte Seite neu laden und erneut versuchen.');
+      return;
+    }
+    try {
+      // 2) Bestätigungen (gemeinsamer Adyen-Store) — frischer Stand, EIN Save.
+      let cur = loadAdyenAbstimmungLocal(tenantId);
+      for (const r of eligible) {
+        cur = applyDayConfirmation(cur, r.date, { confirmed: true, cashCounted: true }, currentUser, now);
+      }
+      setAdyenBlob(cur);
+      await saveAdyenAbstimmung(tenantId, cur);
+      // 3) Abschlüsse — EIN persist für alle Tage.
+      await persist(b);
+    } catch (e) {
+      // Bestätigungen können bereits gespeichert sein, Abschlüsse nicht —
+      // klar melden statt still loggen (Wiederholen ist gefahrlos).
+      console.error('[Tagesabschluss] «Alle auf grün» fehlgeschlagen:', e);
+      window.alert('«Alle auf grün» konnte nicht vollständig gespeichert werden. Bitte erneut versuchen — bereits gesetzte Häkchen bleiben erhalten, kein Tag wurde doppelt abgeschlossen.');
+    }
+  }, [readOnly, blob, monthData, tenantId, currentUser, persist]);
 
   const monthKey = tagesabschlussMonthKey(year, month);
   const monthClosure = blob?.monatsabschluesse[monthKey] ?? null;
@@ -464,14 +541,14 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 Heute
               </Button>
             </div>
-            <Button variant="outline" size="sm" className="h-7 text-xs"
-              onClick={() => exportTagesabschlussExcel(monthData, monthKey)}
+            <UnifiedExportButton
+              className="h-7 text-xs gap-1"
+              data-testid="ta-export"
               disabled={loading || !monthData.rows.some(r => r.status !== 'fehlt')}
-              title="Übersicht des Monats als Excel-Datei (.xlsx) herunterladen"
-              data-testid="ta-excel-export">
-              <Download className="h-3.5 w-3.5 mr-1" />
-              Excel
-            </Button>
+              actions={[
+                { key: 'excel', label: 'Monatsübersicht (Excel)', kind: 'excel', onSelect: () => exportTagesabschlussExcel(monthData, monthKey) },
+              ]}
+            />
             <Button variant="outline" size="sm" className="h-7 text-xs"
               onClick={() => setExportOpen(true)} data-testid="ta-open-export">
               <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
@@ -521,7 +598,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                       <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
                         {saldoResolution.startSaldo === null
                           ? <>Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
-                              Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
+                              Kassensaldo berechnet werden — Kassensaldo Soll und Differenz bleiben leer.
                               Es wird bewusst KEINE 0 angenommen.</>
                           : <>Speichern setzt einen expliziten Anfangsbestand für diesen Monat und übersteuert
                               den aus den Vormonaten fortgeschriebenen Saldo. Alle Folgesalden werden
@@ -603,8 +680,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 className="ml-auto rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer"
                 onClick={() => setShowAllColumns(v => !v)}
                 title={showAllColumns
-                  ? 'Kompakte Ansicht: blendet KK, Einzahlung Bank, Cash Ist und Cash Diff aus'
-                  : 'Voll-Ansicht: zeigt zusätzlich KK, Einzahlung Bank, Cash Ist und Cash Diff'}
+                  ? 'Kompakte Ansicht: blendet Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine aus'
+                  : 'Voll-Ansicht: zeigt zusätzlich Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine'}
                 data-testid="ta-columns-toggle"
               >
                 {showAllColumns ? 'Kompakte Ansicht' : 'Alle Spalten anzeigen'}
@@ -691,7 +768,12 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onConfirm={handleConfirm}
               onReasonsClick={setReasonDate}
               onCloseDay={handleCloseDay}
+              onCloseAllDays={handleCloseAllDays}
+              onReopenDay={canReopen ? handleReopenDay : undefined}
               showAllColumns={showAllColumns}
+              umsatzImport={umsatzImport}
+              umsatzSchwelle={blob ? umsatzDiffSchwelle(blob) : DEFAULT_UMSATZ_DIFF_SCHWELLE}
+              onUmsatzDiffClick={setUmsatzDiffDate}
             />
             <details className="mt-2 text-[10px] text-muted-foreground">
               <summary className="cursor-pointer select-none font-medium hover:text-foreground" data-testid="ta-legend-toggle">
@@ -701,15 +783,13 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
-              <span>normale Werte = automatisch aus dem Z-Bericht</span>
-              <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
-              <span>Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
-              <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Cash Diff = Cash Ist − Kassensaldo Soll</span>
+              <span>Umsatz = Tagesumsätze-Import (massgeblich); übrige Werte automatisch aus dem Z-Bericht</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-100 border border-red-300 align-middle mr-1" />Umsatz weicht mehr als die Schwelle vom Z-Bericht ab (Zelle anklicken für Details)</span>
+              <span>Adyen- und Bar-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span>Bargeld Soll (ber.) = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
+              <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Differenz = BAR IST − Kassensaldo Soll</span>
               <span>Kassensaldo Soll inline überschreiben = manueller Tages-Anker (gelb; Leereingabe entfernt ihn)</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag abgeschlossen (gesperrt)</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-50 border border-yellow-300 align-middle mr-1" />abgeschlossen mit Differenz</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-orange-50 border border-orange-300 align-middle mr-1" />wieder geöffnet</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />offen / Differenz</span>
+              <span>Tages-Status (abgeschlossen / offen / wieder geöffnet) steht im Status-Badge der Zeile</span>
             </div>
             </details>
 
@@ -837,6 +917,81 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         onClose={() => setOverrideCtx(null)}
         onSave={handleOverrideSave}
       />
+
+      {/* ── Umsatz-Differenz-Popup (Tagesumsätze-Import ↔ Z-Bericht) ── */}
+      <Dialog open={umsatzDiffDate !== null} onOpenChange={o => { if (!o) { setUmsatzDiffDate(null); setSchwelleText(null); } }}>
+        <DialogContent className="max-w-sm" data-testid="ta-umsatz-diff-dialog">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Umsatz-Abweichung {umsatzDiffDate ?? ''}</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            if (!umsatzDiffDate) return null;
+            const schwelle = blob ? umsatzDiffSchwelle(blob) : DEFAULT_UMSATZ_DIFF_SCHWELLE;
+            const zWert = monthData.rows.find(r => r.date === umsatzDiffDate)?.cells.umsatz.value ?? null;
+            const a = umsatzAbgleich(umsatzImport[umsatzDiffDate] ?? null, zWert, schwelle);
+            return (
+              <div className="space-y-3 text-xs">
+                <div className="rounded-md border border-border divide-y divide-border">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span>Tagesumsatz (Import)</span>
+                    <span className="font-semibold tabular-nums" data-testid="ta-diff-import">
+                      {a.importWert === null ? '—' : `CHF ${fmtChf(a.importWert)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span>Z-Bericht</span>
+                    <span className="font-semibold tabular-nums" data-testid="ta-diff-z">
+                      {a.zWert === null ? '—' : `CHF ${fmtChf(a.zWert)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="font-medium">Differenz (Import − Z-Bericht)</span>
+                    <span className={`font-semibold tabular-nums ${a.rot ? 'text-red-700 dark:text-red-400' : ''}`} data-testid="ta-diff-wert">
+                      {a.diff === null ? '—' : `CHF ${fmtDiffChf(a.diff)}`}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  «Tagesumsatz (Import)» stammt aus dem manuellen Tagesumsätze-Import (Speisekarte-Excel)
+                  und ist die massgebliche, angezeigte Kennzahl. «Z-Bericht» ist der Brutto-Tagesumsatz
+                  aus dem Kassen-Z-Bericht (gleiche Basis) — er dient als Kontrolle und für die
+                  Bargeld-/Kassensaldo-Berechnungen.
+                </p>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="ta-schwelle" className="text-[11px] text-muted-foreground">
+                    Rot ab Abweichung über
+                  </label>
+                  <input
+                    id="ta-schwelle"
+                    type="text"
+                    inputMode="decimal"
+                    className="h-6 w-20 rounded border border-input bg-background px-1.5 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={schwelleText ?? schwelle.toFixed(2)}
+                    onChange={e => setSchwelleText(e.target.value)}
+                    disabled={readOnly}
+                    data-testid="ta-schwelle-input"
+                  />
+                  <span className="text-[11px] text-muted-foreground">CHF</span>
+                  {!readOnly && schwelleText !== null && (
+                    <Button size="sm" className="h-6 text-xs"
+                      disabled={(() => { const v = parseAmountInput(schwelleText); return v === null || v < 0; })()}
+                      onClick={() => {
+                        if (!blob) return;
+                        const v = parseAmountInput(schwelleText);
+                        if (v === null || v < 0) return;
+                        void persist(setUmsatzDiffSchwelle(blob, v, new Date().toISOString()));
+                        setSchwelleText(null);
+                      }}
+                      data-testid="ta-schwelle-save">
+                      Speichern
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       <TagesabschlussReasonDialog
         row={reasonDate ? monthData.rows.find(r => r.date === reasonDate) ?? null : null}

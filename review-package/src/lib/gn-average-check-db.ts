@@ -14,6 +14,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { GnParsedAverageCheck } from './gn-average-check-parser';
+import { isAverageCheckReimportNoop } from './gn-average-check-parser';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -81,10 +82,33 @@ export async function getOverlappingAverageCheckDates(
 export async function saveAverageCheckImport(
   businessId: string,
   parsed: GnParsedAverageCheck,
-): Promise<{ importId: string; error: string | null }> {
+): Promise<{ importId: string; error: string | null; noop?: boolean }> {
   try {
     if (parsed.rows.length === 0) {
       return { importId: '', error: 'Keine Tageswerte zum Speichern.' };
+    }
+
+    // Idempotenz: identischer Reimport = No-op VOR dem UPSERT — sonst würde
+    // der Tages-UPSERT bei unverändertem Inhalt updated_at bumpen und eine
+    // neue import_id vergeben.  Fehler bei diesem Read führen NICHT zum
+    // stillen Skip des Imports (dann wird normal gespeichert).
+    try {
+      const dates = parsed.rows.map(r => r.date);
+      const { data: existing, error: exErr } = await (supabase as any)
+        .from('gn_average_checks')
+        .select('import_id, report_date, average_check_chf')
+        .eq('business_id', businessId)
+        .in('report_date', dates);
+      if (!exErr && existing && isAverageCheckReimportNoop(
+        parsed.rows,
+        existing as Array<{ report_date: string; average_check_chf: number | null }>,
+      )) {
+        const existingImportId =
+          (existing as Array<{ import_id: string | null }>).find(r => r.import_id)?.import_id ?? '';
+        return { importId: existingImportId, error: null, noop: true };
+      }
+    } catch {
+      // Read-Fehler ⇒ regulär speichern (UPSERT ist ohnehin verlustfrei).
     }
 
     const importId = newImportId();
@@ -204,6 +228,38 @@ export async function getAverageCheckForPeriod(
     return { mean: values.reduce((s, v) => s + v, 0) / values.length, dayCount: values.length };
   } catch {
     return { mean: 0, dayCount: 0 };
+  }
+}
+
+// ── Tageswerte für gemeinsame Tagesanalyse ───────────────────────────────────
+
+/**
+ * Durchschnittsbon pro Tag für den Zeitraum (date → CHF-Wert).
+ * Fehlende Tage fehlen — sie werden NIE als 0 erfunden.
+ */
+export async function getAverageCheckDayValues(
+  businessId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  try {
+    const { data, error } = await (supabase as any)
+      .from('gn_average_checks')
+      .select('report_date, average_check_chf')
+      .eq('business_id', businessId)
+      .gte('report_date', fromIso)
+      .lte('report_date', toIso)
+      .not('average_check_chf', 'is', null);
+    if (error || !data) return result;
+    for (const r of data as Array<{ report_date: string; average_check_chf: number }>) {
+      if (r.report_date && typeof r.average_check_chf === 'number' && r.average_check_chf > 0) {
+        result.set(r.report_date, r.average_check_chf);
+      }
+    }
+    return result;
+  } catch {
+    return result;
   }
 }
 

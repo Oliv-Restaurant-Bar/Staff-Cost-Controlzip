@@ -56,8 +56,81 @@ export interface GnPaymentAccount {
   grossAmount: number;
 }
 
+// ── Erweiterter Z-Bericht (Detailbericht) ────────────────────────────────────
+
+/** Verzehrart: im Haus / ausser Haus. `null` = nicht angegeben. */
+export type GnConsumptionType = 'in_house' | 'takeaway';
+
+/** Eine Zeile aus einer Detailbericht-Sektion des erweiterten Z-Berichts. */
+export interface GnExtendedEntry {
+  /** Name OHNE «… - Inner Haus» / «… - Außer Haus»-Suffix (nur technisch normalisiert). */
+  name: string;
+  quantity: number;
+  /** Betrag nach Rabatten (Spalte «Betrag»). 0-CHF-Zeilen bleiben erhalten. */
+  grossAmount: number;
+  /** Original-Betrag vor Rabatt (4. Spalte, falls vorhanden), sonst null. */
+  originalAmount: number | null;
+  /** Aus dem Namens-Suffix abgeleitet; null wenn kein Suffix vorhanden. */
+  consumptionType: GnConsumptionType | null;
+}
+
+/** Detaildaten des erweiterten Z-Berichts (Abschnitt «Detailbericht»). */
+export interface GnExtendedData {
+  /** «Hauptwarengruppen (inner/außer Haus)» */
+  mainCategoriesByConsumptionType: GnExtendedEntry[];
+  /** «Warengruppen» (ohne Verzehrart-Aufteilung) */
+  categories: GnExtendedEntry[];
+  /** «Warengruppen (inner/außer Haus)» */
+  categoriesByConsumptionType: GnExtendedEntry[];
+  /** «Positionen» — einzelne Artikel */
+  positions: GnExtendedEntry[];
+}
+
+// ── PDF-Zusatzdaten (nur sourceFormat 'pdf', additiv-optional) ───────────────
+
+/** Eine Zeile der Zeitabschnittstabelle (Stundenumsätze, negative Werte bleiben). */
+export interface GnHourlyRevenueRow {
+  /** Anzeige-Label, z. B. «23:00» */
+  label: string;
+  /** Stunde 0–23; null wenn nicht parsebar. */
+  hour: number | null;
+  /** Gesamtumsatz des Abschnitts (kann negativ sein, z. B. Korrekturen). */
+  totalAmount: number;
+  /** Anteil in Prozent; null wenn nicht vorhanden. */
+  sharePct: number | null;
+}
+
+export type GnValidationStatus = 'plausibel' | 'rundungsdifferenz' | 'abweichung' | 'unvollstaendig';
+
+/** Eine einzelne Plausibilitätsprüfung (Summenabgleich). */
+export interface GnValidationCheck {
+  id: string;
+  label: string;
+  expected: number | null;
+  actual: number | null;
+  /** actual − expected; null wenn eine Seite fehlt. */
+  diff: number | null;
+  status: GnValidationStatus;
+  note?: string;
+}
+
+export interface GnValidationResult {
+  /** Schlechtester Einzelstatus: abweichung > unvollstaendig > rundungsdifferenz > plausibel. */
+  status: GnValidationStatus;
+  checks: GnValidationCheck[];
+}
+
+/** Kind-Zahlart (z. B. «Gastronovi Pay» unter «Visa») — rein informativ,
+ *  zählt NIE in paymentMethods (keine Doppelzählung). */
+export interface GnPaymentProvider {
+  parent: string;
+  name: string;
+  count: number;
+  amount: number;
+}
+
 export interface GnParseDebug {
-  /** Erkanntes Trennzeichen */
+  /** Erkanntes Trennzeichen (CSV) bzw. «PDF» */
   delimiter: string;
   /** Anzahl Trennzeichen im CSV */
   delimCounts: { semicolon: number; comma: number; tab: number };
@@ -97,6 +170,15 @@ export interface GnParsedZBericht {
   warnings: string[];
   debug: GnParseDebug;
 
+  /**
+   * Berichtstyp — rein inhaltsbasiert erkannt: 'extended' sobald mindestens
+   * eine Detailbericht-Sektion (Warengruppen, Positionen, inner/außer Haus)
+   * vorhanden ist, sonst 'standard'.
+   */
+  reportType: 'standard' | 'extended';
+  /** Detaildaten des erweiterten Berichts; null bei Standard-Berichten. */
+  extendedData: GnExtendedData | null;
+
   // Header-Metadaten
   periodFrom: string;    // ISO-Datum yyyy-MM-dd
   periodTo: string;      // ISO-Datum yyyy-MM-dd
@@ -130,6 +212,31 @@ export interface GnParsedZBericht {
   discountTotal: number;
   bonCount: number;
   avgBon: number;
+
+  // ── PDF-Zusatzfelder (additiv-optional; CSV-Importe lassen sie weg) ────────
+  /** Quellformat des Imports; fehlend = Legacy-CSV. */
+  sourceFormat?: 'csv' | 'pdf';
+  /** Uhrzeit «HH:mm» aus «Von»/«Bis» (nur PDF mit Zeitstempeln). */
+  periodFromTime?: string | null;
+  periodToTime?: string | null;
+  /**
+   * Geschäftstag (ISO) bei Tagesberichten über Mitternacht: Spanne ≤ 26 h ⇒
+   * EIN Geschäftstag = Kalenderdatum von «Bis», ausser Bis-Uhrzeit < 08:00 ⇒
+   * Kalenderdatum von «Von». periodFrom/periodTo werden dann auf den
+   * Geschäftstag gesetzt (Tagesdatensatz). null = echte Periode.
+   */
+  businessDay?: string | null;
+  /** Zeitabschnitte (Stundenumsätze) inkl. negativer Werte. */
+  hourlyRevenue?: GnHourlyRevenueRow[] | null;
+  /** «Gesamt»-Zeile der Zeitabschnittstabelle. */
+  hourlyRevenueTotal?: number | null;
+  /** Aufladungen Kundenkarten (Einzelkarten, ohne Total-Zeile). */
+  customerCardTopups?: GnNameCountAmount[] | null;
+  customerCardTopupTotal?: number | null;
+  /** Kind-Zahlarten (Parent/Child) — informativ, nie doppelt gezählt. */
+  paymentMethodProviders?: GnPaymentProvider[] | null;
+  /** Plausibilitätsprüfung (nur PDF). */
+  validation?: GnValidationResult | null;
 }
 
 // ── Fuzzy-Sektion-Mapping ─────────────────────────────────────────────────────
@@ -147,9 +254,16 @@ const SECTION_FUZZY: Array<[RegExp, string]> = [
   [/^bezahlart/i,              'Bezahlarten'],
   [/^zahlungsart/i,            'Bezahlarten'],
   [/^payment/i,                'Bezahlarten'],
+  // Erweiterter Bericht: «… (inner/außer Haus)»-Varianten VOR den Basis-Mustern!
+  [/^hauptwarengruppen?\s*\(.*haus/i, 'Hauptwarengruppen (inner/außer Haus)'],
+  [/^warengruppen?\s*\(.*haus/i,      'Warengruppen (inner/außer Haus)'],
   [/^hauptwarengrupp/i,        'Hauptwarengruppen'],
+  // Hinweis: plain «Warengruppen» wird kontextabhängig remappt (siehe
+  // splitIntoSections): existiert im selben Bericht AUCH eine explizite
+  // «Hauptwarengruppen»-Sektion, ist «Warengruppen» die Detailbericht-Sektion.
   [/^warengrupp/i,             'Hauptwarengruppen'],
   [/^produktgrupp/i,           'Hauptwarengruppen'],
+  [/^positionen$/i,            'Positionen'],
   [/^rundungs/i,               'Rundungsdifferenzen'],
   [/^trinkgeld/i,              'Trinkgeld'],
   [/^kunden auf rech/i,        'Kunden auf Rechnung'],
@@ -159,10 +273,14 @@ const SECTION_FUZZY: Array<[RegExp, string]> = [
   [/^storniert/i,              'Stornierte Artikel'],
   [/^buchungskont/i,           'Buchungskonten'],
   [/^zahlungskont/i,           'Zahlungskonten'],
+  // PDF «Auswertungen»: eigene Sektion, damit Stundenzeilen nie eine
+  // Vorsektion (z. B. Zahlungskonten) verschmutzen. Wird vom PDF-Parser
+  // separat ausgewertet, der Kern liest sie nicht.
+  [/^zeitabschnitt/i,          'Zeitabschnitte'],
 ];
 
-/** Liefert den kanonischen Sektionsnamen oder null */
-function matchSectionName(text: string): string | null {
+/** Liefert den kanonischen Sektionsnamen oder null (auch vom PDF-Adapter genutzt) */
+export function matchSectionName(text: string): string | null {
   const t = text.trim();
   if (!t) return null;
   for (const [re, canonical] of SECTION_FUZZY) {
@@ -290,6 +408,9 @@ function parseCSVLine(line: string, delim: string): string[] {
 
 interface ParsedSection { name: string; rawName: string; rows: string[][] }
 
+/** Banner-Zeile des erweiterten Berichts («#####################»). */
+const BANNER_ROW_RE = /^#{3,}$/;
+
 function splitIntoSections(allRows: string[][]): {
   headerRows: string[][];
   sections: ParsedSection[];
@@ -301,9 +422,39 @@ function splitIntoSections(allRows: string[][]): {
   let cur: ParsedSection | null = null;
   let passedFirst = false;
 
+  // Vorab-Pass: Gibt es eine EXPLIZITE «Hauptwarengruppen»-Sektion?
+  // Nur dann ist eine plain «Warengruppen»/«Produktgruppen»-Sektion die
+  // Detailbericht-Sektion des erweiterten Berichts. In Legacy-Berichten
+  // (nur «Warengruppen», keine «Hauptwarengruppen») bleibt das bisherige
+  // Mapping auf 'Hauptwarengruppen' unverändert bestehen.
+  const hasExplicitHaupt = allRows.some(row => {
+    const rawFirst = (row[0] ?? '').replace(/["""]/g, '').trim();
+    return /^hauptwarengrupp/i.test(rawFirst)
+      && isSectionHeaderRow(row, matchSectionName(rawFirst));
+  });
+
   for (const row of allRows) {
     const rawFirst = (row[0] ?? '').replace(/["""]/g, '').trim();
-    const canonical = matchSectionName(rawFirst);
+
+    // Banner-Zeilen («#####…») trennen Detailbericht/Abrechnung vom Rest:
+    // aktuelle Sektion schliessen, damit Bannertitel («Detailbericht»,
+    // «Abrechnung») nicht als Datenzeilen in die Vorsektion laufen.
+    if (BANNER_ROW_RE.test(rawFirst)) {
+      if (cur) { sections.push(cur); cur = null; }
+      continue;
+    }
+
+    let canonical = matchSectionName(rawFirst);
+    // Kontext-Remap: plain «Warengruppen»/«Produktgruppen» neben expliziten
+    // «Hauptwarengruppen» = Detailbericht-Sektion 'Warengruppen'.
+    if (
+      canonical === 'Hauptwarengruppen'
+      && hasExplicitHaupt
+      && !/^hauptwarengrupp/i.test(rawFirst)
+      && /^(?:waren|produkt)grupp/i.test(rawFirst)
+    ) {
+      canonical = 'Warengruppen';
+    }
 
     if (canonical && isSectionHeaderRow(row, canonical)) {
       passedFirst = true;
@@ -337,7 +488,11 @@ function getHeaderEntry(
     const row = headerRows[i];
     const k = (row[0] ?? '').replace(/["""]/g, '').toLowerCase().replace(/:$/, '').trim();
     for (const key of keys) {
-      if (k.includes(key.toLowerCase())) {
+      const kl = key.toLowerCase();
+      // Sehr kurze Keys (z. B. "z" für den Z-Zähler im Tab-Format) NUR exakt
+      // matchen — includes() würde sonst jedes Label mit diesem Buchstaben treffen.
+      const matches = kl.length <= 2 ? k === kl : k.includes(kl);
+      if (matches) {
         const value = (row[1] ?? row[0] ?? '').replace(/["""]/g, '').trim();
         // Zeilennummer im Original
         const lineNumber = allRows.findIndex(r => r === row) + 1;
@@ -348,11 +503,83 @@ function getHeaderEntry(
   return { value: '', lineNumber: null };
 }
 
-/** Tabellen-Sektion parsen: erste Zeile = Header, Rest = Daten */
+/**
+ * Tabellen-Sektion parsen: erste Zeile = Header, Rest = Daten.
+ * Trennzeilen («---------------------», im Tab-Format am Sektionsende vor dem
+ * nächsten Sektionskopf) sind NIE Daten und werden herausgefiltert — die erste
+ * Trennzeile direkt nach dem Sektionskopf dient weiterhin als Opfer-Header.
+ */
 function parseTableSection(sec: ParsedSection | undefined): { header: string[]; data: string[][] } {
   if (!sec || sec.rows.length === 0) return { header: [], data: [] };
   const [header, ...data] = sec.rows;
-  return { header, data: data.filter(r => r.some(c => c.trim())) };
+  return {
+    header,
+    data: data.filter(r => r.some(c => c.trim()) && !/^-{3,}$/.test((r[0] ?? '').trim())),
+  };
+}
+
+// ── Erweiterter Bericht: Detailsektionen ─────────────────────────────────────
+
+/**
+ * Rein TECHNISCHE Namens-Normalisierung: Whitespace kollabieren + trimmen.
+ * Keine fachliche Vereinheitlichung — «Pizza Prosciutto» und
+ * «Pizza Prosciutto TA» bleiben getrennte Namen.
+ */
+function normalizeItemName(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Verzehrart-Suffix «… - Inner Haus» / «… - Außer Haus» abtrennen.
+ * WICHTIG: Nur das LETZTE Suffix strippen — Namen wie «Wein - Rose - Inner Haus»
+ * enthalten selbst « - » und müssen zu «Wein - Rose» werden.
+ */
+const CT_SUFFIX_RE = /\s+[-–—]\s+(inner|außer|ausser)\s+haus\s*$/i;
+
+function splitConsumptionSuffix(name: string): { base: string; ct: GnConsumptionType | null } {
+  const m = name.match(CT_SUFFIX_RE);
+  if (!m || m.index === undefined) return { base: name, ct: null };
+  const ct: GnConsumptionType = /^inner$/i.test(m[1]) ? 'in_house' : 'takeaway';
+  const base = name.slice(0, m.index).trim();
+  // Leerer Basisname wäre Datenverlust — dann Suffix NICHT strippen.
+  if (!base) return { base: name, ct: null };
+  return { base, ct };
+}
+
+/**
+ * Detailbericht-Sektion parsen (Warengruppen, Positionen, inner/außer Haus).
+ * Behält 0-CHF-Zeilen (z. B. Garstufen, «ohne») — fachliche Vorgabe.
+ * Überspringt Trennzeilen («-----»), «Total»-Summenzeilen und Kopfzeilen.
+ */
+function parseExtendedSection(
+  sec: ParsedSection | undefined,
+  opts: { splitCt: boolean },
+): GnExtendedEntry[] {
+  if (!sec) return [];
+  const out: GnExtendedEntry[] = [];
+  for (const row of sec.rows) {
+    const first = (row[0] ?? '').trim();
+    if (!first) continue;
+    if (/^-{3,}$/.test(first)) continue;      // Trennzeile
+    if (/^total$/i.test(first)) continue;     // Summenzeile
+    // Defensive Kopfzeilen-Erkennung («Name  Anzahl  Betrag»): keine Ziffern
+    // in den Wertspalten UND alle weiteren Zellen sind Spaltenüberschriften.
+    const rest = row.slice(1).filter(c => c.trim());
+    if (rest.length > 0 && !rest.some(c => /\d/.test(c)) && rest.every(isColumnHeaderCell)) continue;
+
+    const rawName = normalizeItemName(first);
+    const { base, ct } = opts.splitCt
+      ? splitConsumptionSuffix(rawName)
+      : { base: rawName, ct: null };
+
+    const quantity    = parseInt(row[1] ?? '0', 10) || 0;
+    const grossAmount = parseSwissNumber(row[2] ?? '');
+    const origRaw     = (row[3] ?? '').trim();
+    const originalAmount = origRaw ? parseSwissNumber(origRaw) : null;
+
+    out.push({ name: base, quantity, grossAmount, originalAmount, consumptionType: ct });
+  }
+  return out;
 }
 
 // ── Haupt-Parser ──────────────────────────────────────────────────────────────
@@ -363,7 +590,6 @@ const EXPECTED_SECTIONS = [
 ];
 
 export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBericht {
-  const warnings: string[] = [];
   const checksum = simpleHash(csvText);
 
   // ── Delimiter erkennen ──────────────────────────────────────────────────────
@@ -372,6 +598,41 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   // ── CSV in Zeilen aufteilen ─────────────────────────────────────────────────
   const rawLines = csvText.split(/\r?\n/);
   const allRows  = rawLines.map(l => parseCSVLine(l, delim));
+
+  return parseGnZBerichtFromRows(allRows, {
+    fileName,
+    checksum,
+    sourceFormat: 'csv',
+    delimiterLabel: delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma',
+    delimCounts,
+    rawLines,
+    verboseConsole: true,
+  });
+}
+
+/** Kontext für den format-unabhängigen Sektions-Kern. */
+export interface GnParseRowsContext {
+  fileName: string;
+  checksum: string;
+  sourceFormat: 'csv' | 'pdf';
+  /** Anzeige-Label fürs Debug-Objekt («Semikolon», «Tab», «PDF»). */
+  delimiterLabel: string;
+  delimCounts: { semicolon: number; comma: number; tab: number };
+  /** Rohzeilen (CSV: Originalzeilen; PDF: rekonstruierte Zeilentexte). */
+  rawLines: string[];
+  /** Console-Debug nur für den CSV-Pfad (keine PDF-Rohtexte in Logs). */
+  verboseConsole?: boolean;
+}
+
+/**
+ * Format-unabhängiger Kern: Sektions-Erkennung, Sektions-Parsing und alle
+ * abgeleiteten KPIs auf bereits zerlegten Zeilen (string[][]).
+ * EINZIGE Berechnungsquelle für CSV UND PDF (SSoT) — der PDF-Adapter
+ * (gn-zbericht-pdf-parser.ts) liefert nur normalisierte Zeilen an.
+ */
+export function parseGnZBerichtFromRows(allRows: string[][], ctx: GnParseRowsContext): GnParsedZBericht {
+  const { fileName, checksum, rawLines, delimCounts } = ctx;
+  const warnings: string[] = [];
 
   // ── Sektionen erkennen ─────────────────────────────────────────────────────
   const { headerRows, sections, rawSectionNames } = splitIntoSections(allRows);
@@ -384,7 +645,7 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   const zEntry = getHeaderEntry(
     headerRows, allRows,
     'z-zähler', 'z-zaehler', 'z zähler', 'z-nummer', 'z nummer',
-    'z counter', 'zähler', 'zaehler', 'z-nr', 'znr'
+    'z counter', 'zähler', 'zaehler', 'z-nr', 'znr', 'z'
   );
   const ccEntry = getHeaderEntry(
     headerRows, allRows,
@@ -480,7 +741,7 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   // ── Debug-Informationen zusammenstellen ────────────────────────────────────
 
   const debug: GnParseDebug = {
-    delimiter:     delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma',
+    delimiter:     ctx.delimiterLabel,
     delimCounts,
     firstRawLines: rawLines.slice(0, 50),
     firstParsedRows: allRows.slice(0, 50),
@@ -498,22 +759,24 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     sectionCandidates,
   };
 
-  // ── Console-Debug-Ausgabe ───────────────────────────────────────────────────
-  console.group(`[GN-PARSER] ${fileName}`);
-  console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
-  console.log(`Gesamt Zeilen: ${rawLines.length}, gültige Header-Zeilen: ${headerRows.length}`);
-  console.log('Header-Zeilen:', headerRows.map(r => r.join(' | ')));
-  console.log(`Zeitraum (Zeile ${debug.periodLine ?? '?'}): "${periodRaw}" → ${periodFrom} – ${periodTo}`);
-  console.log(`Z-Zähler (Zeile ${debug.zCounterLine ?? '?'}): "${zCounterRaw}"`);
-  console.log(`Kostenstelle: "${costCenter}"`);
-  console.log('Gefundene Sektionen:', foundSections.join(', ') || '(keine)');
-  console.log('Rohe Sektionsnamen:', rawSectionNames.map(x => `"${x.raw}" → ${x.canonical}`).join(', '));
-  if (missingSections.length) console.warn('Fehlende Sektionen:', missingSections.join(', '));
-  console.log('Erste 20 geparste Zeilen:');
-  allRows.slice(0, 20).forEach((r, i) =>
-    console.log(`  Z${String(i + 1).padStart(3)}: [${r.map(c => `"${c}"`).join(', ')}]`)
-  );
-  console.groupEnd();
+  // ── Console-Debug-Ausgabe (nur CSV-Pfad — keine PDF-Rohtexte in Logs) ──────
+  if (ctx.verboseConsole) {
+    console.group(`[GN-PARSER] ${fileName}`);
+    console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
+    console.log(`Gesamt Zeilen: ${rawLines.length}, gültige Header-Zeilen: ${headerRows.length}`);
+    console.log('Header-Zeilen:', headerRows.map(r => r.join(' | ')));
+    console.log(`Zeitraum (Zeile ${debug.periodLine ?? '?'}): "${periodRaw}" → ${periodFrom} – ${periodTo}`);
+    console.log(`Z-Zähler (Zeile ${debug.zCounterLine ?? '?'}): "${zCounterRaw}"`);
+    console.log(`Kostenstelle: "${costCenter}"`);
+    console.log('Gefundene Sektionen:', foundSections.join(', ') || '(keine)');
+    console.log('Rohe Sektionsnamen:', rawSectionNames.map(x => `"${x.raw}" → ${x.canonical}`).join(', '));
+    if (missingSections.length) console.warn('Fehlende Sektionen:', missingSections.join(', '));
+    console.log('Erste 20 geparste Zeilen:');
+    allRows.slice(0, 20).forEach((r, i) =>
+      console.log(`  Z${String(i + 1).padStart(3)}: [${r.map(c => `"${c}"`).join(', ')}]`)
+    );
+    console.groupEnd();
+  }
 
   // ── Warnungen ──────────────────────────────────────────────────────────────
   if (!periodFrom || !periodTo) warnings.push('Zeitraum konnte nicht erkannt werden.');
@@ -553,7 +816,9 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     const rate = (row[0] ?? '').trim();
     if (/^total/i.test(rate)) {
       taxNetTotal = parseSwissNumber(row[1] ?? '');
-    } else if (rate) {
+    } else if (rate && row.slice(1).some(c => /\d/.test(c))) {
+      // Kopfzeilen wie "%|Netto|Steuer|Brutto" (Tab-Format) haben keine
+      // Ziffern in den Wertspalten und sind keine Steuerzeilen.
       taxes.push({
         taxRate:     rate,
         netAmount:   parseSwissNumber(row[1] ?? ''),
@@ -607,7 +872,15 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
       if (hasOrigCol) {
         return { name: r[0].trim(), count: parseInt(r[1] ?? '0', 10) || 0, originalAmount: parseSwissNumber(r[2] ?? ''), amount: parseSwissNumber(r[3] ?? r[2] ?? '') };
       }
-      return { name: r[0].trim(), count: parseInt(r[1] ?? '0', 10) || 0, originalAmount: null, amount: parseSwissNumber(r[2] ?? r[1] ?? '') };
+      // Tab-Format ohne Kopfzeile: 4. Spalte = Original-Betrag vor Rabatt
+      // (z. B. "Beverage (Getränke)"  439  3338.8  3404.9).
+      const origRaw = (r[3] ?? '').trim();
+      return {
+        name: r[0].trim(),
+        count: parseInt(r[1] ?? '0', 10) || 0,
+        originalAmount: origRaw ? parseSwissNumber(origRaw) : null,
+        amount: parseSwissNumber(r[2] ?? r[1] ?? ''),
+      };
     });
 
   // ── Rabatte ────────────────────────────────────────────────────────────────
@@ -654,6 +927,36 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
       grossAmount: parseSwissNumber(r[2] ?? r[1] ?? ''),
     }));
 
+  // ── Erweiterter Bericht (Detailbericht-Sektionen) ─────────────────────────
+  const mainCtSec = getSection(sections, 'Hauptwarengruppen (inner/außer Haus)');
+  const catSec    = getSection(sections, 'Warengruppen');
+  const catCtSec  = getSection(sections, 'Warengruppen (inner/außer Haus)');
+  const posSec    = getSection(sections, 'Positionen');
+
+  const isExtended = !!(mainCtSec || catSec || catCtSec || posSec);
+  const extendedData: GnExtendedData | null = isExtended
+    ? {
+        mainCategoriesByConsumptionType: parseExtendedSection(mainCtSec, { splitCt: true }),
+        categories:                      parseExtendedSection(catSec,    { splitCt: false }),
+        categoriesByConsumptionType:     parseExtendedSection(catCtSec,  { splitCt: true }),
+        positions:                       parseExtendedSection(posSec,    { splitCt: false }),
+      }
+    : null;
+
+  if (isExtended) {
+    const missingExt: string[] = [];
+    if (!mainCtSec) missingExt.push('Hauptwarengruppen (inner/außer Haus)');
+    if (!catSec)    missingExt.push('Warengruppen');
+    if (!catCtSec)  missingExt.push('Warengruppen (inner/außer Haus)');
+    if (!posSec)    missingExt.push('Positionen');
+    if (missingExt.length > 0) {
+      warnings.push(`Erweiterter Bericht erkannt, aber Detailsektionen fehlen: ${missingExt.join(', ')}.`);
+    }
+    if (posSec && extendedData && extendedData.positions.length === 0) {
+      warnings.push('Erweiterter Bericht: Sektion "Positionen" ist leer.');
+    }
+  }
+
   // ── Abgeleitete KPIs ──────────────────────────────────────────────────────
   const netRevenue    = taxNetTotal > 0 ? taxNetTotal : revenue.totalGross / 1.077;
   const foodAmount    = productGroups.filter(p => /speis|food|küche|küchen|kueche|essen/i.test(p.name)).reduce((s, p) => s + p.amount, 0);
@@ -674,6 +977,9 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
 
   return {
     fileName, checksum, warnings, debug,
+    sourceFormat: ctx.sourceFormat,
+    reportType: isExtended ? 'extended' : 'standard',
+    extendedData,
     periodRaw, periodFrom, periodTo,
     zCounter: zCounterRaw, costCenter,
     revenue, taxes, taxNetTotal,

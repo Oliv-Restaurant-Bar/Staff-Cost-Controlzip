@@ -23,6 +23,108 @@ interface DateColumn {
 
 type DetectedDept = 'küche' | 'service' | 'admin';
 
+// ── Diagnostics (GN-parser-style: every path returns debug + failureReason) ──
+
+export interface MirusParseDebug {
+  fileName: string;
+  totalRows: number;
+  inferredYear: number;
+  reportType: string;
+  /** Detected title/period range as ISO strings, if any. */
+  detectedRange: { startIso: string; endIso: string } | null;
+  /** Which strategy resolved the day columns. */
+  columnStrategy: string | null;
+  /** header row index used (0-based), if resolved. */
+  headerRowIdx: number | null;
+  /** Resolved day columns as "date→colN". */
+  dateColumns: string[];
+  /** Weekday cross-check outcome. */
+  weekdayCheck: MirusWeekdayCheck | null;
+  /** First rows of the sheet for post-mortem inspection. */
+  sampleRows: unknown[][];
+}
+
+export interface MirusWeekdayCheck {
+  ok: boolean;
+  /** 'ok' = alle Labels stimmen; 'mismatch' = Off-by-one erkannt; 'none-found' =
+   *  keine Wochentags-Labels vorhanden (Gegenprobe nicht möglich). */
+  status: 'ok' | 'mismatch' | 'none-found';
+  /** Human-readable mismatches: "col12 2025-07-27: Kopf 'Mo' ↔ berechnet 'So'". */
+  mismatches: string[];
+  /** How many columns carried a checkable weekday label. */
+  checked: number;
+}
+
+export interface MirusCostCenter {
+  /** Kostenträger-Nummer aus dem Dateikopf, z.B. "3027". */
+  number: string;
+  /** Voller Kopftext, z.B. "3027 Restaurant OLIV". */
+  label: string;
+  /** Zugeordneter Mandant laut Tabelle, oder null wenn unbekannt. */
+  tenant: string | null;
+}
+
+export interface MirusParseResult {
+  entries: MirusDailyImportEntry[];
+  dateRange: string[];
+  debug: MirusParseDebug;
+  /** Erkannter Kostenträger (Mandanten-Check, Spec Punkt 4); null wenn keiner gefunden. */
+  costCenter: MirusCostCenter | null;
+  /** Non-null when the import must be STOPPED (e.g. weekday mismatch). */
+  failureReason: string | null;
+}
+
+// ── Kostenträger → Mandant (konfigurierbare Tabelle, Spec Punkt 4) ─────────
+// Robust gegen Zusätze wie «AG»: Zuordnung NUR über die Nummer.
+export const COST_CENTER_TENANTS: Record<string, string> = {
+  '3027': 'oliv',      // «3027 Restaurant OLIV»
+  '3012': 'beaulieu',  // «3012 Restaurant Beaulieu AG»
+};
+
+/** Kostenträger-Kopf in den ersten Zeilen suchen: «<Nr> Restaurant <Name…>». */
+export function detectCostCenter(rows: unknown[][], maxRows = 40): MirusCostCenter | null {
+  for (let i = 0; i < Math.min(rows.length, maxRows); i++) {
+    for (const cell of rows[i] || []) {
+      const s = String(cell ?? '').trim();
+      const m = s.match(/\b(\d{3,5})\s+Restaurant\s+\S/i);
+      if (m) {
+        const number = m[1];
+        return { number, label: s, tenant: COST_CENTER_TENANTS[number] ?? null };
+      }
+    }
+  }
+  return null;
+}
+
+// Weekday abbreviations Mirus uses (German). JS getDay(): 0=So … 6=Sa.
+const WEEKDAY_LABELS: Record<number, string[]> = {
+  0: ['so', 'son', 'sonntag'],
+  1: ['mo', 'mon', 'montag'],
+  2: ['di', 'die', 'dienstag'],
+  3: ['mi', 'mit', 'mittwoch'],
+  4: ['do', 'don', 'donnerstag'],
+  5: ['fr', 'fre', 'freitag'],
+  6: ['sa', 'sam', 'samstag'],
+};
+const WEEKDAY_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+/** Extract a leading German weekday abbreviation from a cell, else null (0..6). */
+function cellToWeekday(cell: unknown): number | null {
+  const s = String(cell ?? '').trim().toLowerCase().replace(/\.$/, '');
+  if (!s) return null;
+  for (const [dow, labels] of Object.entries(WEEKDAY_LABELS)) {
+    if (labels.includes(s)) return Number(dow);
+  }
+  // Header cells sometimes read "Mo 27" or "27 Mo".
+  const m = s.match(/\b(so|mo|di|mi|do|fr|sa)\b/);
+  if (m) {
+    for (const [dow, labels] of Object.entries(WEEKDAY_LABELS)) {
+      if (labels.includes(m[1])) return Number(dow);
+    }
+  }
+  return null;
+}
+
 // ── Date-range regex patterns (most specific first) ───────────────────────
 
 const DATE_RANGE_PATTERNS: RegExp[] = [
@@ -130,6 +232,7 @@ const SUMMARY_RE = [
   /\bsumme\b/i,
   /\bzwischensumme\b/i,
   /\bsub[- ]?total\b/i,
+  /\banzahl\s+mitarbeiter\b/i, // Fusszeile «Anzahl Mitarbeiter» (Zahlen sind keine Stunden)
 ];
 
 function isSummaryRow(rowText: string, row: unknown[]): boolean {
@@ -139,17 +242,31 @@ function isSummaryRow(rowText: string, row: unknown[]): boolean {
   return false;
 }
 
-// ── Department block detection ────────────────────────────────────────────
+// ── Department block detection (GENERISCH, Spec Punkt 2) ──────────────────
+//
+// Beliebig viele Abteilungsblöcke («1 Küche», «2 Service», «3 Hilfsarbeiter»,
+// «4 Geschäftsleitung», …): erkannt an einem Blockkopf «<Nr> <Label>» in den
+// ersten Spalten. KEINE Hardcodierung bekannter Labels — jeder Block wird
+// gelesen (nichts wird mehr übersprungen); Mitarbeiter über Blöcke werden
+// später pro Tag SUMMIERT.
 
-const DEPT_RE = /^\d+\s*(küche|kuche|service|geschäftsleitung|geschaftsleitung|leitung|admin)\b/i;
+const BLOCK_HEADER_RE = /^\d+\s+[\p{L}]/u;
 
 function detectDepartment(row: unknown[]): DetectedDept | null {
   for (const cell of row.slice(0, 8)) {
     const t = String(cell || '').trim();
-    if (!DEPT_RE.test(t)) continue;
+    if (!t) continue;
+    if (!BLOCK_HEADER_RE.test(t)) continue;
+    // Kein Blockkopf, wenn es eine Total-/Summenzeile ist («2 Service Total …»)
+    if (/\btotal\b/i.test(t)) return null;
+    // Datumsartige Zellen («1.7.2026») ausschliessen
+    if (/^\d+\s*[.\-/]/.test(t)) continue;
     const lo = t.toLowerCase();
     if (lo.includes('küch') || lo.includes('kuche')) return 'küche';
     if (lo.includes('service')) return 'service';
+    // Unbekanntes Block-Label (Hilfsarbeiter, Geschäftsleitung, …) → Block
+    // trotzdem lesen; Abteilung neutral als 'admin' signalisieren (Aufrufer
+    // behält die bisherige Abteilung bei, überspringt aber NICHT mehr).
     return 'admin';
   }
   return null;
@@ -167,7 +284,7 @@ function isNameLike(raw: unknown): boolean {
   if (SKIP_NAME_WORDS.test(s)) return false;
   if (/^\d{1,2}[.\-/]/.test(s)) return false;
   if (/^\d+$/.test(s)) return false;
-  if (DEPT_RE.test(s)) return false;
+  if (BLOCK_HEADER_RE.test(s)) return false; // Blockkopf «<Nr> <Label>» ist kein Name
   return true;
 }
 
@@ -369,7 +486,6 @@ function parseEmployeeRows(
 ): MirusDailyImportEntry[] {
   const entries: MirusDailyImportEntry[] = [];
   let currentDept: 'küche' | 'service' = 'service';
-  let skipAdmin = false;
 
   for (let ri = headerRowIdx + 1; ri < rows.length; ri++) {
     const row = rows[ri];
@@ -377,20 +493,15 @@ function parseEmployeeRows(
 
     const rowText = row.map(c => String(c || '')).join(' ');
 
-    // Department header
+    // Department block header — ALLE Blöcke werden gelesen (Spec Punkt 2).
+    // 'admin' = unbekanntes Label (Hilfsarbeiter, Geschäftsleitung, …):
+    // Abteilungszuordnung bleibt die zuletzt bekannte, Zeilen zählen mit.
     const dept = detectDepartment(row);
     if (dept !== null) {
-      if (dept === 'admin') {
-        skipAdmin = true;
-        console.log('[MIRUS] detected department block: admin (skipping)');
-      } else {
-        skipAdmin = false;
-        currentDept = dept;
-        console.log(`[MIRUS] detected department block: ${dept}`);
-      }
+      if (dept !== 'admin') currentDept = dept;
+      console.log(`[MIRUS] detected department block: ${dept}${dept === 'admin' ? ` (generic, reading rows as ${currentDept})` : ''}`);
       continue;
     }
-    if (skipAdmin) continue;
 
     // Summary row
     if (isSummaryRow(rowText, row)) {
@@ -419,8 +530,149 @@ function parseEmployeeRows(
     }
   }
 
-  console.log(`[MIRUS] total parsed entries: ${entries.length}`);
-  return entries;
+  // ── Über Blöcke aggregieren (Spec Punkt 3) ────────────────────────────────
+  // Derselbe Mitarbeiter kann in mehreren Blöcken vorkommen (z.B. Küche +
+  // Hilfsarbeiter): Stunden pro (Name, Tag) SUMMIEREN, nie überschreiben.
+  const byKey = new Map<string, MirusDailyImportEntry>();
+  let mergedRows = 0;
+  for (const e of entries) {
+    const key = `${e.name.toLowerCase()}|${e.date}`;
+    const prev = byKey.get(key);
+    if (prev) {
+      prev.hours = Math.round((prev.hours + e.hours) * 100) / 100;
+      mergedRows++;
+    } else {
+      byKey.set(key, { ...e });
+    }
+  }
+  const aggregated = [...byKey.values()];
+  if (mergedRows > 0) {
+    console.log(`[MIRUS] aggregated ${mergedRows} duplicate name/day cell(s) across blocks (summed)`);
+  }
+
+  console.log(`[MIRUS] total parsed entries: ${aggregated.length}`);
+  return aggregated;
+}
+
+// ── Day-number header → date mapping (SPEC-KONFORM) ─────────────────────────
+//
+// Kernidee (Spec Punkt 1): Das Datum jeder Stundenspalte = TAGESZAHL aus der
+// Kopfzelle + Monat/Jahr aus dem Titel. NIEMALS die Spaltenposition als Tag.
+// Für Teil-Exporte (z.B. nur 27.–28.) gibt es KEINE «1»-Zelle — deshalb ankern
+// wir NICHT auf Tag 1, sondern lesen jede Kopfzelle einzeln.
+//
+// Robustheit: Nur Tageszahlen im gültigen Bereich [1..daysInMonth] und im
+// erkannten Zeitraum werden übernommen. Aufsteigend + eindeutig.
+
+interface HeaderRowScan {
+  headerRowIdx: number;
+  dateColumns: DateColumn[];
+  score: number;
+}
+
+/**
+ * Findet die Kopfzeile mit den meisten gültigen Tageszahlen und mappt jede
+ * Spalte auf `year-month-day`. `month`/`year` stammen aus dem Titel-Zeitraum.
+ */
+function resolveDayNumberColumns(
+  rows: unknown[][],
+  start: Date,
+  end: Date,
+): { headerRowIdx: number; dateColumns: DateColumn[]; strategy: string } | null {
+  const year = start.getFullYear();
+  const month = start.getMonth(); // 0-based
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Erlaubte Tage = die im erkannten Zeitraum enthaltenen Kalendertage.
+  const allowed = new Set<number>();
+  {
+    let cur = new Date(start);
+    while (cur <= end) { allowed.add(cur.getDate()); cur = addDays(cur, 1); }
+  }
+
+  let best: HeaderRowScan | null = null;
+
+  for (let i = 0; i < Math.min(rows.length, 150); i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const cols: DateColumn[] = [];
+    const seenDays = new Set<number>();
+    for (let col = 0; col < row.length; col++) {
+      const day = cellToIntDay(row[col]);
+      if (day === null) continue;
+      if (day < 1 || day > daysInMonth) continue;
+      if (!allowed.has(day)) continue;      // nur Tage aus dem Zeitraum
+      if (seenDays.has(day)) continue;      // Duplikate (z.B. Total-Spalte) ignorieren
+      seenDays.add(day);
+      const iso = format(new Date(year, month, day), 'yyyy-MM-dd');
+      cols.push({ index: col, date: iso });
+    }
+    if (cols.length === 0) continue;
+
+    // Streng aufsteigende Tagesfolge über die Spalten HART erzwingen: eine
+    // echte Mirus-Kopfzeile listet die Tage aufsteigend (…, 27, 28, …). Eine
+    // Zeile mit nicht-monotonen Zahlen ist KEINE Kopfzeile (z.B. zufällige
+    // Werte in Datenzeilen) → Kandidat komplett verwerfen, statt ihn nur
+    // schlechter zu bewerten. Lieber gar keinen Treffer (→ failureReason) als
+    // eine falsche Tag-zu-Spalte-Zuordnung.
+    cols.sort((a, b) => a.index - b.index);
+    const daysSeq = cols.map(c => Number(c.date.slice(-2)));
+    const strictlyAscending = daysSeq.every((d, k) => k === 0 || d > daysSeq[k - 1]);
+    if (!strictlyAscending) continue;
+
+    const score = cols.length;
+    if (!best || score > best.score) {
+      best = { headerRowIdx: i, dateColumns: cols, score };
+    }
+  }
+
+  if (!best || best.dateColumns.length === 0) return null;
+  return {
+    headerRowIdx: best.headerRowIdx,
+    dateColumns: best.dateColumns,
+    strategy: 'day-number-header',
+  };
+}
+
+/**
+ * Wochentags-Gegenprobe (Spec Punkt 1, Off-by-one-Schutz):
+ * Vergleicht das Wochentags-Label in der Kopfzeile (Kopfzeile selbst ODER die
+ * Zeile direkt darüber) mit dem aus dem Datum berechneten Wochentag. Bei
+ * Abweichung → Import stoppen.
+ */
+export function checkWeekdays(
+  rows: unknown[][],
+  headerRowIdx: number,
+  dateColumns: DateColumn[],
+): MirusWeekdayCheck {
+  const headerRow = rows[headerRowIdx] ?? [];
+  const aboveRow = headerRowIdx > 0 ? (rows[headerRowIdx - 1] ?? []) : [];
+  const mismatches: string[] = [];
+  let checked = 0;
+
+  for (const dc of dateColumns) {
+    // Wochentag aus Kopfzelle selbst, sonst aus der Zeile darüber (gleiche Spalte).
+    const label = cellToWeekday(headerRow[dc.index]) ?? cellToWeekday(aboveRow[dc.index]);
+    if (label === null) continue;
+    checked++;
+    const computed = new Date(dc.date + 'T00:00:00').getDay();
+    if (label !== computed) {
+      mismatches.push(
+        `Spalte ${dc.index} (${dc.date}): Kopf «${WEEKDAY_SHORT[label]}» ↔ berechnet «${WEEKDAY_SHORT[computed]}»`,
+      );
+    }
+  }
+
+  if (checked === 0) {
+    // Keine Wochentags-Labels gefunden → Gegenprobe war nicht möglich.
+    // Eigenes Signal (kein stilles ok), damit der Aufrufer konservativ handeln kann.
+    return { ok: false, status: 'none-found', mismatches: [], checked: 0 };
+  }
+  if (mismatches.length > 0) {
+    return { ok: false, status: 'mismatch', mismatches, checked };
+  }
+  return { ok: true, status: 'ok', mismatches: [], checked };
 }
 
 // ── Resolve date columns for a given date range ───────────────────────────
@@ -430,74 +682,70 @@ function resolveDateColumns(
   start: Date,
   end: Date,
   year: number,
-): { headerRowIdx: number; dateColumns: DateColumn[] } | null {
+): { headerRowIdx: number; dateColumns: DateColumn[]; strategy: string } | null {
   const expectedDates = buildExpectedDates(start, end);
   const expectedDays  = expectedDates.map(d => d.day);
   const minConsec     = Math.min(5, expectedDays.length);
 
-  // Short-range (1-2 days): full-month offset approach takes priority
+  // ── PRIMÄR (spec-konform): Tageszahl je Kopfzelle → Datum. Funktioniert auch
+  //    für Teil-Exporte (nur 27.–28.), weil NICHT auf Tag 1 geankert wird.
+  const byDay = resolveDayNumberColumns(rows, start, end);
+  if (byDay && byDay.dateColumns.length > 0) {
+    console.log(`[MIRUS] day columns (day-number-header): ${byDay.dateColumns.map(dc => `${dc.date}→col${dc.index}`).join(', ')}`);
+    return byDay;
+  }
+
+  // Ab hier NUR Fallbacks (ältere Layouts). Diese können Spaltenoffsets nutzen —
+  // sie greifen aber nur, wenn die Tageszahl-Kopfzeile NICHT gefunden wurde.
+
+  // Short-range (1-2 days): full-month offset approach
   if (expectedDays.length <= 2) {
     const fm = findFullMonthHeader(rows, start, expectedDates);
     if (fm) {
-      console.log(`[MIRUS] detected day columns (full-month offset): ${fm.dateColumns.map(dc => `${dc.date}→col${dc.index}`).join(', ')}`);
-      return fm;
+      console.log(`[MIRUS] day columns (full-month offset, FALLBACK): ${fm.dateColumns.map(dc => `${dc.date}→col${dc.index}`).join(', ')}`);
+      return { ...fm, strategy: 'full-month-offset' };
     }
-    // Date-cell fallback
     const dc = detectDateCellHeader(rows, year, 1);
     if (dc) {
       const reqSet = new Set(expectedDates.map(d => d.iso));
       let filtered = dc.dateColumns.filter(c => reqSet.has(c.date));
       if (filtered.length === 0) filtered = dc.dateColumns.slice(0, 1);
-      console.log(`[MIRUS] detected day columns (date-cell): ${filtered.map(c => `${c.date}→col${c.index}`).join(', ')}`);
-      return { headerRowIdx: dc.headerRowIdx, dateColumns: filtered };
+      console.log(`[MIRUS] day columns (date-cell, FALLBACK): ${filtered.map(c => `${c.date}→col${c.index}`).join(', ')}`);
+      return { headerRowIdx: dc.headerRowIdx, dateColumns: filtered, strategy: 'date-cell' };
     }
-    // Last-resort: fixed column offset
-    const fallbackCol = 5;
-    const fallbackRow = (() => {
-      const idx = rows.findIndex(r => /1\s*küche/i.test(String(r?.[0] || '')));
-      return idx > 0 ? idx - 1 : 0;
-    })();
-    console.log(`[MIRUS] detected day columns (last-resort offset): col ${fallbackCol}`);
-    return {
-      headerRowIdx: fallbackRow,
-      dateColumns: expectedDates.map(ed => ({ index: fallbackCol + (ed.day - 1), date: ed.iso })),
-    };
+    return null; // Kein blindes Raten mehr (früher fixer Offset col 5) → failureReason
   }
 
-  // Multi-day: search for consecutive day number sequence
+  // Multi-day: consecutive day number sequence
   const found = findDayNumberHeader(rows, expectedDays, start);
   if (found && found.dateColumns.length >= minConsec) {
-    console.log(`[MIRUS] detected day columns: ${found.dateColumns.map(dc => `${dc.date}→col${dc.index}`).join(', ')}`);
-    return { headerRowIdx: found.headerRowIdx, dateColumns: found.dateColumns };
+    console.log(`[MIRUS] day columns (consecutive-days, FALLBACK): ${found.dateColumns.map(dc => `${dc.date}→col${dc.index}`).join(', ')}`);
+    return { headerRowIdx: found.headerRowIdx, dateColumns: found.dateColumns, strategy: 'consecutive-days' };
   }
 
-  // Fallback: first try date-cell detection
   const dc = detectDateCellHeader(rows, year, minConsec);
   if (dc) {
-    console.log(`[MIRUS] detected day columns (date-cell fallback): ${dc.dateColumns.length} cols`);
-    return dc;
+    console.log(`[MIRUS] day columns (date-cell, FALLBACK): ${dc.dateColumns.length} cols`);
+    return { headerRowIdx: dc.headerRowIdx, dateColumns: dc.dateColumns, strategy: 'date-cell' };
   }
 
-  // Last-resort: fixed column at 5
-  const fallbackCol = 5;
-  const fallbackRow = (() => {
-    const idx = rows.findIndex(r => /1\s*küche/i.test(String(r?.[0] || '')));
-    return idx > 0 ? idx - 1 : 0;
-  })();
-  console.log(`[MIRUS] detected day columns (last-resort): row ${fallbackRow}, col ${fallbackCol}`);
-  return {
-    headerRowIdx: fallbackRow,
-    dateColumns: expectedDates.map(ed => ({ index: fallbackCol + (ed.day - 1), date: ed.iso })),
-  };
+  return null; // Kein Last-Resort-Fixoffset mehr → statt falscher Tage lieber failureReason
 }
 
 // ── Phase 1: Classic parser ────────────────────────────────────────────────
+
+interface RunnerResult {
+  entries: MirusDailyImportEntry[];
+  dateRange: string[];
+  resolved: { headerRowIdx: number; dateColumns: DateColumn[]; strategy: string } | null;
+  detectedRange: { start: Date; end: Date } | null;
+}
 
 function runClassicParser(
   rows: unknown[][],
   year: number,
   fileName: string,
-): { entries: MirusDailyImportEntry[]; dateRange: string[] } {
+): RunnerResult {
   let dateRange = extractDateRange(rows, 40);
 
   // Filename fallback: Tägliche_Stunden_04.2026_...
@@ -515,18 +763,18 @@ function runClassicParser(
 
   if (!dateRange) {
     console.log('[MIRUS] classic parser: no date range found');
-    return { entries: [], dateRange: [] };
+    return { entries: [], dateRange: [], resolved: null, detectedRange: null };
   }
 
   const resolved = resolveDateColumns(rows, dateRange.start, dateRange.end, year);
   if (!resolved || resolved.dateColumns.length === 0) {
     console.log('[MIRUS] classic parser: no date columns resolved');
-    return { entries: [], dateRange: [] };
+    return { entries: [], dateRange: [], resolved: null, detectedRange: dateRange };
   }
 
-  console.log(`[MIRUS] classic parser: header row ${resolved.headerRowIdx}, ${resolved.dateColumns.length} date cols`);
+  console.log(`[MIRUS] classic parser: header row ${resolved.headerRowIdx}, ${resolved.dateColumns.length} date cols (${resolved.strategy})`);
   const entries = parseEmployeeRows(rows, resolved.headerRowIdx, resolved.dateColumns);
-  return { entries, dateRange: resolved.dateColumns.map(dc => dc.date) };
+  return { entries, dateRange: resolved.dateColumns.map(dc => dc.date), resolved, detectedRange: dateRange };
 }
 
 // ── Phase 2: Report-style parser ──────────────────────────────────────────
@@ -534,22 +782,22 @@ function runClassicParser(
 function runReportParser(
   rows: unknown[][],
   year: number,
-): { entries: MirusDailyImportEntry[]; dateRange: string[] } {
+): RunnerResult {
   const dateRange = extractDateRange(rows, 50);
   if (!dateRange) {
     console.log('[MIRUS] report parser: no date range found');
-    return { entries: [], dateRange: [] };
+    return { entries: [], dateRange: [], resolved: null, detectedRange: null };
   }
 
   const resolved = resolveDateColumns(rows, dateRange.start, dateRange.end, year);
   if (!resolved || resolved.dateColumns.length === 0) {
     console.log('[MIRUS] report parser: no date columns resolved');
-    return { entries: [], dateRange: [] };
+    return { entries: [], dateRange: [], resolved: null, detectedRange: dateRange };
   }
 
-  console.log(`[MIRUS] report parser: header row ${resolved.headerRowIdx}, ${resolved.dateColumns.length} date cols`);
+  console.log(`[MIRUS] report parser: header row ${resolved.headerRowIdx}, ${resolved.dateColumns.length} date cols (${resolved.strategy})`);
   const entries = parseEmployeeRows(rows, resolved.headerRowIdx, resolved.dateColumns);
-  return { entries, dateRange: resolved.dateColumns.map(dc => dc.date) };
+  return { entries, dateRange: resolved.dateColumns.map(dc => dc.date), resolved, detectedRange: dateRange };
 }
 
 // ── Post-parse date sanity check ──────────────────────────────────────────
@@ -591,11 +839,109 @@ function sanitizeEntries(
   return { entries: good, dateRange: result.dateRange };
 }
 
+// ── Testable core: parse an already-extracted row grid ─────────────────────
+//
+// Gibt AUF ALLEN PFADEN ein `debug`-Objekt + `failureReason` zurück (GN-Parser-
+// Diagnostik-Regel). `failureReason != null` ⇒ Import STOPPEN (nicht schreiben).
+
+export function parseMirusRows(rows: unknown[][], fileName: string): MirusParseResult {
+  const year = inferYear(rows);
+
+  let reportType = 'classic';
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    if (/tägliche\s+stunden/i.test((rows[i] || []).map(c => String(c || '')).join(' '))) {
+      reportType = 'report';
+      break;
+    }
+  }
+
+  const debug: MirusParseDebug = {
+    fileName,
+    totalRows: rows.length,
+    inferredYear: year,
+    reportType,
+    detectedRange: null,
+    columnStrategy: null,
+    headerRowIdx: null,
+    dateColumns: [],
+    weekdayCheck: null,
+    sampleRows: rows.slice(0, 12),
+  };
+
+  // Kostenträger-Kopf (Mandanten-Check, Spec Punkt 4) — auf allen Pfaden mitgeben.
+  const costCenter = detectCostCenter(rows);
+  if (costCenter) {
+    console.log(`[MIRUS] cost center: «${costCenter.label}» → tenant ${costCenter.tenant ?? 'unbekannt'}`);
+  }
+
+  // Phase 1 → Phase 2: nimm den Lauf mit Einträgen; sonst den mit meisten Infos.
+  const classic = runClassicParser(rows, year, fileName);
+  const run = classic.entries.length > 0 ? classic : runReportParser(rows, year);
+
+  if (run.detectedRange) {
+    debug.detectedRange = {
+      startIso: format(run.detectedRange.start, 'yyyy-MM-dd'),
+      endIso: format(run.detectedRange.end, 'yyyy-MM-dd'),
+    };
+  }
+
+  if (!run.detectedRange) {
+    return { entries: [], dateRange: [], debug, costCenter, failureReason:
+      'Kein Datumsbereich erkannt. Erwartet Titel «Tägliche Stunden von TT.MM.JJJJ bis TT.MM.JJJJ».' };
+  }
+  if (!run.resolved || run.resolved.dateColumns.length === 0) {
+    return { entries: [], dateRange: [], debug, costCenter, failureReason:
+      'Keine Tages-Spalten in der Kopfzeile gefunden. Erwartet Tageszahlen (z.B. 27, 28) je Stundenspalte.' };
+  }
+
+  debug.columnStrategy = run.resolved.strategy;
+  debug.headerRowIdx = run.resolved.headerRowIdx;
+  debug.dateColumns = run.resolved.dateColumns.map(dc => `${dc.date}→col${dc.index}`);
+
+  // ── Plausibilitätscheck (Spec Punkt 1): Anzahl Tagesspalten muss dem
+  //    Titel-Zeitraum (Enddatum − Startdatum + 1) entsprechen — sonst stoppen.
+  {
+    const expectedCount = buildExpectedDates(run.detectedRange.start, run.detectedRange.end).length;
+    const gotCount = run.resolved.dateColumns.length;
+    if (gotCount !== expectedCount) {
+      return { entries: [], dateRange: [], debug, costCenter, failureReason:
+        `Spalten-Plausibilitätscheck fehlgeschlagen: Titel-Zeitraum umfasst ${expectedCount} Tag(e), ` +
+        `aber ${gotCount} Tagesspalte(n) erkannt. Import gestoppt, um eine falsche Tag-zu-Spalte-Zuordnung zu verhindern.` };
+    }
+  }
+
+  // ── Wochentags-Gegenprobe (Off-by-one-Schutz, Spec Punkt 1) ──
+  const wd = checkWeekdays(rows, run.resolved.headerRowIdx, run.resolved.dateColumns);
+  debug.weekdayCheck = wd;
+  if (wd.status === 'mismatch') {
+    return { entries: [], dateRange: [], debug, costCenter, failureReason:
+      `Wochentags-Prüfung fehlgeschlagen (Off-by-one-Schutz): ${wd.mismatches.slice(0, 5).join('; ')}. ` +
+      'Import gestoppt, um falsch zugeordnete Tage zu verhindern.' };
+  }
+  if (wd.status === 'none-found') {
+    // Konservativ (User-Priorität: keine falschen Tage, kein stiller Verlust):
+    // Ohne Wochentags-Labels lässt sich die Tag-zu-Spalte-Zuordnung nicht
+    // gegenprüfen → Import stoppen mit klarer Meldung statt riskieren.
+    return { entries: [], dateRange: [], debug, costCenter, failureReason:
+      'Wochentags-Gegenprobe nicht möglich: keine Wochentags-Beschriftung (Mo/Di/…) in oder über der ' +
+      'Tageszahl-Kopfzeile gefunden. Import gestoppt, um eine ungeprüfte (evtl. falsche) Tageszuordnung ' +
+      'zu vermeiden. Bitte Export mit Wochentagszeile verwenden.' };
+  }
+
+  const sane = sanitizeEntries({ entries: run.entries, dateRange: run.dateRange }, year);
+  if (sane.entries.length === 0) {
+    return { entries: [], dateRange: sane.dateRange, debug, costCenter, failureReason:
+      'Keine gültigen Stunden-Einträge extrahiert (evtl. alle Datumswerte ausserhalb des Plausibilitätsbereichs).' };
+  }
+
+  return { entries: sane.entries, dateRange: sane.dateRange, debug, costCenter, failureReason: null };
+}
+
 // ── Main export ───────────────────────────────────────────────────────────
 
 export async function parseMirusDailyExcel(
   file: File,
-): Promise<{ entries: MirusDailyImportEntry[]; dateRange: string[] }> {
+): Promise<MirusParseResult> {
   try {
     const arrayBuffer = await file.arrayBuffer();
     // Do NOT use cellDates:true — it converts date-serial cells to JS Date objects
@@ -612,36 +958,13 @@ export async function parseMirusDailyExcel(
     console.log(`[MIRUS] file: ${file.name}, total rows: ${rows.length}`);
     console.log('[MIRUS] first 10 rows:', rows.slice(0, 10));
 
-    const year = inferYear(rows);
-    console.log(`[MIRUS] inferred year: ${year}`);
-
-    // Detect layout hint
-    let reportType = 'classic';
-    for (let i = 0; i < Math.min(rows.length, 10); i++) {
-      if (/tägliche\s+stunden/i.test((rows[i] || []).map(c => String(c || '')).join(' '))) {
-        reportType = 'report';
-        break;
-      }
+    const result = parseMirusRows(rows, file.name);
+    if (result.failureReason) {
+      console.warn(`[MIRUS] parse stopped: ${result.failureReason}`, result.debug);
+    } else {
+      console.log(`[MIRUS] parse ok: ${result.entries.length} entries, strategy=${result.debug.columnStrategy}`);
     }
-    console.log(`[MIRUS] detected report type: ${reportType}`);
-
-    // Phase 1: Classic parser
-    const classic = runClassicParser(rows, year, file.name);
-    if (classic.entries.length > 0) {
-      console.log(`[MIRUS] classic parser succeeded: ${classic.entries.length} entries`);
-      return sanitizeEntries(classic, year);
-    }
-
-    // Phase 2: Report parser
-    console.log('[MIRUS] classic parser found 0 entries, trying report parser...');
-    const report = runReportParser(rows, year);
-    if (report.entries.length > 0) {
-      console.log(`[MIRUS] report parser succeeded: ${report.entries.length} entries`);
-      return sanitizeEntries(report, year);
-    }
-
-    console.warn('[MIRUS] both parsers found 0 entries');
-    return { entries: [], dateRange: [] };
+    return result;
 
   } catch (error) {
     console.error('[MIRUS] parsing error:', error);

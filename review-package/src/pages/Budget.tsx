@@ -46,6 +46,7 @@ import { Input }   from '@/components/ui/input';
 import { Label }   from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { HintBox } from '@/components/ui/hint-box';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -237,10 +238,21 @@ function BudgetContent() {
   // in einem anderen Tab ausgeführt wurde.
   useEffect(() => {
     const storeKey = tenantKey(BUDGET_STORAGE_KEY);
-    const hasData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
+    // View-Default (nicht persistierter 2026-Seed) zählt NICHT als Datenbestand —
+    // sonst würde ein frisches Gerät nie den echten Supabase-Stand nachladen.
+    const hasData = !budget.viewDefault
+      && budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
     if (hasData) return;
     console.log(`[BUDGET-SYNC] localStorage leer für storeKey="${storeKey}" – versuche Supabase-Sync`);
+    // Stale-Guard (replit.md §2): Nach Tenant-/Jahr-Wechsel läuft dieser Effekt
+    // neu — eine verspätete Antwort des ALTEN Laufs darf den State nicht mehr
+    // setzen, sonst landen z. B. Oliv-Daten im Beaulieu-UI.
+    let cancelled = false;
     syncBudgetFromSupabase(selectedYear, storeKey).then(remoteBudget => {
+      if (cancelled) {
+        console.log(`[BUDGET-SYNC] Verspätete Antwort für storeKey="${storeKey}" verworfen (Tenant/Jahr gewechselt)`);
+        return;
+      }
       if (remoteBudget) {
         console.log(`[BUDGET-SYNC] Supabase-Daten geladen – Budget wird neu gerendert`);
         reload(selectedYear);
@@ -248,8 +260,19 @@ function BudgetContent() {
         console.log(`[BUDGET-SYNC] Keine Daten in Supabase – Budget bleibt leer (seedBeaulieuBudget2026 ausführen)`);
       }
     });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, selectedYear]);
+
+  // Erste echte Speicherung eines View-Defaults (2026-Seed): Jahresliste
+  // auffrischen, damit ✓-Markierung und Löschen-Button sofort stimmen.
+  useEffect(() => {
+    if (budget.viewDefault) return;
+    if (savedYears.includes(budget.year)) return;
+    const fresh = availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY));
+    if (fresh.includes(budget.year)) setSavedYears(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budget, savedYears, tenantId]);
 
   // Nach Supabase-Sync Budget neu laden (beide Event-Namen abdecken)
   useEffect(() => {
@@ -447,10 +470,15 @@ function BudgetContent() {
 
   const handleApplyRules = () => {
     if (budget.rules.length === 0) { toast.info('Keine Regeln definiert.'); return; }
-    const upd = applyRulesToBudget(budget);
-    saveBudgetYear(upd, tenantKey(BUDGET_STORAGE_KEY));
-    setBudget(upd);
-    toast.success(`${budget.rules.length} Regel(n) angewendet`);
+    // saveBudgetYear liefert den tatsächlich persistierten Stand zurück —
+    // ohne fachliche Änderung bleibt updatedAt unverändert (kein Write).
+    const saved = saveBudgetYear(applyRulesToBudget(budget), tenantKey(BUDGET_STORAGE_KEY));
+    setBudget(saved);
+    if (saved.updatedAt === budget.updatedAt) {
+      toast.info('Keine Änderungen — Regeln ergaben dieselben Werte.');
+    } else {
+      toast.success(`${budget.rules.length} Regel(n) angewendet`);
+    }
   };
 
   const handleRestoreDefaults = () => {
@@ -477,6 +505,17 @@ function BudgetContent() {
 
       {/* Hinweis aus der Import-Checkliste (advisory, schränkt nichts ein) */}
       <ImportTaskPrefillHint />
+
+      {/* View-Default: 2026-Seed wird angezeigt, ist aber noch nicht gespeichert */}
+      {budget.viewDefault && (
+        <div data-testid="hint-budget-view-default">
+          <HintBox tone="info" title="Budgetvorschlag (noch nicht gespeichert)">
+            Für {selectedYear} ist noch kein Budget gespeichert. Angezeigt werden
+            Standardwerte als Vorschlag — sie werden erst beim ersten Bearbeiten
+            oder Speichern übernommen.
+          </HintBox>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">

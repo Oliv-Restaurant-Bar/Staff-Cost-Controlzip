@@ -73,7 +73,6 @@ const DepartmentSchedule = () => {
     updateScheduleEntry,
     refresh,
   } = useSupabaseSchedule({
-    token,
     department: tokenRole === 'admin' ? null : dbDepartment,
     currentMonth: currentMonthStart,
     restaurantId: tenantId,   // ← Tenant-Filter: lädt nur Mitarbeiter des aktiven Mandanten

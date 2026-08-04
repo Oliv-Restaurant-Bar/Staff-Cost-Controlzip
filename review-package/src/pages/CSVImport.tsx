@@ -41,16 +41,21 @@ import {
 import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { cn } from '@/lib/utils';
 import {
-  processCSV, matchCSVRows, buildMonthRecord,
+  processCSV, matchCSVRows, buildMonthRecord, buildExpenseCategoriesOnly,
   CSVParseResult, MatchedCSVRow, ParsedCSVRow, ImportConfig,
   PL_CATEGORY_TO_ROW_ID,
 } from '@/lib/csv-import-engine';
-import { parsePDF, parseSageKontoblattExcel } from '@/lib/pdf-import-engine';
+import { parsePDF, parseAnnualSageKontoblattByMonth } from '@/lib/pdf-import-engine';
+import type { SageJournalEntry } from '@/types/reporting';
+import { getLockStateStrict } from '@/lib/prior-year-lock';
 import {
   saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
 } from '@/lib/account-mapping-store';
 import { PLCategory, DepartmentHint } from '@/types/account-mapping';
-import { saveMonth, saveJournalEntries, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { saveMonth, saveJournalEntries, loadJournalEntries, loadYear, syncJournalYearFromDB, upsertCostMonths, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { recordImportRun } from '@/lib/import-undo-store';
+import { splitWarenJournal, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { loadWarenkostenGrenze } from '@/lib/waren-db';
 import { useTenant } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
 
@@ -778,7 +783,7 @@ function UnresolvedTable({ rows, onAssign, onSplit }: UnresolvedTableProps) {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 export default function CSVImportPage() {
-  const { tenantKey } = useTenant();
+  const { tenantId, tenant, tenantKey } = useTenant();
   const navigate    = useNavigate();
   const { isAdmin } = usePermissions();
 
@@ -796,6 +801,17 @@ export default function CSVImportPage() {
   const [loading, setLoading]               = useState(false);
   const [selectedMatchedIndices, setSelectedMatchedIndices] = useState<Set<number>>(new Set());
 
+  // ── Mehrmonats-Import (Jahres-/Perioden-Kontoblatt, Excel oder PDF) ─────────
+  interface MultiParse {
+    year: number;
+    rowsByMonth: Map<number, ParsedCSVRow[]>;
+    journalByMonth: Map<number, SageJournalEntry[]>;
+  }
+  const [multiParse, setMultiParse] = useState<MultiParse | null>(null);
+  /** Bump nach jeder Konto-Zuordnung → Vorschau-Matching neu berechnen */
+  const [mappingVersion, setMappingVersion] = useState(0);
+  const [savedMultiInfo, setSavedMultiInfo] = useState<string | null>(null);
+
   // ── Split-State ──────────────────────────────────────────────────────────────
   const [splitMatchedRows, setSplitMatchedRows] = useState<MatchedCSVRow[]>([]);
   const [splitExcluded, setSplitExcluded]       = useState<Set<string>>(new Set());
@@ -804,8 +820,30 @@ export default function CSVImportPage() {
 
   // Beim Seitenaufruf: Sage Journal aus Supabase laden (auto-migration)
   useEffect(() => {
-    syncJournalYearFromDB(year);
-  }, [year]);
+    syncJournalYearFromDB(year, tenantId);
+  }, [year, tenantId]);
+
+  // Warenkosten-Grenze (pro Mandant, Standard 4090): Lieferanten-Journal
+  // enthält nur Buchungen auf Konten 4000–Grenze (Warenaufwand).
+  const [warenGrenze, setWarenGrenze] = useState(DEFAULT_WARENKOSTEN_GRENZE);
+  useEffect(() => {
+    let on = true;
+    loadWarenkostenGrenze(tenantId).then(g => { if (on) setWarenGrenze(g); });
+    return () => { on = false; };
+  }, [tenantId]);
+
+  // Journal-Split für die Vorschau: nur Waren-Buchungen (4000–Grenze) landen
+  // im Lieferanten-Journal; der Rest wird als Hinweis ausgewiesen.
+  const journalSplit = useMemo(
+    () => splitWarenJournal(parseResult?.journalEntries ?? [], warenGrenze),
+    [parseResult, warenGrenze],
+  );
+  const multiJournalDropped = useMemo(() => {
+    if (!multiParse) return 0;
+    let n = 0;
+    for (const es of multiParse.journalByMonth.values()) n += splitWarenJournal(es, warenGrenze).nichtWaren.length;
+    return n;
+  }, [multiParse, warenGrenze]);
 
   if (!isAdmin) {
     return (
@@ -822,13 +860,32 @@ export default function CSVImportPage() {
     setFileKind(kind);
     setWarnings([]);
     setParseResult(null);
+    setMultiParse(null);
 
     if (kind === 'pdf') {
       setParsing(true);
       try {
         const pdfResult = await parsePDF(buffer);
+
+        // MANDANTEN-CHECK: Firmenname im Kontoblatt-Kopf muss zum aktiven
+        // Mandanten passen — sonst STOPP (verhindert Import in den falschen Betrieb).
+        if (pdfResult.detectedTenant && pdfResult.detectedTenant !== tenantId) {
+          const firma = pdfResult.detectedCompany ?? pdfResult.detectedTenant;
+          setWarnings([
+            `Falscher Mandant: Das PDF stammt von «${firma}», aktiv ist aber «${tenant.name}». ` +
+            'Bitte oben den passenden Betrieb wählen und die Datei erneut hochladen.',
+          ]);
+          toast.error(`Falscher Mandant: PDF gehört zu «${firma}»`);
+          setParsing(false);
+          return;
+        }
+        if (pdfResult.detectedCompany) {
+          toast.info(`Erkannt: ${pdfResult.detectedCompany}`);
+        }
+
         const matchResult = matchCSVRows(pdfResult.rows);
         matchResult.warnings.push(...pdfResult.warnings);
+        matchResult.journalEntries = pdfResult.journalEntries;
 
         setParseResult(matchResult);
         setWarnings(matchResult.warnings);
@@ -837,7 +894,18 @@ export default function CSVImportPage() {
         if (pdfResult.detectedYear) setYear(pdfResult.detectedYear);
         if (pdfResult.detectedMonth) setMonth(pdfResult.detectedMonth);
 
-        if (pdfResult.detectedMonth || pdfResult.detectedYear) {
+        // Mehrmonats-PDF (Kopf-Zeitraum über Monatsgrenzen): pro Monat speichern.
+        // Routing nach Journal-Monaten (nicht nur Netto≠0-Monaten), damit auch
+        // Monate mit 0-Netto ersetzt werden.
+        if (pdfResult.monthly && (pdfResult.monthly.journalByMonth.size > 1 || pdfResult.monthly.rowsByMonth.size > 1)) {
+          setMultiParse({
+            year: pdfResult.monthly.year,
+            rowsByMonth: pdfResult.monthly.rowsByMonth,
+            journalByMonth: pdfResult.monthly.journalByMonth,
+          });
+          setYear(pdfResult.monthly.year);
+          toast.info(`Mehrmonats-Kontoblatt erkannt: ${pdfResult.monthly.rowsByMonth.size} Monate (${pdfResult.monthly.year}) — Import erfolgt pro Monat.`);
+        } else if (pdfResult.detectedMonth || pdfResult.detectedYear) {
           toast.info(
             `Zeitraum erkannt: ${pdfResult.detectedMonth ? MONTHS[pdfResult.detectedMonth - 1] : ''} ${pdfResult.detectedYear ?? ''}`.trim(),
           );
@@ -850,22 +918,58 @@ export default function CSVImportPage() {
     } else if (kind === 'excel') {
       setParsing(true);
       try {
-        const excelResult = await parseSageKontoblattExcel(buffer);
-        const matchResult = matchCSVRows(excelResult.rows);
-        matchResult.warnings.push(...excelResult.warnings);
-        matchResult.journalEntries = excelResult.journalEntries;
+        // EIN Parser für Monats- UND Jahres-Excel: Buchungszeilen werden nach
+        // Buchungsdatum den Monaten zugeordnet (Netto = Soll − Haben pro Konto).
+        const excelResult = await parseAnnualSageKontoblattByMonth(buffer);
 
-        setParseResult(matchResult);
-        setWarnings(matchResult.warnings);
-        setSelectedMatchedIndices(new Set(matchResult.matched.map((_, i) => i)));
+        // MANDANTEN-CHECK (wie beim PDF): Firma im Kopf muss zum aktiven Mandanten passen.
+        if (excelResult.detectedTenant && excelResult.detectedTenant !== tenantId) {
+          const firma = excelResult.detectedCompany ?? excelResult.detectedTenant;
+          setWarnings([
+            `Falscher Mandant: Die Datei stammt von «${firma}», aktiv ist aber «${tenant.name}». ` +
+            'Bitte oben den passenden Betrieb wählen und die Datei erneut hochladen.',
+          ]);
+          toast.error(`Falscher Mandant: Datei gehört zu «${firma}»`);
+          return;
+        }
+        if (excelResult.detectedCompany) toast.info(`Erkannt: ${excelResult.detectedCompany}`);
+
+        if (excelResult.failureReason) {
+          setWarnings([excelResult.failureReason]);
+          return;
+        }
 
         if (excelResult.detectedYear) setYear(excelResult.detectedYear);
-        if (excelResult.detectedMonth) setMonth(excelResult.detectedMonth);
 
-        if (excelResult.detectedMonth || excelResult.detectedYear) {
-          toast.info(
-            `Zeitraum erkannt: ${excelResult.detectedMonth ? MONTHS[excelResult.detectedMonth - 1] : ''} ${excelResult.detectedYear ?? ''}`.trim(),
-          );
+        if (excelResult.byMonth.size > 1) {
+          // Mehrmonats-/Jahresdatei → Import pro Monat
+          setMultiParse({
+            year: excelResult.detectedYear!,
+            rowsByMonth: excelResult.byMonth,
+            journalByMonth: excelResult.journalByMonth,
+          });
+          setWarnings(excelResult.warnings);
+          toast.info(`Mehrmonats-Kontoblatt erkannt: ${excelResult.byMonth.size} Monate (${excelResult.detectedYear}) — Import erfolgt pro Monat.`);
+        } else {
+          // Einzelmonat → bestehender Wizard-Fluss
+          const onlyMonth = excelResult.byMonth.keys().next().value as number | undefined;
+          const rows = onlyMonth !== undefined ? (excelResult.byMonth.get(onlyMonth) ?? []) : [];
+          const matchResult = matchCSVRows(rows);
+          matchResult.warnings.push(...excelResult.warnings);
+          matchResult.journalEntries = onlyMonth !== undefined
+            ? (excelResult.journalByMonth.get(onlyMonth) ?? [])
+            : [];
+
+          setParseResult(matchResult);
+          setWarnings(matchResult.warnings);
+          setSelectedMatchedIndices(new Set(matchResult.matched.map((_, i) => i)));
+
+          if (onlyMonth !== undefined) setMonth(onlyMonth);
+          if (onlyMonth !== undefined || excelResult.detectedYear) {
+            toast.info(
+              `Zeitraum erkannt: ${onlyMonth !== undefined ? MONTHS[onlyMonth - 1] : ''} ${excelResult.detectedYear ?? ''}`.trim(),
+            );
+          }
         }
       } catch (e) {
         setWarnings([`Excel-Verarbeitung fehlgeschlagen: ${String(e)}`]);
@@ -888,6 +992,231 @@ export default function CSVImportPage() {
     setStep('upload');
     setSplitMatchedRows([]);
     setSplitExcluded(new Set());
+    setMultiParse(null);
+    setSavedMultiInfo(null);
+  }
+
+  // ─── Mehrmonats-Vorschau (Matching pro Monat, wie Import-Center-Jahresimport) ──
+
+  const multiPreview = useMemo(() => {
+    if (!multiParse) return null;
+    const categoriesByMonth = new Map<number, import('@/types/reporting').ExpenseCategory[]>();
+    const unmapped = new Map<string, { name: string; total: number }>();
+    const monthTotals = new Map<number, { accounts: number; expense: number; income: number }>();
+    let sumExpense = 0;
+    let sumIncome = 0;
+
+    // Bestehende Monatswerte (für den Diff «neu / aktualisiert / unverändert»):
+    // Erkennung nach ZEITRAUM, nicht Dateiname — egal aus welcher Datei/Format
+    // die vorhandenen Werte stammen.
+    const existingByMonth = new Map<number, Map<string, number>>();
+    try {
+      for (const rec of loadYear(multiParse.year, tenantKey(REPORTING_STORAGE_KEY))) {
+        const accMap = new Map<string, number>();
+        for (const c of rec.expenseCategories ?? []) {
+          if (/^\d{3,5}$/.test(c.categoryId)) accMap.set(c.categoryId, c.amount);
+        }
+        if (accMap.size > 0) existingByMonth.set(rec.month, accMap);
+      }
+    } catch { /* Vorschau-Diff ist informativ — Import bleibt möglich */ }
+
+    // Diff pro (Konto × Monat)
+    let cellsNew = 0, cellsUpdated = 0, cellsUnchanged = 0;
+    const monthStatus = new Map<number, 'neu' | 'aktualisiert' | 'unverändert'>();
+
+    for (const [m, rows] of multiParse.rowsByMonth.entries()) {
+      const mr = matchCSVRows(rows);
+      const cats = buildExpenseCategoriesOnly(mr.matched, mr.unresolved);
+      categoriesByMonth.set(m, cats);
+
+      const existing = existingByMonth.get(m);
+      let mNew = 0, mUpd = 0, mUnch = 0;
+      for (const c of cats) {
+        const prev = existing?.get(c.categoryId);
+        if (prev === undefined) mNew++;
+        else if (Math.abs(prev - c.amount) > 0.005) mUpd++;
+        else mUnch++;
+      }
+      // Konten, die es bisher gab, aber in der Datei fehlen → werden ersetzt (entfernt)
+      if (existing) {
+        const fileIds = new Set(cats.map(c => c.categoryId));
+        for (const id of existing.keys()) if (!fileIds.has(id)) mUpd++;
+      }
+      cellsNew += mNew; cellsUpdated += mUpd; cellsUnchanged += mUnch;
+      monthStatus.set(m, mUpd > 0 ? 'aktualisiert' : mNew > 0 ? 'neu' : 'unverändert');
+      let expense = 0, income = 0;
+      for (const r of mr.matched) {
+        if (r.sign === 'income') { income += -r.parsed.amount; sumIncome += -r.parsed.amount; }
+        else { expense += r.parsed.amount; sumExpense += r.parsed.amount; }
+      }
+      for (const u of mr.unresolved) {
+        const prev = unmapped.get(u.parsed.accountNumber) ?? { name: u.parsed.accountName, total: 0 };
+        unmapped.set(u.parsed.accountNumber, { name: prev.name, total: prev.total + u.parsed.amount });
+      }
+      monthTotals.set(m, { accounts: rows.length, expense, income });
+    }
+    // Nicht zugeordnete Konten als aggregierte Zeilen für die Zuordnungs-Tabelle
+    const unresolvedRows: MatchedCSVRow[] = unmapped.size > 0
+      ? matchCSVRows(
+          [...unmapped.entries()].map(([acc, v], i) => ({
+            lineIndex: i + 1,
+            rawLine: `${acc} ${v.name} → ${v.total.toFixed(2)} (Jahressumme)`,
+            accountNumber: acc,
+            accountName: v.name,
+            rawAmount: v.total.toFixed(2),
+            amount: v.total,
+          })),
+        ).unresolved
+      : [];
+    return {
+      categoriesByMonth, unmapped, unresolvedRows, monthTotals, sumExpense, sumIncome,
+      cellsNew, cellsUpdated, cellsUnchanged, monthStatus,
+    };
+    // mappingVersion: nach jeder Konto-Zuordnung neu matchen
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiParse, mappingVersion]);
+
+  /** Konto-Zuordnung aus der Mehrmonats-Vorschau: Mapping speichern + neu matchen. */
+  function handleAssignAccountMulti(
+    accountNumber: string,
+    accountName: string,
+    plCategory: PLCategory,
+    department?: DepartmentHint,
+  ) {
+    const catDef = PL_CATEGORIES.find(c => c.id === plCategory);
+    saveMappingCustom({
+      accountNumber,
+      accountName,
+      plCategory,
+      plSection: catDef?.section ?? 'operating_expenses',
+      department: department ?? 'general',
+      sign: catDef?.sign ?? 'expense',
+      canOverride: true,
+      isActive: true,
+      source: 'custom',
+    });
+    setMappingVersion(v => v + 1);
+    toast.success(`Konto ${accountNumber} «${accountName}» → ${getCategoryLabel(plCategory)} gespeichert`);
+  }
+
+  /** Mehrmonats-Import speichern: Upsert je Konto+Monat + Journal pro Monat. */
+  async function handleSaveMulti() {
+    if (!multiParse || !multiPreview) return;
+    if (multiPreview.unmapped.size > 0) {
+      toast.error('Bitte zuerst alle Konten zuordnen.');
+      return;
+    }
+    setLoading(true);
+    const targetYear = multiParse.year;
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    try {
+      // JAHRES-SPERRE: frisch + fail-closed (wie Einzelmonats-Import)
+      try {
+        const lock = await getLockStateStrict(tenantId, targetYear);
+        if (lock.locked) {
+          toast.error(`Das Jahr ${targetYear} ist abgeschlossen und gesperrt. Import nicht möglich — Sperre zuerst im Import-Center aufheben.`);
+          return;
+        }
+      } catch (err) {
+        toast.error(`Jahres-Sperre konnte nicht geprüft werden — Import abgebrochen. (${err instanceof Error ? err.message : String(err)})`);
+        return;
+      }
+
+      const months = [...multiParse.rowsByMonth.keys()].sort((a, b) => a - b);
+
+      // Undo-Snapshot VOR dem Schreiben: expenseCategories + Journal aller Datei-Monate
+      const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+      const undoJournals: Array<{ year: number; month: number; entries: unknown[]; tenantId?: string }> = [];
+      try {
+        const existing = new Map(loadYear(targetYear, storeKey).map(r => [r.month, r]));
+        for (const m of months) {
+          const rec = existing.get(m);
+          undoMonths.push({
+            monthId: `${targetYear}-${String(m).padStart(2, '0')}`,
+            fields: { expenseCategories: rec?.expenseCategories ? JSON.parse(JSON.stringify(rec.expenseCategories)) : null },
+          });
+          // Journal nur bei Ist-Daten (wie Einzelmonats-Import): VJ-Importe
+          // dürfen das Lieferanten-Journal des Jahres nicht überschreiben.
+          if (dataType === 'actual') {
+            undoJournals.push({ year: targetYear, month: m, entries: loadJournalEntries(targetYear, m, tenantId), tenantId });
+          }
+        }
+      } catch (err) {
+        console.warn('[CSV-IMPORT] Undo-Snapshot (Mehrmonat) fehlgeschlagen (Import läuft weiter):', err);
+      }
+
+      // Upsert je Konto+Monat — unveränderte Monate: kein Write («unverändert»)
+      const { monthsWritten, monthsUnchanged, kvBackup } = upsertCostMonths(
+        targetYear,
+        multiPreview.categoriesByMonth,
+        {
+          fileName,
+          note: `${fileKind.toUpperCase()}-Mehrmonats-Import (${months.length} Monate)`,
+          source: dataType === 'previous_year'
+            ? (fileKind === 'pdf' ? 'pdf_previous_year' : 'csv_previous_year')
+            : (fileKind === 'pdf' ? 'pdf_current' : 'csv_current'),
+        },
+        storeKey,
+      );
+
+      // Journal pro Monat ersetzen (Basis Lieferanten-FIBU-Abgleich) — nur bei
+      // Ist-Daten und nur wenn geändert. VJ-Importe schreiben KEIN Journal.
+      let journalMonths = 0;
+      if (dataType === 'actual') {
+        const grenze = await loadWarenkostenGrenze(tenantId);
+        for (const m of months) {
+          // Lieferanten-Journal: NUR Warenaufwand-Konten 4000–Grenze —
+          // Löhne/Gebühren/Verrechnungskonten fliessen nicht in den FIBU-Abgleich.
+          // Die ER-Kontobeträge (upsertCostMonths oben) bleiben vollständig.
+          const { waren: entries } = splitWarenJournal(multiParse.journalByMonth.get(m) ?? [], grenze);
+          const prior = loadJournalEntries(targetYear, m, tenantId);
+          if (JSON.stringify(prior) === JSON.stringify(entries)) continue;
+          saveJournalEntries(targetYear, m, entries, 'replace', tenantId);
+          journalMonths++;
+        }
+      }
+
+      // Import-Protokoll (Rückgängig) — best-effort
+      void recordImportRun(tenantId, {
+        source: dataType === 'previous_year' ? 'kosten-vorjahr-monat' : 'ist-kosten-buchhaltung',
+        periodLabel: months.length === 12
+          ? `Jahr ${targetYear}`
+          : `${MONTHS[months[0] - 1]}–${MONTHS[months[months.length - 1] - 1]} ${targetYear}`,
+        itemCount: months.length,
+        itemLabel: 'Monate',
+        fileName: fileName || undefined,
+        details: `${monthsWritten} Monate geschrieben, ${monthsUnchanged} unverändert, Journal in ${journalMonths} Monat(en) ersetzt`,
+        ...(undoMonths.length > 0 ? {
+          snapshot: {
+            kind: 'reporting-fields' as const,
+            storeKey,
+            months: undoMonths,
+            ...(undoJournals.length > 0 ? { journals: undoJournals } : {}),
+          },
+        } : {}),
+      }).catch(err => {
+        console.error('[CSV-IMPORT] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+      });
+
+      const summary =
+        `${monthsWritten} Monat(e) gespeichert` +
+        (monthsUnchanged > 0 ? `, ${monthsUnchanged} unverändert (kein Write)` : '') +
+        (journalMonths > 0 ? `, Journal in ${journalMonths} Monat(en) aktualisiert` : '');
+      setSavedMultiInfo(`Jahr ${targetYear}: ${summary}`);
+      setSavedMonth({ year: targetYear, month: months[0] });
+      setStep('done');
+      toast.success(`Import ${targetYear}: ${summary}`);
+
+      const backup = await kvBackup;
+      if (backup.failedMonths.length > 0) {
+        toast.error(`Supabase-Backup unvollständig: ${backup.failedMonths.length} Monat(e) nicht gesichert — bitte Import-Center prüfen.`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Fehler beim Speichern – bitte erneut versuchen');
+    } finally {
+      setLoading(false);
+    }
   }
 
   // ─── Split-Zuordnung ──────────────────────────────────────────────────────
@@ -934,6 +1263,10 @@ export default function CSVImportPage() {
   // ─── Vorschau ─────────────────────────────────────────────────────────────
 
   function goToPreview() {
+    if (multiParse) {
+      setStep('preview');
+      return;
+    }
     if (!parseResult || parseResult.totalRows === 0) {
       toast.error('Keine gültigen Zeilen gefunden – bitte Datei prüfen');
       return;
@@ -1005,9 +1338,25 @@ export default function CSVImportPage() {
 
   // ─── Speichern ────────────────────────────────────────────────────────────
 
-  function handleSave() {
+  async function handleSave() {
     if (!parseResult) return;
     setLoading(true);
+
+    // JAHRES-SPERRE: frisch prüfen (nie nur UI-State), FAIL-CLOSED — nur ein
+    // erfolgreicher Read mit locked:false gibt den Import frei; abgeschlossene
+    // Jahre dürfen durch keinen Import verändert werden.
+    try {
+      const lock = await getLockStateStrict(tenantId, year);
+      if (lock.locked) {
+        toast.error(`Das Jahr ${year} ist abgeschlossen und gesperrt. Import nicht möglich — Sperre zuerst im Import-Center aufheben.`);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      toast.error(`Jahres-Sperre konnte nicht geprüft werden — Import abgebrochen. Bitte erneut versuchen. (${err instanceof Error ? err.message : String(err)})`);
+      setLoading(false);
+      return;
+    }
 
     // Zeilen, die per Split aufgeteilt wurden, aus unresolved rausfiltern
     const remainingUnresolved = parseResult.unresolved.filter(
@@ -1031,6 +1380,20 @@ export default function CSVImportPage() {
         ? `, ${splitExcluded.size} aufgeteilt (${splitMatchedRows.length} Teilzeilen)`
         : '';
 
+      // Undo-Snapshot VOR dem Schreiben: kompletter bisheriger Monats-Record
+      // (null = Monat existierte nicht) + bisheriges Journal bei Ist-Daten.
+      const monthId = `${year}-${String(month).padStart(2, '0')}`;
+      const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+      let priorRecord: import('@/types/reporting').MonthlyFinancialRecord | null = null;
+      let priorJournal: import('@/types/reporting').SageJournalEntry[] | undefined;
+      try {
+        priorRecord = loadYear(year, storeKey).find(r => r.month === month) ?? null;
+        priorRecord = priorRecord ? JSON.parse(JSON.stringify(priorRecord)) : null;
+        if (dataType === 'actual') priorJournal = loadJournalEntries(year, month, tenantId);
+      } catch (err) {
+        console.warn('[CSV-IMPORT] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
+
       saveMonth(
         { ...record, year, month },
         source,
@@ -1042,9 +1405,43 @@ export default function CSVImportPage() {
         tenantKey(REPORTING_STORAGE_KEY),
       );
 
-      if (parseResult.journalEntries && parseResult.journalEntries.length > 0 && dataType === 'actual') {
-        saveJournalEntries(year, month, parseResult.journalEntries, importMode);
+      if (dataType === 'actual') {
+        // Lieferanten-Journal: nur Warenaufwand-Konten 4000–Grenze (FIBU-Abgleich).
+        // Invariante gilt auch im Ergänzen-Modus: das BESTEHENDE Journal wird
+        // mitbereinigt (Alt-Buchungen auf Lohn-/Gebühren-Konten fliegen raus),
+        // und bei «replace» wird auch eine leere Waren-Liste geschrieben.
+        // ER-Kontobeträge (saveMonth oben) bleiben vollständig.
+        const grenze = await loadWarenkostenGrenze(tenantId);
+        const { waren } = splitWarenJournal(parseResult.journalEntries ?? [], grenze);
+        const priorClean = importMode === 'replace'
+          ? []
+          : splitWarenJournal(loadJournalEntries(year, month, tenantId), grenze).waren;
+        const final = [...priorClean, ...waren];
+        const prior = loadJournalEntries(year, month, tenantId);
+        if (JSON.stringify(prior) !== JSON.stringify(final)) {
+          saveJournalEntries(year, month, final, 'replace', tenantId);
+        }
       }
+
+      // Import-Protokoll (Import-Center «Letzter Import» + Rückgängig) — best-effort.
+      void recordImportRun(tenantId, {
+        source: dataType === 'previous_year' ? 'kosten-vorjahr-monat' : 'ist-kosten-buchhaltung',
+        periodLabel: `${MONTHS[month - 1]} ${year}`,
+        itemCount: allSelected.length,
+        itemLabel: 'Positionen',
+        fileName: fileName || undefined,
+        details: `${parseResult.matchedCount} zugeordnet, ${remainingUnresolved.length} unbekannt${splitNote}`,
+        snapshot: {
+          kind: 'reporting-record',
+          storeKey,
+          monthId,
+          record: priorRecord,
+          ...(priorJournal !== undefined ? { journal: { year, month, entries: priorJournal, tenantId } } : {}),
+        },
+      }).catch(err => {
+        console.error('[CSV-IMPORT] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+      });
 
       setSavedMonth({ year, month });
       setStep('done');
@@ -1265,10 +1662,21 @@ export default function CSVImportPage() {
                 </CardContent>
               </Card>
 
+              {multiParse && (
+                <Alert className="text-sm border-blue-200 bg-blue-50">
+                  <Info className="h-4 w-4 text-blue-500" />
+                  <AlertDescription className="text-blue-800">
+                    <strong>Mehrmonats-Kontoblatt ({multiParse.year}):</strong> Die Datei umfasst{' '}
+                    {multiParse.rowsByMonth.size} Monate. Der Import erfolgt automatisch pro Konto und Monat
+                    (Netto = Soll − Haben nach Buchungsdatum) — die Monats-/Modus-Einstellungen oben entfallen.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <div className="flex justify-end">
                 <Button
                   onClick={goToPreview}
-                  disabled={!parseResult || parseResult.totalRows === 0 || parsing}
+                  disabled={parsing || (multiParse === null && (!parseResult || parseResult.totalRows === 0))}
                   size="lg"
                 >
                   Vorschau anzeigen <ChevronRight className="h-4 w-4 ml-1" />
@@ -1277,8 +1685,164 @@ export default function CSVImportPage() {
             </div>
           )}
 
+          {/* ── SCHRITT 2b: Mehrmonats-Vorschau (Konten × Monate) ── */}
+          {step === 'preview' && multiParse && multiPreview && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card className="bg-muted/30">
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-xs text-muted-foreground">Jahr</p>
+                    <p className="text-2xl font-bold">{multiParse.year}</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-muted/30">
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-xs text-muted-foreground">Monate mit Daten</p>
+                    <p className="text-2xl font-bold">{multiParse.rowsByMonth.size}/12</p>
+                  </CardContent>
+                </Card>
+                <Card className={cn('border', multiPreview.unmapped.size > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200')}>
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-xs text-muted-foreground">Nicht zugeordnete Konten</p>
+                    <p className={cn('text-2xl font-bold', multiPreview.unmapped.size > 0 ? 'text-amber-700' : 'text-green-700')}>
+                      {multiPreview.unmapped.size}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-muted/30">
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-xs text-muted-foreground">Aufwand / Ertrag</p>
+                    <p className="text-sm font-bold leading-tight">
+                      {formatAmount(multiPreview.sumExpense)}<br />
+                      <span className="text-xs font-normal text-muted-foreground">{formatAmount(multiPreview.sumIncome)} Ertrag</span>
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Monatsübersicht (Upsert je Konto + Monat)</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Pro Monat werden die Konto-Werte (Netto = Soll − Haben) ersetzt — ein erneuter Import
+                    desselben Zeitraums verdoppelt nichts. Buchungszeilen auf Warenaufwand-Konten
+                    (4000–{warenGrenze}) werden als Lieferanten-Journal pro Monat gespeichert (Basis für
+                    den FIBU-Abgleich). Manuell erfasste Kategorien und andere Monatsdaten bleiben unberührt.
+                  </p>
+                  {multiJournalDropped > 0 && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {multiJournalDropped} Nicht-Waren-Buchungen (Löhne/Gebühren/Verrechnungskonten)
+                      werden nicht ins Lieferanten-Journal übernommen — die ER-Kontobeträge bleiben vollständig.
+                    </p>
+                  )}
+                  {/* Diff gegen den Bestand: Erkennung nach Zeitraum, nicht Dateiname */}
+                  <div className="flex flex-wrap gap-2 mb-3 text-xs">
+                    <Badge className="bg-green-100 text-green-800 border-green-200 font-normal">
+                      {multiPreview.cellsNew} Konto-Monate neu
+                    </Badge>
+                    <Badge className={cn('font-normal border', multiPreview.cellsUpdated > 0
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-muted text-muted-foreground')}>
+                      {multiPreview.cellsUpdated} aktualisiert (Wert ändert sich — wird überschrieben)
+                    </Badge>
+                    <Badge variant="outline" className="font-normal">
+                      {multiPreview.cellsUnchanged} unverändert
+                    </Badge>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Monat</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Konten</TableHead>
+                        <TableHead className="text-right">Aufwand (CHF)</TableHead>
+                        <TableHead className="text-right">Ertrag (CHF)</TableHead>
+                        <TableHead className="text-right">Waren-Buchungen (Journal)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[...multiParse.rowsByMonth.keys()].sort((a, b) => a - b).map(m => {
+                        const t = multiPreview.monthTotals.get(m);
+                        return (
+                          <TableRow key={m}>
+                            <TableCell className="font-medium">{MONTHS[m - 1]} {multiParse.year}</TableCell>
+                            <TableCell>
+                              {(() => {
+                                const s = multiPreview.monthStatus.get(m);
+                                if (s === 'aktualisiert') return <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">aktualisiert</Badge>;
+                                if (s === 'unverändert') return <Badge variant="outline" className="text-[10px]">unverändert</Badge>;
+                                return <Badge className="bg-green-100 text-green-800 border-green-200 text-[10px]">neu</Badge>;
+                              })()}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{t?.accounts ?? 0}</TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {(t?.expense ?? 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {(t?.income ?? 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {splitWarenJournal(multiParse.journalByMonth.get(m) ?? [], warenGrenze).waren.length}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              {multiPreview.unresolvedRows.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      Nicht zugeordnete Konten ({multiPreview.unresolvedRows.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <UnresolvedTable
+                      rows={multiPreview.unresolvedRows}
+                      onAssign={handleAssignAccountMulti}
+                      onSplit={() => toast.info('Aufteilen ist im Mehrmonats-Import nicht verfügbar — bitte das Konto direkt zuordnen.')}
+                    />
+                  </CardContent>
+                </Card>
+              )}
+
+              <Separator />
+
+              <div className="flex items-center justify-between gap-4">
+                <Button variant="outline" onClick={() => setStep('upload')}>
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Zurück
+                </Button>
+                <div className="flex items-center gap-4">
+                  {multiPreview.unmapped.size > 0 && (
+                    <p className="text-sm text-amber-700 flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {multiPreview.unmapped.size} {multiPreview.unmapped.size === 1 ? 'Konto muss' : 'Konten müssen'} noch zugeordnet werden
+                    </p>
+                  )}
+                  <Button
+                    onClick={handleSaveMulti}
+                    disabled={loading || multiPreview.unmapped.size > 0}
+                    size="lg"
+                    className="min-w-44"
+                  >
+                    {loading
+                      ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Speichern…</>
+                      : <><Save className="h-4 w-4 mr-2" /> {multiParse.rowsByMonth.size} Monate importieren</>
+                    }
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── SCHRITT 2: Vorschau & Zuordnung ── */}
-          {step === 'preview' && parseResult && (
+          {step === 'preview' && parseResult && !multiParse && (
             <div className="space-y-6">
               {/* Zusammenfassung */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1330,6 +1894,60 @@ export default function CSVImportPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Lieferanten-Journal (Sage-Buchungszeilen) — Basis für den FIBU-Abgleich */}
+              {dataType === 'actual' && (parseResult.journalEntries?.length ?? 0) > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">
+                      Lieferanten-Journal ({journalSplit.waren.length} Waren-Buchungszeilen)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Nur Buchungen auf Warenaufwand-Konten (4000–{warenGrenze}) — speist den
+                      FIBU-Abgleich pro Lieferant (Warenrechnungen → Abgleich). Die
+                      ER-Kontobeträge bleiben davon unberührt (alle Konten).
+                    </p>
+                    {journalSplit.nichtWaren.length > 0 && (
+                      <p className="text-xs text-muted-foreground mb-2">
+                        {journalSplit.nichtWaren.length} Nicht-Waren-Buchungen (Löhne/Gebühren/Verrechnungskonten)
+                        werden nicht ins Lieferanten-Journal übernommen.
+                      </p>
+                    )}
+                    <div className="max-h-48 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground border-b">
+                            <th className="text-left py-1 pr-2 font-medium">Lieferant / Text</th>
+                            <th className="text-right py-1 pr-2 font-medium">Buchungen</th>
+                            <th className="text-right py-1 font-medium">Soll − Haben (CHF)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(
+                            journalSplit.waren.reduce<Record<string, { n: number; sum: number }>>((acc, e) => {
+                              const k = e.text;
+                              acc[k] = { n: (acc[k]?.n ?? 0) + 1, sum: (acc[k]?.sum ?? 0) + e.soll - e.haben };
+                              return acc;
+                            }, {}),
+                          )
+                            .sort((a, b) => Math.abs(b[1].sum) - Math.abs(a[1].sum))
+                            .map(([name, v]) => (
+                              <tr key={name} className="border-b last:border-0">
+                                <td className="py-1 pr-2">{name}</td>
+                                <td className="py-1 pr-2 text-right tabular-nums">{v.n}</td>
+                                <td className="py-1 text-right tabular-nums">
+                                  {v.sum.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Haupttabelle mit Tabs */}
               <Card>
@@ -1424,7 +2042,9 @@ export default function CSVImportPage() {
                 <div>
                   <h2 className="text-xl font-bold text-green-800">Import erfolgreich</h2>
                   <p className="text-green-700 text-sm mt-1">
-                    Die Buchhaltungsdaten für <strong>{MONTHS[savedMonth.month - 1]} {savedMonth.year}</strong> wurden gespeichert.
+                    {savedMultiInfo
+                      ? savedMultiInfo
+                      : <>Die Buchhaltungsdaten für <strong>{MONTHS[savedMonth.month - 1]} {savedMonth.year}</strong> wurden gespeichert.</>}
                   </p>
                 </div>
                 <div className="flex justify-center gap-3 pt-2 flex-wrap">
@@ -1434,6 +2054,8 @@ export default function CSVImportPage() {
                     setParseResult(null);
                     setWarnings([]);
                     setSavedMonth(null);
+                    setMultiParse(null);
+                    setSavedMultiInfo(null);
                   }}>
                     Weiterer Import
                   </Button>

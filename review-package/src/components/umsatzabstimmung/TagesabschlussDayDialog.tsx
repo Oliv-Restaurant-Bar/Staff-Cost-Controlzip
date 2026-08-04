@@ -17,8 +17,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import type { DayConfirmation } from '@/lib/adyen-abstimmung';
+import type { DayConfirmationInput } from '@/lib/adyen-abstimmung';
 import {
+  canCheckAbschlussGeprueft,
+  canCheckBarKontrolliert,
   canCloseDay,
   cashDiffReasonLabel,
   TAGESABSCHLUSS_AUTO_FIELDS,
@@ -29,7 +31,9 @@ import {
   type TagesabschlussRow,
 } from '@/lib/tagesabschluss';
 import { diffColorClass, fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
-import { formatClosedStamp } from './TagesabschlussTable';
+import {
+  CHECK_GREEN, formatClosedStamp, TIP_ABSCHLUSS_GEPRUEFT, TIP_BAR_KONTROLLIERT,
+} from './TagesabschlussTable';
 import { TagesabschlussExpenseEditor } from './TagesabschlussExpenseEditor';
 import { ADYEN_HINWEIS, ZahlungsartenBreakdown } from './ZahlungsartenBreakdown';
 
@@ -42,7 +46,11 @@ interface TagesabschlussDayDialogProps {
   onClose: () => void;
   onSaveManual: (date: string, patch: TagesabschlussManualPatch) => void;
   onOverride: (date: string, field: TagesabschlussAutoField, original: number, corrected: number | null, comment: string) => void;
-  onConfirm: (date: string, confirmation: DayConfirmation | null) => void;
+  /**
+   * Ziel-Zustand der Bestätigung — Audit-Stempel (Benutzer/Zeit) und
+   * Dirty-Check vergibt zentral applyDayConfirmation in der Section.
+   */
+  onConfirm: (date: string, confirmation: DayConfirmationInput) => void;
   onUpsertExpense: (expense: CashExpense) => void;
   onRemoveExpense: (date: string, id: string) => void;
   onCloseDay: (date: string) => void;
@@ -57,6 +65,17 @@ function numToInput(v: number | null | undefined): string {
 function parseGutscheinNummern(raw: string): string[] | null {
   const list = raw.split(/[,;\n]+/).map(s => s.trim()).filter(s => s !== '');
   return list.length > 0 ? list : null;
+}
+
+/**
+ * Historie-Zeile einer Bestätigungs-Checkbox: «von … am …» (aktiv) bzw.
+ * «entfernt von … am …» (Audit der letzten Änderung); ohne Stempel «—».
+ */
+function confirmHistoryStamp(active: boolean, by?: string, at?: string): string {
+  if (!by && !at) return '—';
+  const wer = by ?? '—';
+  const wann = at ? formatClosedStamp(at) : '—';
+  return active ? `von ${wer} am ${wann}` : `entfernt von ${wer} am ${wann}`;
 }
 
 export function TagesabschlussDayDialog({
@@ -130,6 +149,9 @@ export function TagesabschlussDayDialog({
   const confirmation = row.confirmation;
   const cashCounted = confirmation?.cashCounted ?? false;
   const confirmed = confirmation?.confirmed ?? false;
+  // Aktivierungs-Gates der beiden unabhängigen Checkboxen (zentrale Helfer).
+  const barGate = canCheckBarKontrolliert(row);
+  const geprueftGate = canCheckAbschlussGeprueft(row);
 
   return (
     <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
@@ -340,34 +362,58 @@ export function TagesabschlussDayDialog({
           </section>
         )}
 
-        {/* Bestätigung Barbestand (gemeinsamer Store mit Adyen-Abgleich) */}
+        {/* Bestätigung (gemeinsamer Store mit Adyen-Abgleich) — zwei
+            UNABHÄNGIGE Checkboxen; disabled nur fürs Aktivieren, ein
+            gesetztes Häkchen bleibt entfernbar (Audit beim Entfernen). */}
         <section className="space-y-1.5 border-t border-border pt-3">
           <h3 className="text-xs font-semibold">Bestätigung</h3>
-          <label className="flex items-center gap-2 text-xs">
-            <Checkbox checked={cashCounted} disabled={dialogReadOnly}
+          <label
+            className={`flex items-center gap-2 text-xs ${cashCounted ? 'text-green-700 dark:text-green-400 font-medium' : ''}`}
+            title={!cashCounted && !barGate.ok && barGate.reason ? barGate.reason : TIP_BAR_KONTROLLIERT}
+          >
+            <Checkbox checked={cashCounted}
+              className={CHECK_GREEN}
+              disabled={dialogReadOnly || (!cashCounted && !barGate.ok)}
               onCheckedChange={v => onConfirm(date, {
-                confirmed: confirmed && v === true,
+                confirmed,
                 cashCounted: v === true,
-                ...(confirmation?.confirmedAt ? { confirmedAt: confirmation.confirmedAt } : {}),
-                ...(confirmation?.comment ? { comment: confirmation.comment } : {}),
               })}
               data-testid="ta-check-cash" />
-            Barbestand gezählt und bestätigt
+            Bar kontrolliert
           </label>
-          <label className="flex items-center gap-2 text-xs">
-            <Checkbox checked={confirmed} disabled={dialogReadOnly || !cashCounted}
+          <label
+            className={`flex items-center gap-2 text-xs ${confirmed ? 'text-green-700 dark:text-green-400 font-medium' : ''}`}
+            title={!confirmed && !geprueftGate.ok && geprueftGate.reason ? geprueftGate.reason : TIP_ABSCHLUSS_GEPRUEFT}
+          >
+            <Checkbox checked={confirmed}
+              className={CHECK_GREEN}
+              disabled={dialogReadOnly || (!confirmed && !geprueftGate.ok)}
               onCheckedChange={v => onConfirm(date, {
                 confirmed: v === true,
                 cashCounted,
-                ...(v === true ? { confirmedAt: new Date().toISOString() } : {}),
-                ...(confirmation?.comment ? { comment: confirmation.comment } : {}),
               })}
               data-testid="ta-check-confirm" />
-            Tag bestätigt (abgeschlossen)
+            Tagesabschluss geprüft
           </label>
           <p className="text-[10px] text-muted-foreground">
             Gemeinsame Bestätigung mit dem Adyen-Abgleich — dort gelten zusätzliche Prüfregeln.
           </p>
+          <div className="space-y-0.5" data-testid="ta-confirm-history">
+            <p className="text-[10px] font-medium text-muted-foreground">Historie</p>
+            <ul className="text-[10px] text-muted-foreground space-y-0.5">
+              <li data-testid="ta-history-bar">
+                Bar kontrolliert: {confirmHistoryStamp(cashCounted, confirmation?.cashCountedBy, confirmation?.cashCountedAt)}
+              </li>
+              <li data-testid="ta-history-geprueft">
+                Tagesabschluss geprüft: {confirmHistoryStamp(confirmed, confirmation?.confirmedBy, confirmation?.confirmedAt)}
+              </li>
+              <li data-testid="ta-history-abgeschlossen">
+                Abgeschlossen: {locked && closure
+                  ? `von ${closure.closedBy} am ${formatClosedStamp(closure.closedAt)}`
+                  : '—'}
+              </li>
+            </ul>
+          </div>
         </section>
 
         {/* Korrekturen */}

@@ -117,21 +117,14 @@ const dbToScheduleData = (entries: DbScheduleEntry[]): Record<string, DaySchedul
   return result;
 };
 
-interface TokenAccess {
-  department: string;
-  role: string;
-  is_valid: boolean;
-}
-
 interface UseSupabaseScheduleOptions {
-  token?: string | null;
   department?: 'service' | 'kueche' | null;
   currentMonth: Date;
   /** Tenant-Filter: wenn gesetzt, werden nur Mitarbeiter dieses Mandanten geladen */
   restaurantId?: TenantId | null;
 }
 
-export const useSupabaseSchedule = ({ token, department, currentMonth, restaurantId }: UseSupabaseScheduleOptions) => {
+export const useSupabaseSchedule = ({ department, currentMonth, restaurantId }: UseSupabaseScheduleOptions) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
   // Ref-Spiegel: schnelle Slot-Folge-Edits (Split-Schicht) lesen SYNCHRON den
@@ -139,39 +132,7 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
   const scheduleDataRef = useRef(scheduleData);
   useEffect(() => { scheduleDataRef.current = scheduleData; }, [scheduleData]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tokenAccess, setTokenAccess] = useState<TokenAccess | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Validate token access
-  useEffect(() => {
-    const validateToken = async () => {
-      if (!token) {
-        setTokenAccess(null);
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase.rpc('get_token_access', { token_value: token });
-        
-        if (error || !data || data.length === 0) {
-          console.log('Token validation failed:', error);
-          setTokenAccess(null);
-        } else {
-          const access = data[0] as TokenAccess;
-          if (access.is_valid) {
-            setTokenAccess(access);
-          } else {
-            setTokenAccess(null);
-          }
-        }
-      } catch (err) {
-        console.error('Token validation error:', err);
-        setTokenAccess(null);
-      }
-    };
-
-    validateToken();
-  }, [token]);
 
   // Load employees — tenant-filtered
   const loadEmployees = useCallback(async () => {
@@ -532,24 +493,16 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
     return true;
   };
 
-  // Check access permissions
-  const canEdit = (employeeDepartment: 'service' | 'küche'): boolean => {
-    if (!tokenAccess) return true; // Admin mode (no token) can edit all
-    
-    if (tokenAccess.role === 'admin') return true;
-    
-    const tokenDept = tokenAccess.department === 'service' ? 'service' : 'küche';
-    return tokenDept === employeeDepartment;
-  };
+  // Zugriff: nur noch eingeloggt nutzbar — volle Bearbeitung
+  const canEdit = (_employeeDepartment: 'service' | 'küche'): boolean => true;
 
-  const isAdmin = tokenAccess?.role === 'admin' || !token;
+  const isAdmin = true;
 
   return {
     employees,
     scheduleData,
     isLoading,
     error,
-    tokenAccess,
     isAdmin,
     canEdit,
     loadEmployees,

@@ -48,7 +48,7 @@ type MasterChoice = Record<string, string>;
 
 export default function GaesteDuplikatePage() {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -63,7 +63,7 @@ export default function GaesteDuplikatePage() {
   const [merging, setMerging] = useState<string | null>(null); // phoneKey der laufenden Zusammenführung
 
   const load = useCallback(async () => {
-    if (!isAdmin || isGuest) { setLoading(false); return; }  // Datenschutz: kein Gäste-Read für Nicht-Admins / Gast-Sessions
+    if (!isAdmin) { setLoading(false); return; }  // Datenschutz: kein Gäste-Read für Nicht-Admins
     setLoading(true);
     setLoadError(null);
     const ok = await checkReservationTablesExist();
@@ -79,7 +79,7 @@ export default function GaesteDuplikatePage() {
       setLoadError(e instanceof Error ? e.message : String(e));
     }
     setLoading(false);
-  }, [tenantId, isAdmin, isGuest]);
+  }, [tenantId, isAdmin]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -105,7 +105,7 @@ export default function GaesteDuplikatePage() {
     await load();   // Liste neu aufbauen (Gruppe verschwindet, wenn nur noch 1 Gast)
   };
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const masterId = confirmGroup ? (masterChoice[confirmGroup.phoneKey] ?? confirmGroup.suggestedMasterId) : null;
   const masterGuest = confirmGroup?.guests.find(g => g.id === masterId) ?? null;

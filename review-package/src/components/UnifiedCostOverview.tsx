@@ -14,6 +14,7 @@ import {
   CalendarDays, Euro, Users, FileText, FileSpreadsheet, Calendar, ChevronDown, BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useZielPersonalquote } from '@/hooks/useZielPersonalquote';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ComposedChart, Line, Area } from 'recharts';
 import { toast } from '@/hooks/use-toast';
 import jsPDF from 'jspdf';
@@ -60,6 +61,7 @@ export const UnifiedCostOverview = ({
   selectedDate,
 }: UnifiedCostOverviewProps) => {
   const [viewMode, setViewMode] = useState<ViewMode>('week');
+  const { pct: zielPersonalquotePct } = useZielPersonalquote();
   
   const { 
     currentWeekStart,
@@ -395,9 +397,16 @@ export const UnifiedCostOverview = ({
     return 'text-muted-foreground';
   };
 
+  // HINWEIS (Etappe 2b): Diese Komponente wird aktuell NIRGENDS gerendert
+  // (kein Import im aktiven src/-Baum). Zielquote = zentrale Einstellung
+  // «Ziel-Personalquote» (Default 35.5 %) — KEIN hartcodiertes 35.5 % mehr.
+  // Eine vollständige Umstellung auf ladePersonalkostenDaten/personalkosten
+  // (AG-Total-Kostenbasis, Netto-Umsatz-Nenner, Tenant-Async-Load) bleibt
+  // zurückgestellt, solange die Komponente nicht eingebunden ist.
+  const TARGET_QUOTE_PCT = zielPersonalquotePct;
   const getQuoteColor = (quote: number) => {
-    if (quote > 35) return 'text-destructive';
-    if (quote > 30) return 'text-amber-500';
+    if (quote > TARGET_QUOTE_PCT) return 'text-destructive';
+    if (quote > TARGET_QUOTE_PCT - 5) return 'text-amber-500';
     return 'text-green-600';
   };
 
@@ -495,7 +504,7 @@ export const UnifiedCostOverview = ({
             </div>
             <p className="text-lg font-bold">{formatCurrency(totals.actualCost)}</p>
           </div>
-          <div className={cn("p-3 rounded-lg", totals.laborQuote > 30 ? 'bg-destructive/10' : 'bg-green-500/10')}>
+          <div className={cn("p-3 rounded-lg", totals.laborQuote > TARGET_QUOTE_PCT ? 'bg-destructive/10' : 'bg-green-500/10')}>
             <div className="text-muted-foreground text-xs mb-1">Personalkostenquote</div>
             <p className={cn("text-lg font-bold", getQuoteColor(totals.laborQuote))}>
               {totals.laborQuote.toFixed(1)}%

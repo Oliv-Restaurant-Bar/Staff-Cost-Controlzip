@@ -206,7 +206,7 @@ export function WesMarginWidget() {
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Top-Produkte mit der höchsten Wareneinsatzquote. Grün ≤ {WES_GREEN_MAX}% · Amber ≤ {WES_AMBER_MAX}% · Rot &gt; {WES_AMBER_MAX}%.
+          Warenkosten gemäss Rechnungen: Top-Produkte mit der höchsten Wareneinsatzquote. Grün ≤ {WES_GREEN_MAX}% · Amber ≤ {WES_AMBER_MAX}% · Rot &gt; {WES_AMBER_MAX}%.
         </p>
       </CardHeader>
 

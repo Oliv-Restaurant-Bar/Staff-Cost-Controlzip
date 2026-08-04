@@ -105,7 +105,7 @@ export const SEED_BEAULIEU_2026_LINE_ITEMS: BudgetPLLineItem[] = [
   },
   {
     id: 'pli_betriebsmat',
-    categoryId: 'pl_goods_cost',
+    categoryId: 'pl_other_op',
     accountNumber: '4701',
     label: 'Betriebsmaterial Restaurant',
     valueType: 'chf',

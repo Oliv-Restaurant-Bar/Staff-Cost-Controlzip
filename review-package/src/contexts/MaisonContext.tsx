@@ -5,7 +5,9 @@
  *   showMarketingCol — Spalte/Zeile anzeigen oder ausblenden
  *   maisonExclude    — Marketing aus dem Betriebsertrag herausrechnen
  *
- * Wird in der Sidebar (AppNav) als zentrales Toggle-UI gesteuert.
+ * Der frühere Sidebar-Umschalter (AppNav) wurde entfernt: showMarketingCol
+ * ist fix true (Marketing sichtbar). maisonExclude wird weiterhin von
+ * Seiten-lokalen Toggles (z.B. Tagesansicht) gesteuert.
  * Alle Pages lesen nur noch aus diesem Context.
  */
 
@@ -25,16 +27,18 @@ interface MaisonContextType {
 const MaisonContext = createContext<MaisonContextType | undefined>(undefined);
 
 export const MaisonProvider = ({ children }: { children: ReactNode }) => {
-  const [showMarketingCol, setShowMarketingColState] = useState(
-    () => localStorage.getItem(KEY_SHOW) !== 'false',
-  );
+  // Menü-Umschalter wurde entfernt: Marketing ist fix SICHTBAR (bisheriger
+  // Standard). Alte localStorage-Präferenz wird ignoriert und aufgeräumt.
+  const [showMarketingCol, setShowMarketingColState] = useState(true);
+  useEffect(() => {
+    try { localStorage.removeItem(KEY_SHOW); } catch { /* ignore */ }
+  }, []);
   const [maisonExclude, setMaisonExcludeState] = useState(
     () => localStorage.getItem(KEY_EXCL) === 'true',
   );
 
   const setShowMarketingCol = (v: boolean) => {
     setShowMarketingColState(v);
-    localStorage.setItem(KEY_SHOW, String(v));
   };
 
   const setMaisonExclude = (v: boolean) => {

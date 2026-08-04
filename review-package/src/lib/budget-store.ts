@@ -32,6 +32,7 @@ import {
 } from '@/types/budget';
 import { createSeededBudget2026, SEED_2026_LINE_ITEMS } from '@/lib/budget-seed-2026';
 import { createSeededBeaulieuBudget2026, SEED_BEAULIEU_2026_LINE_ITEMS } from '@/lib/budget-seed-beaulieu-2026';
+import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -48,19 +49,54 @@ export const STORAGE_KEY = 'budget_v1';
 type StoredBudgetYear = BudgetYear & { deleted?: boolean };
 
 /** Kontext jedes Speichervorgangs — Pflicht, damit der KV-Merge das Zieljahr kennt (Befund 1). */
-type BudgetSaveAction = { year: number; deleted?: boolean; seeded?: boolean };
+type BudgetSaveAction = { year: number; deleted?: boolean };
 
 /** Hat das Jahr echte (nicht-null) Budgetwerte in den P&L-Positionen? */
 function hasRealBudgetValues(b: StoredBudgetYear | undefined | null): boolean {
   return !!b && !b.deleted && !!b.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
 }
 
-function loadAll(storeKey: string = STORAGE_KEY): Record<number, StoredBudgetYear> {
-  try {
-    return JSON.parse(localStorage.getItem(storeKey) || '{}');
-  } catch {
-    return {};
+/**
+ * Deterministische Serialisierung (Schlüssel sortiert, `undefined`-Felder wie
+ * bei JSON ausgelassen) — Grundlage des fachlichen Dirty-Checks.
+ */
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  if (v && typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    const parts = Object.keys(obj)
+      .filter(k => obj[k] !== undefined)
+      .sort()
+      .map(k => JSON.stringify(k) + ':' + stableStringify(obj[k]));
+    return '{' + parts.join(',') + '}';
   }
+  return JSON.stringify(v);
+}
+
+/**
+ * Fachlicher Vergleich zweier Budgetjahre (Dirty-Check).
+ *
+ * `updatedAt` bedeutet ausschliesslich: «Dieser persistierte fachliche
+ * Datensatz wurde tatsächlich geändert.» Deshalb zählen NICHT zum Vergleich:
+ *  - createdAt/updatedAt (Zeitstempel sind Folge, nicht Teil der Änderung)
+ *  - viewDefault (transientes UI-Flag, nie persistiert)
+ *  - deleted (Tombstone-Status wird im Save-/Delete-Pfad separat behandelt)
+ * Alles andere ist fachlich: Jahr, Monatswerte, Positionen, Regeln,
+ * Prozentsätze, P&L-Kategorien/-Zuordnungen, copiedFromYear, wasAutoCalculated.
+ */
+function budgetBusinessEqual(a: StoredBudgetYear, b: StoredBudgetYear): boolean {
+  const strip = (x: StoredBudgetYear): Record<string, unknown> => {
+    const { createdAt: _c, updatedAt: _u, viewDefault: _v, deleted: _d, ...rest } =
+      x as StoredBudgetYear & Record<string, unknown>;
+    return rest;
+  };
+  return stableStringify(strip(a)) === stableStringify(strip(b));
+}
+
+function loadAll(storeKey: string = STORAGE_KEY): Record<number, StoredBudgetYear> {
+  // Parse-/Shape-Guard zentral (kv-blob-utils, Supabase-frei — Load-Pfade
+  // ziehen weiterhin keinen Supabase-Client).
+  return readLocalRecord(storeKey) as unknown as Record<number, StoredBudgetYear>;
 }
 
 /**
@@ -78,11 +114,9 @@ let kvBackupQueue: Promise<void> = Promise.resolve();
  *
  * Merge-Regeln:
  *  - Das explizit geänderte Jahr (`action.year`) gewinnt lokal — als Daten
- *    ODER als Tombstone (`deleted`, kein Union-Resurrect).
- *  - Ausnahme Auto-Seed (`action.seeded`): hat der Remote-Stand für das Jahr
- *    bereits ECHTE Werte, gewinnt remote — ein automatischer Seed darf nie
- *    remote bearbeitete Budgets überschreiben (Befund 3). localStorage wird
- *    dann auf den Remote-Stand nachgezogen.
+ *    ODER als Tombstone (`deleted`, kein Union-Resurrect). Jeder Save ist
+ *    eine echte Benutzeraktion: der 2026-Seed ist seit Stabilisierungsrunde
+ *    2.2 ein reiner View-Default und erreicht diesen Pfad nie automatisch.
  *  - Alle anderen Jahre: neueres `updatedAt` gewinnt (Tombstones inklusive);
  *    nur einseitig vorhandene Jahre bleiben erhalten.
  *  - Backup-Probleme sind sichtbar: offline/nicht konfiguriert → dezenter
@@ -110,28 +144,16 @@ async function backupBudgetsToKV(
       });
     // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
     // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
-    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt);
-    // insbesondere wird dann auch NIE ein Auto-Seed nach remote geschrieben.
-    const remote = await kvGetStrict(storeKey);
-    const remoteMap: Record<string, StoredBudgetYear> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, StoredBudgetYear>)
-        : {};
+    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt).
+    const remoteMap = asRecordBlob(await kvGetStrict(storeKey)) as Record<string, StoredBudgetYear>;
     const localMap = data as unknown as Record<string, StoredBudgetYear>;
 
-    let seedOutrankedByRemote: StoredBudgetYear | null = null;
     const merged: Record<string, StoredBudgetYear> = {};
     const allYears = new Set([...Object.keys(remoteMap), ...Object.keys(localMap)]);
     for (const y of allYears) {
       const l = localMap[y];
       const r = remoteMap[y];
       if (Number(y) === action.year) {
-        if (action.seeded && hasRealBudgetValues(r)) {
-          // Auto-Seed verliert gegen remote bearbeitete echte Werte (Befund 3)
-          merged[y] = r;
-          seedOutrankedByRemote = r;
-          continue;
-        }
         if (l) { merged[y] = l; continue; }     // lokale Aktion gewinnt (Daten oder Tombstone)
         if (r && !action.deleted) { merged[y] = r; }
         continue;
@@ -146,18 +168,6 @@ async function backupBudgetsToKV(
     }
 
     await kvSetStrict(storeKey, merged);
-
-    if (seedOutrankedByRemote) {
-      // localStorage auf den gewonnenen Remote-Stand nachziehen, damit alle
-      // Geräte konvergieren (der lokale Seed war nur ein Platzhalter).
-      try {
-        const rawLocal = JSON.parse(localStorage.getItem(storeKey) || '{}') as Record<string, StoredBudgetYear>;
-        rawLocal[String(action.year)] = seedOutrankedByRemote;
-        localStorage.setItem(storeKey, JSON.stringify(rawLocal));
-        if (typeof window !== 'undefined') window.dispatchEvent(new Event('store-synced'));
-      } catch { /* localStorage nicht verfügbar */ }
-      console.log(`[BUDGET] Auto-Seed ${action.year}: Remote-Stand mit echten Werten gewinnt — Seed nicht hochgeladen (${storeKey})`);
-    }
   } catch (err) {
     console.error(`[BUDGET] KV-Backup fehlgeschlagen für ${storeKey}:`, err);
     if (notifyProblem) {
@@ -199,66 +209,77 @@ function createEmptyBudgetYear(year: number): BudgetYear {
 
 /**
  * Budgetjahr laden.
- * Für Jahr 2026: Wird beim ersten Aufruf automatisch mit den Excel-Daten befüllt,
- * sofern noch keine plLineItems vorhanden sind.
- * Für andere Jahre: Gibt ein leeres Budgetjahr zurück.
+ * Für Jahr 2026: Existiert noch kein echtes Budget (keine Werte ≠ 0), werden
+ * die Excel-Seed-Werte als reiner View-Default zurückgegeben — NICHT
+ * persistiert (`viewDefault: true`): beim blossen Laden entsteht weder ein
+ * localStorage-Record noch ein KV-Backup, kein updatedAt, kein Importstatus,
+ * kein Tombstone-Resurrect. Persistiert wird erst bei einer echten
+ * Benutzeraktion über die bestehenden Save-Pfade.
+ * Für andere Jahre: Gibt ein leeres Budgetjahr zurück (ebenfalls nicht persistiert).
  */
 export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
   const all = loadAll(storeKey);
   const entry = all[year];
   // Tombstones (gelöschte Jahre) für alle Leser wie «nicht vorhanden» behandeln
   const existing = entry && !entry.deleted ? entry : undefined;
-  if (year === 2026) {
-    // Nur seeden wenn noch keine echten Werte vorhanden (alle 0 oder keine Items)
-    const hasRealValues = hasRealBudgetValues(existing);
-    if (!hasRealValues) {
-      // Auto-Seed für Oliv (Standard-Key). `seeded: true` markiert den Save als
-      // automatischen Seed: der KV-Merge lässt dann remote bearbeitete echte
-      // Werte gewinnen (Befund 3) — der Seed überschreibt nie Remote-Daten.
-      if (storeKey === STORAGE_KEY) {
-        const seeded = createSeededBudget2026();
-        all[2026] = seeded;
-        saveAll(all, storeKey, { year: 2026, seeded: true });
-        return seeded;
-      }
-      // Auto-Seed für Beaulieu — Werte aus Budget_Beaulieu_2026.xlsx
-      if (storeKey === 'beaulieu:budget_v1') {
-        const seeded = createSeededBeaulieuBudget2026();
-        all[2026] = seeded;
-        saveAll(all, storeKey, { year: 2026, seeded: true });
-        return seeded;
-      }
+  if (year === 2026 && !hasRealBudgetValues(existing)) {
+    // View-Default für Oliv bzw. Beaulieu (Werte aus den Budget-2026-Excels)
+    if (storeKey === STORAGE_KEY) {
+      return { ...createSeededBudget2026(), viewDefault: true };
     }
-    return existing ?? createEmptyBudgetYear(year);
+    if (storeKey === 'beaulieu:budget_v1') {
+      return { ...createSeededBeaulieuBudget2026(), viewDefault: true };
+    }
   }
   return existing ?? createEmptyBudgetYear(year);
 }
 
 /**
  * Budget 2026 auf Excel-Seed zurücksetzen (alle bestehenden Daten werden überschrieben).
+ * Explizite Benutzeraktion — läuft über den normalen Save-Pfad (updatedAt wird
+ * gesetzt, ein allfälliger Tombstone bewusst ersetzt, KV-Backup läuft).
  */
 export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYear {
-  const seeded = createSeededBudget2026();
-  const all = loadAll(storeKey);
-  all[2026] = seeded;
-  saveAll(all, storeKey, { year: 2026 });
-  return seeded;
+  const seeded = storeKey === 'beaulieu:budget_v1'
+    ? createSeededBeaulieuBudget2026()
+    : createSeededBudget2026();
+  return saveBudgetYear(seeded, storeKey);
 }
 
 /**
  * Budgetjahr speichern.
  * Überschreibt das bestehende Jahr komplett.
+ *
+ * Dirty-Check (verbindliche Regel): `updatedAt` wird NUR neu gesetzt, wenn
+ * sich die fachlichen Daten tatsächlich geändert haben. Ein identischer Save
+ * (gleiche Werte, gleiche Struktur) erzeugt weder einen updatedAt-Bump noch
+ * einen localStorage-/KV-Write — sonst würde ein wirkungsloser Klick in
+ * newer-wins-Merges fälschlich gegen echte Remote-Änderungen gewinnen.
+ * Ausnahmen, die IMMER speichern: Jahr existiert noch nicht, oder es liegt
+ * ein Tombstone vor (bewusste Neuanlage ersetzt ihn mit neuerem updatedAt).
+ *
+ * @returns den tatsächlich persistierten Datensatz — bei unverändertem
+ *          Inhalt der bestehende Record (alter updatedAt bleibt gültig).
  */
-export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): void {
+export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): BudgetYear {
   const all = loadAll(storeKey);
-  const rec: StoredBudgetYear = {
-    ...data,
-    updatedAt: new Date().toISOString(),
-  };
+  const rec: StoredBudgetYear = { ...data };
   // Explizites Speichern ersetzt einen allfälligen Tombstone (Jahr-Neuanlage)
   delete rec.deleted;
+  // Erste echte Benutzeraktion auf einem View-Default (2026-Seed) macht daraus
+  // ein reguläres Budget — das transiente Flag wird nie mitpersistiert.
+  delete rec.viewDefault;
+
+  const existing = all[data.year];
+  if (existing && !existing.deleted && budgetBusinessEqual(existing, rec)) {
+    // Keine fachliche Änderung → kein updatedAt-Bump, kein Write.
+    return existing;
+  }
+
+  rec.updatedAt = new Date().toISOString();
   all[data.year] = rec;
   saveAll(all, storeKey, { year: data.year });
+  return rec;
 }
 
 /**
@@ -278,6 +299,10 @@ export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
  */
 export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
   const all = loadAll(storeKey);
+  // Wiederholtes Löschen eines bereits getilgten Jahres ist keine fachliche
+  // Änderung: der bestehende Tombstone (samt updatedAt) bleibt unangetastet,
+  // es gibt keinen weiteren Write.
+  if (all[year]?.deleted) return;
   const now = new Date().toISOString();
   // Tombstone statt Hard-Delete: ein stales Gerät mit altem localStorage darf
   // das Jahr beim nächsten Backup-Merge nicht wiederbeleben (newer-wins gegen
@@ -350,8 +375,7 @@ export function copyBudgetYear(
     newBudget = applyRulesToBudget(newBudget);
   }
 
-  saveBudgetYear(newBudget, storeKey);
-  return newBudget;
+  return saveBudgetYear(newBudget, storeKey);
 }
 
 // ─── Regel-Engine ─────────────────────────────────────────────────────────────
@@ -445,11 +469,13 @@ export function applyRulesToBudget(budget: BudgetYear): BudgetYear {
     }
   }
 
+  // Kein updatedAt-Bump: applyRulesToBudget ist eine reine Funktion — den
+  // Änderungszeitstempel setzt ausschliesslich der Save-Pfad (saveBudgetYear),
+  // und nur wenn sich fachlich etwas geändert hat.
   return {
     ...budget,
     positions,
     wasAutoCalculated: budget.rules.length > 0,
-    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -515,9 +541,7 @@ export function updateBudgetPosition(
   const positions = budget.positions.map(p =>
     p.id === updatedPosition.id ? updatedPosition : p,
   );
-  const updated = { ...budget, positions, updatedAt: new Date().toISOString() };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, positions }, storeKey);
 }
 
 // ─── Regeln-Verwaltung ────────────────────────────────────────────────────────
@@ -532,13 +556,7 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
     id: uuidv4(),
     createdAt: new Date().toISOString(),
   };
-  const updated = {
-    ...budget,
-    rules:     [...budget.rules, newRule],
-    updatedAt: new Date().toISOString(),
-  };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, rules: [...budget.rules, newRule] }, storeKey);
 }
 
 /**
@@ -546,13 +564,7 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
  */
 export function removeBudgetRule(year: number, ruleId: string, storeKey: string = STORAGE_KEY): BudgetYear {
   const budget = loadBudgetYear(year, storeKey);
-  const updated = {
-    ...budget,
-    rules:     budget.rules.filter(r => r.id !== ruleId),
-    updatedAt: new Date().toISOString(),
-  };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, rules: budget.rules.filter(r => r.id !== ruleId) }, storeKey);
 }
 
 // ─── P&L Struktur (neue Budget-Erfolgsrechnung) ───────────────────────────────
@@ -654,6 +666,33 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
  * im Budget vorhanden sind. Fügt fehlende hinzu, ohne bestehende Daten zu
  * überschreiben. Wird automatisch beim Laden und nach der Reparatur ausgeführt.
  */
+/**
+ * Klassifikations-Korrektur (Kontenzuordnungs-Defaults):
+ *   4701/4800 = Betriebskosten (nicht Wareneinsatz), 6611 = Personalaufwand
+ *   (nicht Werbung/Marketing). Bestehende Budgets, deren Default-Positionen
+ *   noch in der ALTEN Kategorie stehen, werden beim Laden umgehängt —
+ *   Budgetwerte bleiben unverändert, nur die Kategorie wechselt.
+ *   Nur die bekannte alte Zuordnung wird korrigiert; hat der User die Position
+ *   manuell in eine andere Kategorie verschoben, bleibt das erhalten.
+ */
+const PL_ITEM_CATEGORY_FIXES: Array<{ id: string; from: string; to: string; label?: string }> = [
+  { id: 'pli_betriebsmat', from: 'pl_goods_cost', to: 'pl_other_op' },
+  { id: 'pli_gebinde_akt', from: 'pl_goods_cost', to: 'pl_other_op' },
+  { id: 'pli_kost_logis',  from: 'pl_marketing',  to: 'pl_personnel_other', label: 'Kost & Logis Personal' },
+];
+
+function migratePLItemCategories(budget: BudgetYear): BudgetYear {
+  const items = budget.plLineItems ?? [];
+  let changed = false;
+  const next = items.map(i => {
+    const fix = PL_ITEM_CATEGORY_FIXES.find(f => f.id === i.id && i.categoryId === f.from);
+    if (!fix) return i;
+    changed = true;
+    return { ...i, categoryId: fix.to, ...(fix.label ? { label: fix.label } : {}) };
+  });
+  return changed ? { ...budget, plLineItems: next } : budget;
+}
+
 function ensureDefaultPLItems(budget: BudgetYear): BudgetYear {
   const items = budget.plLineItems ?? [];
   const existingIds = new Set(items.map(i => i.id));
@@ -731,7 +770,8 @@ function migrateSeedZeroValues2026(budget: BudgetYear, storeKey: string = STORAG
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
 export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
-  let budget = loadBudgetYear(year, storeKey);
+  const original = loadBudgetYear(year, storeKey);
+  let budget = original;
   if (!budget.plCategories || !budget.plLineItems) {
     budget = initPLStructure(budget);
   }
@@ -739,18 +779,50 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
   budget = migrateObsoletePLItems(budget);
   budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
+  budget = migratePLItemCategories(budget);
   budget = migrateSeedZeroValues2026(budget, storeKey);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
-  // Nur zurückschreiben wenn echte Daten vorhanden.
-  // Ein leeres Budget NICHT nach Supabase schreiben — das würde dort gespeicherte
-  // Seed-Daten (z.B. von seedBeaulieuBudget2026) überschreiben, bevor sie in
-  // localStorage geladen wurden (race condition beim ersten Seitenaufruf).
-  const hasRealData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
-  if (hasRealData) {
-    saveBudgetYear(budget, storeKey);
+  // Reiner Ladepfad: schreibt NIE nach Supabase (kein saveBudgetYear, kein
+  // KV-Backup). Der frühere saveBudgetYear-Aufruf hier stempelte updatedAt neu
+  // und liess ein Gerät mit stalem localStorage beim blossen ÖFFNEN den
+  // neueren Remote-Stand überschreiben (das Aktionsjahr gewinnt im Merge).
+  // Migrations-/Sync-Ergebnisse werden nur LOKAL persistiert — und nur, wenn
+  // eine Migration effektiv etwas geändert hat (alle Migrationsschritte geben
+  // bei «keine Änderung» dieselbe Objektreferenz zurück).
+  if (budget !== original) {
+    persistMigratedBudgetLocally(budget, storeKey);
   }
   return budget;
+}
+
+/**
+ * Persistiert ein beim Laden migriertes Budget NUR in localStorage:
+ *  - nie nach Supabase (ein reiner Ladevorgang löst kein KV-Backup aus),
+ *  - nie ein neues Jahr anlegen (nur bestehende Records werden migriert),
+ *  - nie einen Tombstone überschreiben (gelöschte Jahre bleiben gelöscht),
+ *  - createdAt/updatedAt bleiben unverändert — eine Migration ist keine
+ *    Benutzeränderung; ein updatedAt-Bump würde stale Daten in
+ *    newer-wins-Merges fälschlich gewinnen lassen.
+ */
+function persistMigratedBudgetLocally(budget: BudgetYear, storeKey: string): void {
+  try {
+    // View-Defaults (nicht persistierter 2026-Seed) NIE lokal ablegen — auch
+    // dann nicht, wenn ein wertloser Alt-Record (alles 0) im Storage liegt:
+    // der bliebe sonst still durch Seed-Werte ersetzt.
+    if (budget.viewDefault) return;
+    const all = loadAll(storeKey);
+    const existing = all[budget.year];
+    if (!existing || existing.deleted) return;
+    all[budget.year] = {
+      ...budget,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+    };
+    localStorage.setItem(storeKey, JSON.stringify(all));
+  } catch {
+    /* localStorage nicht verfügbar — Migration bleibt in-memory */
+  }
 }
 
 /**
@@ -804,8 +876,7 @@ export function restoreMissingDefaultPLItems(year: number, storeKey: string = ST
     ...budget,
     plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
   };
-  saveBudgetYear(updated, storeKey);
-  return { budget: updated, added: missing.length };
+  return { budget: saveBudgetYear(updated, storeKey), added: missing.length };
 }
 
 /**
@@ -820,8 +891,7 @@ export function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY):
     plCategories: DEFAULT_PL_CATEGORIES.map(c => ({ ...c })),
     plLineItems: DEFAULT_PL_LINE_ITEMS.map(createDefaultPLLineItem),
   };
-  saveBudgetYear(reset, storeKey);
-  return reset;
+  return saveBudgetYear(reset, storeKey);
 }
 
 /**
@@ -833,8 +903,7 @@ export function deletePLLineItem(year: number, itemId: string, storeKey: string 
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -915,8 +984,7 @@ export function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: s
     : [...budget.plLineItems!, item];
 
   const updated = syncPLToLegacyPositions({ ...budget, plLineItems: lineItems });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -938,8 +1006,7 @@ export function addCustomPLLineItem(
     ...budget,
     plLineItems: [...budget.plLineItems!, newItem],
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -955,8 +1022,7 @@ export function removeCustomPLLineItem(year: number, itemId: string, storeKey: s
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -1042,5 +1108,19 @@ export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
   });
   setPos('budget_insurance', adminTotal);
 
-  return { ...budget, positions, updatedAt: new Date().toISOString() };
+  // Dirty Check (Objektidentität): Nur wenn sich die Legacy-Positionen
+  // effektiv geändert haben, entsteht ein neues Objekt — sonst würde jeder
+  // reine Ladevorgang das Budget als «geändert» behandeln.
+  if (
+    budget.positions.length > 0 &&
+    JSON.stringify(budget.positions) === JSON.stringify(positions)
+  ) {
+    return budget;
+  }
+
+  // Kein updatedAt-Bump: der Legacy-Sync ist eine Ableitung, keine
+  // Benutzeränderung. Den Änderungszeitstempel setzt ausschliesslich
+  // saveBudgetYear — im reinen Ladepfad bleibt updatedAt unverändert
+  // (persistMigratedBudgetLocally übernimmt den bestehenden Wert).
+  return { ...budget, positions };
 }

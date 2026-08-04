@@ -212,7 +212,10 @@ export const ScheduleImport = ({ onMirusDailyImport, onScheduleImport, onRevenue
       setParsedDailyEntries(result.entries);
       setDetectedDates(result.dateRange);
 
-      if (result.entries.length === 0) {
+      if (result.failureReason) {
+        console.warn('[MIRUS] import gestoppt:', result.failureReason, result.debug);
+        toast.error(`Import gestoppt: ${result.failureReason}`);
+      } else if (result.entries.length === 0) {
         toast.error('Keine Ist-Stunden in Test-Excel gefunden');
       } else {
         // Generate name matches and show dialog
@@ -243,7 +246,10 @@ export const ScheduleImport = ({ onMirusDailyImport, onScheduleImport, onRevenue
       const result = await parseMirusDailyExcel(file);
       setParsedDailyEntries(result.entries);
       setDetectedDates(result.dateRange);
-      if (result.entries.length === 0) {
+      if (result.failureReason) {
+        console.warn('[MIRUS] import gestoppt:', result.failureReason, result.debug);
+        toast.error(`Import gestoppt: ${result.failureReason}`);
+      } else if (result.entries.length === 0) {
         toast.error('Keine Ist-Stunden gefunden');
       } else {
         if (tenantId === 'beaulieu') {

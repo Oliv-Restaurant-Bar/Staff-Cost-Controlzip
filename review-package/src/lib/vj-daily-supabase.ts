@@ -31,7 +31,7 @@
  *   [VJ-SUPABASE] loaded month 2025-04: 30 rows from supabase
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,7 @@ export interface VjDayRecord {
   actualRevenue:   number;
   foodRevenue?:    number;
   beverageRevenue?: number;
+  takeawayRevenue?: number;    // optional (brutto) — nur wenn >0; alte Records ohne Feld bleiben gültig
   source:          string;     // "vorjahr_import"
 }
 
@@ -60,6 +61,11 @@ function tenantPrefix(tenantId?: string): string {
 
 function keyOf(date: string, tenantId?: string): string {
   return `${tenantPrefix(tenantId)}${date}`;
+}
+
+/** Öffentlicher Key-Helper (Import-Center-Undo: Snapshot der betroffenen Keys). */
+export function vjDailyKey(date: string, tenantId?: string): string {
+  return keyOf(date, tenantId);
 }
 
 function keyOfMonth(year: number, month: number, tenantId?: string): string {
@@ -88,8 +94,7 @@ export async function upsertVjDailyBatch(
   }));
 
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert(rows, { onConflict: 'key' });
 
     if (error) {
@@ -123,8 +128,7 @@ export async function loadVjDailyMonth(
 ): Promise<Record<string, VjDayRecord>> {
   const prefix = keyOfMonth(year, month, tenantId);
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('key, value')
       .like('key', `${prefix}%`);
 
@@ -162,8 +166,7 @@ export async function loadVjDailyDate(
   tenantId?: string,
 ): Promise<VjDayRecord | null> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', keyOf(date, tenantId))
       .maybeSingle();
@@ -190,8 +193,7 @@ export async function loadVjDailyYear(
 ): Promise<Record<string, VjDayRecord>> {
   const prefix = `${tenantPrefix(tenantId)}${year}-`;
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('key, value')
       .like('key', `${prefix}%`);
 
@@ -215,6 +217,29 @@ export async function loadVjDailyYear(
   }
 }
 
+/**
+ * STRIKTE Variante für Schreibpfade (Merge-Basis): Lesefehler werfen statt
+ * leer zurückzugeben — sonst würde ein Merge auf falscher Basis bestehende
+ * Records (inkl. actualRevenue) überschreiben. Nie im UI-Lesepfad verwenden.
+ */
+export async function loadVjDailyYearStrict(
+  year:      number,
+  tenantId?: string,
+): Promise<Record<string, VjDayRecord>> {
+  const prefix = `${tenantPrefix(tenantId)}${year}-`;
+  const { data, error } = await appSettingsTable()
+    .select('key, value')
+    .like('key', `${prefix}%`);
+  if (error) throw new Error(`vj_daily-Bestand ${year} nicht lesbar: ${error.message}`);
+  const result: Record<string, VjDayRecord> = {};
+  for (const row of (data ?? []) as Array<{ key: string; value: unknown }>) {
+    const rec  = row.value as VjDayRecord;
+    const date = row.key.replace(tenantPrefix(tenantId), '');
+    result[date] = { ...rec, date };
+  }
+  return result;
+}
+
 // ── Status: Prüfen ob VJ-Daten vorhanden ──────────────────────────────────────
 
 /**
@@ -228,8 +253,7 @@ export async function countVjDailyYear(
   tenantId?: string,
 ): Promise<number> {
   try {
-    const { count, error } = await (supabase as any)
-      .from('app_settings')
+    const { count, error } = await appSettingsTable()
       .select('key', { count: 'exact', head: true })
       .like('key', `${tenantPrefix(tenantId)}${year}-%`);
 

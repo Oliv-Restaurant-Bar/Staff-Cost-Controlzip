@@ -33,8 +33,16 @@ import { Upload, CheckCircle2, Loader2, AlertCircle, Database, Lock, LockOpen, S
 import {
   upsertVjDailyBatch,
   countVjDailyYear,
+  loadVjDailyYear,
+  vjDailyKey,
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
+import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
@@ -44,6 +52,22 @@ import {
   formatLockedAt,
   type PriorYearLockState,
 } from '@/lib/prior-year-lock';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  saveMonth,
+  loadYear,
+  retryReportingMonthsBackup,
+  STORAGE_KEY as REPORTING_STORAGE_KEY,
+} from '@/lib/reporting-store';
+import { notifyKVBackupProblem } from '@/lib/supabase-kv';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
+import { notifyReportingDataChanged } from '@/lib/import-events';
+import {
+  buildVjTransferPlan,
+  buildVjTransferPayload,
+  selectTransferMonths,
+  type VjTransferMonthPlan,
+} from '@/lib/vj-daily-transfer';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -59,27 +83,37 @@ interface VjPreview {
   rowsFound: string[];
   samples:   Array<{ date: string; gesamt: number; food: number | null; beverage: number | null }>;
   days:      Record<string, DayEntry>;
+  /** Monatssummen der «Gesamt»-Zeile (Brutto) — direkt gegen die Datei kontrollierbar. */
+  monthTotals: Array<{ month: string; value: number }>;
+  /** Jahressumme der «Gesamt»-Zeile (Brutto). */
+  jahrTotal: number;
+  /** Zellen ohne gültigen Zahlenwert (Zeile/Spalte/Rohwert) — BLOCKIERT den Import. */
+  unlesbareWerte: UnlesbareZelle[];
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
-function parseCHF(raw: unknown): number {
-  if (raw === null || raw === undefined || raw === '') return 0;
-  const s = String(raw);
-  const cleaned = s
-    .replace(/CHF\s*/i, '')
-    .replace(/['\u2019\u2018\s]/g, '')
-    .replace(',', '.');
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+/**
+ * CHF-Zelle STRIKT parsen (zentraler Betrags-Parser): «CHF 6679,30»,
+ * «CHF 7'118.00», Komma ODER Punkt als Dezimal, Tausender-Hochkomma,
+ * Leerzeichen, negativ. Leer/«-»/«None» ⇒ null (kein Wert — nie 0).
+ * Unlesbare Zellen werden gesammelt (nie 0/NaN) — der Import wird blockiert.
+ */
+function parseCHF(raw: unknown, zeile: string, spalte: string, unlesbar: UnlesbareZelle[]): number | null {
+  const r = parseBetragZelle(typeof raw === 'number' ? raw : String(raw ?? ''));
+  if (!r.ok) { unlesbar.push({ zeile, spalte, roh: r.roh ?? '' }); return null; }
+  return r.value === null ? null : Math.round(r.value * 100) / 100;
 }
 
 const ROW_GESAMT   = ['gesamt', 'total', 'gesamtumsatz'];
 const ROW_FOOD     = ['food', 'speisen', 'food (speisen)', 'food(speisen)'];
 const ROW_BEVERAGE = ['beverage', 'getränke', 'beverage (getränke)', 'beverage(getränke)'];
+// Neutrale Zeilen: nie als Kategorie werten (bereits im Gesamt enthalten bzw. kein Umsatz)
+const ROW_NEUTRAL  = ['non-food', 'non food', 'nonfood', 'aufladung', 'kundenkarte', 'trinkgeld', 'rundungsdifferenz', 'rabatt'];
 
 function matchRow(label: string, patterns: string[]): boolean {
   const l = label.toLowerCase().trim();
+  if (ROW_NEUTRAL.some(p => l.includes(p))) return false;
   return patterns.some(p => l.includes(p));
 }
 
@@ -214,13 +248,29 @@ async function parseVjDaily(file: File, year: number): Promise<VjPreview> {
   if (!gesamtRow) throw new Error('Zeile "Gesamt" nicht gefunden. Bitte Spaltenbeschriftung prüfen.');
 
   const days: Record<string, DayEntry> = {};
+  const unlesbareWerte: UnlesbareZelle[] = [];
   for (const [cStr, iso] of Object.entries(colToDate)) {
-    const c        = parseInt(cStr);
-    const gesamt   = parseCHF(gesamtRow[c]);
-    const food     = foodRow ? parseCHF(foodRow[c]) : null;
-    const beverage = bevRow  ? parseCHF(bevRow[c])  : null;
+    const c      = parseInt(cStr);
+    const spalte = `${iso.slice(8)}.${iso.slice(5, 7)}.`;
+    const gesamt   = parseCHF(gesamtRow[c], 'Gesamt', spalte, unlesbareWerte);
+    const food     = foodRow ? parseCHF(foodRow[c], 'Food (Speisen)', spalte, unlesbareWerte) : null;
+    const beverage = bevRow  ? parseCHF(bevRow[c],  'Beverage (Getränke)', spalte, unlesbareWerte) : null;
+    // Leere Tage (kein Gesamt-Wert, z.B. «None»/leer) = KEIN Datensatz — nie 0 speichern.
+    if (gesamt === null) continue;
     days[iso] = { gesamt, food, beverage };
   }
+
+  // Monats-/Jahressummen der «Gesamt»-Zeile (Brutto) für die Kontroll-Vorschau
+  const monthMap = new Map<string, number>();
+  let jahrTotal = 0;
+  for (const [iso, v] of Object.entries(days)) {
+    const ym = iso.slice(0, 7);
+    monthMap.set(ym, Math.round(((monthMap.get(ym) ?? 0) + v.gesamt) * 100) / 100);
+    jahrTotal = Math.round((jahrTotal + v.gesamt) * 100) / 100;
+  }
+  const monthTotals = [...monthMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, value]) => ({ month, value }));
 
   const dayCount = Object.keys(days).length;
   console.log(`[VJ-IMPORT] detected year: ${year}`);
@@ -231,7 +281,7 @@ async function parseVjDaily(file: File, year: number): Promise<VjPreview> {
     .slice(0, 3)
     .map(([date, v]) => ({ date, ...v }));
 
-  return { year, dayCount, rowsFound, samples, days };
+  return { year, dayCount, rowsFound, samples, days, monthTotals, jahrTotal, unlesbareWerte };
 }
 
 // ── Format-Hilfsfunktionen ────────────────────────────────────────────────────
@@ -248,24 +298,40 @@ function fmtDate(iso: string): string {
 const currentYear = new Date().getFullYear();
 
 export function VjDailyImportSection() {
-  const { tenantId } = useTenant();
-  const { isAdmin }  = usePermissions();
+  const { tenantId, tenantKey } = useTenant();
+  const { isAdmin } = usePermissions();
   const fileRef   = useRef<HTMLInputElement>(null);
   const [year,    setYear]    = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [preview, setPreview] = useState<VjPreview | null>(null);
+  const [fileName, setFileName] = useState('');
   const [error,   setError]   = useState<string | null>(null);
   const [existingCount, setExistingCount]   = useState<number | null>(null);
   const [lockState,     setLockState]       = useState<PriorYearLockState>({ locked: false });
   const [lockLoading,   setLockLoading]     = useState(false);
+  // Übernahme in die Erfolgsrechnung (A/B): NUR auf Klick — reines Öffnen löst keine Reads/Writes aus
+  const [transferPlan,     setTransferPlan]     = useState<VjTransferMonthPlan[] | null>(null);
+  const [transferChecking, setTransferChecking] = useState(false);
+  const [transferError,    setTransferError]    = useState<string | null>(null);
+  const [overwriteMonths,  setOverwriteMonths]  = useState<Set<number>>(new Set());
+  const [transferring,     setTransferring]     = useState(false);
+  const [transferDone,     setTransferDone]     = useState<string | null>(null);
+  // Bestätigungsdialog vor der ER-Übernahme (explizite Zustimmung vor Überschreiben)
+  const [confirmOpen,      setConfirmOpen]      = useState(false);
 
   // Beim Laden: Datenzähler + Lock-Status laden
   useEffect(() => {
     const tid = tenantId ?? 'oliv';
     countVjDailyYear(year, tid).then(n => setExistingCount(n));
     getLockState(tid, year).then(s => setLockState(s));
+    // Jahr-/Tenant-Wechsel: Übernahme-Vorschau verwerfen (gehört zum alten Kontext)
+    setTransferPlan(null);
+    setTransferError(null);
+    setTransferDone(null);
+    setOverwriteMonths(new Set());
+    setConfirmOpen(false);
   }, [year, tenantId]);
 
   const handleFile = async (file: File) => {
@@ -273,6 +339,7 @@ export function VjDailyImportSection() {
     setPreview(null);
     setError(null);
     setSaved(false);
+    setFileName(file.name);
     const yearFromName = file.name.match(/20(\d{2})/)?.[0];
     const detectedYear = yearFromName ? parseInt(yearFromName) : year;
     if (yearFromName) setYear(detectedYear);
@@ -289,6 +356,11 @@ export function VjDailyImportSection() {
 
   const handleSave = async () => {
     if (!preview) return;
+    // HARTER Block: unlesbare Zellwerte dürfen NIE gespeichert werden (kein 0/NaN).
+    if (preview.unlesbareWerte.length > 0) {
+      toast.error('Import blockiert: die Datei enthält nicht lesbare Zellwerte — bitte Format prüfen.');
+      return;
+    }
     const tid = tenantId ?? 'oliv';
 
     // Lock-Check: Abbruch wenn Vorjahresdaten gesperrt sind
@@ -309,11 +381,39 @@ export function VjDailyImportSection() {
         ...(entry.beverage != null ? { beverageRevenue: entry.beverage } : {}),
       }));
 
+      // Undo-Snapshot VOR dem Schreiben: bisheriger Stand aller betroffenen
+      // vj_daily-Keys (null = Tag existierte nicht → beim Undo löschen).
+      let snapshotItems: KvKeyItem[] | null = null;
+      try {
+        const prior = await loadVjDailyYear(preview.year, tid);
+        snapshotItems = records.map(r => ({
+          key: vjDailyKey(r.date, tid),
+          value: (prior[r.date] as unknown) ?? null,
+        }));
+      } catch (err) {
+        console.warn('[PRIOR-YEAR] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
+
       const { upserted, error: supaErr } = await upsertVjDailyBatch(records, tid);
 
       if (supaErr) {
         toast.error('Supabase-Fehler: ' + supaErr);
         return;
+      }
+
+      // Import-Protokoll (Import-Center «Letzter Import» + Rückgängig) — best-effort.
+      try {
+        await recordImportRun(tid, {
+          source: 'vj-tagesumsatz',
+          periodLabel: `Jahr ${preview.year}`,
+          itemCount: records.length,
+          itemLabel: 'Tage',
+          fileName: fileName || undefined,
+          ...(snapshotItems ? { snapshot: { kind: 'kv-keys', items: snapshotItems } } : {}),
+        });
+      } catch (err) {
+        console.error('[PRIOR-YEAR] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
       }
 
       // Seed-Flags zurücksetzen (verhindert alten Seed-Daten das Überschreiben)
@@ -361,8 +461,153 @@ export function VjDailyImportSection() {
     }
   };
 
+  /**
+   * Übernahme-Vorschau (A): liest die vj_daily-Tageswerte des Jahres (read-only)
+   * und gleicht sie gegen die bestehenden Erfolgsrechnungs-Monate ab.
+   * Die Jahres-Sperre blockiert nur vj_daily-WRITES — die Übernahme liest nur
+   * vj_daily und schreibt ausschliesslich in die Erfolgsrechnung.
+   */
+  const handleTransferCheck = async () => {
+    setTransferChecking(true);
+    setTransferError(null);
+    setTransferPlan(null);
+    setTransferDone(null);
+    setOverwriteMonths(new Set());
+    try {
+      const days = await loadVjDailyYear(year, tenantId);
+      if (Object.keys(days).filter(d => d.startsWith(`${year}-`)).length === 0) {
+        setTransferError(
+          `Keine vj_daily-Tageswerte für ${year} gefunden (oder Supabase nicht erreichbar). ` +
+          'Es wird nichts übernommen — fehlende Daten werden nie als 0 interpretiert.',
+        );
+        return;
+      }
+      const existing = loadYear(year, tenantKey(REPORTING_STORAGE_KEY));
+      setTransferPlan(buildVjTransferPlan(year, days, existing));
+    } catch (e) {
+      setTransferError('Übernahme-Prüfung fehlgeschlagen: ' + String(e));
+    } finally {
+      setTransferChecking(false);
+    }
+  };
+
+  /**
+   * Übernahme bestätigen: schreibt NUR die gewählten Monate via saveMonth
+   * (update-Merge, skipKvBackup) und sichert danach SEQUENZIELL nach Supabase
+   * (retryReportingMonthsBackup) — parallele Blob-Upserts würden sich sonst
+   * gegenseitig mit veralteten Monatswerten überschreiben. Backup-Fehler
+   * werden sichtbar gemeldet (notifyKVBackupProblem mit «Erneut versuchen»).
+   */
+  const handleTransferConfirm = async () => {
+    if (!transferPlan) return;
+    const toTransfer = selectTransferMonths(transferPlan, overwriteMonths);
+    if (toTransfer.length === 0) return;
+    setTransferring(true);
+    try {
+      const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+
+      // Undo-Snapshot VOR dem Schreiben: nur die Umsatzfelder der Ziel-Monate
+      // (grossRevenueManual/revenueActual) — Rückgängig stellt exakt diese
+      // Felder wieder her, Kosten & übrige Monatsdaten sind nie betroffen.
+      const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+      let snapshotOk = false;
+      try {
+        const existing = new Map(loadYear(year, storeKey).map(r => [r.month, r]));
+        for (const p of toTransfer) {
+          const rec = existing.get(p.month);
+          undoMonths.push({
+            monthId: p.monthId,
+            fields: {
+              grossRevenueManual: rec?.grossRevenueManual ?? null,
+              revenueActual: rec?.revenueActual ?? null,
+            },
+          });
+        }
+        snapshotOk = undoMonths.length === toTransfer.length;
+      } catch (err) {
+        console.warn('[VJ-TRANSFER] Undo-Snapshot fehlgeschlagen (Übernahme läuft weiter):', err);
+      }
+
+      const monthIds: string[] = [];
+      for (const p of toTransfer) {
+        saveMonth(
+          buildVjTransferPayload(year, p),
+          'vj_daily_transfer',
+          'update',
+          {
+            note: `Übernahme aus vj_daily (${p.dayCount} Tage, Brutto ${NUM.format(Math.round(p.grossTotal))} CHF)`,
+            skipKvBackup: true,
+          },
+          storeKey,
+        );
+        monthIds.push(p.monthId);
+      }
+      // Import-Protokoll (Import-Historie + Rückgängig): Fehler sichtbar melden —
+      // nie stillschweigend «rückgängig möglich» behaupten. Ohne vollständigen
+      // Snapshot wird KEIN Undo-fähiger Lauf geschrieben (leerer Snapshot würde
+      // ein «erfolgreiches» Undo vortäuschen, das nichts wiederherstellt).
+      let undoAvailable = false;
+      try {
+        await recordImportRun(tenantId ?? 'oliv', {
+          source: 'vj-er-uebernahme',
+          periodLabel: `Jahr ${year}`,
+          itemCount: toTransfer.length,
+          itemLabel: 'Monate',
+          details: `Umsatz aus Tagesdaten in die ER übernommen (${toTransfer.length} Monat(e), nur Ertragsseite`
+            + (toTransfer.some(p => !p.taSplit)
+              ? `, ${toTransfer.filter(p => !p.taSplit).length} ohne TA-Split — 8.1 % pauschal)`
+              : ', Netto mit MwSt-Split TA 2.6 %/8.1 %)')
+            + (snapshotOk ? '' : ' — ohne Undo-Snapshot'),
+          ...(snapshotOk ? { snapshot: { kind: 'reporting-fields' as const, storeKey, months: undoMonths } } : {}),
+        });
+        undoAvailable = snapshotOk;
+      } catch (err) {
+        console.error('[VJ-TRANSFER] Import-Protokoll fehlgeschlagen:', err);
+      }
+      if (!undoAvailable) {
+        toast.warning('Übernahme ausgeführt, aber ohne Rückgängig-Protokoll — Undo im Import-Center ist für diesen Lauf nicht verfügbar.');
+      }
+
+      const skippedConflicts = transferPlan.filter(p => p.transferable && p.conflict && !overwriteMonths.has(p.month)).length;
+      setTransferDone(
+        `${toTransfer.length} Monat(e) in die Erfolgsrechnung übernommen` +
+        (skippedConflicts > 0 ? ` — ${skippedConflicts} Konflikt-Monat(e) unverändert gelassen` : ''),
+      );
+      setTransferPlan(null);
+      setOverwriteMonths(new Set());
+      notifyReportingDataChanged();
+      toast.success(`${toTransfer.length} Monat(e) für ${year} in die Erfolgsrechnung übernommen`);
+
+      // Sequenzielle Supabase-Sicherung der übernommenen Monate — Fehler sichtbar
+      const backup = await retryReportingMonthsBackup(monthIds, storeKey);
+      if (backup.failedMonths.length > 0) {
+        const failed = backup.failedMonths;
+        void notifyKVBackupProblem(backup.lastError, `Übernahme ${year} (${failed.length} Monat(e))`, {
+          toastId: `vj-transfer-backup-${year}`,
+          retry: async () => {
+            const res = await retryReportingMonthsBackup(failed, storeKey);
+            if (res.failedMonths.length > 0) {
+              throw res.lastError ?? new Error(`${res.failedMonths.length} Monat(e) weiterhin nicht gesichert`);
+            }
+            toast.success(`Supabase-Backup vervollständigt (${failed.length} Monat(e) nachgesichert).`);
+          },
+        });
+      }
+    } catch (e) {
+      toast.error('Übernahme fehlgeschlagen: ' + String(e));
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
+
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="vj-tagesumsatz"
+        undoHint="Zurückgesetzt werden die vj_daily-Tageswerte dieses Jahres. Bereits in die Erfolgsrechnung übernommene Monate (Übernahme-Schritt) sind davon nicht betroffen."
+      />
 
       {/* Lock-Status ─────────────────────────────────────────────────────────── */}
       {lockState.locked ? (
@@ -518,6 +763,51 @@ export function VjDailyImportSection() {
             </table>
           </div>
 
+          {/* Monatstotale der «Gesamt»-Zeile (Brutto) — Kontrollwerte gegen die Datei */}
+          <div className="rounded border border-border/60 bg-background divide-y divide-border/50" data-testid="vj-month-totals">
+            <div className="flex items-center justify-between px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span>Monat</span>
+              <span>Umsatz brutto (Zeile «Gesamt»)</span>
+            </div>
+            {preview.monthTotals.map(mt => (
+              <div key={mt.month} className="flex items-center justify-between px-2.5 py-1 text-xs">
+                <span>{mt.month}</span>
+                <span className="font-medium tabular-nums">
+                  {Number.isFinite(mt.value)
+                    ? `CHF ${mt.value.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between px-2.5 py-1 text-xs font-semibold">
+              <span>Jahr {preview.year} ({preview.dayCount} Tage)</span>
+              <span className="tabular-nums">
+                {Number.isFinite(preview.jahrTotal)
+                  ? `CHF ${preview.jahrTotal.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
+              </span>
+            </div>
+          </div>
+
+          {/* HARTER Block: nicht lesbare Zellwerte — Import gesperrt */}
+          {preview.unlesbareWerte.length > 0 && (
+            <div className="rounded border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-2.5 py-2 space-y-1" data-testid="vj-unlesbar">
+              <p className="text-[11px] font-medium text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                {preview.unlesbareWerte.length} Zellwert{preview.unlesbareWerte.length === 1 ? '' : 'e'} nicht lesbar —
+                der Import ist blockiert, bis das Format geklärt ist (nie als 0 speichern).
+              </p>
+              <ul className="text-[11px] text-red-700 dark:text-red-300 tabular-nums pl-5 space-y-0.5">
+                {preview.unlesbareWerte.slice(0, 8).map((z, i) => (
+                  <li key={i}>Zeile «{z.zeile}» · Spalte {z.spalte}: «{z.roh}»</li>
+                ))}
+                {preview.unlesbareWerte.length > 8 && (
+                  <li>… und {preview.unlesbareWerte.length - 8} weitere Zellen</li>
+                )}
+              </ul>
+            </div>
+          )}
+
           {/* Supabase-Hinweis */}
           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground bg-teal-50 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-800 rounded px-2.5 py-1.5">
             <Database className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
@@ -530,7 +820,7 @@ export function VjDailyImportSection() {
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={handleSave}
-              disabled={saving || lockState.locked}
+              disabled={saving || lockState.locked || preview.unlesbareWerte.length > 0}
             >
               {saving
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird in Supabase gespeichert…</>
@@ -573,6 +863,209 @@ export function VjDailyImportSection() {
           <p>• Werte: <span className="font-mono bg-muted px-1 rounded">CHF 7'118.00</span> oder <span className="font-mono bg-muted px-1 rounded">CHF 7118,75</span></p>
           <p>• Monatsexport möglich: Nur die Tage des gewählten Monats werden importiert</p>
           <p>• Supabase ist die primäre Datenquelle — Daten werden dauerhaft gespeichert</p>
+        </div>
+      )}
+
+      {/* Übernahme in die Erfolgsrechnung ────────────────────────────────── */}
+      {isAdmin && (
+        <div className="border-t border-border pt-3 space-y-2" data-testid="vj-transfer-section">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Übernahme in die Erfolgsrechnung ({year})
+            </p>
+            <Button
+              size="sm" variant="outline" className="h-7 text-[11px] gap-1"
+              onClick={handleTransferCheck}
+              disabled={transferChecking || transferring}
+              data-testid="vj-transfer-check-button"
+            >
+              {transferChecking
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <Database className="h-3 w-3" />}
+              Übernahme prüfen
+            </Button>
+          </div>
+          {/* Letzte ER-Übernahme + Rückgängig (stellt nur die Umsatzfelder wieder her) */}
+          <LastImportPanel
+            source="vj-er-uebernahme"
+            undoHint="Zurückgesetzt werden nur die Umsatzfelder (Brutto/Netto) der übernommenen ER-Monate — Kosten und alle anderen Monatsdaten sind nicht betroffen."
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Überträgt die Monatssummen der importierten Tageswerte als Umsatz in die Erfolgsrechnung:
+            Brutto = Summe der Tage, Netto = MwSt-Split — Take Away ÷ 1.026 (2.6 %), übriger
+            Umsatz ÷ 1.081 (8.1 %). Monate ohne Take-Away-Daten werden pauschal mit 8.1 %
+            gerechnet und sichtbar gekennzeichnet. Monate ohne Tageswerte werden nie angelegt. Eine Jahres-Sperre blockiert nur den
+            Tageswerte-Import — die Übernahme bleibt möglich.
+          </p>
+
+          {transferError && (
+            <div className="flex items-start gap-2 text-xs text-red-600 dark:text-red-400" data-testid="vj-transfer-error">
+              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <span>{transferError}</span>
+            </div>
+          )}
+
+          {transferDone && (
+            <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400" data-testid="vj-transfer-done">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              <span>{transferDone}</span>
+            </div>
+          )}
+
+          {transferPlan && (() => {
+            const transferable   = transferPlan.filter(p => p.transferable);
+            const freeMonths     = transferable.filter(p => !p.conflict);
+            const conflictMonths = transferable.filter(p => p.conflict);
+            const selected       = selectTransferMonths(transferPlan, overwriteMonths);
+            return (
+              <div className="space-y-2" data-testid="vj-transfer-preview">
+                <div className="rounded border text-[11px] overflow-auto">
+                  <table className="w-full min-w-[520px]">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="text-left py-1 px-2 font-medium">Monat</th>
+                        <th className="text-right py-1 px-2 font-medium">Tage</th>
+                        <th className="text-right py-1 px-2 font-medium">Brutto CHF</th>
+                        <th className="text-right py-1 px-2 font-medium">Netto CHF</th>
+                        <th className="text-left py-1 px-2 font-medium">Ziel (Erfolgsrechnung)</th>
+                        <th className="text-center py-1 px-2 font-medium">Überschreiben</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferPlan.map(p => (
+                        <tr key={p.month} className="border-t" data-testid={`vj-transfer-row-${p.month}`}>
+                          <td className="py-1 px-2 font-mono">{p.monthId}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">{p.dayCount > 0 ? p.dayCount : '—'}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">
+                            {p.transferable ? NUM.format(Math.round(p.grossTotal)) : '—'}
+                          </td>
+                          <td className="py-1 px-2 text-right tabular-nums">
+                            {p.transferable ? (
+                              <span className="inline-flex items-center gap-1 justify-end">
+                                {!p.taSplit ? (
+                                  <span
+                                    className="text-[9px] rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 px-1 py-px whitespace-nowrap"
+                                    title="Für diesen Monat liegen keine Take-Away-Daten vor — Netto pauschal mit 8.1 % gerechnet."
+                                    data-testid={`vj-transfer-pauschal-${p.month}`}
+                                  >
+                                    ohne TA-Split, 8.1 % pauschal
+                                  </span>
+                                ) : p.taDayCount < p.dayCount ? (
+                                  <span
+                                    className="text-[9px] rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 px-1 py-px whitespace-nowrap"
+                                    title={`Take-Away-Daten nur für ${p.taDayCount} von ${p.dayCount} Tagen — Tage ohne TA-Daten werden mit 8.1 % gerechnet.`}
+                                    data-testid={`vj-transfer-ta-partial-${p.month}`}
+                                  >
+                                    TA-Split unvollständig ({p.taDayCount}/{p.dayCount} Tage)
+                                  </span>
+                                ) : null}
+                                {NUM.format(Math.round(p.netTotal))}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="py-1 px-2">
+                            {!p.transferable ? (
+                              <span className="text-muted-foreground">
+                                {p.dayCount === 0 ? 'keine Tageswerte — wird nicht angelegt' : 'Summe 0 — wird nicht angelegt'}
+                              </span>
+                            ) : p.conflict ? (
+                              <span className="text-amber-700 dark:text-amber-400">
+                                belegt{p.existingGross !== undefined && <> · Brutto {NUM.format(Math.round(p.existingGross))}</>}
+                                {p.existingNet !== undefined && <> · Netto {NUM.format(Math.round(p.existingNet))}</>}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 dark:text-emerald-400">frei</span>
+                            )}
+                          </td>
+                          <td className="py-1 px-2 text-center">
+                            {p.transferable && p.conflict && (
+                              <Checkbox
+                                checked={overwriteMonths.has(p.month)}
+                                onCheckedChange={checked => {
+                                  setOverwriteMonths(prev => {
+                                    const next = new Set(prev);
+                                    if (checked === true) next.add(p.month); else next.delete(p.month);
+                                    return next;
+                                  });
+                                }}
+                                data-testid={`vj-transfer-overwrite-${p.month}`}
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground">
+                  {freeMonths.length} freie Monat(e) werden übernommen
+                  {conflictMonths.length > 0 && (
+                    <> · {conflictMonths.length} Monat(e) mit bestehenden Umsatzwerten werden nur
+                    überschrieben, wenn oben explizit markiert</>
+                  )}.
+                  Übrige Monatsfelder (Kosten, Kategorien, Budget) bleiben unangetastet.
+                  Hinweis: Die Tagesansicht und VJ-Vergleiche lesen weiterhin die Tageswerte
+                  (vj_daily) — spätere manuelle Änderungen an diesen Erfolgsrechnungs-Monaten
+                  erscheinen dort nicht.
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm" className="h-8 text-xs gap-1.5"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={transferring || selected.length === 0}
+                    data-testid="vj-transfer-confirm"
+                    title="Übernimmt die täglichen Umsätze des Jahres als Monats-Umsatz in die Erfolgsrechnung (Ertragsseite). Die Kostenseite bleibt unverändert."
+                  >
+                    {transferring
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird übernommen…</>
+                      : <><CheckCircle2 className="h-3.5 w-3.5" />{selected.length} Monat(e) übernehmen</>}
+                  </Button>
+                  <Button
+                    size="sm" variant="outline" className="h-8 text-xs"
+                    onClick={() => { setTransferPlan(null); setOverwriteMonths(new Set()); setConfirmOpen(false); }}
+                    disabled={transferring}
+                  >
+                    Abbrechen
+                  </Button>
+                </div>
+
+                {/* Bestätigung vor dem Schreiben: nur Umsatzseite der ER */}
+                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                  <AlertDialogContent data-testid="vj-transfer-confirm-dialog">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Umsatz {year} aus den Tagesdaten in die Erfolgsrechnung übernehmen?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Bestehende ER-Umsätze dieses Jahres werden ersetzt ({selected.length}/12 Monate
+                        {conflictMonths.filter(p => overwriteMonths.has(p.month)).length > 0 && (
+                          <>, davon {conflictMonths.filter(p => overwriteMonths.has(p.month)).length} mit
+                          bestehenden Umsatzwerten</>
+                        )}).
+                        {selected.some(p => !p.taSplit) && (
+                          <> {selected.filter(p => !p.taSplit).length} Monat(e) ohne Take-Away-Daten
+                          werden pauschal mit 8.1 % gerechnet (übrige mit MwSt-Split 2.6 %/8.1 %).</>
+                        )}
+                        {' '}Nur die Umsatz-/Ertragszeile wird geändert — Kosten und alle anderen Werte
+                        bleiben unangetastet. Die Übernahme kann im Import-Center rückgängig gemacht werden.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel data-testid="vj-transfer-dialog-cancel">Abbrechen</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => { setConfirmOpen(false); void handleTransferConfirm(); }}
+                        data-testid="vj-transfer-dialog-confirm"
+                      >
+                        Bestätigen
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

@@ -16,7 +16,7 @@ import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
   ArrowRight, BarChart3, Filter, X, TrendingDown,
   Crown, Star, Building2, Mail, Ban, AlertTriangle,
-  FileDown, FileSpreadsheet, Columns3, Trophy, Calendar,
+  Columns3, Trophy, Calendar,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -65,6 +65,7 @@ import {
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { downloadCsv, downloadXlsx } from '@/lib/table-export';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { guestListExportTable } from '@/lib/guest-list-export';
 
 type TopFlopMode = 'off' | 'top10' | 'top20' | 'flop20' | 'flop50';
@@ -258,7 +259,7 @@ function GuestCell({ colKey, m, today }: { colKey: GuestColumnKey; m: GuestListM
 
 export default function GaesteCrmPage() {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -309,7 +310,7 @@ export default function GaesteCrmPage() {
   );
 
   const load = useCallback(async () => {
-    if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
+    if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
     setLoading(true);
     const [ok, actionsOk] = await Promise.all([
       checkReservationTablesExist(),
@@ -345,7 +346,7 @@ export default function GaesteCrmPage() {
       setCrmError(false);
     }
     setLoading(false);
-  }, [tenantId, isAdmin, isGuest]);
+  }, [tenantId, isAdmin]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -519,7 +520,7 @@ export default function GaesteCrmPage() {
     }
   };
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const SortHeader = ({ label, k, align = 'left' }: { label: string; k: GuestSortKey; align?: 'left' | 'right' }) => (
     <th
@@ -887,20 +888,14 @@ export default function GaesteCrmPage() {
               </div>
             </PopoverContent>
           </Popover>
-          <button
-            onClick={() => downloadCsv(guestListExportTable(displayRows, visibleColumns))}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
-          >
-            <FileDown className="h-4 w-4" />
-            CSV
-          </button>
-          <button
-            onClick={() => void downloadXlsx(guestListExportTable(displayRows, visibleColumns))}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            Excel
-          </button>
+          <UnifiedExportButton
+            size="default"
+            data-testid="crm-export"
+            actions={[
+              { key: 'csv', label: 'Gästeliste (CSV)', kind: 'csv', onSelect: () => downloadCsv(guestListExportTable(displayRows, visibleColumns)) },
+              { key: 'excel', label: 'Gästeliste (Excel)', kind: 'excel', onSelect: () => { void downloadXlsx(guestListExportTable(displayRows, visibleColumns)); } },
+            ]}
+          />
         </div>
       )}
 

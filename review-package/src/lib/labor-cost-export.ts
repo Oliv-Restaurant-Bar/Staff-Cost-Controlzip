@@ -19,8 +19,12 @@ interface WeeklyDataItem {
   ziel: number;
   umsatz: number;
   quote: number;
+  /** Ungerundete Wochenquote — Ampelschwellen entscheiden auf dem Rohwert (T007). */
+  quoteRaw: number;
   stunden: number;
   differenz: number;
+  /** Ungerundete Differenz Ziel−Geplant — Vorzeichenfarbe auf dem Rohwert. */
+  differenzRaw: number;
 }
 
 interface MonthlySummary {
@@ -148,20 +152,17 @@ export const exportLaborCostComparisonPDF = (data: LaborCostExportData): void =>
       6: { cellWidth: 28, halign: 'right' },
     },
     didParseCell: (data) => {
-      if (data.column.index === 4 && data.section === 'body') {
-        const value = parseFloat(data.cell.raw?.toString()?.replace('%', '') || '0');
-        if (value > laborCostThreshold) {
+      if (data.section !== 'body') return;
+      const week = weeklyData[data.row.index];
+      // Ampel auf dem ROHWERT — nie auf dem gerundeten Anzeigestring
+      if (data.column.index === 4 && week) {
+        if (week.quoteRaw > laborCostThreshold) {
           data.cell.styles.textColor = [220, 53, 69];
           data.cell.styles.fontStyle = 'bold';
         }
       }
-      if (data.column.index === 6 && data.section === 'body') {
-        const value = data.cell.raw?.toString() || '';
-        if (value.startsWith('-') || value.startsWith('+CHF -')) {
-          data.cell.styles.textColor = [220, 53, 69];
-        } else {
-          data.cell.styles.textColor = [34, 139, 34];
-        }
+      if (data.column.index === 6 && week) {
+        data.cell.styles.textColor = week.differenzRaw < 0 ? [220, 53, 69] : [34, 139, 34];
       }
     },
   });

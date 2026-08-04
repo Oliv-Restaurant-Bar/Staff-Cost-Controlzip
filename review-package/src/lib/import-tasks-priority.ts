@@ -13,18 +13,24 @@
  * OP-Listen-Tool wiederverwendbar. Die Engine selbst bleibt unverändert.
  *
  * Fälligkeits-Semantik: Tag X ist ab dem Folgetag X+1 importierbar (die
- * Engine deckelt Aufgaben auf min(Monatsende, gestern)). Eine Tagesaufgabe
- * für gestern ist damit HEUTE fällig; ältere Tage sind überfällig. Urgenz
- * wird bewusst NICHT aus `notYetDue` abgeleitet (yearly setzt das Flag nie),
+ * Engine deckelt Aufgaben je Typ auf min(Monatsende, heute−1−delayDays)).
+ * Eine Tagesaufgabe für gestern ist damit HEUTE fällig; ältere Tage sind
+ * überfällig. Wochen-Aufgaben sind ab dem Montag nach ihrem Sonntag fällig.
+ * UNTERDRÜCKTE Aufgaben (suppressedBy: Basis-Quelle fehlt) mahnen NIE —
+ * sie gelten als „später" mit erklärendem Label; die Hauptwarnung trägt
+ * die Basis-Quelle. Urgenz wird bewusst NICHT aus `notYetDue` abgeleitet,
  * sondern rein aus from/to + Frequenz + today.
  */
 
 import {
   addDaysIso,
+  getTaskTypeDef,
   monthEndIso,
   formatIsoRange,
   isOpenTask,
+  rangeDayCount,
   TASK_TYPE_DEFS,
+  type DateRange,
   type ImportTask,
   type ImportTaskType,
 } from './import-tasks-engine';
@@ -51,10 +57,18 @@ function diffDays(a: string, b: string): number {
 const NONE: TaskDueInfo = { urgency: 'later', dueLabel: null, daysOverdue: 0 };
 
 export function getTaskDueInfo(
-  task: Pick<ImportTask, 'status' | 'frequency' | 'from' | 'to'>,
+  task: Pick<ImportTask, 'status' | 'frequency' | 'from' | 'to' | 'suppressedBy'>,
   today: string,
 ): TaskDueInfo {
   if (task.status === 'done') return NONE;
+  // Unterdrückte Aufgaben mahnen nie — die Basis-Quelle trägt die Warnung.
+  if (task.suppressedBy) {
+    return {
+      urgency: 'later',
+      dueLabel: `Wartet auf ${getTaskTypeDef(task.suppressedBy).label}`,
+      daysOverdue: 0,
+    };
+  }
   // Fehler-Aufgaben: keine Fälligkeits-Aussage möglich — Sortierung stellt sie
   // separat nach vorne (siehe prioritizeTasks).
   if (task.status === 'error') return { urgency: 'overdue', dueLabel: null, daysOverdue: 0 };
@@ -70,15 +84,14 @@ export function getTaskDueInfo(
         daysOverdue: overdueDays,
       };
     }
-    case 'range': {
-      // Der ÄLTESTE fehlende Tag bestimmt die Urgenz.
-      const overdueDays = diffDays(today, addDaysIso(task.from, 1));
+    case 'weekly': {
+      // Fällig ab dem Montag nach dem Wochen-Sonntag (task.to).
+      const overdueDays = diffDays(today, addDaysIso(task.to, 1));
       if (overdueDays === 0) return { urgency: 'today', dueLabel: 'Heute erledigen', daysOverdue: 0 };
       if (overdueDays < 0) return NONE;
-      const span = diffDays(task.to, task.from) + 1;
       return {
         urgency: 'overdue',
-        dueLabel: span === 1 ? '1 Tag offen' : `${span} Tage offen`,
+        dueLabel: `${overdueDays} Tag${overdueDays === 1 ? '' : 'e'} überfällig`,
         daysOverdue: overdueDays,
       };
     }
@@ -88,14 +101,6 @@ export function getTaskDueInfo(
       return {
         urgency: 'overdue',
         dueLabel: 'Monatsimport noch offen',
-        daysOverdue: diffDays(today, addDaysIso(task.to, 1)),
-      };
-    }
-    case 'yearly': {
-      if (today <= task.to) return { urgency: 'later', dueLabel: 'Budget noch offen', daysOverdue: 0 };
-      return {
-        urgency: 'overdue',
-        dueLabel: 'Budget noch offen',
         daysOverdue: diffDays(today, addDaysIso(task.to, 1)),
       };
     }
@@ -114,13 +119,14 @@ export interface PrioritizedTask {
 /**
  * Aufgaben nach Priorität sortieren: Fehler zuerst, dann überfällig
  * (älteste zuerst), heute fällig, rest. Innerhalb gleicher Stufe chronologisch.
+ * Unterdrückte Aufgaben ranken als „später" (mahnen nie).
  */
 export function prioritizeTasks(tasks: readonly ImportTask[], today: string): PrioritizedTask[] {
   return tasks
     .map((task) => ({ task, due: getTaskDueInfo(task, today) }))
     .sort((a, b) => {
-      const ra = a.task.status === 'error' ? 0 : URGENCY_RANK[a.due.urgency];
-      const rb = b.task.status === 'error' ? 0 : URGENCY_RANK[b.due.urgency];
+      const ra = a.task.status === 'error' && !a.task.suppressedBy ? 0 : URGENCY_RANK[a.due.urgency];
+      const rb = b.task.status === 'error' && !b.task.suppressedBy ? 0 : URGENCY_RANK[b.due.urgency];
       if (ra !== rb) return ra - rb;
       if (a.task.from !== b.task.from) return a.task.from < b.task.from ? -1 : 1;
       return a.task.label.localeCompare(b.task.label, 'de');
@@ -146,10 +152,10 @@ export interface MonthProgress {
   percent: number | null;
   /** Fällige offene Aufgaben (inkl. Fehler). */
   openNow: number;
-  /** Offene, aber noch nicht fällige Aufgaben (Monat läuft noch / Budget im laufenden Jahr). */
+  /** Offene, aber noch nicht fällige Aufgaben (läuft noch / unterdrückt). */
   laterOpen: number;
   errors: number;
-  /** WIRKLICH alle Aufgaben erledigt (inkl. monatlich/jährlich, keine Fehler). */
+  /** WIRKLICH alle Aufgaben erledigt (inkl. monatlich, keine Fehler). */
   allDone: boolean;
   /** Monatsende liegt in der Vergangenheit. */
   monthOver: boolean;
@@ -159,8 +165,9 @@ export interface MonthProgress {
 /**
  * Fortschritt eines Monats aus seinen Aufgaben. Nenner = fällige Aufgaben:
  * Ohne diesen Ausschluss könnte ein laufender Monat nie 100 % erreichen
- * (Monats-/Jahresaufgaben werden erst nach Periodenende fällig).
- * „complete" erfordert ALLE Aufgaben erledigt UND Monat vorbei.
+ * (Monatsaufgaben werden erst nach Periodenende fällig). Unterdrückte
+ * Aufgaben zählen als „später" (nicht in den Nenner — die Basis-Quelle
+ * zählt bereits). „complete" erfordert ALLE Aufgaben erledigt UND Monat vorbei.
  */
 export function computeMonthProgress(
   tasks: readonly ImportTask[],
@@ -174,6 +181,8 @@ export function computeMonthProgress(
   for (const t of tasks) {
     if (t.status === 'done') {
       done += 1;
+    } else if (t.suppressedBy) {
+      laterOpen += 1;
     } else if (t.status === 'error') {
       errors += 1;
       openNow += 1;
@@ -226,12 +235,24 @@ export interface TypeCompletion {
   status: TypeCompletionStatus;
   /** Offene Zeiträume kompakt („24.06.–30.06.2026") bzw. Fehlertext; null wenn nichts anzuzeigen. */
   detail: string | null;
+  /**
+   * Offene Zeiträume als Rohdaten (nur daily/weekly bei status 'open') — für
+   * kompakte Anzeigen (z. B. Startseite), die dieselbe Basis anders formatieren.
+   * KEINE Zweitberechnung: identische Quelle wie `detail`.
+   */
+  openRanges?: DateRange[];
+  /** Summe fehlender Kalendertage über alle openRanges (nur wenn openRanges gesetzt). */
+  openDayCount?: number;
 }
 
-/** Benachbarte/überlappende offene Zeiträume zu kompakten Bereichen mergen. */
-function mergeOpenRanges(open: readonly ImportTask[]): Array<{ from: string; to: string }> {
+/**
+ * Benachbarte/überlappende offene Zeiträume zu kompakten Bereichen mergen.
+ * Exportiert für read-only-Konsumenten (Startseite) — bleibt die EINE Quelle
+ * für „fehlende Tage als Bereiche".
+ */
+export function mergeOpenRanges(open: readonly Pick<ImportTask, 'from' | 'to'>[]): DateRange[] {
   const sorted = [...open].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
-  const out: Array<{ from: string; to: string }> = [];
+  const out: DateRange[] = [];
   for (const t of sorted) {
     const last = out[out.length - 1];
     if (last && t.from <= addDaysIso(last.to, 1)) {
@@ -245,7 +266,9 @@ function mergeOpenRanges(open: readonly ImportTask[]): Array<{ from: string; to:
 
 /**
  * Eine Zeile pro Importtyp: vollständig / noch offen (mit Zeiträumen) /
- * noch nicht fällig / Fehler — für die kompakte Monats-Zusammenfassung.
+ * noch nicht fällig bzw. wartend / Fehler — für die kompakte
+ * Monats-Zusammenfassung. Typen ohne Aufgaben (bei_bedarf/deaktiviert)
+ * erscheinen NICHT.
  */
 export function summarizeTypeCompletion(
   tasks: readonly ImportTask[],
@@ -255,7 +278,7 @@ export function summarizeTypeCompletion(
   for (const def of TASK_TYPE_DEFS) {
     const own = tasks.filter((t) => t.type === def.type);
     if (own.length === 0) continue;
-    const errorTask = own.find((t) => t.status === 'error');
+    const errorTask = own.find((t) => t.status === 'error' && !t.suppressedBy);
     if (errorTask) {
       result.push({
         type: def.type,
@@ -267,7 +290,18 @@ export function summarizeTypeCompletion(
     }
     const open = own.filter(isOpenTask);
     if (open.length === 0) {
-      result.push({ type: def.type, label: def.label, status: 'done', detail: null });
+      // Alles erledigt ODER alle offenen Aufgaben sind unterdrückt (warten).
+      const suppressed = own.find((t) => t.suppressedBy && t.status !== 'done');
+      if (suppressed?.suppressedBy) {
+        result.push({
+          type: def.type,
+          label: def.label,
+          status: 'later',
+          detail: `Wartet auf ${getTaskTypeDef(suppressed.suppressedBy).label}`,
+        });
+      } else {
+        result.push({ type: def.type, label: def.label, status: 'done', detail: null });
+      }
       continue;
     }
     const anyDue = open.some((t) => getTaskDueInfo(t, today).urgency !== 'later');
@@ -275,14 +309,20 @@ export function summarizeTypeCompletion(
       result.push({ type: def.type, label: def.label, status: 'later', detail: null });
       continue;
     }
-    if (def.frequency === 'monthly' || def.frequency === 'yearly') {
+    if (open.every((t) => t.frequency === 'monthly' && t.expectedDayCount === undefined)) {
       result.push({ type: def.type, label: def.label, status: 'open', detail: 'fehlt' });
       continue;
     }
-    const detail = mergeOpenRanges(open)
-      .map((r) => formatIsoRange(r.from, r.to))
-      .join(', ');
-    result.push({ type: def.type, label: def.label, status: 'open', detail });
+    const openRanges = mergeOpenRanges(open);
+    const detail = openRanges.map((r) => formatIsoRange(r.from, r.to)).join(', ');
+    result.push({
+      type: def.type,
+      label: def.label,
+      status: 'open',
+      detail,
+      openRanges,
+      openDayCount: openRanges.reduce((sum, r) => sum + rangeDayCount(r.from, r.to), 0),
+    });
   }
   return result;
 }

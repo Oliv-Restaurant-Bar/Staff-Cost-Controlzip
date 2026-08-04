@@ -38,6 +38,28 @@ const DEFAULT_NAME_MAPPINGS: SavedNameMapping[] = [
   { importedName: "Gashi Mendim", employeeId: "48178c12-ef61-488e-b3bb-184ea60d578f", employeeName: "Mendim", createdAt: "2026-01-21T12:46:50.843Z", isDefault: true },
 ];
 
+/**
+ * Normalisiert einen Namen für robustes Matching (Spec Punkt 2):
+ * - Kleinbuchstaben, getrimmt, Mehrfach-Spaces kollabiert
+ * - Akzente/Diakritika entfernt (é→e, à→a …) via Unicode-NFD
+ * - Deutsche Umlaute/ß expandiert (ä→ae, ö→oe, ü→ue, ß→ss)
+ * - Kommas/Bindestriche → Space (damit «Nachname, Vorname» wie «Nachname Vorname» wird)
+ */
+export function normalizeNameKey(raw: string): string {
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Diakritika entfernen
+    .replace(/[,\-_.]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** Sortierte Token-Menge → reihenfolge-unabhängiger Vergleich (Nachname↔Vorname gedreht). */
+function nameTokenSet(raw: string): string {
+  return normalizeNameKey(raw).split(/\s+/).filter(Boolean).sort().join(' ');
+}
+
 // Levenshtein distance calculation
 export function levenshteinDistance(str1: string, str2: string): number {
   const s1 = str1.toLowerCase();
@@ -91,11 +113,13 @@ export function findMatchingEmployeeWithSuggestions(
   savedMappings: SavedNameMapping[]
 ): {
   bestMatch: Employee | null;
-  matchType: 'exact' | 'firstName' | 'saved' | 'new';
+  matchType: 'exact' | 'firstName' | 'saved' | 'new' | 'conflict';
   suggestions: NameSuggestion[];
 } {
   const normalizedImportedName = importedName.trim().toLowerCase();
   const importedFirstName = normalizedImportedName.split(/\s+/)[0];
+  const importedKey = normalizeNameKey(importedName);
+  const importedTokenSet = nameTokenSet(importedName);
   
   // Check saved mappings first
   const savedMapping = savedMappings.find(
@@ -117,20 +141,40 @@ export function findMatchingEmployeeWithSuggestions(
     }
   }
   
-  // Check for exact match
-  const exactMatch = employees.find(
-    e => e.name.toLowerCase() === normalizedImportedName
-  );
-  
-  if (exactMatch) {
+  // Check for exact match — robust gegen Umlaute/Akzente UND gedrehte
+  // Reihenfolge («Nachname Vorname» ↔ «Vorname Nachname»).
+  // WICHTIG: ALLE Treffer sammeln (nicht nur den ersten). Bei einer
+  // reihenfolge-/normalisierungs-bedingten Token-Kollision (mehrere
+  // verschiedene Personen mit identischem Token-Set) darf NICHT automatisch
+  // gematcht werden → 'conflict', damit der User manuell auswählt.
+  const exactMatches = employees.filter(e => {
+    const eLower = e.name.toLowerCase();
+    if (eLower === normalizedImportedName) return true;
+    if (normalizeNameKey(e.name) === importedKey) return true;
+    if (nameTokenSet(e.name) === importedTokenSet) return true;
+    return false;
+  });
+  // Nach eindeutiger Identität deduplizieren (derselbe MA über mehrere Regeln).
+  const uniqueExact = Array.from(new Map(exactMatches.map(e => [e.id, e])).values());
+
+  if (uniqueExact.length === 1) {
     return {
-      bestMatch: exactMatch,
+      bestMatch: uniqueExact[0],
       matchType: 'exact',
       suggestions: [{
-        employee: exactMatch,
+        employee: uniqueExact[0],
         similarity: 1,
         matchReason: 'exact'
       }]
+    };
+  }
+
+  if (uniqueExact.length > 1) {
+    // Kollision: kein Auto-Match. Alle Kandidaten als Vorschläge zurückgeben.
+    return {
+      bestMatch: null,
+      matchType: 'conflict',
+      suggestions: uniqueExact.map(e => ({ employee: e, similarity: 1, matchReason: 'exact' as const })),
     };
   }
   

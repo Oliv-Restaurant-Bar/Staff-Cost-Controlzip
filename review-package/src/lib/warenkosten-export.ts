@@ -25,6 +25,7 @@ import {
   type WarenKategorie,
   type WarenkostenEntryInput,
 } from './warenkosten-quote';
+import { isoWeekKeyOf, weekLabelOf } from './waren-analyse';
 
 const MONTHS_LONG_DE = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -90,9 +91,21 @@ export interface WarenkostenExportSummary {
   quotePct: number | null;
 }
 
+/** Summenzeile eines Summenblocks (pro Lieferant / Konto / Woche). */
+export interface WarenkostenSumRow {
+  label: string;
+  totalNet: number;
+  totalGross: number;
+  count: number;
+}
+
 export interface WarenkostenExportData {
   rows: WarenkostenExportRow[];
   summary: WarenkostenExportSummary;
+  /** Summenblöcke: Total pro Lieferant (Top zuerst), pro Konto, pro Woche (chronologisch). */
+  bySupplier: WarenkostenSumRow[];
+  byKonto: WarenkostenSumRow[];
+  byWeek: WarenkostenSumRow[];
   periodLabel: string;
   tenantName: string;
   from: string;
@@ -113,19 +126,43 @@ function warenkontoDisplay(inv: WarenkostenExportInvoice): string {
 }
 
 /**
- * Baut den Dateinamen `Warenkosten_<Monat>_<Jahr>.xlsx`. Umfasst der Zeitraum
- * genau EINEN Kalendermonat, wird der lange Monatsname verwendet; sonst der
- * ISO-Zeitraum (from_bis_to), damit der Name eindeutig bleibt.
+ * Baut den Dateinamen `Warenkosten_<Mandant>_<yyyy-MM>.xlsx` (Ein-Monats-
+ * Zeitraum); sonst `Warenkosten_<Mandant>_<from>_bis_<to>.xlsx`, damit der
+ * Name eindeutig bleibt. Mandantenname wird dateisystem-sicher bereinigt.
  */
-export function warenkostenExportFileName(from: string, to: string): string {
+export function warenkostenExportFileName(from: string, to: string, tenantName = ''): string {
+  const tenant = tenantName.trim().replace(/[^A-Za-z0-9ÄÖÜäöüß-]+/g, '');
+  const prefix = tenant ? `Warenkosten_${tenant}` : 'Warenkosten';
   const [fy, fm] = from.split('-');
   const [ty, tm] = to.split('-');
   if (fy && fm && fy === ty && fm === tm) {
-    const monthIdx = parseInt(fm, 10) - 1;
-    const monthName = MONTHS_LONG_DE[monthIdx] ?? fm;
-    return `Warenkosten_${monthName}_${fy}.xlsx`;
+    return `${prefix}_${fy}-${fm}.xlsx`;
   }
-  return `Warenkosten_${from}_bis_${to}.xlsx`;
+  return `${prefix}_${from}_bis_${to}.xlsx`;
+}
+
+/** Summenblock über eine Schlüsselfunktion; sortiert nach sort. */
+function sumBlock(
+  invoices: WarenkostenExportInvoice[],
+  keyOf: (inv: WarenkostenExportInvoice) => string,
+  sort: 'desc' | 'chrono',
+  labelOf: (key: string) => string = k => k,
+): WarenkostenSumRow[] {
+  const map = new Map<string, { net: number; gross: number; count: number }>();
+  for (const inv of invoices) {
+    const k = keyOf(inv);
+    const cur = map.get(k) ?? { net: 0, gross: 0, count: 0 };
+    cur.net += inv.amountNet ?? 0;
+    cur.gross += inv.amountGross ?? 0;
+    cur.count += 1;
+    map.set(k, cur);
+  }
+  const rows = [...map.entries()].map(([k, v]) => ({
+    key: k, label: labelOf(k), totalNet: v.net, totalGross: v.gross, count: v.count,
+  }));
+  if (sort === 'chrono') rows.sort((a, b) => a.key.localeCompare(b.key));
+  else rows.sort((a, b) => b.totalNet - a.totalNet);
+  return rows.map(({ key: _key, ...rest }) => rest);
 }
 
 /**
@@ -171,14 +208,22 @@ export function buildWarenkostenExport(input: WarenkostenExportInput): Warenkost
     quotePct,
   };
 
+  // Summenblöcke: pro Lieferant (Top-Betrag zuerst), pro Konto, pro Woche.
+  const bySupplier = sumBlock(input.invoices, inv => inv.supplierName.trim() || '—', 'desc');
+  const byKonto = sumBlock(input.invoices, inv => warenkontoDisplay(inv) || 'Ohne Konto', 'desc');
+  const byWeek = sumBlock(input.invoices, inv => isoWeekKeyOf(inv.date), 'chrono', weekLabelOf);
+
   return {
     rows,
     summary,
+    bySupplier,
+    byKonto,
+    byWeek,
     periodLabel: input.periodLabel,
     tenantName: input.tenantName,
     from: input.from,
     to: input.to,
-    fileName: warenkostenExportFileName(input.from, input.to),
+    fileName: warenkostenExportFileName(input.from, input.to, input.tenantName),
   };
 }
 
@@ -305,6 +350,44 @@ export async function exportWarenkostenToExcel(input: WarenkostenExportInput): P
   summaryRow('Total brutto', s.totalGross, { fmt: CHF_FMT });
   summaryRow('Umsatz (Betriebsertrag netto)', s.revenue, { fmt: CHF_FMT });
   summaryRow('Warenkostenquote (relevant / Umsatz)', s.quotePct, { fmt: PCT_FMT, strong: true, tone: 'relevant' });
+
+  // ── Summenblöcke: pro Lieferant / Konto / Woche ───────────────────────────
+  function sumBlockSection(title: string, rows2: WarenkostenSumRow[]) {
+    if (rows2.length === 0) return;
+    ws.addRow([]);
+    const t = ws.addRow(['', '', '', title]);
+    t.getCell(4).font = { bold: true, size: 10, color: { argb: 'FF' + HEADER_BG } };
+    const h = ws.addRow(['', '', '', '', 'Netto CHF', 'Brutto CHF', 'Rechn.']);
+    [5, 6, 7].forEach(c => {
+      h.getCell(c).font = { bold: true, size: 8, color: { argb: 'FF' + MUTED_FG } };
+      h.getCell(c).alignment = { horizontal: 'right' };
+    });
+    for (const r of rows2) {
+      const row = ws.addRow(['', '', '', r.label, r.totalNet, r.totalGross, r.count]);
+      row.getCell(4).font = { size: 9 };
+      row.getCell(4).alignment = { horizontal: 'left' };
+      [5, 6].forEach(c => {
+        row.getCell(c).numFmt = CHF_FMT;
+        row.getCell(c).alignment = { horizontal: 'right' };
+        row.getCell(c).font = { size: 9 };
+      });
+      row.getCell(7).alignment = { horizontal: 'right' };
+      row.getCell(7).font = { size: 9, color: { argb: 'FF' + MUTED_FG } };
+    }
+    const tot = ws.addRow(['', '', '', 'Total',
+      rows2.reduce((s2, r) => s2 + r.totalNet, 0),
+      rows2.reduce((s2, r) => s2 + r.totalGross, 0),
+      rows2.reduce((s2, r) => s2 + r.count, 0)]);
+    [4, 5, 6, 7].forEach(c => {
+      tot.getCell(c).font = { bold: true, size: 9 };
+      tot.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + TOTAL_BG } };
+      if (c >= 5 && c <= 6) tot.getCell(c).numFmt = CHF_FMT;
+      tot.getCell(c).alignment = { horizontal: c === 4 ? 'left' : 'right' };
+    });
+  }
+  sumBlockSection('Total pro Lieferant', data.bySupplier);
+  sumBlockSection('Total pro Konto', data.byKonto);
+  sumBlockSection('Total pro Woche', data.byWeek);
 
   ws.columns = COLUMNS.map(c => ({ width: c.width }));
 

@@ -4,7 +4,7 @@
  * Zentralisierte Analysepage — direkt gekoppelt an die Erfolgsrechnung.
  *
  * DATENBASIS (identisch mit PLView):
- *   IST-Umsatz   → computeMonthlyIstNet()  (Netto, MwSt abgezogen)
+ *   IST-Umsatz   → umsatz.ts (ladeUmsatzTage/summiereUmsatz, Netto aus gn_imports)
  *   VJ-Umsatz    → computeMonthlyVjNet()   (Netto, MwSt abgezogen)
  *   Budget        → budget_v1 (loadBudgetWithPL / resolveBudgetYear)
  *   PK Ist        → personnelCostActual oder 5xxx-Konten aus expenseCategories
@@ -16,13 +16,14 @@
  */
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
-  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope, Sheet,
+  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope,
 } from 'lucide-react';
 import { eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import {
@@ -69,12 +70,18 @@ import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { ReportingExportDialog } from '@/components/ReportingExportDialog';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 
-// ── NEU: korrekte Netto-Umsatz-Berechnungen (identisch mit PLView) ───────────
-import {
-  computeMonthlyIstNet,
-  computeMonthlyVjNet,
-} from '@/lib/revenue-sync';
+// ── IST-Umsatz NETTO: kanonische Quelle (src/lib/umsatz.ts, SSOT) ────────────
+// Der IST-Umsatz des laufenden Zeitraums stammt ausschliesslich aus den
+// Tages-Z-Berichten (gn_imports) via ladeUmsatzTage/summiereUmsatz. VJ-Umsatz
+// bleibt bei computeMonthlyVjNet (vj_daily / reporting_v1).
+import { computeMonthlyVjNet } from '@/lib/revenue-sync';
+// Gemeinsame kanonische IST-Umsatz-Regel (SSoT) — identisch mit der Erfolgsrechnung
+// (PLView): 3xxx-Vorrang, Take-Away Kto. 3000/3010-Split, Personalkosten-Vorrang,
+// KEIN additiver Maison-Zuschlag.
+import { applyCanonicalIstRule } from '@/lib/effective-records';
+import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
 import { computePLForMonth } from '@/lib/pl-engine';
 import type { PLMonthResult } from '@/types/pl';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
@@ -1772,7 +1779,7 @@ const ImportModeInfo = () => (
 
 // ─── Jahres-Umsatz-Import ─────────────────────────────────────────────────────
 
-const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => {
+const AnnualRevenueImportCard = ({ onImported, storeKey }: { onImported: () => void; storeKey: string }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [importYear, setImportYear] = useState(currentYear - 1);
   const [parsing,  setParsing]  = useState(false);
@@ -1802,7 +1809,7 @@ const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => 
     let saved = 0;
     for (const row of result.months) {
       if (row.revenue === 0) continue;
-      saveMonth({ year: importYear, month: row.month, revenueActual: row.revenue }, 'annual_xlsx_import', 'update', { note: `Jahres-Import ${fileName}` });
+      saveMonth({ year: importYear, month: row.month, revenueActual: row.revenue }, 'annual_xlsx_import', 'update', { note: `Jahres-Import ${fileName}` }, storeKey);
       saved++;
     }
     setSaving(false); setSaved(true); onImported();
@@ -2016,7 +2023,12 @@ const Reporting = () => {
   const { showMarketingCol: maisonColPref } = useMaison();
   // Tenant-bewusst (Beaulieu sah zuvor Oliv-Jahre) + 2024 wählbar (§ Jahresauswahl)
   const years = yearSelectOptions(availableYears(tenantKey('reporting_v1')), currentYear);
-  const [year,        setYear]        = useState(currentYear);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM ⇒ Jahresauswahl)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year,        setYear]        = useState(
+    monatParam && years.includes(monatParam.year) ? monatParam.year : currentYear,
+  );
   const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year, tenantKey('reporting_v1')));
   const [editRecord,  setEditRecord]  = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);
@@ -2059,11 +2071,41 @@ const Reporting = () => {
     return () => window.removeEventListener('store-synced', handler);
   }, [year, tenantId]);
 
-  // Tages-Daten (authoritativ für IST-Umsatz)
+  // Tages-Daten (nur noch für VJ-Umsatz — computeMonthlyVjNet)
   const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [year, months, tenantId]);
+
+  // ── IST-Umsatz NETTO pro Monat aus der kanonischen Quelle (umsatz.ts) ─────
+  // Quelle: gn_imports Tages-Z-Berichte (+ gn_discounts Marketing) via
+  // ladeUmsatzTage → summiereUmsatz. Tage ohne Import fehlen → kein erfundenes 0.
+  // Ein Monat ohne einen einzigen Import hat hasData=false und bleibt leer.
+  const [umsatzByMonth, setUmsatzByMonth] = useState<Record<number, { net: number; gross: number; hasData: boolean }>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const fromIso = `${year}-01-01`;
+    const toIso   = `${year}-12-31`;
+    ladeUmsatzTage(tenantId, fromIso, toIso).then(tage => {
+      if (cancelled) return;
+      const byMonth: Record<number, { net: number; gross: number; hasData: boolean }> = {};
+      const perMonthTage: Record<number, UmsatzTag[]> = {};
+      for (const [datum, tag] of tage) {
+        const m = parseInt(datum.slice(5, 7), 10);
+        if (!m) continue;
+        (perMonthTage[m] ??= []).push(tag);
+      }
+      for (let m = 1; m <= 12; m++) {
+        const list = perMonthTage[m] ?? [];
+        if (list.length === 0) { byMonth[m] = { net: 0, gross: 0, hasData: false }; continue; }
+        const s = summiereUmsatz(list);
+        byMonth[m] = { net: s.netto, gross: s.bruttoGesamt, hasData: true };
+      }
+      setUmsatzByMonth(byMonth);
+    }).catch(() => { if (!cancelled) setUmsatzByMonth({}); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, tenantId]);
 
   // Budget-Daten
   const resolvedBudget = useMemo(() => {
@@ -2085,20 +2127,19 @@ const Reporting = () => {
 
     return months.map((rec, idx) => {
       const m = idx + 1;
-      let r = rec;
 
-      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView, inkl. Maison + Takeaway)
-      const hasIndivRev = r.expenseCategories.some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 3000 && n <= 3999;
+      // 1) IST-Umsatz NETTO: kanonische Quelle umsatz.ts (gn_imports Tages-Z-Berichte)
+      //    über die GEMEINSAME Regel applyCanonicalIstRule (SSoT mit der Erfolgsrechnung).
+      //    revenueActual = EXAKT der kanonische Netto-Wert (Take-Away-Netto steckt bereits
+      //    darin). KEIN additiver Maison-Zuschlag mehr — Maison ist ggf. eine reine
+      //    Anzeige-Spalte, fliesst aber NICHT in revenueActual. Beibehalten: 3xxx-Vorrang,
+      //    Take-Away Kto. 3000/3010-Split (Monats-Override) und Personalkosten-Vorrang.
+      let r = applyCanonicalIstRule(rec, m, {
+        year,
+        canonical: umsatzByMonth,
+        takeawayMonthly: takeawayMonthlyMap,
+        net: true,
       });
-      if (!hasIndivRev) {
-        // Maison (Marketing-Umsatzkanal): nur einrechnen wenn aktiviert und "Anzeigen" aktiv
-        const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
-        const taMonthly = takeawayMonthlyMap[`${year}-${String(m).padStart(2, '0')}`] ?? 0;
-        const net = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined);
-        if (net > 0) r = { ...r, revenueActual: net };
-      }
 
       // 2) VJ-Umsatz: computeMonthlyVjNet (NETTO – identisch mit PLView)
       const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
@@ -2133,7 +2174,7 @@ const Reporting = () => {
 
       return r;
     });
-  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap]);
+  }, [months, year, umsatzByMonth, takeawayMonthlyMap, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths]);
 
   // ── P&L-Berechnungen pro Monat (identisch mit PLView) ───────────────────
   const plResults = useMemo<PLMonthResult[]>(
@@ -2189,7 +2230,8 @@ const Reporting = () => {
   const totals     = useMemo(() => calcEffectiveTotals(effectiveMonths), [effectiveMonths]);
 
   // ── Maison-Nettobetrag pro Monat (für Export-Anpassung) ──────────────────
-  // Entspricht der PLView-Logik: Tages-Bruttobeträge / 1.081 = Netto
+  // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts/PLView):
+  // voller Wert 1:1, KEIN MwSt-Abzug (/1.081 war falsch).
   const maisonMonthlyNet = useMemo<number[]>(() => {
     return Array.from({ length: 12 }, (_, idx) => {
       const m = idx + 1;
@@ -2198,8 +2240,8 @@ const Reporting = () => {
       let total = 0;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const gross = maisonDaily[key] ?? 0;
-        if (gross > 0) total += gross / 1.081;
+        const v = Math.abs(maisonDaily[key] ?? 0);
+        if (v > 0) total += Math.round(v * 100) / 100;
       }
       return Math.round(total * 100) / 100;
     });
@@ -2356,15 +2398,13 @@ const Reporting = () => {
                 <Upload className="h-3.5 w-3.5" /><span className="hidden sm:inline">Import</span>
               </Button>
             </Link>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50" onClick={handleExportPDF}>
-              <FileDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">PDF</span>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-indigo-300 text-indigo-700 hover:bg-indigo-50" onClick={handleExportMonatsdaten}>
-              <Sheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Monatsdaten PDF</span>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-green-300 text-green-700 hover:bg-green-50" onClick={handleExportExcel}>
-              <FileSpreadsheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Excel</span>
-            </Button>
+            <UnifiedExportButton
+              actions={[
+                { key: 'pdf', label: 'PDF-Bericht', kind: 'pdf', onSelect: handleExportPDF },
+                { key: 'monatsdaten-pdf', label: 'Monatsdaten (PDF)', kind: 'pdf', onSelect: handleExportMonatsdaten },
+                { key: 'excel', label: 'Excel', kind: 'excel', onSelect: handleExportExcel },
+              ]}
+            />
             <Link to="/kontenplan">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
                 <Settings2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Kontenplan</span>
@@ -2879,7 +2919,7 @@ const Reporting = () => {
               </Link>
             </CardContent>
           </Card>
-          <AnnualRevenueImportCard onImported={reload} />
+          <AnnualRevenueImportCard onImported={reload} storeKey={tenantKey('reporting_v1')} />
         </section>
 
       </div>

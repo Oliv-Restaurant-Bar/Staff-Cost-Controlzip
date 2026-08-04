@@ -2,8 +2,11 @@
  * maison-import.ts — XLSX-Import für Marketing-Tagesumsätze
  * ===========================================================
  * Liest einen GastronoVi-/POS-Export und extrahiert Tagesbeträge
- * ausschliesslich aus Zeilen mit der Bezeichnung "marketing" oder "Marketing".
- * Andere Zeilen (z.B. "Maison", "Rabatte") werden ignoriert.
+ * ausschliesslich aus Zeilen, deren Bezeichnung «marketing» ENTHÄLT —
+ * case-insensitive, inkl. Tippvarianten («Marketing», «marketing@»,
+ * «Marketing influencerin Tanja»). NICHT gezählt werden «Maison»,
+ * «Rabatte», «Mitarbeiter Rabatt», «Gutschein», «Sponsoring» und
+ * Einzelnamen/Bewirtungen (enthalten das Wort «marketing» nicht).
  *
  * Format:
  *   Zeile 1: Bezeichnung | Zeitraum | 01.05. | 02.05. | …
@@ -11,6 +14,7 @@
  */
 
 import ExcelJS from 'exceljs';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 
 export interface MaisonImportResult {
   daily: Record<string, number>;
@@ -19,14 +23,45 @@ export interface MaisonImportResult {
   totalGross: number;
   rowsFound: string[];
   daysWithData: number;
+  /**
+   * Zellen, die keinen gültigen Zahlenwert ergaben (nie als 0/NaN übernommen).
+   * Nicht leer ⇒ die Import-UI MUSS den Import blockieren.
+   */
+  unlesbareWerte: UnlesbareZelle[];
 }
 
-const MAISON_LABELS = new Set(['marketing']);
+/**
+ * Verbindliche Marketing-Erkennung: Bezeichnung enthält «marketing»
+ * (case-insensitive). Deckt «Marketing», «marketing@», «Marketing
+ * influencerin Tanja» ab; «Maison»/«Rabatte»/«Gutschein»/«Sponsoring»/
+ * Namenszeilen matchen nie.
+ */
+export function isMarketingLabel(label: string): boolean {
+  return /marketing/i.test(label);
+}
 
-function parseCHFCell(val: ExcelJS.CellValue): number {
-  if (val === null || val === undefined) return 0;
-  const str = String(val).replace(/CHF\s*/i, '').replace(/\s/g, '').replace(',', '.');
-  return parseFloat(str) || 0;
+/** Zellwert robust in Text wandeln (auch RichText-/Formel-Zellen). */
+function cellToString(val: ExcelJS.CellValue): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object') {
+    const o = val as { richText?: { text: string }[]; result?: ExcelJS.CellValue; text?: string };
+    if (Array.isArray(o.richText)) return o.richText.map(t => t.text ?? '').join('');
+    if (o.result !== undefined) return cellToString(o.result);
+    if (typeof o.text === 'string') return o.text;
+  }
+  return String(val);
+}
+
+/** CHF-Zelle STRIKT parsen — unlesbar wird gesammelt (nie 0/NaN), leer ⇒ null. */
+function parseCHFCell(
+  val: ExcelJS.CellValue,
+  zeile: string,
+  spalte: string,
+  unlesbar: UnlesbareZelle[],
+): number | null {
+  const r = parseBetragZelle(typeof val === 'number' ? val : cellToString(val));
+  if (!r.ok) { unlesbar.push({ zeile, spalte, roh: r.roh ?? '' }); return null; }
+  return r.value;
 }
 
 export async function parseMaisonXlsx(
@@ -54,17 +89,22 @@ export async function parseMaisonXlsx(
   const inferredMonth = dateCols[0].month;
   const daily: Record<string, number> = {};
   const rowsFound: string[] = [];
+  const unlesbareWerte: UnlesbareZelle[] = [];
   let totalGross = 0;
 
   ws.eachRow({ includeEmpty: false }, (row, rowIndex) => {
     if (rowIndex === 1) return;
-    const label = String(row.getCell(1).value ?? '').trim();
-    if (!MAISON_LABELS.has(label.toLowerCase())) return;
+    // Case-insensitive Substring-Match (NBSP-/RichText-tolerant):
+    // «Marketing», «marketing@», «Marketing influencerin Tanja» zählen;
+    // Maison/Rabatte/Gutschein/Sponsoring/Namens-Zeilen nie.
+    const label = cellToString(row.getCell(1).value).replace(/\u00A0/g, ' ').trim();
+    if (!isMarketingLabel(label)) return;
 
     rowsFound.push(label);
     dateCols.forEach(({ col, day, month }) => {
-      const amount = parseCHFCell(row.getCell(col).value);
-      if (amount > 0) {
+      const spalte = `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.`;
+      const amount = parseCHFCell(row.getCell(col).value, label, spalte, unlesbareWerte);
+      if (amount !== null && amount > 0) {
         const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         daily[key] = (daily[key] ?? 0) + amount;
         totalGross += amount;
@@ -79,5 +119,6 @@ export async function parseMaisonXlsx(
     totalGross,
     rowsFound,
     daysWithData: Object.keys(daily).length,
+    unlesbareWerte,
   };
 }

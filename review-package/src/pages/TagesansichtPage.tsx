@@ -35,6 +35,7 @@ import { loadMonth } from '@/lib/reporting-store';
 import { useVj2025Import } from '@/hooks/useVj2025Import';
 import { useVj2025BeaulieuImport } from '@/hooks/useVj2025BeaulieuImport';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { ladeUmsatzTage, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
 import { getDailyBudgetMap } from '@/lib/budget-day';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -107,6 +108,11 @@ export default function TagesansichtPage() {
   // vjSupabaseData: VJ-Tagesumsätze aus Supabase (primäre Quelle)
   const [vjSupabaseData, setVjSupabaseData] = useState<Record<string, VjDayRecord>>({});
 
+  // umsatzTage: kanonische IST-Netto/Brutto-Quelle des ANGEZEIGTEN Monats
+  // (src/lib/umsatz.ts → gn_imports Tages-Z-Berichte). EINZIGE IST-Quelle
+  // für den aktuellen Zeitraum. Tage ohne Import fehlen in der Map («—», nie 0).
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag>>(() => new Map());
+
   // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
   const [reportingTick, setReportingTick] = useState(0);
 
@@ -146,13 +152,23 @@ export default function TagesansichtPage() {
   const [editValue,   setEditValue]   = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // VJ-Supabase-Daten für den angezeigten VJ-Monat laden
+  // VJ-Supabase-Daten (Vorjahres-Vergleich) + kanonische IST-Umsatz-Tage laden
   useEffect(() => {
-    const vjYear  = year - 1;
-    const vjMonth = month;
-    loadVjDailyMonth(vjYear, vjMonth, tenantId).then(data => {
-      setVjSupabaseData(data);
+    let cancelled = false;
+    setVjSupabaseData({});
+    setUmsatzTage(new Map());
+    // Vorjahres-Vergleich: vj_daily (Jahr − 1)
+    loadVjDailyMonth(year - 1, month, tenantId).then(data => {
+      if (!cancelled) setVjSupabaseData(data);
     });
+    // IST-Umsatz des angezeigten Monats aus der kanonischen Netto-Quelle
+    const mm2 = String(month).padStart(2, '0');
+    const fromIso = `${year}-${mm2}-01`;
+    const toIso   = `${year}-${mm2}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+    ladeUmsatzTage(tenantId, fromIso, toIso).then(map => {
+      if (!cancelled) setUmsatzTage(map);
+    });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month, tenantId]);
 
@@ -188,6 +204,10 @@ export default function TagesansichtPage() {
       setDailyBudgets(readDailyBudgets(tenantKey));
       setReportingTick(t => t + 1);
       loadVjDailyMonth(year - 1, month, tenantId).then(setVjSupabaseData);
+      const mm2 = String(month).padStart(2, '0');
+      const fromIso = `${year}-${mm2}-01`;
+      const toIso   = `${year}-${mm2}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+      ladeUmsatzTage(tenantId, fromIso, toIso).then(setUmsatzTage);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
@@ -209,6 +229,17 @@ export default function TagesansichtPage() {
     () => hasBud ? getDailyBudgetMap(budgetData.revenueBudget, year, month) : {},
     [hasBud, budgetData.revenueBudget, year, month],
   );
+
+  // ── IST-Zusammenfassung aus der kanonischen Netto-Quelle (umsatz.ts) ────────
+  // Tage mit vorhandenem Import (gesamtBrutto > 0) zählen; fehlende Tage NIE 0.
+  const istSummary = useMemo(() => {
+    let daysWithData = 0;
+    for (const d of monthDays) {
+      const tag = umsatzTage.get(format(d, 'yyyy-MM-dd'));
+      if (tag && tag.gesamtBrutto > 0) daysWithData += 1;
+    }
+    return { daysWithData, totalDays: monthDays.length };
+  }, [monthDays, umsatzTage]);
 
   // ── Zeilenberechnung ──────────────────────────────────────────────────────
   const rows = useMemo(() => {
@@ -237,12 +268,21 @@ export default function TagesansichtPage() {
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
-      // Ist (inkl. Maison-Anteil wenn aktiviert und nicht ausgeschlossen)
-      const gross       = dailyBudgets[d]?.actualRevenue   ?? 0;
-      const takeaway    = dailyBudgets[d]?.takeawayRevenue ?? 0;
+      // Ist: kanonischer Tageswert aus umsatz.ts (gn_imports Tages-Z-Berichte).
+      // Netto = nettoUmsatzTag (TA-Split + Marketing), Brutto = gesamtBrutto.
+      // Fehlender Import ⇒ null («—»), NIE eine erfundene 0.
+      const umsatzTag   = umsatzTage.get(d);
+      const hasUmsatz   = !!umsatzTag && umsatzTag.gesamtBrutto > 0;
+      // Maison NUR als eigene Anzeige-Spalte (maisonNet). Fliesst NICHT mehr
+      // in den IST-Umsatz ein — IST = ausschliesslich Σ nettoUmsatzTag/gesamtBrutto.
+      // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts):
+      // voller Wert, KEIN MwSt-Abzug — weder netto noch brutto umrechnen.
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
-      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
-      const ist         = (showNetRevenue ? grossToNet(gross, takeaway) : gross) + (maisonExclude ? 0 : maisonDisp);
+      const maisonDisp  = maisonGross > 0 ? maisonGross : 0;
+      // IST kommt ausschliesslich aus umsatz.ts; ohne Import bleibt IST leer («—»).
+      const ist: number | null = !hasUmsatz
+        ? null
+        : (showNetRevenue ? nettoUmsatzTag(umsatzTag!) : umsatzTag!.gesamtBrutto);
 
       // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
@@ -271,9 +311,11 @@ export default function TagesansichtPage() {
         vjIsExact  = false;
       }
 
-      const vjBase = vjIsExact
+      // VJ fehlt komplett (kein Exaktwert, keine Monatssumme) ⇒ null («—»),
+      // NIE Vergleich gegen eine künstliche 0.
+      const vjBase: number | null = vjIsExact
         ? (showNetRevenue ? grossToNet(vjDailyRaw) : vjDailyRaw)
-        : vjProRata; // Fallback: pro-rata aus reporting_v1
+        : (vjMonthlyBase > 0 ? vjProRata : null);
       const vjDate = new Date(vjKey + 'T00:00:00');
 
       // Diagnose-Log (nur Tag 1-5)
@@ -290,8 +332,9 @@ export default function TagesansichtPage() {
       const budGross   = dailyBudgetMap[d] ?? 0;
       const budBase    = showNetRevenue ? grossToNet(budGross) : budGross;
 
-      cumIst += ist;
-      cumVj  += vjBase;
+      // Kumuliert NUR über vorhandene Tage (fehlend ≠ 0)
+      if (ist    !== null) cumIst += ist;
+      if (vjBase !== null) cumVj  += vjBase;
       cumBud += budBase;
 
       // Kumulierte Abweichung VJ in %
@@ -301,24 +344,25 @@ export default function TagesansichtPage() {
 
       return {
         day, vjDate,
-        ist,
+        ist,                    // number | null (null = kein Import, «—»)
+        istSource: hasUmsatz ? 'gn_imports' as const : null, // Quelle: umsatz.ts
         maisonNet: maisonDisp,
-        vj:         vjBase,
+        vj:         vjBase,     // number | null (null = keine VJ-Daten)
         vjIsExact,              // true = Tages-Exaktwert, false = pro-rata aus reporting_v1
         bud:        budBase,
-        devVj:      ist - vjBase,
-        devBud:     ist - budBase,
+        devVj:      ist !== null && vjBase !== null ? ist - vjBase : null,
+        devBud:     ist !== null ? ist - budBase : null,
         cumIst, cumVj, cumBud,
         cumDevVj,
         cumDevVjPct,
         cumDevBud,
         cumDevBudPct: cumBud > 0 ? (cumDevBud / cumBud) * 100 : 0,
-        hasIst:  gross > 0,
-        hasVj:   vjBase > 0,           // pro-rata zählt auch als VJ-Wert vorhanden
+        hasIst:  ist !== null,         // echte 0 zählt als vorhanden
+        hasVj:   vjBase !== null,      // pro-rata zählt auch als VJ-Wert vorhanden
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
+  }, [monthDays, umsatzTage, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
 
   const lastRow = rows[rows.length - 1];
   const totalMaisonNet = rows.reduce((s, r) => s + r.maisonNet, 0);
@@ -369,14 +413,15 @@ export default function TagesansichtPage() {
     const hasMonthly     = (vjMonthRec.revenueActual ?? 0) > 0 ||
                            (currentRec.revenuePreviousYear ?? 0) > 0;
     const vjMonthLabel   = format(new Date(year - 1, month - 1, 1), 'MMMM yyyy', { locale: de });
-    // Exakte Tages-Einträge im VJ-Monat (aus dailyBudgets)
+    // Exakte Tages-Einträge im VJ-Monat (vj_daily-Supabase ∪ dailyBudgets)
     const vjMonthDays    = eachDayOfInterval({
       start: startOfMonth(new Date(year - 1, month - 1, 1)),
       end:   endOfMonth(new Date(year - 1, month - 1, 1)),
     });
     const exactDays = vjMonthDays.filter(d => {
       const key = format(d, 'yyyy-MM-dd');
-      return (dailyBudgets[key]?.actualRevenue ?? 0) > 0;
+      return vjSupabaseData[key] !== undefined ||
+             (dailyBudgets[key]?.actualRevenue ?? 0) > 0;
     }).length;
 
     console.log(
@@ -388,7 +433,7 @@ export default function TagesansichtPage() {
 
     return { hasMonthly, vjMonthLabel, exactDays, totalDays: vjMonthDays.length };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, dailyBudgets, reportingTick]);
+  }, [year, month, dailyBudgets, vjSupabaseData, reportingTick]);
 
   // ── Manuelle Ist-Eingabe speichern ────────────────────────────────────────
   const saveManualIst = useCallback(async (dateKey: string, rawInput: string) => {
@@ -498,37 +543,66 @@ export default function TagesansichtPage() {
 
       <main className="max-w-6xl mx-auto px-4 py-4 space-y-3">
 
-        {/* ── VJ-Status-Bar ────────────────────────────────────────────────── */}
-        {showVjCols && (
-          <div className={cn(
-            'flex items-center gap-3 px-3 py-2 rounded-lg border text-xs flex-wrap',
-            vjStatus.hasMonthly
-              ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-              : 'bg-amber-50  dark:bg-amber-950/30  border-amber-200  dark:border-amber-800  text-amber-800  dark:text-amber-300',
-          )}>
-            {vjStatus.hasMonthly
-              ? <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-              : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
-            <span className="font-medium">
-              {vjStatus.hasMonthly
-                ? 'Vorjahresdaten verfügbar'
-                : 'Keine Vorjahresdaten importiert'}
-            </span>
-            <span className="text-current/70">
-              Vergleichsmonat: {vjStatus.vjMonthLabel}
-            </span>
-            {vjStatus.exactDays > 0 && (
-              <span className="text-current/70">
-                · {vjStatus.exactDays} von {vjStatus.totalDays} Tagen mit Tageswerten
-              </span>
-            )}
-            {vjStatus.hasMonthly && vjStatus.exactDays === 0 && (
-              <span className="text-current/70">
-                · Monatssumme aus Sage/Buchhaltung, pro-rata auf Tage aufgeteilt
-              </span>
-            )}
-          </div>
-        )}
+        {/* ── Status-Bar: IST (angezeigter Monat) getrennt von VJ (Vergleich) ── */}
+        {(() => {
+          const monthLabel = format(refDate, 'MMMM yyyy', { locale: de });
+          const hasIstData = istSummary.daysWithData > 0;
+          const hasVjAny   = vjStatus.hasMonthly || vjStatus.exactDays > 0;
+          return (
+            <div className="space-y-1.5" data-testid="status-bar">
+              {/* IST-Zeile: bezieht sich IMMER auf den angezeigten Monat */}
+              <div className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg border text-xs flex-wrap',
+                hasIstData
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-amber-50  dark:bg-amber-950/30  border-amber-200  dark:border-amber-800  text-amber-800  dark:text-amber-300',
+              )} data-testid="status-ist">
+                {hasIstData
+                  ? <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                  : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+                <span className="font-medium">
+                  {hasIstData
+                    ? `Umsatzdaten für ${monthLabel}: ${istSummary.daysWithData} von ${istSummary.totalDays} Tagen vorhanden`
+                    : `Keine Umsatzdaten für ${monthLabel} importiert`}
+                </span>
+                {hasIstData && (
+                  <span className="text-current/70">
+                    · Quelle: Tages-Z-Berichte (gn_imports)
+                  </span>
+                )}
+              </div>
+
+              {/* VJ-Zeile: bezieht sich auf den VERGLEICHSMONAT (Jahr − 1) */}
+              {showVjCols && (
+                <div className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-lg border text-xs flex-wrap',
+                  hasVjAny
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-amber-50  dark:bg-amber-950/30  border-amber-200  dark:border-amber-800  text-amber-800  dark:text-amber-300',
+                )} data-testid="status-vj">
+                  {hasVjAny
+                    ? <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                    : <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="font-medium">
+                    {hasVjAny
+                      ? `Vorjahresvergleich verfügbar (${vjStatus.vjMonthLabel})`
+                      : `Keine Vergleichsdaten für ${vjStatus.vjMonthLabel} importiert — Vorjahresvergleich nicht möglich`}
+                  </span>
+                  {vjStatus.exactDays > 0 && (
+                    <span className="text-current/70">
+                      · {vjStatus.exactDays} von {vjStatus.totalDays} Tagen mit Tageswerten
+                    </span>
+                  )}
+                  {vjStatus.hasMonthly && vjStatus.exactDays === 0 && (
+                    <span className="text-current/70">
+                      · Monatssumme aus Sage/Buchhaltung, pro-rata auf Tage aufgeteilt
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── KPI-Banner ───────────────────────────────────────────────────── */}
         {kpiRow && (showKumDevVj || showKumDevBud) && (
@@ -540,7 +614,7 @@ export default function TagesansichtPage() {
                 Kumuliert Ist{isCurrentMonth ? ' bis heute' : ''}
               </p>
               <p className="text-base font-bold mt-0.5">
-                {fmtN(kpiRow.cumIst)}
+                {istSummary.daysWithData > 0 ? fmtN(kpiRow.cumIst) : '—'}
               </p>
             </Card>
 
@@ -741,7 +815,7 @@ export default function TagesansichtPage() {
                               onClick={() => openEdit(format(row.day, 'yyyy-MM-dd'), dailyBudgets[format(row.day, 'yyyy-MM-dd')]?.actualRevenue ?? 0)}
                               title="Klicken zum manuellen Eintragen"
                             >
-                              <span>{row.hasIst ? fmtN(row.ist) : '–'}</span>
+                              <span>{row.hasIst ? fmtN(row.ist ?? 0) : '–'}</span>
                               <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-40 transition-opacity" />
                             </div>
                           )}
@@ -789,10 +863,10 @@ export default function TagesansichtPage() {
                             </td>
                           );
                         })()}
-                        {/* Umsatz VJ — exakt oder pro-rata (~) */}
+                        {/* Umsatz VJ — exakt oder pro-rata (~); fehlend = «—», nie 0 */}
                         {showVjCols && (
                           <td className={cn(tdR, row.vjIsExact ? 'text-muted-foreground' : 'text-muted-foreground/60 italic')}>
-                            {row.hasVj ? (row.vjIsExact ? '' : '~') + fmtN(row.vj) : '0'}
+                            {row.vj !== null ? (row.vjIsExact ? '' : '~') + fmtN(row.vj) : '—'}
                           </td>
                         )}
                         {/* WT VJ */}
@@ -801,10 +875,10 @@ export default function TagesansichtPage() {
                             {wtOf(row.vjDate)}
                           </td>
                         )}
-                        {/* Abw. VJ */}
+                        {/* Abw. VJ — nur wenn IST UND VJ vorhanden */}
                         {showDevVj && (
-                          <td className={cn(tdR, devCls(row.devVj, row.hasIst))}>
-                            {row.hasIst ? fmtDev(row.devVj) : '–'}
+                          <td className={cn(tdR, devCls(row.devVj ?? 0, row.devVj !== null))}>
+                            {row.devVj !== null ? fmtDev(row.devVj) : '–'}
                           </td>
                         )}
                         {/* Budget */}
@@ -813,34 +887,34 @@ export default function TagesansichtPage() {
                             {hasBud ? fmtN(row.bud) : '–'}
                           </td>
                         )}
-                        {/* Abw. Budget */}
+                        {/* Abw. Budget — nur wenn IST vorhanden */}
                         {showDevBud && (
-                          <td className={cn(tdR, devCls(row.devBud, row.hasIst && hasBud))}>
-                            {row.hasIst && hasBud ? fmtDev(row.devBud) : '–'}
+                          <td className={cn(tdR, devCls(row.devBud ?? 0, row.devBud !== null && hasBud))}>
+                            {row.devBud !== null && hasBud ? fmtDev(row.devBud) : '–'}
                           </td>
                         )}
-                        {/* Kum. Ist */}
+                        {/* Kum. Ist — «—», solange kein einziger Tag Daten hat */}
                         {showKum && (
                           <td className={cn(tdRK, 'font-medium')}>
-                            {fmtN(row.cumIst)}
+                            {istSummary.daysWithData > 0 ? fmtN(row.cumIst) : '—'}
                           </td>
                         )}
                         {/* Kum. VJ */}
                         {showKumVj && (
                           <td className={cn(tdR, 'text-muted-foreground')}>
-                            {fmtN(row.cumVj)}
+                            {hasPrevYearData ? fmtN(row.cumVj) : '—'}
                           </td>
                         )}
                         {/* Kum. Abw. VJ CHF */}
                         {showKumDevVj && (
-                          <td className={cn(tdR, devCls(row.cumDevVj, row.cumIst > 0))}>
-                            {fmtDev(row.cumDevVj)}
+                          <td className={cn(tdR, devCls(row.cumDevVj, hasPrevYearData && row.cumIst > 0))}>
+                            {hasPrevYearData && istSummary.daysWithData > 0 ? fmtDev(row.cumDevVj) : '–'}
                           </td>
                         )}
                         {/* Kum. Abw. VJ % */}
                         {showKumDevVj && (
-                          <td className={cn(tdR, devCls(row.cumDevVjPct, row.cumIst > 0))}>
-                            {row.cumVj > 0 ? fmtPct(row.cumDevVjPct) : '–'}
+                          <td className={cn(tdR, devCls(row.cumDevVjPct, hasPrevYearData && row.cumIst > 0))}>
+                            {hasPrevYearData && istSummary.daysWithData > 0 && row.cumVj > 0 ? fmtPct(row.cumDevVjPct) : '–'}
                           </td>
                         )}
                         {/* Kum. Budget */}
@@ -873,7 +947,7 @@ export default function TagesansichtPage() {
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
                         <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
-                        <td className={tdR}>{fmtN(gr.cumIst)}</td>
+                        <td className={tdR}>{istSummary.daysWithData > 0 ? fmtN(gr.cumIst) : '—'}</td>
                         {showMarketingCol && (
                           <td className={cn(
                             'px-1 py-[3px] text-right tabular-nums text-[10px] border-l border-violet-200/40 dark:border-violet-800/40 font-semibold',
@@ -882,15 +956,15 @@ export default function TagesansichtPage() {
                             {totalMaisonNet > 0 ? fmtN(totalMaisonNet) : '–'}
                           </td>
                         )}
-                        {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(gr.cumVj)}</td>}
+                        {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{hasPrevYearData ? fmtN(gr.cumVj) : '—'}</td>}
                         {showVjCols && <td className={tdL} />}
-                        {showDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, gr.cumIst > 0))}>{fmtDev(gr.cumDevVj)}</td>}
+                        {showDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, hasPrevYearData && gr.cumIst > 0))}>{hasPrevYearData && istSummary.daysWithData > 0 ? fmtDev(gr.cumDevVj) : '–'}</td>}
                         {showBudCol && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(gr.cumBud) : '–'}</td>}
-                        {showDevBud && <td className={cn(tdR, devCls(gr.cumDevBud, hasBud))}>{hasBud ? fmtDev(gr.cumDevBud) : '–'}</td>}
-                        {showKum    && <td className={cn(tdRK)}>{fmtN(gr.cumIst)}</td>}
-                        {showKumVj  && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(gr.cumVj)}</td>}
-                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, gr.cumIst > 0))}>{fmtDev(gr.cumDevVj)}</td>}
-                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVjPct, gr.cumVj > 0))}>{gr.cumVj > 0 ? fmtPct(gr.cumDevVjPct) : '–'}</td>}
+                        {showDevBud && <td className={cn(tdR, devCls(gr.cumDevBud, hasBud))}>{hasBud && istSummary.daysWithData > 0 ? fmtDev(gr.cumDevBud) : '–'}</td>}
+                        {showKum    && <td className={cn(tdRK)}>{istSummary.daysWithData > 0 ? fmtN(gr.cumIst) : '—'}</td>}
+                        {showKumVj  && <td className={cn(tdR, 'text-muted-foreground')}>{hasPrevYearData ? fmtN(gr.cumVj) : '—'}</td>}
+                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, hasPrevYearData && gr.cumIst > 0))}>{hasPrevYearData && istSummary.daysWithData > 0 ? fmtDev(gr.cumDevVj) : '–'}</td>}
+                        {showKumDevVj  && <td className={cn(tdR, devCls(gr.cumDevVjPct, gr.cumVj > 0))}>{hasPrevYearData && gr.cumVj > 0 ? fmtPct(gr.cumDevVjPct) : '–'}</td>}
                         {showKumBud    && <td className={cn(tdR, 'text-muted-foreground')}>{hasBud ? fmtN(gr.cumBud) : '–'}</td>}
                         {showKumDevBud && <td className={cn(tdR, devCls(gr.cumDevBud, hasBud))}>{hasBud ? fmtDev(gr.cumDevBud) : '–'}</td>}
                         {showKumDevBud && <td className={cn(tdR, devCls(gr.cumDevBudPct, hasBud && gr.cumBud > 0))}>{hasBud && gr.cumBud > 0 ? fmtPct(gr.cumDevBudPct) : '–'}</td>}

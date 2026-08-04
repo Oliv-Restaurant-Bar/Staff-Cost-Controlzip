@@ -7,7 +7,7 @@
  * ReservationDetailRow enthält Gast-PII (Name/Telefon/E-Mail), die hier nie in
  * State, Props oder Logs landen darf.
  *
- * Gating: Reservations-Flächen sind admin-only (isAdmin && !isGuest) — für
+ * Gating: Reservations-Flächen sind admin-only (isAdmin) — für
  * andere Rollen liefert der Hook 'hidden' und lädt NICHTS.
  */
 
@@ -47,11 +47,11 @@ function cachedTablesExist(): Promise<boolean> {
 }
 
 export function useDayDemandContext(dateStr: string | null | undefined): DayDemandState {
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const { tenantId } = useTenant();
   const [state, setState] = useState<DayDemandState>({ status: 'hidden' });
 
-  const allowed = isAdmin && !isGuest;
+  const allowed = isAdmin;
   const loadFrom = dateStr ? demandContextLoadFrom(dateStr) : null;
 
   useEffect(() => {

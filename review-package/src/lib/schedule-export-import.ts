@@ -1582,7 +1582,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
   let isFirstPage = true;
 
   // ── Palette — matches webapp chip colors ──────────────────────────────────
-  // Shift: emerald-50 / emerald-800  (matches ShiftChip in StaffSchedulePage)
+  // Shift: emerald-50 / emerald-800
   const COL_SHIFT:  { bg: [number,number,number]; fg: [number,number,number] } = { bg: [209,250,229], fg: [5,80,58]   };
   // Frei: slate-100 / slate-600
   const COL_FREI:   { bg: [number,number,number]; fg: [number,number,number] } = { bg: [241,245,249], fg: [71,85,105] };

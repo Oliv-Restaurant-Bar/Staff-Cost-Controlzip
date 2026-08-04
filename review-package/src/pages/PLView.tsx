@@ -14,13 +14,14 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
-  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
-  Calculator, ArrowRight, FileText, Landmark,
+  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle,
+  Calculator, ArrowRight, FileText, Landmark, SlidersHorizontal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -32,18 +33,31 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem,
+} from '@/components/ui/dropdown-menu';
+import { aggregateBPLRows, aggregateFinancialMetricValues } from '@/lib/bpl-aggregate';
+import { getBPLColumnVisibility } from '@/lib/bpl-columns';
+import { useIsMobile } from '@/hooks/use-mobile';
+import {
+  getFinancialMetricDefinition, getFinancialMetricValues,
+  type FinancialMetricId, type FinancialMetricValues, type FinancialMetricDefinition,
+} from '@/lib/financial-metrics';
+import { warenPctTone, personalPctTone } from '@/lib/reporting-export';
+import { KpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
+import type { Tone } from '@/components/ui/tones';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableYears, yearSelectOptions, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableYears, yearSelectOptions, calcAnnualSummary, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
-import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth, buildCogsBudgetSplitForMonth } from '@/lib/pl-engine';
+import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth, buildCogsBudgetSplitForMonth, buildPrevYearByRowForMonth } from '@/lib/pl-engine';
 import { gruppiereWarenaufwandKonten, WARENAUFWAND_GRUPPE_LABEL, type WarenaufwandGruppe } from '@/lib/warenaufwand-gruppierung';
-import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
@@ -53,12 +67,20 @@ import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF, PLExportOptions } from '@/lib/pl-export';
 import { getBranding } from '@/lib/pl-branding';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 import { computePriorYearDiagnostics } from '@/lib/pl-prior-year-diagnostics';
-import { computeMonthlyVjNet } from '@/lib/revenue-sync';
-import { applyEffectiveMonthRules, applyEffectiveYearRules } from '@/lib/effective-records';
+import {
+  applyVjRevenueRule,
+  applyCanonicalIstRule,
+  type CanonicalRevenueByMonth,
+} from '@/lib/effective-records';
+// IST-Umsatz NETTO/BRUTTO des laufenden Zeitraums: kanonische Quelle (SSOT).
+// gn_imports Tages-Z-Berichte via ladeUmsatzTage/summiereUmsatz — keine eigene
+// grossToNet/1.081-Rechnung mehr. VJ + Budget + FIBU-Logik bleiben unberührt.
+import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -77,7 +99,29 @@ import { loadAnnualCostImports, ANNUAL_COST_IMPORTS_KEY, type AnnualCostImportEn
 
 /** Datenbasis-Hinweis für Mehrjahresanalyse + Management Report (gleiche Quelle). */
 const MULTI_YEAR_DATA_SOURCE_HINT =
-  'Basis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der Tagesansicht-Abgleich der Erfolgsrechnung (Tagesumsätze als massgebliche IST-Quelle, Maison-/Ausschluss-Effekte) wird hier NICHT angewendet — Werte können daher von der Monats-/Jahresansicht abweichen.';
+  'Kostenbasis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der IST-Umsatz stammt — wie in der Erfolgsrechnung — aus den Tages-Z-Berichten (umsatz.ts, netto); übrige Effekte (Maison-/Ausschluss) der Monats-/Jahresansicht sind hier nicht angewendet, Kostenwerte können daher abweichen.';
+
+// ─── Kanonischer IST-Umsatz (umsatz.ts) ──────────────────────────────────────
+// CanonicalMonthRevenue / CanonicalRevenueByMonth + applyCanonicalIstRule sind
+// jetzt in src/lib/effective-records.ts (gemeinsame SSoT-Regel für ER + Reporting).
+
+/** Aggregiert die kanonischen Umsatz-Tage einer Map auf Monate (1-basiert). */
+function aggregateCanonicalByMonth(tage: Map<string, UmsatzTag>): CanonicalRevenueByMonth {
+  const perMonth: Record<number, UmsatzTag[]> = {};
+  for (const [datum, tag] of tage) {
+    const m = parseInt(datum.slice(5, 7), 10);
+    if (!m) continue;
+    (perMonth[m] ??= []).push(tag);
+  }
+  const out: CanonicalRevenueByMonth = {};
+  for (let m = 1; m <= 12; m++) {
+    const list = perMonth[m] ?? [];
+    if (list.length === 0) { out[m] = { net: 0, gross: 0, hasData: false }; continue; }
+    const s = summiereUmsatz(list);
+    out[m] = { net: s.netto, gross: s.bruttoGesamt, hasData: true };
+  }
+  return out;
+}
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -97,6 +141,42 @@ const fmtPct = (v: number | undefined): string => {
 const fmtCHF = (v: number | undefined): string => {
   if (v === undefined) return '—';
   return `CHF ${fmt(v)}`;
+};
+
+// ─── E006/E007: Registry-KPI-Leiste (Erfolgsrechnung) ────────────────────────
+// Kennzahlen 1:1 aus der Financial-Metrics-Registry (SSoT, keine Doppelberechnung).
+const PLVIEW_KPI_METRIC_IDS: FinancialMetricId[] = [
+  'net_revenue', 'cogs_ratio', 'personnel_ratio', 'ebitda', 'ebit',
+];
+
+const fmtMetricValue = (v: number | null, unit: 'CHF' | '%'): string =>
+  v === null ? '—' : unit === '%' ? `${v.toFixed(1)} %` : fmt(v);
+
+/**
+ * E007: kleiner Ampel-Punkt — Quoten über die bestehenden Ton-Helfer
+ * (warenPctTone/personalPctTone, Rohwerte), Beträge über das Vorzeichen der
+ * Budget-Abweichung (bestehende BPLVarCell-Logik); fehlend ⇒ neutral.
+ */
+const registryKpiTone = (id: FinancialMetricId, v: FinancialMetricValues, laborThreshold: number): Tone => {
+  if (id === 'cogs_ratio')      return v.actual === null ? 'neutral' : warenPctTone(v.actual);
+  if (id === 'personnel_ratio') return v.actual === null ? 'neutral' : personalPctTone(v.actual, laborThreshold);
+  if (v.actual === null || v.budget === null) return 'neutral';
+  return v.actual - v.budget >= 0 ? 'good' : 'critical';
+};
+
+/** Abweichung IST − Budget als Trend (Quote runter = grün; Beträge rauf = grün). */
+const registryKpiTrend = (
+  def: FinancialMetricDefinition,
+  v: FinancialMetricValues,
+): { direction: 'up' | 'down' | 'flat'; tone: Tone; label: string } | undefined => {
+  if (v.actual === null || v.budget === null) return undefined;
+  const d = v.actual - v.budget;
+  const direction = d === 0 ? 'flat' as const : d > 0 ? 'up' as const : 'down' as const;
+  const tone: Tone = d === 0 ? 'neutral' : def.kind === 'ratio' ? (d < 0 ? 'good' : 'critical') : (d > 0 ? 'good' : 'critical');
+  const label = def.kind === 'ratio'
+    ? `${d > 0 ? '+' : ''}${d.toFixed(1)} pp vs. Budget`
+    : `${d > 0 ? '+' : ''}${fmt(d)} vs. Budget`;
+  return { direction, tone, label };
 };
 
 // ─── Zeilenstile ─────────────────────────────────────────────────────────────
@@ -603,7 +683,7 @@ const YearView = ({
 
 // ─── Budget P&L Vergleich ─────────────────────────────────────────────────────
 
-interface BPLCell {
+export interface BPLCell {
   isExpense: boolean;
   budget: number;
   actual: number;
@@ -614,7 +694,7 @@ interface BPLCell {
   vsPrevYearPct?: number;
 }
 
-interface BPLRow {
+export interface BPLRow {
   catId: string;
   catLabel: string;
   catType: 'items' | 'result';
@@ -629,7 +709,7 @@ interface BPLRow {
   isGroupSubtotal?: boolean;
 }
 
-interface BPLRowWithValues extends BPLRow {
+export interface BPLRowWithValues extends BPLRow {
   values: BPLCell;
 }
 
@@ -662,23 +742,51 @@ function normalizeAccountNum(categoryId: string): number {
   return parseInt(s);
 }
 
+/**
+ * Effektive BPL-Kategorie eines Kontos: Ein EXAKTES Konto-Mapping
+ * (Stammdaten/Kontenzuordnung, custom oder default) überschreibt die reine
+ * Bereichszuordnung — z.B. 4701/4800 → Betriebskosten statt Wareneinsatz,
+ * 6611 Kost & Logis → Personalaufwand statt Werbung/Marketing.
+ * Bereichs-Treffer (matchType 'range') behalten die bisherige BPL-Bereichslogik.
+ */
+function bplCatForAccount(categoryId: string): string | undefined {
+  const s = (categoryId ?? '').trim();
+  const n = normalizeAccountNum(s);
+  if (isNaN(n)) return undefined;
+  let res = lookupAccount(s);
+  // 5-stellige Varianten (z.B. 47010): falls kein exaktes Mapping, auf die
+  // kanonischen ersten 4 Stellen zurückfallen (bestehende App-Konvention).
+  if (res.matchType !== 'exact' && s.length > 4) res = lookupAccount(s.slice(0, 4));
+  if (res.matchType === 'exact' && res.mapping) {
+    const b = PL_CAT_TO_BPL[res.mapping.plCategory];
+    if (b) return b;
+  }
+  for (const [catId, r] of Object.entries(BPL_CAT_RANGES)) {
+    if (n >= r[0] && n <= r[1]) return catId;
+  }
+  return undefined;
+}
+
+function sumCatFromCategories(
+  catId: string,
+  cats: { categoryId?: string; amount?: number }[] | undefined,
+): number {
+  return (cats ?? [])
+    .filter(c => bplCatForAccount(c.categoryId ?? '') === catId)
+    .reduce((s, c) => s + (c.amount ?? 0), 0);
+}
+
 function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
   if (catId === 'pl_revenue') {
     // Priorität 1: individuelle 3xxx-Konten aus expenseCategories (Sage-Import)
-    const r = BPL_CAT_RANGES['pl_revenue']; // [3000, 3999]
-    const fromExpCat = (rec.expenseCategories ?? [])
-      .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-      .reduce((s, c) => s + (c.amount ?? 0), 0);
+    const fromExpCat = sumCatFromCategories('pl_revenue', rec.expenseCategories);
     if (fromExpCat !== 0) return fromExpCat;
     // Priorität 2: revenueActual Direktfeld (manuelle Eingabe / Gastronovi)
     return rec.revenueActual ?? (rec as any).revenue ?? 0;
   }
-  const r = BPL_CAT_RANGES[catId];
-  if (!r) return 0;
-  return (rec.expenseCategories ?? [])
-    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-    .reduce((s, c) => s + (c.amount ?? 0), 0);
+  if (!BPL_CAT_RANGES[catId] && !Object.values(PL_CAT_TO_BPL).includes(catId)) return 0;
+  return sumCatFromCategories(catId, rec.expenseCategories);
 }
 
 function getCatPY(
@@ -698,22 +806,13 @@ function getCatPY(
       const fromActual = prevRec.revenueActual ?? 0;
       if (fromActual !== 0) return fromActual;
     }
-    const r = BPL_CAT_RANGES[catId];
-    if (r) {
-      const fromActual = (prevRec.expenseCategories ?? [])
-        .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-        .reduce((s, c) => s + (c.amount ?? 0), 0);
-      if (fromActual !== 0) return fromActual;
-    }
+    const fromActual = sumCatFromCategories(catId, prevRec.expenseCategories);
+    if (fromActual !== 0) return fromActual;
   }
   // Fallback: PreviousYear-Felder im aktuellen Datensatz (manuell als "Vorjahr" importiert)
   if (!rec) return 0;
   if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
-  const r = BPL_CAT_RANGES[catId];
-  if (!r) return 0;
-  return (rec.expenseCategoriesPreviousYear ?? [])
-    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-    .reduce((s, c) => s + (c.amount ?? 0), 0);
+  return sumCatFromCategories(catId, rec.expenseCategoriesPreviousYear);
 }
 
 function makeCell(actual: number, budget: number, prevYear: number, isExpense: boolean): BPLCell {
@@ -1050,6 +1149,9 @@ const InlineIstCell = ({
   );
 };
 
+// Quartals-Bereichslabels für Periodenwahl & Titel (E003)
+const QUARTER_RANGE_LABELS = ['Jan–Mär', 'Apr–Jun', 'Jul–Sep', 'Okt–Dez'] as const;
+
 // ─── Inline Ist-Umsatz Schnelleingabe (für PLView-Banner) ─────────────────────
 const InlineRevenueEntry = ({
   year, month, onSaved,
@@ -1111,7 +1213,7 @@ const InlineRevenueEntry = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse, onBudgetEdit }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode: pctModeProp = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse, onBudgetEdit, readOnly = false, isMobile = false }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -1128,14 +1230,17 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   onBudgetEdit?: (catId: string, monthIdx: number, budgetVal: number) => void;
+  /** Quartal-/Jahres-Aggregat: KEINE Inline-Bearbeitung (Saves sind monatsgebunden). */
+  readOnly?: boolean;
+  /** E009: mobil reduzierte Spalten (zentrale reine Logik, keine Zweitberechnung). */
+  isMobile?: boolean;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
   const py = compact ? 'py-1' : 'py-2';
   const pyResult = compact ? 'py-1' : 'py-2.5';
   const pyItem = compact ? 'py-0.5' : 'py-1.5';
-  const showBudget   = compareMode !== 'ist_vorjahr' && compareMode !== 'monat_vs_monat';
-  const showPrevYear = compareMode !== 'ist_budget';
+  const { showBudget, showPrevYear, pctMode } = getBPLColumnVisibility(compareMode, pctModeProp, isMobile);
 
   const pctVal = (actual: number) =>
     revenueActual > 0 && actual !== 0
@@ -1163,8 +1268,12 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const isPos = v.actual >= 0;
     const p = pctVal(v.actual);
     return (
-      <tr className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640]">
-        <td className={cn('px-3 text-sm text-gray-900 dark:text-gray-100', pyResult)} colSpan={2}>{row.catLabel}</td>
+      <tr
+        className="bg-[#F7F0E3] dark:bg-slate-800/80 font-bold border-t-2 border-b border-[#4F6F52] dark:border-[#3d5640] cursor-pointer hover:bg-[#efe5cf] dark:hover:bg-slate-700/80 transition-colors"
+        onClick={onClick}
+        title={`${row.catLabel} – Zusammensetzung anzeigen`}
+      >
+        <td className={cn('px-3 text-sm text-gray-900 dark:text-gray-100 sticky left-0 z-10 bg-[#F7F0E3] dark:bg-slate-800', pyResult)} colSpan={2}>{row.catLabel}</td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-bold', pyResult,
           isPos ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'
         )}>{fmt(v.actual)}</td>
@@ -1181,7 +1290,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
                 ? 'cursor-pointer hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:ring-1 hover:ring-inset hover:ring-amber-300 dark:hover:ring-amber-600 transition-colors group'
                 : '',
             )}
-            onClick={onBudgetEdit && row.isTopDownable ? () => onBudgetEdit(row.catId, month - 1, v.budget) : undefined}
+            onClick={onBudgetEdit && row.isTopDownable ? e => { e.stopPropagation(); onBudgetEdit(row.catId, month - 1, v.budget); } : undefined}
             title={onBudgetEdit && row.isTopDownable ? `Budget ${row.catLabel} anpassen (Top-Down)` : undefined}
           >
             <span className="flex items-center justify-end gap-1">
@@ -1206,7 +1315,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         className="bg-[#4F6F52] text-white dark:bg-[#3d5640] cursor-pointer hover:bg-[#3d5640] transition-colors select-none"
         onClick={onClick}
       >
-        <td className={cn('px-3 text-xs font-bold tracking-wider', py)} colSpan={2}>
+        <td className={cn('px-3 text-xs font-bold tracking-wider sticky left-0 z-10 bg-[#4F6F52] dark:bg-[#3d5640]', py)} colSpan={2}>
           <span className="inline-flex items-center gap-1.5">
             <span
               onClick={e => { e.stopPropagation(); onToggleCollapse?.(); }}
@@ -1247,7 +1356,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
     const p = pctVal(v.actual);
     return (
       <tr className="bg-muted/60 dark:bg-slate-800/60 border-t border-b border-slate-200 dark:border-slate-700 font-semibold" data-testid={`bpl-${row.itemId}`}>
-        <td className={cn('px-3 pl-6 text-xs text-gray-700 dark:text-gray-300 uppercase tracking-wide', pyItem)} colSpan={2}>
+        <td className={cn('px-3 pl-6 text-xs text-gray-700 dark:text-gray-300 uppercase tracking-wide sticky left-0 z-10 bg-slate-100 dark:bg-slate-800', pyItem)} colSpan={2}>
           {row.itemLabel}
         </td>
         <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-semibold', pyItem)}>{fmt(v.actual)}</td>
@@ -1265,7 +1374,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   }
 
   const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
-  const canEdit = !row.isCategory;
+  const canEdit = !row.isCategory && !readOnly;
 
   const varPct = v.vsBudgetPct;
   const isVarianceHighlighted =
@@ -1279,6 +1388,10 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       ? 'bg-red-50 dark:bg-red-950/20 border-l-4 border-l-red-400'
       : 'bg-green-50 dark:bg-green-950/20 border-l-4 border-l-green-400'
     : '';
+  // Sticky erste Spalte braucht einen OPAKEN Hintergrund (replit.md §3)
+  const stickyItemBg = isVarianceHighlighted
+    ? (varPct! < 0 ? 'bg-red-50 dark:bg-red-950' : 'bg-green-50 dark:bg-green-950')
+    : row.isInternal ? 'bg-violet-50 dark:bg-violet-950' : 'bg-card';
 
   return (
     <tr
@@ -1288,7 +1401,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         varBgClass,
       )}
     >
-      <td className={cn('px-3 pl-9 text-sm cursor-pointer', pyItem)} onClick={onClick}>
+      <td className={cn('px-3 pl-9 text-sm cursor-pointer sticky left-0 z-10', stickyItemBg, pyItem)} onClick={onClick}>
         <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
         {row.itemLabel}
         {row.isInternal && (
@@ -1355,7 +1468,7 @@ const BudgetPLView = ({
   year,
   onSaved,
   highlightVariance,
-  pctMode = 'off',
+  pctMode: pctModeProp = 'off',
   revenueActual = 0,
   revenueBudget = 0,
   revenuePrevYear = 0,
@@ -1365,6 +1478,8 @@ const BudgetPLView = ({
   maisonNet = 0,
   prevYearLabel = 'Vorjahr',
   onBudgetEdit,
+  readOnly = false,
+  isMobile = false,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1384,9 +1499,14 @@ const BudgetPLView = ({
   maisonNet?: number;
   prevYearLabel?: string;
   onBudgetEdit?: (catId: string, monthIdx: number, budgetVal: number) => void;
+  /** Quartal-/Jahres-Aggregat: strikt read-only (Saves sind monatsgebunden). */
+  readOnly?: boolean;
+  /** E009: mobil reduzierte Tabelle (zentrale reine Spalten-Logik). */
+  isMobile?: boolean;
 }) => {
-  const showBudget   = compareMode !== 'ist_vorjahr' && compareMode !== 'monat_vs_monat';
-  const showPrevYear = compareMode !== 'ist_budget';
+  const { showBudget, showPrevYear, pctMode } = getBPLColumnVisibility(compareMode, pctModeProp, isMobile);
+  // Sticky Tabellenkopf: jede th-Zelle braucht einen eigenen OPAKEN Hintergrund
+  const thSticky = 'sticky top-0 z-20 bg-[#4F6F52]';
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
 
   function toggleCat(catId: string) {
@@ -1399,26 +1519,26 @@ const BudgetPLView = ({
   }
 
   return (
-  <div className="overflow-x-auto">
-    <table className="w-full text-sm border-collapse min-w-[600px]">
+  <div className="overflow-auto max-h-[70vh]" data-testid="bpl-table-scroll">
+    <table className="w-full text-sm border-collapse md:min-w-[600px]">
       <thead>
         <tr className="bg-[#4F6F52] text-white text-xs">
-          <th className={cn('text-left px-3 min-w-[230px]', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
-          <th className={cn('w-5', compact ? 'py-1.5' : 'py-2.5')} />
-          <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')} title="Klick auf Ist-Wert = direkt bearbeiten">Ist (CHF) ✎</th>
+          <th className={cn('text-left px-3 min-w-[140px] md:min-w-[230px]', thSticky, 'left-0 z-30', compact ? 'py-1.5' : 'py-2.5')}>Position</th>
+          <th className={cn('w-5', thSticky, compact ? 'py-1.5' : 'py-2.5')} />
+          <th className={cn('text-right px-2 min-w-[100px]', thSticky, compact ? 'py-1.5' : 'py-2.5')} title={readOnly ? 'Summe der Monatswerte (nur Lesen)' : 'Klick auf Ist-Wert = direkt bearbeiten'}>{readOnly ? 'Ist (CHF)' : 'Ist (CHF) ✎'}</th>
           {pctMode !== 'off' && (
-            <th className={cn('text-right px-2 min-w-[60px]', compact ? 'py-1.5' : 'py-2.5',
+            <th className={cn('text-right px-2 min-w-[60px]', thSticky, compact ? 'py-1.5' : 'py-2.5',
               pctMode === 'subtle' ? 'opacity-50 italic text-[10px]' : 'text-[#d4e8c4]',
             )} title={pctIsBudgetBased ? '% vom Budget-Umsatz (kein Ist-Umsatz erfasst)' : '% vom Ist-Umsatz'}>
               {pctIsBudgetBased ? '% Bud.' : '% Ums.'}
             </th>
           )}
-          {showBudget && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
-          {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Budget-Umsatz">% Bud.</th>}
-          {showBudget && <th className={cn('text-right px-2 min-w-[130px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
-          {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', compact ? 'py-1.5' : 'py-2.5')}>{prevYearLabel} (CHF)</th>}
-          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title={`% vom ${prevYearLabel}-Umsatz`}>% {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
-          {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', compact ? 'py-1.5' : 'py-2.5')}>Abw. {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
+          {showBudget && <th className={cn('text-right px-2 min-w-[100px]', thSticky, compact ? 'py-1.5' : 'py-2.5')}>Budget (CHF)</th>}
+          {showBudget && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', thSticky, compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title="% vom Budget-Umsatz">% Bud.</th>}
+          {showBudget && <th className={cn('text-right px-2 min-w-[130px]', thSticky, compact ? 'py-1.5' : 'py-2.5')}>Abw. Budget</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[100px]', thSticky, compact ? 'py-1.5' : 'py-2.5')}>{prevYearLabel} (CHF)</th>}
+          {showPrevYear && pctMode !== 'off' && <th className={cn('text-right px-2 min-w-[55px]', thSticky, compact ? 'py-1.5' : 'py-2.5', 'text-[#c8d9b8]')} title={`% vom ${prevYearLabel}-Umsatz`}>% {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
+          {showPrevYear && <th className={cn('text-right px-2 min-w-[120px]', thSticky, compact ? 'py-1.5' : 'py-2.5')}>Abw. {prevYearLabel.length > 6 ? 'Vgl.' : prevYearLabel}</th>}
         </tr>
       </thead>
       <tbody>
@@ -1439,7 +1559,7 @@ const BudgetPLView = ({
                 row={row}
                 onClick={() => onRowClick(row)}
                 compact={compact}
-                onDelete={onDeleteItem}
+                onDelete={readOnly ? undefined : onDeleteItem}
                 month={month}
                 year={year}
                 onSaved={onSaved}
@@ -1451,11 +1571,13 @@ const BudgetPLView = ({
                 compareMode={compareMode}
                 isCollapsed={row.isCategory ? collapsedCats.has(row.catId) : undefined}
                 onToggleCollapse={row.isCategory ? () => toggleCat(row.catId) : undefined}
-                onBudgetEdit={onBudgetEdit}
+                onBudgetEdit={readOnly ? undefined : onBudgetEdit}
+                readOnly={readOnly}
+                isMobile={isMobile}
               />
               {isLastRevItem && maisonEnabled && maisonNet > 0 && (
                 <tr className="bg-violet-50/70 dark:bg-violet-950/20 border-b border-violet-100 dark:border-violet-900/50">
-                  <td className={cn('pl-8 pr-2 text-xs text-violet-700 dark:text-violet-400 font-medium', compact ? 'py-0.5' : 'py-1')}>
+                  <td className={cn('pl-8 pr-2 text-xs text-violet-700 dark:text-violet-400 font-medium sticky left-0 z-10 bg-violet-50 dark:bg-violet-950', compact ? 'py-0.5' : 'py-1')}>
                     <span className="flex items-center gap-1.5">
                       <span className="text-violet-400 text-[10px]">↳</span>
                       Marketing
@@ -1489,12 +1611,15 @@ const BudgetPLDrilldownDialog = ({
   year,
   onClose,
   onSaved,
+  composition,
 }: {
   row: BPLRowWithValues;
   month: number;
   year: number;
   onClose: () => void;
   onSaved: () => void;
+  /** E005: Zusammensetzung einer Ergebniszeile — dieselben Tabellenzeilen, reine Anzeige. */
+  composition?: BPLRowWithValues[];
 }) => {
   const { tenantKey } = useTenant();
   const label   = row.itemLabel ?? row.catLabel;
@@ -1683,6 +1808,42 @@ const BudgetPLDrilldownDialog = ({
             </div>
           )}
 
+          {/* E005: Zusammensetzung der Ergebniszeile (reine Anzeige, Summen stimmen sichtbar ab) */}
+          {row.catType === 'result' && composition && composition.length > 0 && (
+            <div className="rounded-lg border border-border overflow-hidden" data-testid="bpl-drilldown-composition">
+              <p className="text-xs font-semibold bg-muted/60 px-3 py-2 border-b border-border">Zusammensetzung</p>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-muted-foreground border-b border-border/60">
+                    <th className="px-3 py-1 text-left font-medium">Position</th>
+                    <th className="px-2 py-1 text-right font-medium">Ist</th>
+                    <th className="px-2 py-1 text-right font-medium">Budget</th>
+                    <th className="px-3 py-1 text-right font-medium">Vorjahr</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {composition.map((c, i) => (
+                    <tr key={`${c.catId}-${i}`} className={cn('border-b border-border/40', c.catType === 'result' && 'font-semibold bg-muted/30')}>
+                      <td className="px-3 py-1.5">
+                        {c.isExpense && <span className="mr-1 text-muted-foreground">−</span>}
+                        {c.catLabel}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums">{fmt(c.values.actual)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmt(c.values.budget)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmt(c.values.prevYear)}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-bold border-t-2 border-foreground/30">
+                    <td className="px-3 py-1.5">= {label}</td>
+                    <td className="px-2 py-1.5 text-right font-mono tabular-nums">{fmt(v.actual)}</td>
+                    <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmt(v.budget)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono tabular-nums text-muted-foreground">{fmt(v.prevYear)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Zusammenfassung */}
           <div className="rounded-lg bg-muted/40 border border-border p-3 grid grid-cols-2 gap-3 text-xs">
             <div>
@@ -1776,7 +1937,7 @@ const AccountActionDialog = ({
   onRefresh: () => void;
   onOpenDrilldown: () => void;
 }) => {
-  const { tenantKey } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const accountNum = row.itemAccountNumber ?? '';
   const result     = lookupAccount(accountNum);
   const mapping    = result.mapping;
@@ -1832,9 +1993,9 @@ const AccountActionDialog = ({
   // Buchungszeilen für dieses Konto laden
   const bookings = useMemo<SageJournalEntry[]>(() => {
     if (!accountNum) return [];
-    const all = loadJournalYear(year);
+    const all = loadJournalYear(year, tenantId);
     return all.filter(e => e.accountNumber === accountNum.padStart(4, '0'));
-  }, [accountNum, year]);
+  }, [accountNum, year, tenantId]);
 
   const handleToggleActive = () => {
     if (mapping) {
@@ -2358,13 +2519,18 @@ const PLViewPage = () => {
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
 
-  const [year,   setYear]   = useState(currentYear);
-  const [month,  setMonth]  = useState(currentMonth);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year,   setYear]   = useState(monatParam?.year ?? currentYear);
+  const [month,  setMonth]  = useState(monatParam?.month ?? currentMonth);
   const [mode,   setMode]   = useState<ViewMode>('budget_pl');
   const [drilldown,       setDrilldown]       = useState<PLDrilldown | null>(null);
   const [bplDrilldown,    setBplDrilldown]    = useState<BPLRowWithValues | null>(null);
+  const [miniYearsOpen,   setMiniYearsOpen]   = useState(false);
   const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
   const [compact,          setCompact]          = useState(false);
+  const isMobile = useIsMobile();
   const [excludeCurrentMonth, setExcludeCurrentMonth] = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
@@ -2380,6 +2546,9 @@ const PLViewPage = () => {
   const [cmpYear,          setCmpYear]          = useState<number>(() => month > 1 ? new Date().getFullYear() : new Date().getFullYear() - 1);
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
+  // Budget-P&L Periodenwahl (E003): Quartal/Jahr = reine Anzeige-Aggregation, strikt read-only
+  const [period,  setPeriod]  = useState<'month' | 'quarter' | 'year'>('month');
+  const [quarter, setQuarter] = useState<number>(() => Math.ceil(currentMonth / 3));
 
   // Per-Monat Top-Down Budget (PLView)
   const [bplTopDownDialog,  setBplTopDownDialog]  = useState<{ catId: string; catLabel: string; monthIdx: number; monthBudgetTotal: number } | null>(null);
@@ -2436,19 +2605,52 @@ const PLViewPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, tenantId, refreshKey]);
 
+  // Kanonischer IST-Umsatz ALLER Serien-Jahre (nur Mehrjahres-/Bank-/Mgmt-Modi):
+  // damit die Mehrjahresanalyse denselben umsatz.ts-IST verwendet wie die ER.
+  const [canonicalByYear, setCanonicalByYear] = useState<Record<number, CanonicalRevenueByMonth>>({});
+  useEffect(() => {
+    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return;
+    let cancelled = false;
+    const currentYr = new Date().getFullYear();
+    const yrs = Array.from(new Set([
+      ...availableYears(tenantKey(REPORTING_STORAGE_KEY)),
+      currentYr - 2, currentYr - 1, currentYr,
+    ]));
+    Promise.all(yrs.map(y =>
+      ladeUmsatzTage(tenantId, `${y}-01-01`, `${y}-12-31`)
+        .then(tage => [y, aggregateCanonicalByMonth(tage)] as const)
+        .catch(() => [y, {} as CanonicalRevenueByMonth] as const),
+    )).then(pairs => {
+      if (cancelled) return;
+      const map: Record<number, CanonicalRevenueByMonth> = {};
+      for (const [y, cr] of pairs) map[y] = cr;
+      setCanonicalByYear(map);
+    });
+    return () => { cancelled = true; };
+  // KEIN refreshKey (Supabase-Direktquelle) — sonst verwerfen häufige refreshKey-
+  // Bumps die laufende Ladung, siehe canonicalRevenue-Effekt.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, tenantId]);
+
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
   // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
+  // WICHTIG: maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts) —
+  // KEINE /1.081-Division mehr (Juli 2026: 13'193.40, nicht 12'205).
   const maisonMonthNet = useMemo(() => {
     if (!maisonEnabled || !maisonColPref) return 0;
     const mm   = String(month).padStart(2, '0');
     const days = new Date(year, month, 0).getDate();
     let total  = 0;
     for (let d = 1; d <= days; d++) {
-      const gross = maisonDaily[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0;
-      if (gross > 0) total += gross / 1.081;
+      const v = Number(maisonDaily[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0);
+      if (v !== 0) total += Math.round(Math.abs(v) * 100) / 100;
     }
     return total;
   }, [maisonEnabled, maisonColPref, maisonDaily, year, month]);
+
+  // Marketing-Unterzeile in der Tabelle: per Default AUSGEBLENDET (nur informativ,
+  // Marketing ist bereits im Betriebsertrag-Netto enthalten). Toggle im Maison-Banner.
+  const [showMarketingRow, setShowMarketingRow] = useState(false);
 
   // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
   const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
@@ -2484,8 +2686,8 @@ const PLViewPage = () => {
 
   // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
   useEffect(() => {
-    syncJournalYearFromDB(year).then(() => setRefreshKey(k => k + 1));
-  }, [year]);
+    syncJournalYearFromDB(year, tenantId).then(() => setRefreshKey(k => k + 1));
+  }, [year, tenantId]);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
@@ -2542,11 +2744,47 @@ const PLViewPage = () => {
     [year, prevYearRecords, vjDailyData],
   );
 
-  // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
+  // Gastronovi-Tagesdaten aus localStorage laden (nur noch für VJ-Umsatz-Regel)
   const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [refreshKey, tenantId]);
+
+  // ── Kanonischer IST-Umsatz pro Monat (umsatz.ts, gn_imports Tages-Z-Berichte) ──
+  // SSOT für den IST-Umsatz des laufenden Jahres; ersetzt die frühere
+  // grossToNet/dailyBudgets-Herleitung. Tage ohne Import fehlen → kein 0 erfunden.
+  const [canonicalRevenue, setCanonicalRevenue] = useState<CanonicalRevenueByMonth>({});
+  useEffect(() => {
+    // WICHTIG: KEIN refreshKey in den Deps. Der Wert kommt direkt aus Supabase
+    // (gn_imports), nicht aus localStorage — refreshKey wird von mehreren anderen
+    // Effekten (store-synced, Journal-Sync, Mandantenwechsel) hochgezählt. Hinge
+    // dieser Effekt an refreshKey, würde ein solcher Bump die noch laufende
+    // ladeUmsatzTage-Promise via cancelled=true verwerfen, BEVOR sie state setzt
+    // → Erfolgsrechnung bliebe leer ("Noch keine Daten"), obwohl gn_imports Daten
+    // liefert (Dashboard funktioniert, weil dessen Effekt nicht an refreshKey hängt).
+    // Generationszähler statt cancelled-Flag; zusätzlich Nachladen bei
+    // 'store-synced': Läuft der Mount-Load, BEVOR die Auth-Session am Supabase-
+    // Client hängt, liefert RLS still 0 Zeilen (kein Fehler!) — ohne Retry
+    // bliebe die Erfolgsrechnung dauerhaft leer, obwohl gn_imports Daten hat.
+    let gen = 0;
+    const load = () => {
+      const myGen = ++gen;
+      ladeUmsatzTage(tenantId, `${year}-01-01`, `${year}-12-31`)
+        .then(tage => {
+          if (myGen !== gen) return;
+          const agg = aggregateCanonicalByMonth(tage);
+          // Leeres Ergebnis überschreibt nie ein bereits geladenes (Session-Race).
+          setCanonicalRevenue(prev =>
+            tage.size === 0 && Object.values(prev).some(m => m.hasData) ? prev : agg,
+          );
+        })
+        .catch(() => { /* Fehler bereits in ladeUmsatzTage geloggt; State behalten */ });
+    };
+    load();
+    const refresh = () => load();
+    window.addEventListener('store-synced', refresh);
+    return () => { gen++; window.removeEventListener('store-synced', refresh); };
+  }, [year, tenantId]);
 
   // ── Mehrjahresanalyse: Serien je Jahr (effektive Records → computePLForMonth)
   // Datenbasis IDENTISCH zur Erfolgsrechnung: dieselbe SSoT-Lib (effective-records)
@@ -2574,13 +2812,13 @@ const PLViewPage = () => {
       currentYr - 2, currentYr - 1, currentYr,
     ])).sort((a, b) => a - b);
     return seriesYearBasis.map(y => {
-      const recs = applyEffectiveYearRules(loadYear(y, storeKey), {
+      const canonical = canonicalByYear[y] ?? {};
+      const recs = loadYear(y, storeKey).map((rec, idx) => applyCanonicalIstRule(rec, idx + 1, {
         year: y,
-        dailyBudgets: dailyBudgetsData,
-        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        canonical,
         takeawayMonthly: takeawayAllYears,
         net: showNetRevenue,
-      });
+      }));
       const values: (number | null)[] = [];
       const byPosition: Record<string, (number | null)[]> =
         Object.fromEntries(positionIds.map(id => [id, [] as (number | null)[]]));
@@ -2604,7 +2842,7 @@ const PLViewPage = () => {
       }
       return { year: y, values, byPosition, personnelPct, wesPct };
     });
-  }, [mode, refreshKey, tenantId, tenantKey, dailyBudgetsData, maisonEnabled, maisonDaily, takeawayAllYears, showNetRevenue]);
+  }, [mode, refreshKey, tenantId, tenantKey, canonicalByYear, maisonEnabled, maisonDaily, takeawayAllYears, showNetRevenue]);
 
   // Budget P&L laden (vor den Overrides benötigt)
   const budgetData = useMemo(() => loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)), [year, refreshKey, tenantId]);
@@ -2618,35 +2856,28 @@ const PLViewPage = () => {
   const effectiveAllRecords = useMemo(() => {
     return records.map((rec, idx) => {
       const m = idx + 1;
-      // ── IST-Umsatz + Personalkosten-Buchhaltungsvorrang (SSoT-Lib) ────────
-      // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
-      // Maison wird immer eingerechnet wenn aktiviert — unabhängig von der Spalten-Anzeige
-      let r = applyEffectiveMonthRules(rec, m, {
+      // ── IST-Umsatz (kanonische Quelle umsatz.ts) + Personalkosten-Vorrang ──
+      // Maison-Zuschlag fliesst NICHT in revenueActual (kanonischer Umsatz identisch
+      // mit Dashboard/Monatsreport); Maison ist ggf. eine separate Anzeige-Spalte.
+      let r = applyCanonicalIstRule(rec, m, {
         year,
-        dailyBudgets: dailyBudgetsData,
-        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        canonical: canonicalRevenue,
         takeawayMonthly: takeawayMonthlyMap,
         net: showNetRevenue,
       });
 
-      // ── VJ-Umsatz ─────────────────────────────────────────────────────────
-      const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 3000 && n <= 3999;
+      // ── VJ-Umsatz: zentrale Regel aus effective-records (SSoT — dieselbe
+      // Quelle nutzt die Financial-Metrics-Registry für das Dashboard) ──────
+      r = applyVjRevenueRule(r, m, {
+        year,
+        dailyBudgets: dailyBudgetsData,
+        vjDaily: vjDailyData,
+        prevYearRecord: prevYearRecords[idx],
       });
-      if (!hasIndivPYRev) {
-        const tagesansichtVj = computeMonthlyVjNet(year, m, dailyBudgetsData, vjDailyData);
-        if (tagesansichtVj > 0) {
-          r = { ...r, revenuePreviousYear: tagesansichtVj };
-        } else if (!r.revenuePreviousYear) {
-          const prevActual = prevYearRecords[idx]?.revenueActual;
-          if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
-        }
-      }
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
+  }, [records, prevYearRecords, year, canonicalRevenue, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -2660,54 +2891,15 @@ const PLViewPage = () => {
       // Budget-Overrides zentral aus pl-engine (Single Source of Truth — dieselbe
       // Quelle nutzt PersonalFix für „Planung vs. Erfolgsrechnung").
       const budgetByRow = buildBudgetByRowForMonth(budgetData, idx, lookupAccount);
-      const prevYearByRow = new Map<string, number>();
-      const prevRec = prevYearRecords[idx];
-      const effRec  = effectiveAllRecords[idx];
-
-      // ── VJ-Umsatz: Tagesansicht hat höchste Priorität (Klassisch-Ansicht) ─
-      // effRec.revenuePreviousYear wurde bereits in effectiveAllRecords auf
-      // Tagesansicht-Netto gesetzt (computeMonthlyVjNet). Daher hat dieser Wert
-      // Vorrang vor prevRec.revenueActual (reporting_v1 für das Vorjahr).
-      if (effRec?.revenuePreviousYear) {
-        prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
-      } else if (prevRec?.revenueActual) {
-        prevYearByRow.set('revenue_total', prevRec.revenueActual);
-      }
-
-      if (prevRec) {
-        if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
-        for (const cat of (prevRec.expenseCategories ?? [])) {
-          if (!cat.categoryId || !cat.amount) continue;
-          if (/^\d{3,5}$/.test(cat.categoryId)) {
-            const res = lookupAccount(cat.categoryId);
-            if (res.mapping) {
-              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId && rowId !== 'revenue_total') {
-                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
-              }
-            }
-          }
-        }
-      }
-      // Fallback: personnelCostPreviousYear aus den effektiven Records
-      if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
-        prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
-      }
-      // Fallback: expenseCategoriesPreviousYear aus den effektiven Records
-      if (!prevRec) {
-        for (const cat of (effRec?.expenseCategoriesPreviousYear ?? [])) {
-          if (!cat.categoryId || !cat.amount) continue;
-          if (/^\d{3,5}$/.test(cat.categoryId)) {
-            const res = lookupAccount(cat.categoryId);
-            if (res.mapping) {
-              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId && rowId !== 'revenue_total') {
-                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
-              }
-            }
-          }
-        }
-      }
+      // VJ-Overrides zentral aus pl-engine (Single Source of Truth — dieselbe
+      // Quelle nutzt die Financial-Metrics-Registry für das Dashboard).
+      // Priorität: effRec.revenuePreviousYear (Tagesansicht-VJ, vorgängig in
+      // effectiveAllRecords gesetzt) > prevYearRecords (reporting_v1 Vorjahr).
+      const prevYearByRow = buildPrevYearByRowForMonth(
+        prevYearRecords[idx],
+        effectiveAllRecords[idx],
+        lookupAccount,
+      );
       return {
         budgetByRow:   budgetByRow.size   > 0 ? budgetByRow   : undefined,
         prevYearByRow: prevYearByRow.size > 0 ? prevYearByRow : undefined,
@@ -2771,19 +2963,38 @@ const PLViewPage = () => {
     });
   }, [compareMode, bplRows, cmpBplRows]);
 
+  // ── Perioden-Aggregation Quartal/Jahr (E003) — reine Anzeige, read-only ──
+  // Summe der UNVERÄNDERTEN Monats-Zeilen aus computeBPLRows; Abweichungen
+  // und Prozente aus den Rohsummen (bpl-aggregate) — keine Zweitberechnung.
+  const periodAgg = useMemo(() => {
+    if (mode !== 'budget_pl' || period === 'month') return null;
+    const monthIdxs = period === 'quarter'
+      ? [0, 1, 2].map(i => (quarter - 1) * 3 + i)
+      : Array.from({ length: 12 }, (_, i) => i);
+    const rowsPerMonth = monthIdxs.map(i =>
+      computeBPLRows(budgetData, effectiveAllRecords[i], i, prevYearRecords[i]));
+    const hasDataFlags = monthIdxs.map(i => yearResult.months[i]?.hasData ?? false);
+    return aggregateBPLRows(rowsPerMonth, hasDataFlags);
+  }, [mode, period, quarter, budgetData, effectiveAllRecords, prevYearRecords, yearResult]);
+
+  // Anzeige-Zeilen: Monat = effectiveBplRows (inkl. Monat-vs-Monat-Injektion);
+  // Quartal/Jahr = aggregierte Zeilen (Monat-vs-Monat dort nicht verfügbar).
+  const displayBplRows = periodAgg ? periodAgg.rows : effectiveBplRows;
+  const effectiveCompareMode = period !== 'month' && compareMode === 'monat_vs_monat' ? 'all' : compareMode;
+
   const bplRevenue = useMemo(
-    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
-    [effectiveBplRows],
+    () => displayBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.actual ?? 0,
+    [displayBplRows],
   );
 
   // Wenn kein Ist-Umsatz vorhanden → Budget-Umsatz als Fallback für %-Berechnung
   const bplBudgetRevenue = useMemo(
-    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
-    [effectiveBplRows],
+    () => displayBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.budget ?? 0,
+    [displayBplRows],
   );
   const bplPrevYearRevenue = useMemo(
-    () => effectiveBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.prevYear ?? 0,
-    [effectiveBplRows],
+    () => displayBplRows.find(r => r.catId === 'pl_revenue' && r.isCategory)?.values.prevYear ?? 0,
+    [displayBplRows],
   );
   const bplEffectiveRevenue = bplRevenue > 0 ? bplRevenue : bplBudgetRevenue;
   const pctIsBudgetBased = pctMode !== 'off' && bplRevenue === 0 && bplBudgetRevenue > 0;
@@ -2868,15 +3079,16 @@ const PLViewPage = () => {
     if (opts.includeMaison !== undefined && !!opts.includeMaison !== !!currentlyIncludes) {
       const delta = opts.includeMaison ? 1 : -1;
 
-      // Compute net Maison revenue for a given month from daily gross values (/1.081)
+      // Marketing-Netto pro Monat: maison-daily ist Netto-NENNWERT (voller Wert, kein MwSt-Abzug)
       const getMaisonNetForMonth = (m: number): number => {
         const mm   = String(m).padStart(2, '0');
         const days = new Date(year, m, 0).getDate();
         let net    = 0;
+        // Gleiche Regel wie maisonMonthNet/umsatz.ts: Netto-NENNWERT 1:1, kein /1.081
         for (let d = 1; d <= days; d++) {
-          const key   = `${year}-${mm}-${String(d).padStart(2, '0')}`;
-          const gross = maisonDaily[key] ?? 0;
-          if (gross > 0) net += gross / 1.081;
+          const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+          const v   = Number(maisonDaily[key] ?? 0);
+          if (v !== 0) net += Math.round(Math.abs(v) * 100) / 100;
         }
         return net;
       };
@@ -2918,40 +3130,83 @@ const PLViewPage = () => {
     setMode('monthly');
   }, []);
 
-  // KPI-Karten oben (Monats- & Budget-Ansicht)
-  const netRev  = monthResult.rows.find(r => r.def.id === 'net_revenue')?.values;
-  const gp1     = monthResult.rows.find(r => r.def.id === 'gross_profit_1')?.values;
-  const gp2     = monthResult.rows.find(r => r.def.id === 'gross_profit_2')?.values;
-  const ebit    = monthResult.rows.find(r => r.def.id === 'ebit')?.values;
+  // ── E006: KPI-Leiste aus der Financial-Metrics-Registry (SSoT) ─────────────
+  // Monat: direkt getFinancialMetricValues({pl: monthResult}) — dieselbe
+  // computePLForMonth-Basis wie Dashboard-Finanzkarten. Quartal/Jahr:
+  // null-erhaltende Aggregation über die BEREITS berechneten yearResult.months
+  // (E011: keine zusätzliche Berechnung, keine neuen Queries).
+  const laborThreshold = useMemo(
+    () => parseInt(localStorage.getItem(tenantKey('labor_cost_threshold')) || '40'),
+    [tenantKey],
+  );
 
-  // Budget-P&L KPIs direkt aus effectiveBplRows (enthält manualIstValues → stimmt mit Tabelle überein)
-  const bplKpiNetRev = effectiveBplRows.find(r => r.catId === 'pl_revenue'  && r.isCategory)?.values;
-  const bplKpiGross1 = effectiveBplRows.find(r => r.catId === 'pl_gross_1'  && r.isCategory)?.values;
-  const bplKpiGross2 = effectiveBplRows.find(r => r.catId === 'pl_gross_2'  && r.isCategory)?.values;
-  const bplKpiEbitda = effectiveBplRows.find(r => r.catId === 'pl_ebitda'   && r.isCategory)?.values;
+  const registryKpis = useMemo(() => {
+    if (mode !== 'monthly' && mode !== 'budget_pl') return null;
+    const periodPls =
+      mode === 'budget_pl' && period === 'quarter'
+        ? yearResult.months.slice((quarter - 1) * 3, (quarter - 1) * 3 + 3)
+        : mode === 'budget_pl' && period === 'year'
+          ? yearResult.months
+          : null;
+    return PLVIEW_KPI_METRIC_IDS.map(id => ({
+      def: getFinancialMetricDefinition(id),
+      values: periodPls
+        ? aggregateFinancialMetricValues(id, periodPls)
+        : getFinancialMetricValues(id, { pl: monthResult }),
+    }));
+  }, [mode, period, quarter, monthResult, yearResult]);
 
-  // PLCellValues-kompatible Objekte für BPL-KPIs
-  const toBPLKpiVal = (c: BPLCell | undefined): { actual?: number; budget?: number; prevYear?: number } | undefined =>
-    c ? { actual: c.actual || undefined, budget: c.budget || undefined, prevYear: c.prevYear || undefined } : undefined;
+  const renderRegistryKpiCard = (k: { def: FinancialMetricDefinition; values: FinancialMetricValues }) => (
+    <KpiCard
+      key={k.def.id}
+      label={k.def.label}
+      value={fmtMetricValue(k.values.actual, k.def.unit)}
+      tone={registryKpiTone(k.def.id, k.values, laborThreshold)}
+      trend={registryKpiTrend(k.def, k.values)}
+      sub={<>Budget {fmtMetricValue(k.values.budget, k.def.unit)} · VJ {fmtMetricValue(k.values.priorYear, k.def.unit)}</>}
+      data-testid={`plview-kpi-${k.def.id}`}
+    />
+  );
 
-  // prevYearLabel für Budget-P&L Tabellenkopf (Monat-vs-Monat → Vergleichsmonat-Name)
-  const prevYearColLabel = compareMode === 'monat_vs_monat'
+  // ── E008: Mini-Jahresvergleich (lazy beim Öffnen; calcAnnualSummary liest
+  // nur localStorage — keine neuen Supabase-Queries, kein neuer Store) ────────
+  const miniYearCompare = useMemo(() => {
+    if (!miniYearsOpen || mode !== 'budget_pl') return null;
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    const years = [year - 2, year - 1, year];
+    const sums = years.map(y => calcAnnualSummary(y, storeKey));
+    return years.map((y, i) => {
+      const s = sums[i];
+      const prev = i > 0 ? sums[i - 1] : null;
+      const hasData = s.monthsWithData > 0;
+      const prevHasData = !!prev && prev.monthsWithData > 0;
+      const delta = hasData && prevHasData ? s.totalRevenueActual - prev!.totalRevenueActual : null;
+      const deltaPct = delta !== null && prev!.totalRevenueActual !== 0
+        ? (delta / Math.abs(prev!.totalRevenueActual)) * 100
+        : null;
+      return { year: y, revenue: hasData ? s.totalRevenueActual : null, months: s.monthsWithData, delta, deltaPct };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [miniYearsOpen, mode, year, tenantKey, refreshKey]);
+
+  // ── E005: Zusammensetzung einer Ergebniszeile (reine Anzeige derselben
+  // Tabellenzeilen — Kategorien seit dem vorherigen Zwischenergebnis) ─────────
+  const bplDrilldownComposition = useMemo(() => {
+    if (!bplDrilldown || bplDrilldown.catType !== 'result' || !bplDrilldown.isCategory) return undefined;
+    const idx = displayBplRows.findIndex(r => r.isCategory && r.catType === 'result' && r.catId === bplDrilldown.catId);
+    if (idx === -1) return undefined;
+    let start = 0;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (displayBplRows[i].isCategory && displayBplRows[i].catType === 'result') { start = i; break; }
+    }
+    return displayBplRows.slice(start, idx).filter(r => r.isCategory);
+  }, [bplDrilldown, displayBplRows]);
+
+  // prevYearLabel für Budget-P&L Tabellenkopf (Monat-vs-Monat → Vergleichsmonat-Name);
+  // effectiveCompareMode: bei Quartal/Jahr fällt monat_vs_monat auf 'all' zurück → Label «Vorjahr»
+  const prevYearColLabel = effectiveCompareMode === 'monat_vs_monat'
     ? `${MONTH_NAMES_DE[cmpMonth]?.slice(0, 3) ?? `M${cmpMonth}`} ${cmpYear}`
     : 'Vorjahr';
-
-  // In budget_pl mode: KPI-Karten aus bplRows (konsistent mit Tabelle)
-  // In anderen Modi: KPI-Karten aus pl-engine (klassisch/jahr)
-  const kpis = (mode === 'budget_pl' ? [
-    { label: 'Betriebsertrag',          values: toBPLKpiVal(bplKpiNetRev), suffix: '' },
-    { label: 'Bruttogewinn 1',          values: toBPLKpiVal(bplKpiGross1), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiGross1?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
-    { label: 'Deckungsbeitrag',         values: toBPLKpiVal(bplKpiGross2), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiGross2?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
-    { label: 'Betriebsergebnis (EBIT)', values: toBPLKpiVal(bplKpiEbitda), suffix: bplKpiNetRev?.actual ? ` (${((bplKpiEbitda?.actual ?? 0) / bplKpiNetRev.actual * 100).toFixed(1)} %)` : '' },
-  ] : [
-    { label: 'Betriebsertrag netto', values: netRev, suffix: '' },
-    { label: 'Bruttogewinn 1',       values: gp1,   suffix: netRev?.actual ? ` (${((gp1?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
-    { label: 'Deckungsbeitrag',       values: gp2,   suffix: netRev?.actual ? ` (${((gp2?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
-    { label: 'Betriebsergebnis EBIT', values: ebit,  suffix: netRev?.actual ? ` (${((ebit?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
-  ]) as Array<{ label: string; values: { actual?: number } | undefined; suffix: string }>;
 
   // KPI-Karten Jahresansicht (Summe über alle / nur abgeschlossene Monate)
   // excludeMonthIdx: 0-basiert (currentMonth - 1); -1 = kein Ausschluss
@@ -3134,8 +3389,39 @@ const PLViewPage = () => {
               </Select>
             )}
 
-            {/* Monat (Monatsansicht + Budget P&L) */}
-            {(mode === 'monthly' || mode === 'budget_pl') && (
+            {/* Periode: Monat / Quartal / Jahr (nur Budget P&L — Aggregat ist read-only) */}
+            {mode === 'budget_pl' && (
+              <div className="flex rounded-md border border-border overflow-hidden" role="group" aria-label="Periode">
+                {(['month', 'quarter', 'year'] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setPeriod(p)}
+                    data-testid={`plview-period-${p}`}
+                    className={cn(
+                      'h-8 px-2.5 text-xs transition-colors',
+                      period === p
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-card hover:bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {p === 'month' ? 'Monat' : p === 'quarter' ? 'Quartal' : 'Jahr'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mode === 'budget_pl' && period === 'quarter' && (
+              <Select value={String(quarter)} onValueChange={v => setQuarter(Number(v))}>
+                <SelectTrigger className="h-8 w-36 text-xs" data-testid="plview-quarter-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4].map(q => (
+                    <SelectItem key={q} value={String(q)}>Q{q} · {QUARTER_RANGE_LABELS[q - 1]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month')) && (
               <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
                 <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -3146,8 +3432,8 @@ const PLViewPage = () => {
               </Select>
             )}
 
-            {/* Konto hinzufügen */}
-            {mode === 'budget_pl' && (
+            {/* Konto hinzufügen (nur Monatsansicht — Quartal/Jahr ist read-only) */}
+            {mode === 'budget_pl' && period === 'month' && (
               <button
                 title="Konto zur Erfolgsrechnung hinzufügen"
                 onClick={() => setAddKontoOpen(true)}
@@ -3158,38 +3444,61 @@ const PLViewPage = () => {
               </button>
             )}
 
-            {/* Zeilenabstand */}
+            {/* «Ansicht»-Menü: Darstellung + %-Spalte + Vergleichsmodus (E002) */}
             {mode === 'budget_pl' && (
-              <button
-                title={compact ? 'Normaler Zeilenabstand' : 'Kompakter Zeilenabstand'}
-                onClick={() => setCompact(c => !c)}
-                className={cn(
-                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
-                  compact
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
-                )}
-              >
-                {compact ? <AlignJustify className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}
-                <span className="hidden sm:inline">{compact ? 'Normal' : 'Kompakt'}</span>
-              </button>
-            )}
-
-            {/* Abweichung >10% hervorheben */}
-            {mode === 'budget_pl' && (
-              <button
-                title={highlightVariance ? 'Abweichungs-Highlight deaktivieren' : 'Positionen mit Abweichung >10% farblich hervorheben'}
-                onClick={() => setHighlightVariance(v => !v)}
-                className={cn(
-                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
-                  highlightVariance
-                    ? 'bg-amber-500 text-white border-amber-500'
-                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
-                )}
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Abw. &gt;10%</span>
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 text-xs gap-1" data-testid="plview-view-options">
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Ansicht</span>
+                    {(compact || highlightVariance || pctMode !== 'off' || effectiveCompareMode !== 'all') && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-label="Ansichtsoptionen aktiv" />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-60">
+                  <DropdownMenuLabel className="text-xs">Darstellung</DropdownMenuLabel>
+                  <DropdownMenuCheckboxItem
+                    className="text-xs"
+                    checked={compact}
+                    onCheckedChange={v => setCompact(v === true)}
+                    onSelect={e => e.preventDefault()}
+                  >
+                    Kompakter Zeilenabstand
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    className="text-xs"
+                    checked={highlightVariance}
+                    onCheckedChange={v => setHighlightVariance(v === true)}
+                    onSelect={e => e.preventDefault()}
+                  >
+                    Abweichung &gt;10% hervorheben
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs">% Anteil am Umsatz</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={pctMode} onValueChange={v => setPctMode(v as 'off' | 'normal' | 'subtle')}>
+                    <DropdownMenuRadioItem className="text-xs" value="off" onSelect={e => e.preventDefault()}>Ausgeblendet</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="text-xs" value="normal" onSelect={e => e.preventDefault()}>Anzeigen</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="text-xs" value="subtle" onSelect={e => e.preventDefault()}>Dezent</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs">Vergleich</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={effectiveCompareMode} onValueChange={v => setCompareMode(v as 'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat')}>
+                    <DropdownMenuRadioItem className="text-xs" value="all" onSelect={e => e.preventDefault()}>Alles (Budget + Vorjahr)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="text-xs" value="ist_budget" onSelect={e => e.preventDefault()}>Ist vs Budget</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem className="text-xs" value="ist_vorjahr" onSelect={e => e.preventDefault()}>Ist vs Vorjahr</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem
+                      className="text-xs"
+                      value="monat_vs_monat"
+                      disabled={period !== 'month'}
+                      onSelect={e => e.preventDefault()}
+                      title={period !== 'month' ? 'Nur in der Monatsansicht verfügbar' : undefined}
+                    >
+                      Ist vs anderer Monat
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
             {/* % Anteil am Umsatz */}
@@ -3214,7 +3523,7 @@ const PLViewPage = () => {
               </button>
             )}
 
-            {(mode === 'budget_pl' || mode === 'yearly') && (
+            {mode === 'yearly' && (
               <button
                 title={
                   pctMode === 'off'
@@ -3250,44 +3559,8 @@ const PLViewPage = () => {
               </span>
             )}
 
-            {/* Vergleichsmodus */}
-            {mode === 'budget_pl' && (
-              <button
-                title="Vergleichsmodus wechseln: Alles / Ist vs Budget / Ist vs Vorjahr / Ist vs Monat"
-                onClick={() => setCompareMode(m =>
-                  m === 'all' ? 'ist_budget'
-                  : m === 'ist_budget' ? 'ist_vorjahr'
-                  : m === 'ist_vorjahr' ? 'monat_vs_monat'
-                  : 'all'
-                )}
-                className={cn(
-                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
-                  compareMode === 'ist_budget'
-                    ? 'bg-blue-500 text-white border-blue-500'
-                    : compareMode === 'ist_vorjahr'
-                    ? 'bg-purple-500 text-white border-purple-500'
-                    : compareMode === 'monat_vs_monat'
-                    ? 'bg-amber-500 text-white border-amber-500'
-                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
-                )}
-              >
-                <span className="hidden sm:inline">
-                  {compareMode === 'ist_budget' ? 'Ist vs Budget'
-                    : compareMode === 'ist_vorjahr' ? 'Ist vs Vorjahr'
-                    : compareMode === 'monat_vs_monat' ? 'Ist vs Monat'
-                    : 'Vergleich'}
-                </span>
-                <span className="sm:hidden">
-                  {compareMode === 'ist_budget' ? 'B'
-                    : compareMode === 'ist_vorjahr' ? 'VJ'
-                    : compareMode === 'monat_vs_monat' ? 'M'
-                    : 'Vgl'}
-                </span>
-              </button>
-            )}
-
-            {/* Vergleichsmonat-Selektor (nur Monat-vs-Monat) */}
-            {mode === 'budget_pl' && compareMode === 'monat_vs_monat' && (
+            {/* Vergleichsmonat-Selektor (nur Monat-vs-Monat, nur Monatsansicht) */}
+            {mode === 'budget_pl' && period === 'month' && compareMode === 'monat_vs_monat' && (
               <>
                 <Select value={String(cmpYear)} onValueChange={v => setCmpYear(Number(v))}>
                   <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
@@ -3320,16 +3593,12 @@ const PLViewPage = () => {
               </Button>
             </Link>
 
-            {/* PDF Export – alle 3 Ansichten */}
-            <Button
-              variant="outline" size="sm"
-              className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50"
-              onClick={handleExportPDF}
-              title="Alle 3 Ansichten als PDF exportieren (Budget P&L, Klassisch, Jahresübersicht)"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">PDF</span>
-            </Button>
+            {/* PDF Export – alle 3 Ansichten (öffnet den bestehenden Export-Dialog) */}
+            <UnifiedExportButton
+              actions={[
+                { key: 'pdf', label: 'PDF (alle 3 Ansichten)', kind: 'pdf', onSelect: handleExportPDF },
+              ]}
+            />
           </div>
         </div>
       </header>
@@ -3355,35 +3624,87 @@ const PLViewPage = () => {
           </div>
         )}
 
-        {/* KPI-Karten (Monatsansicht + Budget P&L) */}
-        {(mode === 'monthly' || mode === 'budget_pl') && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {kpis.map(kpi => {
-              const val = kpi.values?.actual;
-              const isPositive = val !== undefined && val >= 0;
-              return (
-                <Card key={kpi.label} className={cn(
-                  'border',
-                  val !== undefined
-                    ? isPositive ? 'border-emerald-200 dark:border-emerald-800' : 'border-red-200 dark:border-red-800'
-                    : 'border-border',
-                )}>
-                  <CardContent className="p-3">
-                    <p className="text-[11px] text-muted-foreground mb-1 leading-tight">{kpi.label}</p>
-                    {val !== undefined ? (
-                      <>
-                        <p className={cn('text-lg font-bold', isPositive ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
-                          {fmt(val)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">{kpi.suffix || 'CHF'}</p>
-                      </>
-                    ) : (
-                      <p className="text-sm text-muted-foreground/50 italic">Keine Daten</p>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
+        {/* E006/E007: KPI-Leiste aus der Financial-Metrics-Registry (max. 4 sichtbar, EBIT unter «Mehr») */}
+        {(mode === 'monthly' || mode === 'budget_pl') && registryKpis && (
+          <div className="space-y-2" data-testid="plview-kpi-bar">
+            <KpiGrid>
+              {registryKpis.slice(0, 4).map(renderRegistryKpiCard)}
+            </KpiGrid>
+            <MoreKpis storageKey="plview-more-kpis">
+              <KpiGrid>
+                {registryKpis.slice(4).map(renderRegistryKpiCard)}
+              </KpiGrid>
+            </MoreKpis>
+          </div>
+        )}
+
+        {/* E008: Mini-Jahresvergleich (lazy; Details in der Mehrjahresanalyse) */}
+        {mode === 'budget_pl' && (
+          <div className="rounded-lg border border-border bg-card">
+            <button
+              type="button"
+              onClick={() => setMiniYearsOpen(v => !v)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="plview-mini-years-toggle"
+            >
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !miniYearsOpen && '-rotate-90')} />
+              Jahresvergleich {year - 2}–{year}
+              <span className="font-normal opacity-70">· Umsatz mit Δ zum Vorjahr</span>
+            </button>
+            {miniYearsOpen && miniYearCompare && (
+              <div className="border-t border-border px-3 py-2">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="py-1 text-left font-medium">Jahr</th>
+                      <th className="py-1 text-right font-medium">Umsatz (CHF)</th>
+                      <th className="py-1 text-right font-medium">Δ Vorjahr</th>
+                      <th className="py-1 text-right font-medium">Trend</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {miniYearCompare.map(r => (
+                      <tr key={r.year} className="border-t border-border/50" data-testid={`plview-mini-year-${r.year}`}>
+                        <td className="py-1.5 font-medium">
+                          {r.year}
+                          {r.revenue !== null && r.months < 12 && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">({r.months} Mte)</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 text-right font-mono tabular-nums">{r.revenue !== null ? fmt(r.revenue) : '—'}</td>
+                        <td className={cn(
+                          'py-1.5 text-right font-mono tabular-nums',
+                          r.delta === null ? 'text-muted-foreground' : r.delta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600',
+                        )}>
+                          {r.delta !== null ? (
+                            <>
+                              {r.delta >= 0 ? '+' : ''}{fmt(r.delta)}
+                              {r.deltaPct !== null && (
+                                <span className="ml-1 opacity-70">({r.deltaPct >= 0 ? '+' : ''}{r.deltaPct.toFixed(1)} %)</span>
+                              )}
+                            </>
+                          ) : '—'}
+                        </td>
+                        <td className="py-1.5 text-right">
+                          {r.delta === null ? '—' : r.delta > 0 ? '↑' : r.delta < 0 ? '↓' : '→'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                  <span>Teiljahre sind markiert; Jahre ohne Daten bleiben «—» (keine Hochrechnung).</span>
+                  <button
+                    type="button"
+                    className="underline hover:text-foreground whitespace-nowrap"
+                    onClick={() => setMode('multi_year')}
+                    data-testid="plview-mini-years-details-link"
+                  >
+                    Details in der Mehrjahresanalyse
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3433,8 +3754,15 @@ const PLViewPage = () => {
           </>
         )}
 
-        {/* Datenvollständigkeit-Hinweis */}
-        {(mode === 'monthly' || mode === 'budget_pl') && !monthResult.hasData && (
+        {/* Datenvollständigkeit-Hinweis (monatsbezogen — bei Quartal/Jahr übernimmt der Coverage-Badge)
+            Zeigt sich NUR, wenn wirklich keine Daten vorliegen: weder P&L-hasData, noch
+            ein effektiver Ist-Umsatz (revenueActual), noch kanonischer IST-Umsatz aus
+            gn_imports (canonicalRevenue) für diesen Monat. Verhindert den Banner, wenn ein
+            Ist-Wert (Tages-Z-Berichte) angezeigt wird. */}
+        {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month'))
+          && !monthResult.hasData
+          && !effectiveMonthRecord?.revenueActual
+          && !canonicalRevenue[month]?.hasData && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4 flex items-start gap-3">
             <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
             <div className="text-xs text-amber-800 dark:text-amber-300">
@@ -3447,8 +3775,8 @@ const PLViewPage = () => {
           </div>
         )}
 
-        {/* Kein Ist-Umsatz – inline Schnelleingabe (nur wenn KEINE Quelle vorhanden) */}
-        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && !effectiveMonthRecord?.revenueActual && (
+        {/* Kein Ist-Umsatz – inline Schnelleingabe (nur wenn KEINE Quelle vorhanden; Schreibpfad → nur Monatsansicht) */}
+        {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month')) && monthResult.hasData && !effectiveMonthRecord?.revenueActual && (
           <InlineRevenueEntry
             year={year}
             month={month}
@@ -3456,8 +3784,8 @@ const PLViewPage = () => {
           />
         )}
 
-        {/* ── Marketing/Maison Umsatzkanal ─────────────────────────────────── */}
-        {(mode === 'monthly' || mode === 'budget_pl') && maisonColPref && (
+        {/* ── Marketing/Maison Umsatzkanal (monatsbezogen → nur Monatsansicht) ── */}
+        {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month')) && maisonColPref && (
           <div className={cn(
             'rounded-lg border px-4 py-3 flex items-center gap-3 flex-wrap',
             maisonEnabled
@@ -3488,11 +3816,35 @@ const PLViewPage = () => {
             </button>
 
             {maisonEnabled ? (
-              <span className="text-xs text-violet-700 dark:text-violet-400">
-                {maisonMonthNet > 0
-                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
-                  : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
-              </span>
+              <>
+                <span className="text-xs text-violet-700 dark:text-violet-400">
+                  {maisonMonthNet > 0
+                    ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
+                    : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
+                </span>
+                {/* Unterzeile-Toggle: Marketing-Aufschlüsselung in der Tabelle ein-/ausblenden */}
+                <button
+                  onClick={() => setShowMarketingRow(v => !v)}
+                  className="flex items-center gap-2 shrink-0 group ml-auto"
+                  title={showMarketingRow ? 'Marketing-Zeile ausblenden' : 'Marketing-Zeile in der Tabelle anzeigen'}
+                >
+                  <span className={cn(
+                    'h-5 w-9 rounded-full border-2 transition-all duration-200 relative block',
+                    showMarketingRow
+                      ? 'border-violet-500 bg-violet-500'
+                      : 'border-muted-foreground/30 bg-muted/50',
+                  )}>
+                    <span className={cn(
+                      'absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200',
+                      showMarketingRow ? 'translate-x-[14px] left-0.5' : 'translate-x-0 left-0.5',
+                    )} />
+                  </span>
+                  <span className={cn(
+                    'text-xs font-semibold',
+                    showMarketingRow ? 'text-violet-700 dark:text-violet-400' : 'text-muted-foreground',
+                  )}>Marketing anzeigen</span>
+                </button>
+              </>
             ) : (
               <span className="text-xs text-muted-foreground">
                 Aktivieren um Marketing-Umsatz in Betriebsertrag einzurechnen (Tageswerte aus Tages-Controlling)
@@ -3539,16 +3891,21 @@ const PLViewPage = () => {
             <div>
               <h2 className="text-sm font-bold">
                 {mode === 'budget_pl'
-                  ? `Budget-P&L Vergleich – ${MONTH_NAMES_DE[month]} ${year}`
+                  ? `Budget-P&L Vergleich – ${
+                      period === 'month' ? `${MONTH_NAMES_DE[month]} ${year}`
+                      : period === 'quarter' ? `Q${quarter} ${year} (${QUARTER_RANGE_LABELS[quarter - 1]})`
+                      : `Jahr ${year}`}`
                   : mode === 'monthly'
                   ? `Erfolgsrechnung – ${MONTH_NAMES_DE[month]} ${year}`
                   : `Erfolgsrechnung – Jahresübersicht ${year}`}
               </h2>
               <p className="text-[11px] text-slate-400 mt-0.5">
                 {mode === 'budget_pl'
-                  ? compareMode === 'ist_budget'
+                  ? period !== 'month'
+                    ? 'Summe der Monatswerte · nur Lesen — Bearbeitung in der Monatsansicht'
+                    : effectiveCompareMode === 'ist_budget'
                     ? 'Ist vs Budget · Abweichungen – Budget-Hierarchie mit Kontonummern'
-                    : compareMode === 'ist_vorjahr'
+                    : effectiveCompareMode === 'ist_vorjahr'
                     ? 'Ist vs Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
                     : 'Ist · Budget · Vorjahr · Abweichungen – Budget-Hierarchie mit Kontonummern'
                   : mode === 'monthly'
@@ -3557,7 +3914,12 @@ const PLViewPage = () => {
               </p>
             </div>
             <div className="text-[10px] text-slate-400">
-              {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (
+              {mode === 'budget_pl' && period !== 'month' && periodAgg ? (
+                <span className="flex items-center gap-1" data-testid="bpl-period-coverage">
+                  <Database className="h-3 w-3 text-emerald-400" />
+                  Ist-Daten in {periodAgg.monthsWithData} von {periodAgg.monthsTotal} Monaten
+                </span>
+              ) : (mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (
                 <span className="flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3 text-emerald-400" />
                   Ist-Daten vorhanden
@@ -3569,8 +3931,10 @@ const PLViewPage = () => {
           {/* Tabelle */}
           {mode === 'budget_pl'
             ? <BudgetPLView
-                rows={effectiveBplRows}
+                rows={displayBplRows}
                 onRowClick={row => {
+                  // Quartal/Jahr: Drilldown-Dialoge sind monatsgebunden (saveMonth-Writes) → deaktiviert
+                  if (period !== 'month') return;
                   if (row.isCategory || row.catId === 'pl_revenue') {
                     setBplDrilldown(row);
                   } else {
@@ -3578,10 +3942,10 @@ const PLViewPage = () => {
                   }
                 }}
                 compact={compact}
-                onDeleteItem={itemId => {
+                onDeleteItem={period === 'month' ? itemId => {
                   deletePLLineItem(year, itemId, tenantKey(BUDGET_STORAGE_KEY));
                   setRefreshKey(k => k + 1);
-                }}
+                } : undefined}
                 month={month}
                 year={year}
                 onSaved={() => setRefreshKey(k => k + 1)}
@@ -3590,17 +3954,19 @@ const PLViewPage = () => {
                 revenueActual={bplEffectiveRevenue}
                 revenueBudget={bplBudgetRevenue}
                 revenuePrevYear={bplPrevYearRevenue}
-                compareMode={compareMode}
+                compareMode={effectiveCompareMode}
                 pctIsBudgetBased={pctIsBudgetBased}
-                maisonEnabled={maisonEnabled && maisonColPref}
+                maisonEnabled={maisonEnabled && maisonColPref && period === 'month' && showMarketingRow}
                 maisonNet={maisonMonthNet}
                 prevYearLabel={prevYearColLabel}
-                onBudgetEdit={(catId, monthIdx, budgetVal) => {
-                  const catLabel = effectiveBplRows.find(r => r.catId === catId && r.catType === 'result' && r.isCategory)?.catLabel ?? catId;
+                readOnly={period !== 'month'}
+                onBudgetEdit={period === 'month' ? (catId, monthIdx, budgetVal) => {
+                  const catLabel = displayBplRows.find(r => r.catId === catId && r.catType === 'result' && r.isCategory)?.catLabel ?? catId;
                   setBplTopDownDialog({ catId, catLabel, monthIdx, monthBudgetTotal: budgetVal });
                   setBplTopDownInput('');
                   setBplTopDownMode('chf');
-                }}
+                } : undefined}
+                isMobile={isMobile}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
@@ -3964,138 +4330,6 @@ const PLViewPage = () => {
           </div>
         )}
 
-        {false && (mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (() => {
-          const mNetRev = mode === 'budget_pl' ? (bplKpiNetRev?.actual ?? 0) : (netRev?.actual ?? 0);
-          const mEbit   = mode === 'budget_pl' ? (bplKpiEbitda?.actual ?? 0) : (ebit?.actual ?? 0);
-          const mCogs   = monthResult.rows.find(r => r.def.id === 'total_cogs')?.values.actual ?? 0;
-          const mPers   = monthResult.rows.find(r => r.def.id === 'total_personnel')?.values.actual ?? 0;
-          const cogsQuote = mNetRev > 0 ? mCogs / mNetRev * 100 : null;
-          const persQuote = mNetRev > 0 ? mPers / mNetRev * 100 : null;
-          const ebitPct = mNetRev > 0 ? mEbit / mNetRev : null;
-          const rawInput = (monthlyEbitInputs[month - 1] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
-          const targetEbit = parseFloat(rawInput);
-          const hasInput = rawInput !== '' && !isNaN(targetEbit);
-          const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && mNetRev > 0;
-          const reqNetRev = canCompute ? targetEbit / ebitPct! : null;
-          const factor    = (reqNetRev !== null && mNetRev > 0) ? reqNetRev / mNetRev : null;
-          const reqCogs   = (factor !== null) ? mCogs * factor : null;
-          const reqPers   = (factor !== null) ? (persFixed ? mPers : mPers * factor) : null;
-          const dCogsChf  = reqCogs !== null ? reqCogs - mCogs : null;
-          const dCogsPct  = (dCogsChf !== null && mCogs > 0) ? (dCogsChf / mCogs) * 100 : null;
-          const dPersChf  = (reqPers !== null && !persFixed) ? reqPers - mPers : null;
-          const dPersPct  = (dPersChf !== null && mPers > 0) ? (dPersChf / mPers) * 100 : null;
-          const persNewQuote = (persFixed && reqNetRev !== null && reqNetRev > 0) ? (mPers / reqNetRev) * 100 : null;
-          const persZielQuote = (reqPers !== null && reqNetRev !== null && reqNetRev > 0) ? (reqPers / reqNetRev) * 100 : null;
-          return (
-            <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
-              <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-                <button onClick={() => setHochMonthOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
-                  <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${hochMonthOpen ? '' : '-rotate-90'}`} />
-                  <TrendingUp className="h-4 w-4 shrink-0" />
-                  <div>
-                    <h3 className="text-sm font-bold">Hochrechnung — Betriebsergebnis auf Nettoumsatz</h3>
-                    <p className="text-[11px] text-indigo-200">Ziel-EBIT eingeben → erforderlicher Nettoumsatz bei gleicher Kostenstruktur</p>
-                  </div>
-                </button>
-                <button
-                  disabled={!hasInput}
-                  onClick={() => { const next = [...monthlyEbitInputs]; next[month - 1] = ''; setMonthlyEbitInputs(next); }}
-                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Zurücksetzen
-                </button>
-              </div>
-              {hochMonthOpen && (<div className="p-4 space-y-4">
-                <div className="flex flex-wrap gap-4 items-center">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-muted-foreground whitespace-nowrap">Ziel EBIT (CHF):</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder={mNetRev > 0 ? String(Math.round(mEbit)) : '—'}
-                      value={monthlyEbitInputs[month - 1] ?? ''}
-                      onChange={e => { const next = [...monthlyEbitInputs]; next[month - 1] = e.target.value; setMonthlyEbitInputs(next); }}
-                      className="h-8 w-36 border border-indigo-300 rounded px-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-indigo-950/30"
-                    />
-                  </div>
-                  {mNetRev > 0 && ebitPct !== null && (
-                    <span className="text-xs text-muted-foreground">
-                      Aktueller EBIT:{' '}
-                      <strong className={mEbit >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'}>
-                        {Math.round(mEbit).toLocaleString('de-CH')} CHF ({(ebitPct * 100).toFixed(1)} %)
-                      </strong>
-                    </span>
-                  )}
-                  {mNetRev > 0 && cogsQuote !== null && (
-                    <span className="text-xs text-muted-foreground">
-                      Warenquote: <strong className="text-amber-700 dark:text-amber-400">{cogsQuote.toFixed(1)} %</strong>
-                      <span className="text-[10px] ml-1">(gleiche Quote)</span>
-                    </span>
-                  )}
-                  {mNetRev > 0 && persQuote !== null && (
-                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-                      <span>Personalkosten: <strong className="text-blue-700 dark:text-blue-400">{persQuote.toFixed(1)} %</strong></span>
-                      <span className="flex items-center gap-1 text-[10px] border border-indigo-300 dark:border-indigo-600 rounded px-1.5 py-0.5 bg-white dark:bg-indigo-950/30">
-                        <input type="checkbox" checked={persFixed} onChange={e => setPersFixed(e.target.checked)} className="h-3 w-3 accent-indigo-500" />
-                        CHF fixieren
-                      </span>
-                    </label>
-                  )}
-                  {mNetRev <= 0 && (
-                    <span className="text-xs text-red-600">Keine Ist-Daten für diesen Monat</span>
-                  )}
-                </div>
-                {ebitPct !== null && Math.abs(ebitPct) < 0.0001 && hasInput && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400">EBIT-Quote nahe 0 % — Hochrechnung nicht sinnvoll.</p>
-                )}
-                {canCompute && reqNetRev !== null && factor !== null && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="rounded-md bg-indigo-100 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 px-3 py-2">
-                      <p className="text-[10px] text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-0.5">Erforderlicher Nettoumsatz</p>
-                      <p className="text-base font-bold text-indigo-900 dark:text-indigo-100">{Math.round(reqNetRev).toLocaleString('de-CH')}</p>
-                      <p className="text-[11px] text-indigo-500">{reqNetRev >= mNetRev ? '+' : ''}{Math.round(reqNetRev - mNetRev).toLocaleString('de-CH')} CHF vs. Ist</p>
-                    </div>
-                    <div className={cn('rounded-md border px-3 py-2', factor >= 1 ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800')}>
-                      <p className="text-[10px] uppercase tracking-wide mb-0.5 text-muted-foreground">Faktor</p>
-                      <p className={cn('text-base font-bold', factor >= 1 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>{factor.toFixed(2)}×</p>
-                      <p className="text-[11px] text-muted-foreground">{factor >= 1 ? 'mehr Umsatz nötig' : 'weniger Umsatz nötig'}</p>
-                    </div>
-                    {mCogs > 0 && reqCogs !== null && (
-                      <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
-                        <p className="text-[10px] text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-0.5">Warenaufwand Ziel</p>
-                        <p className="text-base font-bold text-amber-800 dark:text-amber-300">{Math.round(reqCogs).toLocaleString('de-CH')}</p>
-                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mCogs).toLocaleString('de-CH')} ({cogsQuote !== null ? `${cogsQuote.toFixed(1)} %` : '—'})</p>
-                        {dCogsChf !== null && (
-                          <p className={`text-[11px] font-medium ${dCogsChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                            {'\u0394 '}{dCogsChf > 0 ? '+' : ''}{Math.round(dCogsChf).toLocaleString('de-CH')}{dCogsPct !== null ? ` (${dCogsChf > 0 ? '+' : ''}${dCogsPct.toFixed(1)}%)` : ''}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {mPers > 0 && reqPers !== null && (
-                      <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
-                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">
-                          Personalkosten Ziel <span className="font-normal normal-case">{persFixed ? '(CHF fix)' : '(gleiche Quote)'}</span>
-                        </p>
-                        <p className="text-base font-bold text-blue-800 dark:text-blue-300">
-                          {Math.round(reqPers).toLocaleString('de-CH')}
-                          {persZielQuote !== null && <span className="text-sm font-semibold text-blue-600 dark:text-blue-400 ml-1.5">({persZielQuote.toFixed(1)} %)</span>}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')} ({persQuote !== null ? `${persQuote.toFixed(1)} %` : '—'})</p>
-                        {dPersChf !== null && (
-                          <p className={`text-[11px] font-medium ${dPersChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                            {'\u0394 '}{dPersChf > 0 ? '+' : ''}{Math.round(dPersChf).toLocaleString('de-CH')}{dPersPct !== null ? ` (${dPersChf > 0 ? '+' : ''}${dPersPct.toFixed(1)}%)` : ''}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>)}
-            </div>
-          );
-        })()}
-
         {/* Legende */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
           <p className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
@@ -4127,6 +4361,7 @@ const PLViewPage = () => {
           year={year}
           onClose={() => setBplDrilldown(null)}
           onSaved={() => { setBplDrilldown(null); setRefreshKey(k => k + 1); }}
+          composition={bplDrilldownComposition}
         />
       )}
 

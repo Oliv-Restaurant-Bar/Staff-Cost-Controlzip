@@ -33,7 +33,6 @@ import { de } from 'date-fns/locale';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
 import ReservationenImportPage from './ReservationenImportPage';
 import GaesteImportPage from './GaesteImportPage';
@@ -113,7 +112,6 @@ function LastImportCard({
 
 export default function ForatableImportPage() {
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { tenantId } = useTenant();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -151,8 +149,7 @@ export default function ForatableImportPage() {
     if (tab === 'verlauf') { loadHistory(); refreshLatest(); }
   }, [tab, loadHistory, refreshLatest]);
 
-  // usePermissions().isAdmin schliesst Gäste ein — daher hier explizit ausschliessen.
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const setTab = (t: ImportTab) => {
     const next = new URLSearchParams(searchParams);

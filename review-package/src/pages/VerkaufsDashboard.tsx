@@ -54,6 +54,7 @@ import {
   type ProductCostEntry,
 } from '@/lib/produkte-store';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 
 const MONTH_NAMES = [
@@ -243,6 +244,7 @@ function KpiCard({
 
 export default function VerkaufsDashboard() {
   const { showNetRevenue } = useRevenueDisplay();
+  const { tenantId } = useTenant();
   const now = new Date();
   const [loading,         setLoading]         = useState(true);
   const [dbError,         setDbError]         = useState<string | null>(null);
@@ -279,8 +281,8 @@ export default function VerkaufsDashboard() {
     setDbError(null);
     try {
       const [rows, altCount, wMap, catMap] = await Promise.all([
-        loadProductSalesRows(),
-        loadAltbestandCount(),
+        loadProductSalesRows(tenantId),
+        loadAltbestandCount(tenantId),
         loadProductWesMap(),
         loadProductCategoryMap(),
       ]);
@@ -301,7 +303,7 @@ export default function VerkaufsDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tenantId]);
 
   // Erstladen + Reaktion auf neuen Import aus SalesUpload
   useEffect(() => {

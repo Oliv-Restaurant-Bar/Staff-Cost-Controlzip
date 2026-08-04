@@ -29,6 +29,8 @@ import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 import { UserManagementCard } from '@/components/UserManagementCard';
 import { ZielwerteCard } from '@/components/ZielwerteCard';
 import { SocialCostRatesCard } from '@/components/SocialCostRatesCard';
+import { MwstRatesCard } from '@/components/MwstRatesCard';
+import { ZielPersonalquoteCard } from '@/components/ZielPersonalquoteCard';
 
 const DEFAULT_PASSWORD = 'admin123';
 
@@ -1533,6 +1535,12 @@ const Settings = () => {
 
           {/* Zentrale AG-Sozialkostensätze */}
           <SocialCostRatesCard />
+
+          {/* Konfigurierbare MwSt-Sätze (Umsatz netto: dine-in / Take Away) */}
+          <MwstRatesCard />
+
+          {/* Zentrale Ziel-Personalquote (skaliert das PK-Budget mit dem Umsatz) */}
+          <ZielPersonalquoteCard />
 
           {/* Import Settings */}
           <Card className="mt-6">

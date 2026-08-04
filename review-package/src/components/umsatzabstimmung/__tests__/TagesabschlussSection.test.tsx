@@ -16,7 +16,7 @@ import { emptyTagesabschlussBlob } from '@/lib/tagesabschluss';
 import { emptyAdyenBlob } from '@/lib/adyen-abstimmung';
 
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ isAdmin: true, isGuest: false, isBeaulieuManager: false }),
+  usePermissions: () => ({ isAdmin: true, isBeaulieuManager: false }),
 }));
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { email: 'admin@oliv.ch' } }),
@@ -51,6 +51,8 @@ vi.mock('../TagesabschlussOverrideDialog', () => ({ TagesabschlussOverrideDialog
 vi.mock('../TagesabschlussVoucherDialog', () => ({ TagesabschlussVoucherDialog: () => null }));
 
 import { TagesabschlussSection } from '../TagesabschlussSection';
+import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
+import { exportTagesabschlussExcel } from '@/lib/tagesabschluss-excel-export';
 
 afterEach(cleanup);
 
@@ -70,7 +72,9 @@ describe('TagesabschlussSection — kompakte Toolbar', () => {
   it('zeigt Monatsnav mit „Heute", Exporte und „+ Tagesabschluss"; Beschreibung nur als Tooltip', async () => {
     await renderSection();
     expect(screen.getByTestId('ta-heute')).toBeInTheDocument();
-    expect(screen.getByTestId('ta-excel-export')).toBeInTheDocument();
+    expect(screen.getByTestId('ta-export')).toBeInTheDocument();
+    // Leerer Monat (Mock ohne Tagesdaten) → Export korrekt deaktiviert.
+    expect(screen.getByTestId('ta-export')).toBeDisabled();
     expect(screen.getByTestId('ta-open-export')).toBeInTheDocument();
     expect(screen.getByTestId('ta-add-abschluss')).toBeInTheDocument();
     // Langer Erklärtext steht NICHT mehr im Fliesstext, nur im Info-Tooltip.
@@ -126,6 +130,39 @@ describe('TagesabschlussSection — KPI-Chips + „Weitere Kennzahlen"', () => {
 
     fireEvent.click(screen.getByTestId('ta-kpi-more-toggle'));
     expect(screen.queryByTestId('ta-kpi-more')).toBeNull();
+  });
+});
+
+describe('TagesabschlussSection — Export aktiv bei vorhandenen Tagesdaten', () => {
+  it('aktiviert «Exportieren» und startet über den Excel-Eintrag den BESTEHENDEN Handler', async () => {
+    // Gemockter Datenmonat: EIN Z-Bericht-Tag im aktuellen Monat → Zeilenstatus ≠ 'fehlt'.
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const date = `${now.getFullYear()}-${mm}-01`;
+    vi.mocked(loadGnDayClosingsForMonth).mockResolvedValueOnce({
+      [date]: {
+        date, grossRevenue: 1000, netRevenue: 920, tip: null,
+        taxes: [], payments: [], accountingLines: [], paymentAccounts: [],
+      },
+    });
+    await renderSection();
+
+    const btn = screen.getByTestId('ta-export');
+    expect(btn).not.toBeDisabled();
+
+    // Dropdown öffnen (Radix reagiert auf pointerdown) und Excel-Eintrag wählen.
+    fireEvent.pointerDown(btn);
+    fireEvent.click(btn);
+    const item = await screen.findByTestId('export-action-excel');
+    fireEvent.click(item);
+
+    // Bestehender Handler mit denselben Argumenten wie zuvor: (monthData, monthKey).
+    expect(exportTagesabschlussExcel).toHaveBeenCalledTimes(1);
+    const [monthArg, keyArg] = vi.mocked(exportTagesabschlussExcel).mock.calls[0] as [
+      { rows: Array<{ status: string }> }, string,
+    ];
+    expect(keyArg).toBe(`${now.getFullYear()}-${mm}`);
+    expect(monthArg.rows.some(r => r.status !== 'fehlt')).toBe(true);
   });
 });
 

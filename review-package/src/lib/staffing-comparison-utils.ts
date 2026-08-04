@@ -20,15 +20,19 @@
  * Hinweis: Tage mit `isAdditionalCostPlan` zählen als geplant (es sind
  * eingeplante Personen); Abwesenheiten zählen NICHT.
  *
- * ── Zählregel „geplant" (bewusst, dokumentiert) ───────────────────────────────
- * Der Dienstplan speichert KEINE Position je Schicht. Daher zählt für eine
- * Bedarfs-Schicht ein AKTIVER Mitarbeiter genau dann, wenn
- *   1) seine HAUPTPOSITION (`primaryStation`, auf Slug aufgelöst) === positionKey
- *      der Schicht  (nur Hauptposition → kein Doppelzählen über Zusatz-
- *      qualifikationen), UND
- *   2) er an dem Tag mindestens eine PRODUKTIVE (nicht-Abwesenheits-) Schicht
- *      hat, die sich mit dem Zeitraum der Bedarfs-Schicht ÜBERSCHNEIDET.
- * Jeder Mitarbeiter wird je Bedarfs-Schicht höchstens einmal gezählt.
+ * ── Zählregel „geplant" (EINDEUTIGE ZUORDNUNG, bewusst, dokumentiert) ─────────
+ * Der Dienstplan speichert KEINE Position je Schicht. Jeder EINSATZ (Slot)
+ * einer Person wird daher genau EINEM Soll-Block zugeordnet
+ * (assignPlannedToShifts) — getrennte Schichten (Früh+Spät) dürfen zwei Blöcke
+ * füllen, derselbe Einsatz zählt aber nie doppelt:
+ *   1) Kandidaten-Blöcke = Blöcke, deren positionKey die Person als HAUPT- oder
+ *      ZWEITposition abdeckt (inkl. Legacy-Aliasse, z.B. bar ↔ BAR Buffet) bzw.
+ *      deren dynamische Regel (CdS / Kalte Küche) sie heute zuweist, UND deren
+ *      Zeitraum sich mit einem produktiven Slot ÜBERSCHNEIDET.
+ *   2) Gewählt wird der Block mit der GRÖSSTEN Zeitüberlappung; bei Gleichstand
+ *      gewinnt Regel > Haupt > Zweit > Alias, danach der frühere Block.
+ * KEINE Mehrfachzählung: je Block zählt jede Person höchstens einmal.
+ * Abwesenheiten zählen nicht; `isAdditionalCostPlan`-Tage zählen als geplant.
  */
 
 import type { Department, Employee, DaySchedule } from '@/types/personnel';
@@ -40,6 +44,7 @@ import {
   activePositions,
   resolvePositionKey,
   positionDisplayName,
+  employeeCoverableKeys,
 } from '@/lib/position-utils';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
@@ -68,6 +73,11 @@ export interface PlannedEmployeeDay {
   department: Department;
   /** Hauptposition als Slug (bereits via resolvePositionKey aufgelöst) oder null. */
   positionKey: string | null;
+  /**
+   * Alle Positionen, die die Person abdecken kann (Haupt + Zweit, Slugs).
+   * Optional (Alt-Aufrufer); fehlt es, zählt nur die Hauptposition.
+   */
+  trainedKeys?: string[];
   /** Produktive Slots des Tages (Abwesenheiten bereits ausgeschlossen). */
   slots: PlannedSlot[];
 }
@@ -83,6 +93,8 @@ export interface ShiftComparisonRow {
   /** geplant − benötigt. */
   diff: number;
   status: ComparisonStatus;
+  /** Die diesem Block eindeutig zugeordneten Personen (Drill-down). */
+  assigned: AssignedPerson[];
 }
 
 export interface PositionComparison {
@@ -189,6 +201,113 @@ export function slotOverlapsShift(
   return Math.max(aS, bS) < Math.min(aE, bE);
 }
 
+/** Überlappung Slot↔Schicht in Minuten (0 bei ungültigen/Null-Zeiten). */
+export function overlapMinutes(slot: PlannedSlot, shiftStart: string, shiftEnd: string): number {
+  const aS = timeToMinutes(slot.start);
+  const aE = timeToMinutes(slot.end);
+  const bS = timeToMinutes(shiftStart);
+  const bE = timeToMinutes(shiftEnd);
+  if ([aS, aE, bS, bE].some((v) => Number.isNaN(v))) return 0;
+  if (aE <= aS || bE <= bS) return 0;
+  return Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
+}
+
+/**
+ * Legacy-Aliasse zwischen Positions-Slugs: alte Stations-Werte des Plans sollen
+ * auf die heutigen Soll-Positionen zählen (z.B. Hauptposition `bar` ↔ Bedarf
+ * auf «BAR Buffet» bar_buffet_springer bzw. Bar oben/unten) — statt falscher
+ * «Ist 0». Symmetrisch gepflegt; greift nur als NIEDRIGSTE Prioritätsstufe.
+ */
+export const LEGACY_POSITION_ALIASES: Record<string, string[]> = {
+  bar: ['bar_buffet_springer', 'bar_oben', 'bar_unten', 'corner_bar'],
+  bar_buffet_springer: ['bar'],
+  bar_oben: ['bar'],
+  bar_unten: ['bar'],
+  corner_bar: ['bar'],
+  springer: ['bar_buffet_springer'],
+  abwasch_service: ['abwasch'],
+};
+
+/** Eine einem Soll-Block eindeutig zugeordnete Person (Drill-down-Grundlage). */
+export interface AssignedPerson {
+  id: string;
+  /** Produktive Slots des Tages (Anzeige «Name + Schichtzeit»). */
+  slots: PlannedSlot[];
+  /** Wie kam die Zuordnung zustande? */
+  via: 'regel' | 'haupt' | 'zweit' | 'alias';
+}
+
+/** Prioritätsstufen der Zuordnung (kleiner = stärker). */
+const VIA_RANK: Record<AssignedPerson['via'], number> = { regel: 0, haupt: 1, zweit: 2, alias: 3 };
+
+/**
+ * Ordnet jeden Einsatz (Slot) genau EINEM Soll-Block zu (siehe Zählregel oben).
+ * `preferredKeysById` trägt die dynamischen Regeln hinein (z.B. aktiver CdS →
+ * ['chef_de_service'], Kalte-Küche-Person → ['kalte_kueche','sushi']) — diese
+ * Keys haben Vorrang vor Haupt-/Zweitposition.
+ * Rückgabe: Map Block-Index (Position im `shifts`-Array) → zugeordnete Personen.
+ */
+export function assignPlannedToShifts(
+  shifts: Pick<StaffingRequirement, 'positionKey' | 'shiftStart' | 'shiftEnd'>[],
+  planned: PlannedEmployeeDay[],
+  preferredKeysById?: Record<string, string[]>,
+): Map<number, AssignedPerson[]> {
+  const out = new Map<number, AssignedPerson[]>();
+  for (const person of planned) {
+    // Kandidaten-Keys mit Prioritätsstufe aufbauen (erste Nennung gewinnt).
+    const tier = new Map<string, AssignedPerson['via']>();
+    for (const k of preferredKeysById?.[person.id] ?? []) {
+      if (!tier.has(k)) tier.set(k, 'regel');
+    }
+    if (person.positionKey && !tier.has(person.positionKey)) tier.set(person.positionKey, 'haupt');
+    for (const k of person.trainedKeys ?? []) {
+      if (!tier.has(k)) tier.set(k, 'zweit');
+    }
+    for (const base of [...tier.keys()]) {
+      for (const alias of LEGACY_POSITION_ALIASES[base] ?? []) {
+        if (!tier.has(alias)) tier.set(alias, 'alias');
+      }
+    }
+    if (tier.size === 0) continue;
+
+    // Pro EINSATZ (Slot) genau ein Block: getrennte Schichten derselben Person
+    // (Früh+Spät) dürfen verschiedene Blöcke füllen; derselbe Einsatz zählt
+    // aber nie doppelt. Innerhalb eines Blocks wird die Person dedupliziert.
+    const byBlock = new Map<number, { slots: PlannedSlot[]; via: AssignedPerson['via'] }>();
+    for (const slot of person.slots) {
+      let best: { idx: number; overlap: number; via: AssignedPerson['via'] } | null = null;
+      for (let i = 0; i < shifts.length; i++) {
+        const s = shifts[i];
+        const via = tier.get(s.positionKey);
+        if (!via) continue;
+        const overlap = overlapMinutes(slot, s.shiftStart, s.shiftEnd);
+        if (overlap <= 0) continue;
+        if (
+          !best ||
+          overlap > best.overlap ||
+          (overlap === best.overlap && VIA_RANK[via] < VIA_RANK[best.via])
+        ) {
+          best = { idx: i, overlap, via };
+        }
+      }
+      if (!best) continue;
+      const entry = byBlock.get(best.idx);
+      if (entry) {
+        entry.slots.push(slot);
+        if (VIA_RANK[best.via] < VIA_RANK[entry.via]) entry.via = best.via;
+      } else {
+        byBlock.set(best.idx, { slots: [slot], via: best.via });
+      }
+    }
+    for (const [idx, entry] of byBlock) {
+      const arr = out.get(idx) ?? [];
+      arr.push({ id: person.id, slots: entry.slots, via: entry.via });
+      out.set(idx, arr);
+    }
+  }
+  return out;
+}
+
 /** IDs der eingeplanten Mitarbeitenden, die eine Bedarfs-Schicht matchen (siehe Zählregel). */
 export function plannedIdsForShift(
   planned: PlannedEmployeeDay[],
@@ -242,10 +361,18 @@ export function buildPlannedEmployees(
       slots.push({ start: ds.spät.start, end: ds.spät.end });
     }
     if (slots.length === 0) continue;
+    const trainedKeys = [
+      ...new Set(
+        employeeCoverableKeys(emp)
+          .map((k) => resolvePositionKey(positions, k) ?? k)
+          .filter((k): k is string => !!k),
+      ),
+    ];
     out.push({
       id: emp.id,
       department: emp.department,
       positionKey: resolvePositionKey(positions, emp.primaryStation) ?? null,
+      trainedKeys,
       slots,
     });
   }
@@ -269,12 +396,19 @@ export function computeStaffingComparison(args: {
   season: StaffingSeason;
   weekday: number;
   departments?: Department[];
+  /** Dynamische Regel-Zuweisungen (Person-ID → bevorzugte Positions-Keys). */
+  preferredKeysById?: Record<string, string[]>;
 }): StaffingComparisonResult {
   const { positions, requirements, plannedEmployees, season, weekday } = args;
   const deptFilter =
     args.departments && args.departments.length ? args.departments : undefined;
 
   const scopeShifts = shiftsForScope(requirements, season, weekday);
+
+  // Eindeutige Zuordnung: jede Person zählt in genau EINEM Block.
+  const assignment = assignPlannedToShifts(scopeShifts, plannedEmployees, args.preferredKeysById);
+  const assignedByShift = new Map<StaffingRequirement, AssignedPerson[]>();
+  scopeShifts.forEach((s, i) => assignedByShift.set(s, assignment.get(i) ?? []));
 
   const byKey = new Map<string, StaffingRequirement[]>();
   for (const s of scopeShifts) {
@@ -285,12 +419,8 @@ export function computeStaffingComparison(args: {
 
   const rows: ShiftComparisonRow[] = [];
   const toRow = (req: StaffingRequirement): ShiftComparisonRow => {
-    const planned = countPlanned(
-      plannedEmployees,
-      req.positionKey,
-      req.shiftStart,
-      req.shiftEnd,
-    );
+    const assigned = assignedByShift.get(req) ?? [];
+    const planned = assigned.length;
     const diff = planned - req.requiredCount;
     return {
       requirementId: req.id,
@@ -301,6 +431,7 @@ export function computeStaffingComparison(args: {
       planned,
       diff,
       status: comparisonStatus(req.requiredCount, planned),
+      assigned,
     };
   };
 
@@ -429,21 +560,16 @@ export function computeDayStaffingSummary(args: {
   season: StaffingSeason;
   weekday: number;
   departments?: Department[];
+  /** Dynamische Regel-Zuweisungen (Person-ID → bevorzugte Positions-Keys). */
+  preferredKeysById?: Record<string, string[]>;
 }): DayStaffingSummaryResult {
   const comparison = computeStaffingComparison(args);
 
-  // Alle MA-IDs, die irgendeine Bedarfs-Schicht des Tages matchen (über ALLE
+  // Alle MA-IDs, die einem Bedarfs-Block zugeordnet wurden (über ALLE
   // gerenderten Zeilen inkl. Orphans → kein falscher „ohne Bedarf"-Hinweis).
   const matchedIds = new Set<string>();
   for (const row of comparison.rows) {
-    for (const id of plannedIdsForShift(
-      args.plannedEmployees,
-      row.positionKey,
-      row.shiftStart,
-      row.shiftEnd,
-    )) {
-      matchedIds.add(id);
-    }
+    for (const a of row.assigned) matchedIds.add(a.id);
   }
 
   const departments: DepartmentDaySummary[] = comparison.groups.map((g) => {
@@ -649,7 +775,7 @@ export interface StaffingTooltipLine {
 }
 
 export const DEFAULT_TOOLTIP_BASIS =
-  'Hauptposition mit Zeitüberschneidung; Abwesenheiten zählen nicht.';
+  'Jeder Einsatz zählt genau einmal — im Block der passenden Position (Haupt/Zweit/Regel) mit der grössten Zeitüberlappung; Abwesenheiten zählen nicht.';
 
 function formatChf(n: number): string {
   return `CHF ${Math.round(n)}`;

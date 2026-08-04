@@ -15,6 +15,13 @@ export interface AuthContextType {
   session: Session | null;
   loading: boolean;
   role: UserRole;
+  /**
+   * true sobald die Rolle für die aktuelle Session verbindlich feststeht
+   * (aus persistiertem localStorage-Wert ODER nach loadUserRole).
+   * Solange false UND ein User eingeloggt ist, dürfen keine rollen-gegateten
+   * Routen gerendert werden (sonst kurzzeitig falsche Rechte).
+   */
+  roleResolved: boolean;
   isAdmin: boolean;
   isServiceManager: boolean;
   isKuecheManager: boolean;
@@ -34,11 +41,29 @@ export interface AuthContextType {
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const VALID_ROLES: UserRole[] = [
+  'admin', 'service_manager', 'kueche_manager', 'beaulieu_manager', 'beaulieu_viewer',
+];
+
+/** Liest die zuletzt bestätigte Rolle aus localStorage (validiert), sonst null. */
+const readPersistedRole = (): UserRole | null => {
+  try {
+    const r = localStorage.getItem('user_role');
+    return r && (VALID_ROLES as string[]).includes(r) ? (r as UserRole) : null;
+  } catch {
+    return null;
+  }
+};
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser]             = useState<User | null>(null);
   const [session, setSession]       = useState<Session | null>(null);
   const [loading, setLoading]       = useState(true);
-  const [role, setRole]             = useState<UserRole>('admin');
+  // Initial-Rolle: persistierte Rolle des letzten Logins (Refresh-Fall),
+  // sonst restriktiver Default — NIE 'admin' (sonst sehen eingeschränkte
+  // Logins beim Boot kurz Admin-Navigation/-Daten).
+  const [role, setRole]             = useState<UserRole>(() => readPersistedRole() ?? 'kueche_manager');
+  const [roleResolved, setRoleResolved] = useState<boolean>(() => readPersistedRole() !== null);
   const [sessionVersion, setSessionVersion] = useState(0);
 
   const bootDoneRef      = useRef(false);
@@ -54,6 +79,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const applyRole = (r: UserRole) => {
     setRole(r);
+    setRoleResolved(true);
     localStorage.setItem('user_role', r);
     // [AUTH] debug logs for all roles
     console.log(`[AUTH] user role: ${r}`);
@@ -99,16 +125,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch { /* fall through */ }
 
     if (email && EMAIL_ROLE_MAP[email.toLowerCase()]) {
+      // Read-only Bootstrap-Fallback: NIE user_profiles automatisch schreiben
+      // (produktive Profile dürfen durch blosses Einloggen nicht verändert werden).
       const r = EMAIL_ROLE_MAP[email.toLowerCase()];
       applyRole(r);
       logBeaulieuEmail(email, r);
-      console.log('[AUTH] loadUserRole: resolved via email map', r);
-      (supabase as any).from('user_profiles').upsert({ id: userId, role: r }, { onConflict: 'id' })
-        .then(() => {}).catch(() => {});
+      console.log('[AUTH] loadUserRole: resolved via email map (read-only fallback)', r);
       return;
     }
 
-    console.error('[AUTH] loadUserRole: all paths failed — defaulting to kueche_manager');
+    console.warn('[AUTH] loadUserRole: Rolle konnte nicht geladen werden (RPC, user_profiles und E-Mail-Fallback ohne Treffer) — restriktiver Default kueche_manager');
     applyRole('kueche_manager');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -128,7 +154,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   //   2. Fire loadUserRole in background → role arrives a moment later
   //
   // This is safe because:
-  //   - The role default ('admin') shows the most content; downgrade is harmless.
+  //   - The initial role is the persisted role of the last login (refresh case)
+  //     or the restrictive default 'kueche_manager' — never 'admin'.
+  //   - While a user session exists and roleResolved=false, AppContent shows a
+  //     spinner instead of role-gated routes (no wrong-permission flash).
   //   - sessionVersion=1 triggers SchedulePlanner to fetch with a valid JWT.
   //   - Role update re-renders the nav but doesn't re-fetch data.
   const completeBoot = useCallback((sess: Session | null, source: string) => {
@@ -279,6 +308,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setSession(null);
     setUser(null);
     setRole('kueche_manager');
+    // Nächster Login muss die Rolle frisch auflösen — ein anderer Benutzer
+    // darf nie die Rolle des vorherigen Benutzers erben.
+    setRoleResolved(false);
     setLoading(false);
     localStorage.removeItem('user_role');
     bootDoneRef.current = false;
@@ -329,6 +361,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       session,
       loading,
       role,
+      roleResolved,
       sessionVersion,
       isAdmin:            role === 'admin',
       isServiceManager:   role === 'service_manager',

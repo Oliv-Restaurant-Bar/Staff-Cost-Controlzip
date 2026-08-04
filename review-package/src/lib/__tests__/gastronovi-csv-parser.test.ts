@@ -18,6 +18,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   matchAnzahlUmsatz,
+  headerToIsoDate,
+  saleDateRange,
   type ParseResult,
   type ParsedWideRow,
 } from '../gastronovi-csv-parser';
@@ -242,5 +244,54 @@ describe('matchAnzahlUmsatz – unmatched products (unchanged behaviour)', () =>
     const res = match([], [row('NurUmsatz', { '01.06.': 99 })], ['01.06.']);
     expect(res.rows).toHaveLength(0);
     expect(res.unmatchedProducts.some(p => p.includes('NurUmsatz'))).toBe(true);
+  });
+});
+
+// ─── Jahr-Datierung der «TT.MM.»-Spalten ──────────────────────────────────────
+
+describe('headerToIsoDate — gewähltes Jahr fliesst in die Datierung ein', () => {
+  it('datiert «01.03.» mit dem übergebenen Jahr', () => {
+    expect(headerToIsoDate('01.03.', 2025)).toBe('2025-03-01');
+    expect(headerToIsoDate('01.03.', 2023)).toBe('2023-03-01');
+  });
+  it('akzeptiert Header ohne abschliessenden Punkt', () => {
+    expect(headerToIsoDate('9.7', 2024)).toBe('2024-07-09');
+  });
+  it('Nicht-Datums-Header → null', () => {
+    expect(headerToIsoDate('Bezeichnung', 2025)).toBeNull();
+    expect(headerToIsoDate('', 2025)).toBeNull();
+  });
+  it('dasselbe Datum ergibt unterschiedliche ISO-Daten je Jahr (kein globaler Zustand)', () => {
+    expect(headerToIsoDate('15.06.', 2024)).not.toBe(headerToIsoDate('15.06.', 2025));
+  });
+});
+
+describe('saleDateRange — datierter Zeitraum (Vorschau)', () => {
+  it('ermittelt min/max über datierte Zeilen', () => {
+    const rows = [
+      { sale_date: '2025-03-15' },
+      { sale_date: '2025-03-01' },
+      { sale_date: '2025-03-31' },
+    ];
+    expect(saleDateRange(rows)).toEqual({ from: '2025-03-01', to: '2025-03-31' });
+  });
+  it('ignoriert leere/ungültige Daten', () => {
+    const rows = [
+      { sale_date: '' },
+      { sale_date: null },
+      { sale_date: 'kaputt' },
+      { sale_date: '2025-07-10' },
+    ];
+    expect(saleDateRange(rows)).toEqual({ from: '2025-07-10', to: '2025-07-10' });
+  });
+  it('leere Eingabe → { from: null, to: null }', () => {
+    expect(saleDateRange([])).toEqual({ from: null, to: null });
+  });
+  it('folgt dem gewählten Jahr (Datierung via headerToIsoDate)', () => {
+    const headers = ['01.03.', '28.02.', '15.03.'];
+    const rows2025 = headers.map(h => ({ sale_date: headerToIsoDate(h, 2025)! }));
+    const rows2023 = headers.map(h => ({ sale_date: headerToIsoDate(h, 2023)! }));
+    expect(saleDateRange(rows2025)).toEqual({ from: '2025-02-28', to: '2025-03-15' });
+    expect(saleDateRange(rows2023)).toEqual({ from: '2023-02-28', to: '2023-03-15' });
   });
 });

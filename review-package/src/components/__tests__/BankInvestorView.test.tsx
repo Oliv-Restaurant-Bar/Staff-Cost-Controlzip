@@ -73,8 +73,7 @@ describe('BankInvestorView', () => {
     expect(screen.getByTestId('bank-base-year').textContent).toContain('2024');
     expect(screen.getByTestId('bank-current-year').textContent).toContain('2025');
     expect(screen.getByTestId('bank-same-month').getAttribute('data-state')).toBe('checked');
-    expect(screen.getByTestId('bank-export-pdf')).toBeTruthy();
-    expect(screen.getByTestId('bank-export-excel')).toBeTruthy();
+    expect(screen.getByTestId('bank-export')).toBeTruthy();
   });
 
   it('zeigt KPIs, alle Sektionen, Zwischentotale, Positionstabelle, Kostenstruktur und Kernaussagen', () => {

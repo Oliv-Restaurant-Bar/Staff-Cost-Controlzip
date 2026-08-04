@@ -19,6 +19,7 @@ import {
   Info, Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useTenant } from '@/contexts/TenantContext';
 import { ResetProductMonthDialog } from '@/components/ResetProductMonthDialog';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,11 +27,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  parseWideFile, matchAnzahlUmsatz, generateImportBatch,
+  parseWideFile, matchAnzahlUmsatz, generateImportBatch, saleDateRange,
   type NormalizedSaleRow, type MatchResult, type ParseResult,
 } from '@/lib/gastronovi-csv-parser';
-import { insertProductSales, deleteProductSalesForPeriod, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
+import { insertProductSales, deleteProductSalesForPeriod, computeDeleteScope, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +50,12 @@ interface SectionResult {
 }
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
+
+// Auswahl-Jahre für den Import: aktuelles Jahr und die 3 Vorjahre (aktuell −0..−3).
+const YEAR_OPTIONS: number[] = (() => {
+  const cur = new Date().getFullYear();
+  return [cur, cur - 1, cur - 2, cur - 3];
+})();
 
 function fmtChf(v: number | null | undefined): string {
   if (v == null) return '–';
@@ -337,6 +345,7 @@ function PreviewCard({
 
 export default function SalesUpload() {
   const { isAdmin, user } = useAuth();
+  const { tenantId } = useTenant();
   const userEmail = user?.email ?? 'unbekannt';
 
   // Datei-Zustand
@@ -363,9 +372,9 @@ export default function SalesUpload() {
 
   const loadBatches = useCallback(async () => {
     setBatchLoading(true);
-    setBatches(await fetchImportBatches());
+    setBatches(await fetchImportBatches(tenantId));
     setBatchLoading(false);
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { loadBatches(); }, [loadBatches]);
 
@@ -449,22 +458,14 @@ export default function SalesUpload() {
     if (allRows.length === 0) return;
     setStep('importing');
 
-    // ── Schritt A: Bestehende Daten für dieselben source+Monate löschen ──────
-    // Verhindert Duplikate bei Re-Import (naives Insert würde anhängen).
-    // Gruppenbildung: { source → Set<'YYYY-MM'> }
-    const sourceMonthMap = new Map<string, Set<string>>();
-    for (const row of allRows) {
-      const src = row.source ?? 'food_csv_export';
-      if (!sourceMonthMap.has(src)) sourceMonthMap.set(src, new Set());
-      sourceMonthMap.get(src)!.add(row.sale_date.slice(0, 7));
-    }
-    const deletions = Array.from(sourceMonthMap.entries()).map(([src, months]) => ({
-      source: src,
-      months: Array.from(months),
-    }));
+    // ── Schritt A: Bestehende Daten TAG-GENAU ersetzen ──────────────────────
+    // Nur die tatsächlich in der Datei enthaltenen Tage (pro Mandant + source)
+    // werden gelöscht; Tage/Produkte ausserhalb der Datei bleiben unverändert.
+    // Re-Import derselben Datei ⇒ identische Summen (idempotent).
+    const scope = computeDeleteScope(allRows);
 
-    console.log('[SalesUpload] Delete-before-insert:', deletions);
-    const { deleted, error: delErr } = await deleteProductSalesForPeriod(deletions);
+    console.log('[SalesUpload] Delete-before-insert (tag-genau, tenant=' + tenantId + '):', scope);
+    const { deleted, error: delErr } = await deleteProductSalesForPeriod(tenantId, scope);
     if (delErr) {
       setParseError(`Fehler beim Löschen alter Daten: ${delErr}`);
       setStep('error');
@@ -473,8 +474,8 @@ export default function SalesUpload() {
     setDeletedCount(deleted);
     console.log(`[SalesUpload] ${deleted} alte Zeilen gelöscht vor Re-Import`);
 
-    // ── Schritt B: Neue Daten einfügen ────────────────────────────────────────
-    const { count, error } = await insertProductSales(allRows);
+    // ── Schritt B: Neue Daten einfügen (mit aktivem Mandant) ──────────────────
+    const { count, error } = await insertProductSales(tenantId, allRows);
     if (error) {
       setParseError(error);
       setStep('error');
@@ -507,6 +508,8 @@ export default function SalesUpload() {
   ];
   const totalQty = allPreviewRows.reduce((s, r) => s + r.quantity, 0);
   const totalRev = allPreviewRows.reduce((s, r) => s + r.revenue, 0);
+  // Tatsächlich datierter Zeitraum (min/max) der Vorschau — belegt das Jahr sichtbar.
+  const previewRange = saleDateRange(allPreviewRows);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -588,16 +591,19 @@ export default function SalesUpload() {
                   <Label className="text-xs flex items-center gap-1">
                     Jahr <span className="text-red-500">*</span>
                   </Label>
-                  <Input
-                    value={year}
-                    onChange={e => setYear(e.target.value)}
-                    placeholder="z.B. 2026"
-                    className={`h-8 text-sm ${!yearValid && year ? 'border-red-400' : ''}`}
-                    maxLength={4}
-                  />
-                  {!yearValid && year && (
-                    <p className="text-[10px] text-red-500">Bitte gültiges Jahr eingeben (z.B. 2026)</p>
-                  )}
+                  <Select value={year} onValueChange={setYear}>
+                    <SelectTrigger className="h-8 w-32 text-sm" data-testid="select-import-year">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {YEAR_OPTIONS.map(y => (
+                        <SelectItem key={y} value={String(y)} className="text-sm">{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground">
+                    Die CSV-Tagesspalten «TT.MM.» tragen kein Jahr — sie werden mit dem gewählten Jahr datiert.
+                  </p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Quelle (optional)</Label>
@@ -720,8 +726,22 @@ export default function SalesUpload() {
             <div className="flex gap-4 text-sm text-muted-foreground">
               <span>Absatz: <strong>{fmtNum(totalQty, 0)}</strong></span>
               <span>Umsatz: <strong>{fmtChf(totalRev)}</strong></span>
-              <span>Jahr: <strong>{year}</strong></span>
             </div>
+          </div>
+
+          {/* Jahr-Bestätigung: gewähltes Jahr + tatsächlich datierter Zeitraum. */}
+          <div
+            className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/15 px-4 py-2.5 flex items-start gap-2"
+            data-testid="preview-import-year"
+          >
+            <Info className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+              <strong>Import als Jahr {year}</strong> — die Tagesspalten «TT.MM.» werden mit diesem Jahr datiert.
+              {previewRange.from && previewRange.to && (
+                <> Zeitraum: <strong>{fmtDate(previewRange.from)}</strong> – <strong>{fmtDate(previewRange.to)}</strong>.</>
+              )}
+              {' '}Bitte prüfen, dass das Jahr stimmt.
+            </p>
           </div>
 
           {/* Re-Import-Hinweis */}

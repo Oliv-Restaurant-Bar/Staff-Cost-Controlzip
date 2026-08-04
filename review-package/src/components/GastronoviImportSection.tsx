@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { parseGastronoviExcel, GastronoviDayResult } from '@/lib/revenue-parser';
+import { unlesbareWerteMeldung, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { DailyBudget } from '@/types/personnel';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -69,7 +70,7 @@ function saveBudgets(b: Record<string, DailyBudget>, storageKey: string) {
 
 // ─── Manual entry sub-component ──────────────────────────────────────────────
 
-function ManualEntryCard({ storageKey }: { storageKey: string }) {
+export function ManualEntryCard({ storageKey, tenantId }: { storageKey: string; tenantId?: string }) {
   const [date, setDate]         = useState(todayIso());
   const [target, setTarget]     = useState<ImportTarget>('actual');
   const [total, setTotal]       = useState('');
@@ -127,12 +128,50 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
       toast.error('Bitte gültiges Datum und Betrag eingeben');
       return;
     }
-    const foodNum = parseFloat(food.replace(',', '.')) || 0;
-    const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
+    // Leere Eingabe = «keine Angabe» (Key weglassen, bestehende Aufteilung
+    // nie nullen); explizite 0 ist ein echter Wert. Unlesbares → Fehler.
+    const parseSplit = (raw: string): number | undefined => {
+      if (raw.trim() === '') return undefined;
+      const n = parseFloat(raw.replace(',', '.'));
+      return isNaN(n) || n < 0 ? undefined : n;
+    };
+    if ((food.trim() !== '' && parseSplit(food) === undefined) ||
+        (beverage.trim() !== '' && parseSplit(beverage) === undefined)) {
+      toast.error('Food/Beverage: ungültiger Betrag');
+      return;
+    }
+    const foodNum = parseSplit(food);
+    const bevNum  = parseSplit(beverage);
+    const dateLabel = format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de });
 
-    const fields: Record<string, unknown> = target === 'actual'
-      ? { actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum }
-      : { previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
+    if (target === 'previous_year') {
+      // Vorjahres-SSOT: über commitGastronoviDays speichern → schreibt BEIDE Ziele
+      // (dailyBudgets.previousYearRevenue + vj_daily) und prüft die Jahres-Sperre.
+      const { commitGastronoviDays } = await import('@/lib/gastronovi-daily-save');
+      const year = parseInt(date.slice(0, 4), 10);
+      const res = await commitGastronoviDays(
+        storageKey,
+        // 0 = «keine Angabe»: commitGastronoviDays schreibt F/B nur bei > 0.
+        [{ date, total: totalNum, food: foodNum ?? 0, beverage: bevNum ?? 0, takeAway: 0, currency: 'CHF' }],
+        'previous_year',
+        { tenantId, year },
+      );
+      if (res.blocked) {
+        toast.error(`Jahr ${res.lockedYear ?? year} ist gesperrt — Vorjahresumsatz nicht gespeichert. Zum Entsperren: Sektion «Vorjahres-Tagesumsatz» (nur Admin).`);
+        return;
+      }
+      window.dispatchEvent(new Event('supabase-kv-synced'));
+      setSaved(true);
+      toast.success(`Vorjahresumsatz für ${dateLabel} gespeichert (auch nach vj_daily für den Report)`);
+      setTimeout(() => setSaved(false), 3000);
+      return;
+    }
+
+    // Aktuelles Jahr — nur dailyBudgets; F/B-Keys nur bei tatsächlicher Angabe
+    // (undefined wird von safeUpsertDailyBudgets übersprungen, nie genullt).
+    const fields: Record<string, unknown> = { actualRevenue: totalNum };
+    if (foodNum !== undefined) fields.actualFood = foodNum;
+    if (bevNum !== undefined) fields.actualBeverage = bevNum;
 
     // Sicherer Upsert: immer KV-Stand holen, dann mergen — kein Blob-Overwrite
     console.log(`[UMSATZ] safe-upsert: ${date} field=${target} total=${totalNum} key=${storageKey}`);
@@ -140,7 +179,7 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
     console.log(`[UMSATZ] safe-upsert ok: ${storageKey} now has ${Object.keys(merged).length} Tage`);
     window.dispatchEvent(new Event('supabase-kv-synced'));
     setSaved(true);
-    toast.success(`Umsatz für ${format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de })} gespeichert`);
+    toast.success(`Umsatz für ${dateLabel} gespeichert`);
     setTimeout(() => setSaved(false), 3000);
   };
 
@@ -435,8 +474,13 @@ export function GastronoviImportSection() {
     setImported(false);
     setParsing(true);
     try {
-      const parsed = await parseGastronoviExcel(file, parseInt(year, 10));
-      if (!parsed || parsed.length === 0) {
+      // Strikte Zahl-Prüfung: unlesbare Zellen NIE als 0 importieren — blockieren.
+      const unlesbareWerte: UnlesbareZelle[] = [];
+      const parsed = await parseGastronoviExcel(file, parseInt(year, 10), unlesbareWerte);
+      if (unlesbareWerte.length > 0) {
+        setError(unlesbareWerteMeldung(unlesbareWerte));
+        setFileName(null);
+      } else if (!parsed || parsed.length === 0) {
         setError('Keine Tagesdaten erkannt. Bitte prüfe das Dateiformat (Spaltenköpfe "01.01.", "02.01." usw.).');
         setFileName(null);
       } else {
@@ -530,7 +574,15 @@ export function GastronoviImportSection() {
 
       if (existingVal > 0 && !datesToReplace.has(r.date)) continue;
 
-      updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
+      // Food/Beverage NUR bei > 0 schreiben: 0 = Datei ohne Kategorie-Zeilen —
+      // eine bestehende Aufteilung darf ein Import ohne F/B nie nullen
+      // (gleiche Regel wie commitGastronoviDays).
+      updates[r.date] = { [field]: r.total };
+      if (r.food > 0) updates[r.date][foodKey] = r.food;
+      if (r.beverage > 0) updates[r.date][bevKey] = r.beverage;
+      // Take-Away-Anteil (brutto) nur für Ist-Umsätze — Basis der Netto-Berechnung (2.6 % MwSt).
+      // undefined = Datei ohne Take-Away-Zeile → bestehenden Wert nie überschreiben.
+      if (target === 'actual' && r.takeAway !== undefined) updates[r.date].takeawayRevenue = r.takeAway;
       count++;
     }
 

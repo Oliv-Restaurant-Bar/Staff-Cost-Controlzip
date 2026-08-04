@@ -299,6 +299,37 @@ describe('buildBudgetVsIst — richtungsabhängiger Budget-↔-Ist-Vergleich (Bl
       buildBudgetVsIst({ budgetCHF: 100_000, istCHF: 90_000, budgetPct: null, istPct: null }).diffPp,
     ).toBeNull();
   });
+
+  // ── NEUE WAHRHEIT (Vollumstellung Etappe 2) ────────────────────────────────
+  // Der Personalcontrolling-Block A bezieht NUR NOCH Kern-Werte:
+  //   Budget = Ziel-Personalquote × Umsatz-Budget (pkBudget.total)
+  //   Ist    = Hochrechnung (kHr.total, zeitkonsistent — NICHT die volle
+  //            Monatssumme gegen Teilumsatz)
+  //   budgetPct = Ziel-Personalquote (konstant), istPct = Hochrechnungs-PKQ.
+  // Damit gibt es KEINE «volle Kosten ÷ Teilumsatz»-Quote (früher ~64 %) mehr.
+  it('Juli-Wahrheit: Budget 88\u2019750 (35.5 %), Hochrechnung 118\u2019531 → über Budget, richtungs-/zeitkonsistent', () => {
+    const umsatzBudget = 250_000;
+    const zielQuotePct = 35.5;
+    const pkBudget = (zielQuotePct / 100) * umsatzBudget; // 88'750
+    const hochrechnung = 118_531;
+    // Hochrechnungs-PKQ (zeitkonsistent) — Beispielnenner = Hochrechnungs-Umsatz.
+    const hrUmsatz = 253_000;
+    const pkqHr = (hochrechnung / hrUmsatz) * 100;
+    const r = buildBudgetVsIst({
+      budgetCHF: pkBudget,
+      istCHF: hochrechnung,
+      budgetPct: zielQuotePct,
+      istPct: pkqHr,
+    });
+    expect(pkBudget).toBe(88_750);
+    expect(r.diffCHF).toBeCloseTo(29_781, 0); // Hochrechnung − Budget
+    expect(r.direction).toBe('over');
+    expect(r.tone).toBe('critical');
+    // Ziel-Quote ist konstant 35.5 %, NICHT aus Budget/Umsatz abgeleitet.
+    expect(r.budgetPct).toBe(35.5);
+    // Ist-Quote < 47 % (plausibel, zeitkonsistent) — kein 64-%-Teilumsatz-Wert.
+    expect(r.istPct).toBeLessThan(47);
+  });
 });
 
 describe('Klartext-Wording (Budget-Abweichung + App-↔-ER)', () => {

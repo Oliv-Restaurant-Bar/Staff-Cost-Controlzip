@@ -7,7 +7,7 @@
  * dem Anlegen NICHT mehr änderbar (sonst verwaisen Zuordnungen).
  */
 import { useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, ArrowUp, ArrowDown, LayoutGrid, AlertTriangle, Sparkles,
@@ -42,6 +42,24 @@ import {
 import type { PositionAreaGroup } from '@/lib/position-utils';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { PositionIcon } from '@/components/PositionIcon';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PositionMatrix } from '@/components/positions/PositionMatrix';
+import { useTenant } from '@/contexts/TenantContext';
+
+/**
+ * Kurzer, statischer Regel-Hinweis für Positionen mit dynamischer
+ * Tagesbesetzung (CdS, Kalt/Sushi) — Details siehe Personalbedarf.
+ */
+export function staticDynamicRuleHint(positionKey: string): string | null {
+  const k = positionKey.toLowerCase();
+  if (k.includes('kalt') || k.includes('sushi')) {
+    return 'Dynamische Regel (Kalte Küche/Sushi): Die konkrete Tagesbesetzung wird zusätzlich über die Stationsregel bestimmt; die Matrix zeigt die grundsätzlich Qualifizierten.';
+  }
+  if (k === 'service') {
+    return 'Dynamische Regel (Chef de Service): Die konkrete Tagesbesetzung wird zusätzlich über die CdS-Prioritätsliste bestimmt; die Matrix zeigt die grundsätzlich Qualifizierten.';
+  }
+  return null;
+}
 
 interface DraftState {
   id?: string;
@@ -69,8 +87,11 @@ function emptyDraft(dept: Department, sortOrder: number, departmentGroup: string
 }
 
 export default function Positionen() {
-  const { canAccessModule, isGuest } = usePermissions();
+  const { canAccessModule } = usePermissions();
   const { positions, loading, error, save, remove, seed, reload, applyDefaults } = usePositions();
+  const { tenantId } = useTenant();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get('tab') === 'stammdaten' ? 'stammdaten' : 'matrix';
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<DraftState | null>(null);
@@ -112,8 +133,6 @@ export default function Positionen() {
   if (!canAccessModule('positionen')) {
     return <Navigate to="/personal" replace />;
   }
-
-  const readOnly = isGuest;
 
   const openNew = (dept: Department, areaKey: string) => {
     const inDept = positions.filter((p) => p.department === dept);
@@ -208,13 +227,13 @@ export default function Positionen() {
   const isEmpty = !loading && positions.length === 0;
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <LayoutGrid className="h-5 w-5 text-violet-600" />
           <h1 className="text-lg font-semibold">Positionen</h1>
         </div>
-        {!readOnly && positions.length > 0 && (
+        {positions.length > 0 && tab === 'stammdaten' && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button size="sm" variant="outline" className="gap-1" disabled={busy}>
@@ -240,6 +259,26 @@ export default function Positionen() {
         )}
       </div>
 
+      <Tabs value={tab} onValueChange={(v) => setSearchParams(v === 'matrix' ? {} : { tab: v }, { replace: true })}>
+        <TabsList>
+          <TabsTrigger value="matrix" data-testid="tab-matrix">Matrix</TabsTrigger>
+          <TabsTrigger value="stammdaten" data-testid="tab-stammdaten">Stammdaten</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="matrix" className="mt-3 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Wer hat welche Position/Qualifikation? Gleiche Zuordnung wie im
+            Personalstamm («Positionen/Qualifikationen») — Änderungen wirken
+            sofort überall (Personalstamm, Positions-Pop-up, Dienstplan-Vorschläge).
+          </p>
+          <PositionMatrix
+            positions={positions}
+            tenantId={tenantId}
+            dynamicHintFor={staticDynamicRuleHint}
+          />
+        </TabsContent>
+
+        <TabsContent value="stammdaten" className="mt-3 space-y-4">
       <p className="text-sm text-muted-foreground">
         Positionen / Stationen je Abteilung. Werden im Personalstamm und in der
         Dienstplanung zur Zuordnung der Mitarbeitenden verwendet.
@@ -261,11 +300,9 @@ export default function Positionen() {
             <p className="text-sm text-muted-foreground">
               Noch keine Positionen vorhanden.
             </p>
-            {!readOnly && (
-              <Button onClick={handleSeed} disabled={busy} className="gap-1">
-                <Sparkles className="h-4 w-4" /> Standard-Positionen anlegen
-              </Button>
-            )}
+            <Button onClick={handleSeed} disabled={busy} className="gap-1">
+              <Sparkles className="h-4 w-4" /> Standard-Positionen anlegen
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -295,7 +332,7 @@ export default function Positionen() {
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {areaName}
                     </h3>
-                    {!readOnly && group.area && (
+                    {group.area && (
                       <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => openNew(dept, group.area!.key)}>
                         <Plus className="h-3.5 w-3.5" /> Position
                       </Button>
@@ -322,22 +359,20 @@ export default function Positionen() {
                             </div>
                             <span className="text-[10px] text-muted-foreground font-mono">{p.key}</span>
                           </div>
-                          {!readOnly && (
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(group.positions, idx, -1)} title="Nach oben">
-                                <ArrowUp className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === group.positions.length - 1} onClick={() => move(group.positions, idx, 1)} title="Nach unten">
-                                <ArrowDown className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(group.positions, idx, -1)} title="Nach oben">
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === group.positions.length - 1} onClick={() => move(group.positions, idx, 1)} title="Nach unten">
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -348,6 +383,8 @@ export default function Positionen() {
           </CardContent>
         </Card>
       ))}
+        </TabsContent>
+      </Tabs>
 
       {/* ── Anlegen / Bearbeiten ─────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={v => { if (!v) { setDialogOpen(false); setDraft(null); } }}>

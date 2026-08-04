@@ -1,16 +1,18 @@
 // @vitest-environment happy-dom
 /**
  * TagesabschlussTable.test.tsx — Komponententest der Monats-Tabelle.
- * Prüft die gruppierte Spaltenstruktur (Umsatz · Kartenzahlungen · Kasse ·
- * Weitere Zahlungsarten · Ausgaben · Status), entfallene Spalten (Netto,
- * MWST, TWINT, Adyen-Differenz, Bemerkung), die Cash-Spalten (Soll berechnet,
- * Ist manuell, Diff mit Ampel), visuelle Marker (manuell / korrigiert /
+ * Prüft die FIXE Spaltenreihenfolge (Datum · Umsatz · BAR SOLL · BAR IST ·
+ * Kassensaldo Soll · Differenz · KK Adyen · Debitoren · Barausgaben ·
+ * EG-Gutscheine · [Detail: Einzahlung Bank · Bargeld Soll (ber.) · KK ·
+ * V-Gutscheine] · Status), entfallene Spalten (Netto, MWST, TWINT,
+ * Adyen-Differenz, Bemerkung), die Bar-Spalten (Soll aus Z-Bericht, Ist
+ * manuell, Differenz mit Ampel), visuelle Marker (manuell / korrigiert /
  * negativ / Zeilen-Tints), Barausgaben-Total und Status-Badges.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach } from 'vitest';
-import { TAGESABSCHLUSS_COLUMN_GROUPS, TagesabschlussTable, visibleColumns } from '../TagesabschlussTable';
+import { TAGESABSCHLUSS_COLUMNS, TagesabschlussTable, visibleTagesabschlussColumns } from '../TagesabschlussTable';
 import {
   buildTagesabschlussRows,
   closeDay,
@@ -79,34 +81,33 @@ function buildMonthWithClosedDay() {
 }
 
 describe('TagesabschlussTable', () => {
-  it('zeigt die neuen Spalten in gruppierter Reihenfolge — entfallene Spalten fehlen', () => {
+  it('zeigt die Spalten in der FIXEN Reihenfolge — entfallene Spalten fehlen', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
-    // Gruppenzeile.
-    const groupRow = screen.getByTestId('ta-header-groups');
-    expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
-      'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
-    ]);
-
-    // Spaltenzeile — exakte Reihenfolge (Kasse-Gruppe zusammenhängend).
+    // EINE Header-Zeile — exakte Reihenfolge (10 fixe Spalten, dann
+    // Detail-Spalten der Voll-Ansicht, zuletzt Status).
     const colRow = screen.getByTestId('ta-header-cols');
     expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
       'Datum', 'Umsatz',
-      'KK', 'KK Adyen',
-      'Bargeld Soll', 'Einzahlung Bank', 'Kassensaldo Soll', 'Cash Ist', 'Cash Diff',
-      'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
+      'BAR SOLL', 'BAR IST', 'Kassensaldo Soll', 'Differenz',
+      'KK Adyen', 'Debitoren',
       'Barausgaben',
+      'EG-Gutscheine',
+      'Einzahlung Bank', 'Bargeld Soll (ber.)', 'KK', 'V-Gutscheine',
       'Status',
     ]);
+    // Keine Gruppen-Kopfzeile mehr.
+    expect(screen.queryByTestId('ta-header-groups')).toBeNull();
 
     // Entfallene Spalten erscheinen nirgends mehr.
-    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung', 'Bargeld', 'Cash Soll']) {
+    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung', 'Bargeld', 'Cash Soll', 'Cash Ist', 'Cash Diff']) {
       expect(screen.queryByText(gone)).toBeNull();
     }
 
-    // Alle Kalendertage des Monats (Juli = 31 Zeilen).
-    expect(screen.getAllByTestId(/^ta-row-/)).toHaveLength(31);
+    // Alle Kalendertage des Monats (Juli = 31 Zeilen) — NUR Datumszeilen,
+    // nicht die ta-row-check-*-Checkboxen.
+    expect(screen.getAllByTestId(/^ta-row-\d{4}-\d{2}-\d{2}$/)).toHaveLength(31);
   });
 
   it('KK bündelt Karten + TWINT laut Z-Bericht (TWINT ohne eigene Spalte)', () => {
@@ -137,14 +138,14 @@ describe('TagesabschlussTable', () => {
     const corrected = row2.querySelector('.bg-amber-100');
     expect(corrected?.textContent).toContain('1’050.00');
 
-    // Status-Badges: Arbeitsstand (Bestätigung ODER Korrektur) = „In Bearbeitung".
-    // 01.07. bestätigt + 02.07. korrigiert → beide in Bearbeitung, kein „Offen".
-    expect(screen.getAllByText('In Bearbeitung').length).toBe(2);
-    expect(screen.queryByText('Offen')).toBeNull();
-    expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
+    // Status-Badges (kompakt): alles Nicht-Abgeschlossene = amber «Offen» —
+    // 01.07. (bestätigt) + 02.07. (korrigiert). Tage ohne Z-Bericht = «—».
+    expect(screen.getAllByText('Offen').length).toBe(2);
+    expect(screen.queryByText('In Bearbeitung')).toBeNull();
+    expect(screen.getAllByTestId(/^ta-status-badge-/).length).toBe(31);
   });
 
-  it('Bargeld Soll / Kassensaldo Soll / Cash Diff: berechnete Spalten, Ampel und Totale', () => {
+  it('Bargeld Soll (ber.) / Kassensaldo Soll / Differenz: berechnete Spalten, Ampel und Totale', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
@@ -152,7 +153,7 @@ describe('TagesabschlussTable', () => {
     // Kassensaldo Soll = 0 + 247.50; Ist 247.50 → Diff 0 grün.
     const soll1 = screen.getByTestId('ta-bargeld-soll-2026-07-01');
     expect(soll1.textContent).toContain('247.50');
-    expect(soll1.getAttribute('title')).toContain('Bargeld Soll = Umsatz − KK − Rechnung');
+    expect(soll1.getAttribute('title')).toContain('Bargeld Soll (berechnet) = Umsatz − KK − Rechnung');
     const saldo1 = screen.getByTestId('ta-saldo-2026-07-01');
     expect(saldo1.textContent).toContain('247.50');
     expect(saldo1.getAttribute('title')).toContain('Saldo Vortag + Bargeld Soll − Einzahlung Bank');
@@ -246,19 +247,21 @@ describe('TagesabschlussTable', () => {
     expect(screen.queryByText(/GS-4712/)).toBeNull();
   });
 
-  it('färbt Zeilen nach Zustand: abgeschlossen grün, offen rot — bestätigt allein ist NICHT grün', () => {
+  it('schlichtes Design: KEINE Zustands-Tints auf Zeilen — Status nur via Badge', () => {
     const base = buildMonth();
-    // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (rot).
+    // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (Badge, kein Zeilen-Tint).
     const closings = { ...base.closings, '2026-07-03': closing('2026-07-03') };
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, base.blob, base.confirmations, null, 0);
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
-    // 01.07. nur bestätigt (in Bearbeitung) → KEIN grüner Tint mehr.
     expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
-    expect(screen.getByTestId('ta-row-2026-07-03').className).toContain('bg-red-50');
+    expect(screen.getByTestId('ta-row-2026-07-03').className).not.toContain('bg-red-50');
+    expect(screen.getAllByText('Offen').length).toBeGreaterThanOrEqual(1);
     cleanup();
     const closed = buildMonthWithClosedDay();
     render(<TagesabschlussTable showAllColumns rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
-    expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
+    expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
+    // Abgeschlossen = grünes Badge «Grün» (Details im Status-Popup).
+    expect(screen.getByText('Grün')).toBeTruthy();
   });
 
   it('markiert die heutige Zeile (data-today)', () => {
@@ -288,6 +291,36 @@ describe('TagesabschlussTable', () => {
     dateBtn.click();
     expect(onDayClick).toHaveBeenCalledTimes(1);
     expect(onDayClick).toHaveBeenCalledWith('2026-07-02');
+  });
+
+  describe('Umsatz-Spalte: Import massgeblich, Abgleich gegen Z-Bericht', () => {
+    it('zeigt den Import-Wert; rot + klickbar nur bei |Import − Z| > Schwelle', () => {
+      const base = buildMonth(); // Z-Bericht 01.07. = 1000
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, base.closings, base.blob, base.confirmations, null, 0);
+      const onDiff = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        umsatzImport={{ '2026-07-01': 1025.5 }} umsatzSchwelle={10} onUmsatzDiffClick={onDiff} />);
+      // Anzeige = Import (1025.50), NICHT der Z-Wert (1000):
+      const cell = screen.getByTestId('ta-umsatz-2026-07-01');
+      expect(cell.textContent).toContain('1’025.50');
+      expect(cell.className).toContain('bg-red-100');
+      fireEvent.click(screen.getByTestId('ta-umsatz-diff-2026-07-01'));
+      expect(onDiff).toHaveBeenCalledWith('2026-07-01');
+    });
+
+    it('innerhalb der Schwelle: Import-Anzeige ohne rot; fehlende Quelle: nur vorhandener Wert, nie rot', () => {
+      const base = buildMonth();
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, base.closings, base.blob, base.confirmations, null, 0);
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        umsatzImport={{ '2026-07-01': 1004 }} umsatzSchwelle={10} onUmsatzDiffClick={() => {}} />);
+      const cell = screen.getByTestId('ta-umsatz-2026-07-01');
+      expect(cell.textContent).toContain('1’004.00');
+      expect(cell.className).not.toContain('bg-red-100');
+      expect(screen.queryByTestId('ta-umsatz-diff-2026-07-01')).toBeNull();
+      // 02.07.: Z-Bericht vorhanden, KEIN Import → Z-Wert anzeigen, nie rot.
+      const cell2 = screen.getByTestId('ta-umsatz-2026-07-02');
+      expect(cell2.className).not.toContain('bg-red-100');
+    });
   });
 
   describe('Inline-Bearbeitung', () => {
@@ -345,18 +378,35 @@ describe('TagesabschlussTable', () => {
       expect(leer.className).not.toContain('text-sky-700');
     });
 
-    it('bestätigt Tage über die Checkboxen (nur Tage mit Z-Bericht, gleiche Semantik wie Dialog)', () => {
+    it('Bestätigungs-Checkboxen: unabhängig, Aktivierungs-Gates, Entfernen immer möglich', () => {
       const { onConfirm } = renderEditable();
+      // Checkboxen leben im Status-Popup (Klick aufs Status-Badge).
       // Nur 01.07./02.07. haben Z-Bericht → nur dort Checkboxen.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-03'));
       expect(screen.queryByTestId('ta-row-check-cash-2026-07-03')).toBeNull();
 
-      // 02.07.: unbestätigt → "Tag" erst nach Barbestand möglich.
-      const confirmBox = screen.getByTestId('ta-row-check-confirm-2026-07-02') as HTMLButtonElement;
-      expect(confirmBox.disabled).toBe(true);
-      const cashBox = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
-      fireEvent.click(cashBox);
-      expect(onConfirm).toHaveBeenCalledWith('2026-07-02',
-        expect.objectContaining({ cashCounted: true, confirmed: false }));
+      // 02.07.: kein BAR IST erfasst → BEIDE Checkboxen deaktiviert,
+      // Sperr-Grund als Tooltip am Label.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-02'));
+      const cashBox2 = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
+      expect(cashBox2.disabled).toBe(true);
+      expect(cashBox2.closest('label')?.getAttribute('title')).toContain('BAR IST muss zuerst erfasst werden.');
+      const confirmBox2 = screen.getByTestId('ta-row-check-confirm-2026-07-02') as HTMLButtonElement;
+      expect(confirmBox2.disabled).toBe(true);
+      expect(confirmBox2.closest('label')?.getAttribute('title')).toContain('Es fehlen noch Pflichtwerte.');
+
+      // 01.07.: beide gesetzt → Entfernen bleibt möglich und lässt das
+      // ANDERE Häkchen unangetastet (unabhängige Checkboxen); Payload OHNE
+      // Zeitstempel — Audit stempelt zentral applyDayConfirmation.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
+      const cashBox1 = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(cashBox1.disabled).toBe(false);
+      fireEvent.click(cashBox1);
+      expect(onConfirm).toHaveBeenCalledWith('2026-07-01', { confirmed: true, cashCounted: false });
+      const confirmBox1 = screen.getByTestId('ta-row-check-confirm-2026-07-01') as HTMLButtonElement;
+      expect(confirmBox1.disabled).toBe(false);
+      fireEvent.click(confirmBox1);
+      expect(onConfirm).toHaveBeenCalledWith('2026-07-01', { confirmed: false, cashCounted: true });
     });
 
     it('rendert im readOnly-Modus (Gast) keinerlei Eingabefelder', () => {
@@ -366,7 +416,13 @@ describe('TagesabschlussTable', () => {
         onCorrectRechnung={() => {}} onVoucherClick={() => {}} onExpensesClick={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Bestätigungs-Checkboxen bleiben im Status-Popup SICHTBAR (Zustand
+      // ablesbar), sind aber deaktiviert — read-only versteckt nichts.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
+      const roCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(roCash.disabled).toBe(true);
+      const roConfirm = screen.getByTestId('ta-row-check-confirm-2026-07-01') as HTMLButtonElement;
+      expect(roConfirm.disabled).toBe(true);
       // Neue Editier-Flächen ebenfalls NICHT vorhanden.
       expect(screen.queryByTestId('ta-input-rechnung-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
@@ -476,7 +532,8 @@ describe('TagesabschlussTable', () => {
     expect(badCell.textContent).toContain('690.00');
     expect(badCell.textContent).toContain('10.00');
     expect(badCell.className).toContain('text-red-600');
-    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-red-50');
+    // Schlichtes Design: kein roter Zeilen-Tint mehr (nur die Zellen-Werte).
+    expect(screen.getByTestId('ta-row-2026-07-02').className).not.toContain('bg-red-50');
 
     // Tag ohne Adyen-Import: Zelle leer ("—").
     expect(screen.getByTestId('ta-adyen-2026-07-03').textContent).toContain('—');
@@ -590,20 +647,24 @@ describe('TagesabschlussTable', () => {
       render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={onCloseDay} />);
 
+      // Abschließen-Button lebt im Status-Popup (Klick aufs Badge).
       // 01.07.: bestätigt + Barbestand + Cash Ist + Diff grün → aktiv.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       const btn1 = screen.getByTestId('ta-close-day-2026-07-01') as HTMLButtonElement;
       expect(btn1.disabled).toBe(false);
       btn1.click();
       expect(onCloseDay).toHaveBeenCalledWith('2026-07-01');
 
       // 02.07.: unbestätigt → deaktiviert, Blocker im title.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-02'));
       const btn2 = screen.getByTestId('ta-close-day-2026-07-02') as HTMLButtonElement;
       expect(btn2.disabled).toBe(true);
-      expect(btn2.getAttribute('title')).toContain('Tagesbestätigung fehlt');
+      expect(btn2.getAttribute('title')).toContain('«Tagesabschluss geprüft» nicht bestätigt.');
       btn2.click();
       expect(onCloseDay).toHaveBeenCalledTimes(1);
 
       // Tage ohne Z-Bericht haben gar keinen Abschluss-Button.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-03'));
       expect(screen.queryByTestId('ta-close-day-2026-07-03')).toBeNull();
     });
 
@@ -614,16 +675,21 @@ describe('TagesabschlussTable', () => {
         onSaveManual={() => {}} onConfirm={() => {}} onCorrectRechnung={() => {}}
         onVoucherClick={() => {}} onExpensesClick={() => {}} onCloseDay={onCloseDay} />);
 
-      // Lock-Icon am Datum + grüner Badge mit Abschluss-Info im title.
+      // Lock-Icon am Datum + grünes Badge «Grün»; Abschluss-Info im title
+      // des Popup-Triggers.
       expect(screen.getByTestId('ta-lock-2026-07-01')).toBeTruthy();
-      const badge = screen.getByText('Abgeschlossen');
-      expect(badge.closest('span')?.getAttribute('title')).toContain('admin@oliv.ch');
+      expect(screen.getByText('Grün')).toBeTruthy();
+      const trigger = screen.getByTestId('ta-status-badge-2026-07-01');
+      expect(trigger.getAttribute('title')).toContain('admin@oliv.ch');
 
       // Zeile 01.07.: KEINE Inputs/Checkboxen/Buttons für Edits mehr.
       const row1 = screen.getByTestId('ta-row-2026-07-01');
       expect(row1.querySelectorAll('input').length).toBe(0);
+      fireEvent.click(trigger);
       expect(screen.queryByTestId('ta-close-day-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Checkboxen bleiben im Popup sichtbar (Zustand ablesbar), aber gesperrt.
+      const lockedCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(lockedCash.disabled).toBe(true);
       expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-expenses-2026-07-01')).toBeNull();
 
@@ -639,10 +705,13 @@ describe('TagesabschlussTable', () => {
       render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={() => {}} />);
 
-      expect(screen.getByText('Wieder geöffnet')).toBeTruthy();
+      // Wieder geöffnet = amber «Offen» (Details im title/Popup).
+      expect(screen.getByTestId('ta-status-badge-2026-07-01').getAttribute('title')).toContain('Wieder geöffnet');
       const row1 = screen.getByTestId('ta-row-2026-07-01');
-      expect(row1.className).toContain('bg-orange-50');
+      // Schlichtes Design: kein oranger Zeilen-Tint mehr — Status via Badge.
+      expect(row1.className).not.toContain('bg-orange-50');
       expect(row1.querySelectorAll('input').length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       expect(screen.getByTestId('ta-close-day-2026-07-01')).toBeTruthy();
       expect(screen.queryByTestId('ta-lock-2026-07-01')).toBeNull();
     });
@@ -663,54 +732,57 @@ describe('TagesabschlussTable', () => {
   });
 
   describe('Kompakte Standardansicht (ohne showAllColumns)', () => {
-    it('blendet die Detail-Spalten KK, Einzahlung Bank, Cash Ist und Cash Diff aus', () => {
+    it('blendet die Detail-Spalten Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine aus', () => {
       const { rows, totals } = buildMonth();
       render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} />);
 
-      // Kompakte Spaltenzeile — Detail-Spalten fehlen, Reihenfolge bleibt gruppiert.
+      // Kompakte Spaltenzeile — genau die 10 fixen Spalten + Status.
       const colRow = screen.getByTestId('ta-header-cols');
       expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
         'Datum', 'Umsatz',
-        'KK Adyen',
-        'Bargeld Soll', 'Kassensaldo Soll',
-        'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
+        'BAR SOLL', 'BAR IST', 'Kassensaldo Soll', 'Differenz',
+        'KK Adyen', 'Debitoren',
         'Barausgaben',
+        'EG-Gutscheine',
         'Status',
-      ]);
-
-      // Gruppenzeile bleibt vollständig (colSpan schrumpft nur).
-      const groupRow = screen.getByTestId('ta-header-groups');
-      expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
-        'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
       ]);
 
       // Detail-Zellen (Body + Footer) sind nicht im DOM.
       expect(screen.queryByTestId('ta-kk-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-02')).toBeNull();
-      expect(screen.queryByTestId('ta-bestand-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-cash-diff-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-total-cash-ist')).toBeNull();
-      expect(screen.queryByTestId('ta-total-cash-diff')).toBeNull();
+      expect(screen.queryByTestId('ta-bargeld-soll-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-total-bargeld-soll')).toBeNull();
 
-      // Kompakte Spalten bleiben funktional: KK Adyen, Saldo, Totals.
+      // Kern-Spalten bleiben funktional: BAR SOLL/IST, Differenz, KK Adyen,
+      // Saldo, Totals.
+      expect(screen.getByTestId('ta-bar-soll-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-bestand-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-cash-diff-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-adyen-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-saldo-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-total-adyen')).toBeTruthy();
       expect(screen.getByTestId('ta-total-saldo')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-cash-ist')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-cash-diff')).toBeTruthy();
 
-      // Jede Zeile hat exakt so viele Zellen wie kompakte Spalten (10).
+      // Jede Zeile hat exakt so viele Zellen wie kompakte Spalten (11).
       const row1 = screen.getByTestId('ta-row-2026-07-01');
-      expect(row1.querySelectorAll('td')).toHaveLength(10);
+      expect(row1.querySelectorAll('td')).toHaveLength(11);
     });
 
-    it('visibleColumns filtert detailOnly-Spalten nur in der kompakten Ansicht', () => {
-      const kasse = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kasse')!;
-      expect(visibleColumns(kasse, false).map(c => c.key)).toEqual(['bargeldSoll', 'kassensaldoSoll']);
-      expect(visibleColumns(kasse, true).map(c => c.key)).toEqual(
-        ['bargeldSoll', 'einzahlungBank', 'kassensaldoSoll', 'cashIst', 'cashDiff']);
-      const karten = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kartenzahlungen')!;
-      expect(visibleColumns(karten, false).map(c => c.key)).toEqual(['kkAdyen']);
+    it('visibleTagesabschlussColumns filtert detailOnly-Spalten nur in der kompakten Ansicht', () => {
+      expect(visibleTagesabschlussColumns(false).map(c => c.key)).toEqual([
+        'datum', 'umsatz', 'barSoll', 'barIst', 'kassensaldoSoll', 'differenz',
+        'kkAdyen', 'debitoren', 'barausgaben', 'gutscheinEingeloest', 'status',
+      ]);
+      expect(visibleTagesabschlussColumns(true).map(c => c.key)).toEqual(
+        TAGESABSCHLUSS_COLUMNS.map(c => c.key));
+      expect(visibleTagesabschlussColumns(true).map(c => c.key)).toEqual([
+        'datum', 'umsatz', 'barSoll', 'barIst', 'kassensaldoSoll', 'differenz',
+        'kkAdyen', 'debitoren', 'barausgaben', 'gutscheinEingeloest',
+        'einzahlungBank', 'bargeldSoll', 'kk', 'gutscheinVerkauft', 'status',
+      ]);
     });
 
     it('Voll-Ansicht zeigt dieselben Daten-Zellen wieder an (Toggle-Verhalten)', () => {
@@ -724,8 +796,8 @@ describe('TagesabschlussTable', () => {
         onSaveManual={() => {}} />);
       expect(screen.getByTestId('ta-kk-2026-07-01').textContent).toContain('700.00');
       expect(screen.getByTestId('ta-input-einzahlung-2026-07-02')).toBeTruthy();
-      expect(screen.getByTestId('ta-bestand-2026-07-01')).toBeTruthy();
-      expect(screen.getByTestId('ta-total-cash-ist')).toBeTruthy();
+      expect(screen.getByTestId('ta-bargeld-soll-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-bargeld-soll')).toBeTruthy();
     });
   });
 

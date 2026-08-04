@@ -152,8 +152,9 @@ function parseGermanDate(s: string): string {
  * Erkennt eine reine Datums-Spaltenüberschrift wie "01.06", "01.06.2026" oder
  * "Mo 01.06.".  Geldbeträge ("CHF 54.07") werden bewusst NICHT als Datum
  * akzeptiert (Currency-Token + Tag/Monat-Plausibilität).
+ * Exportiert für den KPI-PDF-Parser (gn-kpi-pdf-parser.ts) — EINE Erkennung.
  */
-function parseHeaderDate(cell: string): { day: number; month: number; year: number | null } | null {
+export function parseHeaderDate(cell: string): { day: number; month: number; year: number | null } | null {
   const c = cleanCell(cell);
   if (!c) return null;
   if (/(chf|eur|usd|gbp|€|\$|£)/i.test(c)) return null;
@@ -174,8 +175,9 @@ function normalizeCurrency(token: string): string {
   return t;
 }
 
-/** "CHF 54.07" / "CHF 54,07" / "1'234.50" → { value, currency } */
-function parseMoney(s: string): { value: number; currency: string | null } {
+/** "CHF 54.07" / "CHF 54,07" / "1'234.50" → { value, currency }
+ *  Exportiert für den KPI-PDF-Parser (gn-kpi-pdf-parser.ts) — EINE Geld-Erkennung. */
+export function parseMoney(s: string): { value: number; currency: string | null } {
   const c = cleanCell(s);
   if (!c) return { value: 0, currency: null };
   const cur = c.match(/(CHF|EUR|USD|GBP|€|\$|£)/i);
@@ -603,4 +605,26 @@ function emptyResult(
     rows: [], rowCount: 0,
     averageMean: 0, averageMin: 0, averageMax: 0,
   };
+}
+
+// ── Idempotenz (reine Logik) ─────────────────────────────────────────────────
+
+/**
+ * Prüft, ob ein Reimport ein No-op wäre: JEDER geparste Tageswert existiert
+ * bereits mit identischem Wert (±0.005 wegen numeric-Rundung).
+ *
+ * Wird VOR dem Tages-UPSERT geprüft — ein identischer Reimport darf keinen
+ * Write auslösen (kein `updated_at`-Bump, keine neue import_id).
+ */
+export function isAverageCheckReimportNoop(
+  parsedRows: ReadonlyArray<Pick<GnAverageCheckRow, 'date' | 'averageCheck'>>,
+  existingRows: ReadonlyArray<{ report_date: string; average_check_chf: number | null }>,
+): boolean {
+  if (parsedRows.length === 0) return false;
+  const existing = new Map<string, number | null>();
+  for (const r of existingRows) existing.set(r.report_date, r.average_check_chf);
+  return parsedRows.every(r => {
+    const have = existing.get(r.date);
+    return have != null && Math.abs(have - r.averageCheck) < 0.005;
+  });
 }

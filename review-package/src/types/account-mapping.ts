@@ -53,6 +53,7 @@ export type PLCategory =
   | 'cogs_food'             // Warenaufwand Küche/Lebensmittel
   | 'cogs_beverage'         // Warenaufwand Getränke
   | 'cogs_other'            // Warenaufwand Diverses
+  | 'cogs_lager'            // Veränderung Warenvorrat (Lagerveränderung, 4900) — Teil des Wareneinsatzes, NICHT des Wareneinkaufs
   // Personalkosten
   | 'personnel_kitchen'     // Löhne Küche
   | 'personnel_service'     // Löhne Service

@@ -6,7 +6,7 @@
  * Tenant kommt aus dem TenantContext (tenantId = restaurant_id). Persistenz:
  * `season-definitions-db` (KV + localStorage, KEINE Tabelle/Migration).
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import {
   loadSeasonDefinitions,
@@ -30,13 +30,19 @@ export function useSeasonDefinitions(): UseSeasonDefinitions {
   const [seasons, setSeasons] = useState<SeasonDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [saveError, setSaveError] = useState(false);
+  // Generation-Guard: eine späte Antwort (z.B. nach Mandantenwechsel) darf den
+  // State des neueren Ladevorgangs nicht überschreiben.
+  const generation = useRef(0);
 
   const reload = useCallback(async () => {
+    const gen = ++generation.current;
     setLoading(true);
     try {
-      setSeasons(await loadSeasonDefinitions(tenantId));
+      const loaded = await loadSeasonDefinitions(tenantId);
+      if (gen !== generation.current) return;
+      setSeasons(loaded);
     } finally {
-      setLoading(false);
+      if (gen === generation.current) setLoading(false);
     }
   }, [tenantId]);
 

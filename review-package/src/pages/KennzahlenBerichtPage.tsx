@@ -8,6 +8,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   startOfWeek, endOfMonth, startOfMonth, startOfYear,
   subDays, subMonths, subYears, eachDayOfInterval, format, parseISO,
@@ -15,7 +17,7 @@ import {
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
-  BarChart2, Download, DollarSign, Clock, Package, Users, TrendingUp,
+  BarChart2, DollarSign, Clock, Package, Users, TrendingUp,
   Table2, LayoutDashboard,
 } from 'lucide-react';
 import {
@@ -25,13 +27,26 @@ import {
 import { cn } from '@/lib/utils';
 import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import { LoadingState, EmptyState } from '@/components/ui/page-states';
 import type { Tone } from '@/components/ui/tones';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
-import { getGuestsForPeriod, getAvgReceiptForPeriod } from '@/lib/gn-personen-db';
+import { getGuestsForPeriod, getAvgReceiptForPeriod, getPersonDayValues } from '@/lib/gn-personen-db';
+import { getAverageCheckDayValues } from '@/lib/gn-average-check-db';
+import { loadGnHourlyRevenueByDay } from '@/lib/gn-zbericht-db';
+import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz';
+import {
+  mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
+} from '@/lib/gn-tagesanalyse';
+import type { GnPeriodenAnalyse } from '@/lib/gn-tagesanalyse';
+import {
+  mergeGnStundenwerte, analyzeGnZeitabschnitte, GN_ZEITFENSTER,
+} from '@/lib/gn-zeitabschnitte';
+import type { GnZeitabschnittsAnalyse } from '@/lib/gn-zeitabschnitte';
+import { InfoTip } from '@/components/ui/info-tip';
 import type { DailyBudget } from '@/types/personnel';
 
 // ── Period ────────────────────────────────────────────────────────────────
@@ -93,6 +108,13 @@ interface Summary {
   vjRevPerGuest: number;
   avgReceipt: number;
   weekAvgReceipt: number;
+  /** Gemeinsame Tagesanalyse (gewichtete Periodenwerte, SSoT gn-tagesanalyse) */
+  tages: GnPeriodenAnalyse;
+  weekTages: GnPeriodenAnalyse;
+  /** Zeitabschnittsanalyse über die Tages-Z-Berichte des Zeitraums (SSoT gn-zeitabschnitte); null wenn keine Stundenumsätze vorhanden. */
+  zeit: GnZeitabschnittsAnalyse | null;
+  /** Anzahl Geschäftstage mit Stundenumsätzen im Zeitraum. */
+  zeitDayCount: number;
 }
 
 // Excel-Zeile: type 'data' oder 'empty' (Leerzeile wie in der Vorlage)
@@ -280,10 +302,36 @@ export default function KennzahlenBerichtPage() {
   const { tenantId } = useTenant();
   const today = useMemo(() => new Date(), []);
 
-  const [period,     setPeriod]     = useState<Period>('monat');
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert):
+  // aktueller Monat ⇒ «Monat», Vormonat ⇒ «Letzter Monat», sonst Custom-Zeitraum.
+  const [searchParams] = useSearchParams();
+  const monatInit = useMemo(() => {
+    const p = parseMonatParam(searchParams.get(MONAT_PARAM));
+    if (!p) return null;
+    const start = new Date(p.year, p.month - 1, 1);
+    const lastMonth = subMonths(today, 1);
+    if (p.year === today.getFullYear() && p.month === today.getMonth() + 1) {
+      return { period: 'monat' as Period };
+    }
+    if (p.year === lastMonth.getFullYear() && p.month === lastMonth.getMonth() + 1) {
+      return { period: 'letzter_monat' as Period };
+    }
+    return {
+      period: 'custom' as Period,
+      from: format(start, 'yyyy-MM-dd'),
+      to: format(endOfMonth(start), 'yyyy-MM-dd'),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [period,     setPeriod]     = useState<Period>(monatInit?.period ?? 'monat');
   const [viewMode,   setViewMode]   = useState<ViewMode>('dashboard');
-  const [customFrom, setCustomFrom] = useState(format(startOfMonth(today), 'yyyy-MM-dd'));
-  const [customTo,   setCustomTo]   = useState(format(today, 'yyyy-MM-dd'));
+  const [customFrom, setCustomFrom] = useState(
+    monatInit && 'from' in monatInit && monatInit.from ? monatInit.from : format(startOfMonth(today), 'yyyy-MM-dd'),
+  );
+  const [customTo,   setCustomTo]   = useState(
+    monatInit && 'to' in monatInit && monatInit.to ? monatInit.to : format(today, 'yyyy-MM-dd'),
+  );
   const [loading,    setLoading]    = useState(false);
   const [summary,    setSummary]    = useState<Summary | null>(null);
 
@@ -323,29 +371,37 @@ export default function KennzahlenBerichtPage() {
         const weekFromMs   = Math.max(from.getTime(), subDays(to, 6).getTime());
         const weekFromDate = new Date(weekFromMs);
 
-        let grossTotal = 0, netTotal = 0, foodGross = 0, bevGross = 0;
+        const fromIso = format(from, 'yyyy-MM-dd');
+        const toIso   = format(to,   'yyyy-MM-dd');
+
+        // Kanonische Umsatz-SSoT (umsatz.ts): MANUELLER Tagesumsatz-Import
+        // (dailyBudgets-KV) + Marketing (maison-daily) — KEINE Z-Berichte.
+        const tage = await ladeUmsatzTage(tenantId, fromIso, toIso);
+
+        let grossTotal = 0, netTotal = 0, foodNetSum = 0, bevNetSum = 0;
         let plannedGross = 0, vjGross = 0, laborActual = 0, laborPlanned = 0;
         let daysWithData = 0;
         let wGross = 0, wNet = 0, wVjGross = 0, wPlanGross = 0;
-        let wFoodGross = 0, wBevGross = 0, wLabor = 0;
+        let wFoodNet = 0, wBevNet = 0, wLabor = 0;
         const chartMap = new Map<string, { net: number; planned: number; vj: number }>();
 
         for (const day of days) {
           const key   = format(day, 'yyyy-MM-dd');
           const d     = budgets[key];
-          const gross = d?.actualRevenue    ?? 0;
-          const ta    = d?.takeawayRevenue  ?? 0;
-          const net   = grossToNet(gross, ta);
+          const tag   = tage.get(key);
+          const gross = tag?.gesamtBrutto ?? 0;
+          const net   = tag ? nettoUmsatzTag(tag) : 0;
+          const split = tag ? foodBeverageSplit(tag) : null;
           const planG = d?.plannedRevenue   ?? 0;
           const vjG   = d?.previousYearRevenue ?? 0;
 
           grossTotal   += gross;  netTotal     += net;
-          foodGross    += d?.actualFood     ?? 0;
-          bevGross     += d?.actualBeverage ?? 0;
+          foodNetSum   += split?.food     ?? 0;
+          bevNetSum    += split?.beverage ?? 0;
           plannedGross += planG; vjGross      += vjG;
           laborActual  += d?.actualLaborCost  ?? 0;
           laborPlanned += d?.plannedLaborCost ?? 0;
-          if (gross > 0) daysWithData++;
+          if (tag) daysWithData++;
 
           const lbl = format(day, lblFmt, { locale: de });
           const ex  = chartMap.get(lbl) ?? { net: 0, planned: 0, vj: 0 };
@@ -353,19 +409,17 @@ export default function KennzahlenBerichtPage() {
 
           if (!isBefore(day, weekFromDate)) {
             wGross += gross; wNet += net; wVjGross += vjG; wPlanGross += planG;
-            wFoodGross += d?.actualFood ?? 0; wBevGross += d?.actualBeverage ?? 0;
-            wLabor     += d?.actualLaborCost ?? 0;
+            wFoodNet += split?.food ?? 0; wBevNet += split?.beverage ?? 0;
+            wLabor   += d?.actualLaborCost ?? 0;
           }
         }
 
-        const fromIso      = format(from, 'yyyy-MM-dd');
-        const toIso        = format(to,   'yyyy-MM-dd');
         const weekFromIso  = format(weekFromDate, 'yyyy-MM-dd');
         const vjFromIso    = format(subYears(from, 1), 'yyyy-MM-dd');
         const vjToIso      = format(subYears(to,   1), 'yyyy-MM-dd');
 
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek] = await Promise.all([
+        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek, personDays, avgCheckDays, hourlyByDay] = await Promise.all([
           Promise.all(months.map(m => loadMonthInvoices(tenantId, m))).then(res => res.flat()
             .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } })),
           getGuestsForPeriod(tenantId, fromIso, toIso),
@@ -373,7 +427,32 @@ export default function KennzahlenBerichtPage() {
           getGuestsForPeriod(tenantId, vjFromIso, vjToIso),
           getAvgReceiptForPeriod(tenantId, fromIso, toIso),
           getAvgReceiptForPeriod(tenantId, weekFromIso, toIso),
+          getPersonDayValues(tenantId, fromIso, toIso),
+          getAverageCheckDayValues(tenantId, fromIso, toIso),
+          loadGnHourlyRevenueByDay(tenantId, fromIso, toIso),
         ]);
+
+        // ── Gemeinsame Tagesanalyse (SSoT gn-tagesanalyse) ──────────────
+        // Umsatzquelle: MANUELLER Tagesumsatz-Import (Gesamt brutto) —
+        // Z-Berichte werden für den Umsatz NICHT mehr gelesen.
+        // Fallback: Personen × Umsatz pro Person. Fehlend = null, nie 0.
+        const validatedByDate = new Map<string, number>();
+        for (const [key, tag] of tage) {
+          if (tag.gesamtBrutto > 0) validatedByDate.set(key, tag.gesamtBrutto);
+        }
+        const tagesAnalysen = mergeGnTagesQuellen({
+          personsByDate:          personDays.personsByDate,
+          revenuePerPersonByDate: personDays.revenuePerPersonByDate,
+          averageReceiptByDate:   avgCheckDays,
+          validatedRevenueByDate: validatedByDate,
+        });
+        const tages     = summarizeGnPeriode(tagesAnalysen);
+        const weekTages = summarizeGnPeriode(tagesAnalysen.filter(d => d.date >= weekFromIso));
+
+        // ── Zeitabschnittsanalyse (SSoT gn-zeitabschnitte) ──────────────
+        // Stundenwerte über alle Geschäftstage des Zeitraums summiert;
+        // Fenster/Peak zentral definiert, negative Werte bleiben.
+        const zeit = analyzeGnZeitabschnitte(mergeGnStundenwerte([...hourlyByDay.values()]));
 
         const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
         const warenBev   = allInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
@@ -406,7 +485,7 @@ export default function KennzahlenBerichtPage() {
         setSummary({
           daysTotal: days.length, daysWithData,
           netTotal, grossTotal,
-          foodNet: foodGross / 1.081, bevNet: bevGross / 1.081,
+          foodNet: foodNetSum, bevNet: bevNetSum,
           plannedNet: calcNet, vjNet: vjNetFinal,
           laborActual, laborPlanned,
           warenFood, warenBev, warenSonst, warenTotal: warenFood + warenBev + warenSonst,
@@ -419,13 +498,17 @@ export default function KennzahlenBerichtPage() {
             laborActual: wLabor,
             warenFood: wWarenFood, warenBev: wWarenBev, warenSonst: wWarenSonst,
             warenTotal: wWarenFood + wWarenBev + wWarenSonst,
-            foodNet: wFoodGross / 1.081, bevNet: wBevGross / 1.081,
+            foodNet: wFoodNet, bevNet: wBevNet,
           },
           chart: Array.from(chartMap.entries()).map(([label, v]) => ({ label, ...v })),
           guestCount: gCount, weekGuestCount: wGCount, vjGuestCount: vjGCount,
           revPerGuest: revPG, weekRevPerGuest: wRevPG, vjRevPerGuest: vjRevPG,
           avgReceipt: avgRcptCur.avgReceipt,
           weekAvgReceipt: avgRcptWeek.avgReceipt,
+          tages,
+          weekTages,
+          zeit,
+          zeitDayCount: hourlyByDay.size,
         });
       } catch (err) {
         console.error('[KennzahlenBericht] load error', err);
@@ -655,17 +738,16 @@ export default function KennzahlenBerichtPage() {
     <PageHeader
       icon={<BarChart2 />}
       title="Kennzahlen Bericht"
-      info="Management-Report: Umsatz, Personalkosten und Warenaufwand für den gewählten Zeitraum — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF."
+      info="Operativer Management-Report für den gewählten Zeitraum: Tagesumsatz gemäss manuellem Umsatz-Import, Personalkosten gemäss Dienstplan, Warenkosten gemäss Rechnungen — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF. Finanzielle Monatswerte gemäss Erfolgsrechnung stehen in Erfolgsrechnung und Reporting."
       meta={rangeLabel}
       actions={
-        <button
-          onClick={exportPdf}
+        <UnifiedExportButton
+          data-testid="kb-export"
           disabled={!summary || loading}
-          className="flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
-        >
-          <Download className="h-3.5 w-3.5" />
-          PDF exportieren
-        </button>
+          actions={[
+            { key: 'pdf', label: 'Kennzahlen-Bericht (PDF)', kind: 'pdf', onSelect: () => { void exportPdf(); } },
+          ]}
+        />
       }
     >
       <div className="ml-2 flex items-center gap-0.5 rounded-md bg-muted p-0.5">
@@ -719,36 +801,40 @@ export default function KennzahlenBerichtPage() {
         {!loading && summary && viewMode === 'dashboard' && <>
           <KpiGrid>
             <KpiCard label="Nettoumsatz"    value={fmtChf(summary.netTotal)}
-              sub={summary.daysWithData > 0 ? `${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
+              sub={summary.daysWithData > 0 ? `gemäss Umsatz-Import · ${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
             <KpiCard label="Personalkosten" value={fmtChf(summary.laborActual)}
-              sub={summary.netTotal > 0 ? `${fmtPct(pkPct)} vom Umsatz` : '—'} tone={TL_TONE[tlPk]} />
+              sub={summary.netTotal > 0 ? `gemäss Dienstplan · ${fmtPct(pkPct)} vom Umsatz` : 'gemäss Dienstplan'} tone={TL_TONE[tlPk]} />
             <KpiCard label="WES Total"      value={summary.warenTotal > 0 ? fmtChf(summary.warenTotal) : '—'}
-              sub={summary.warenTotal > 0 ? `${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} tone={TL_TONE[tlWes]} />
+              sub={summary.warenTotal > 0 ? `gemäss Rechnungen · ${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} tone={TL_TONE[tlWes]} />
             <KpiCard label="Abw. Budget"    value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
-              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : 'Kein Budget'} tone={TL_TONE[tlBudg]} />
+              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)} · vs. Tagesbudget` : 'Kein Budget'} tone={TL_TONE[tlBudg]} />
           </KpiGrid>
 
           <BSection title="Umsatzübersicht" icon={<DollarSign className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold />
+              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold hint="gemäss Umsatz-Import, inkl. Marketing" />
               <Row label="Bruttoumsatz Total"      value={fmtChf(summary.grossTotal)} />
               <Row label="Umsatz Food (netto)"     value={summary.foodNet > 0 ? fmtChf(summary.foodNet) : '—'} />
               <Row label="Umsatz Beverage (netto)" value={summary.bevNet  > 0 ? fmtChf(summary.bevNet)  : '—'} />
               <Row label="Tage mit Umsatz"         value={`${summary.daysWithData} / ${summary.daysTotal}`} />
               <Row label="Ø Tagesumsatz (netto)"   value={avgDaily > 0 ? fmtChf(avgDaily) : '—'} />
-              <Row label="Anzahl Bons / Gäste"     value="—" hint="gastronovi Import" />
-              <Row label="Durchschnittsbon"        value="—" hint="gastronovi Import" />
+              <Row label="Bons, berechnet"
+                value={summary.tages.derivedReceiptCount !== null ? NUM.format(Math.round(summary.tages.derivedReceiptCount)) : '—'}
+                hint="Umsatz ÷ Durchschnittsbon" tip={BONS_BERECHNET_TOOLTIP} />
+              <Row label="Durchschnittsbon"
+                value={summary.tages.averageReceipt !== null ? fmtChf(summary.tages.averageReceipt) : '—'}
+                hint="gastronovi Import, gewichtet" />
             </DGrid>
           </BSection>
 
           <BSection title="Vergleichswerte" icon={<TrendingUp className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Budget Nettoumsatz"  value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} />
+              <Row label="Budget Nettoumsatz"  value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} hint="Tagesbudget" />
               <Row label="Abw. Budget (CHF)"   value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
                 diff={budDiff !== null ? (budDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Budget (%)"     value={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : '—'}
                 diff={budPct !== null ? (budPct >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} />
+              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} hint="Tagesumsatz Vorjahr" />
               <Row label="Abw. Vorjahr (CHF)"  value={vjDiff !== null ? `${sgn(vjDiff)}${fmtChf(vjDiff)}` : '—'}
                 diff={vjDiff !== null ? (vjDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Vorjahr (%)"    value={vjPct !== null ? `${sgn(vjPct)}${fmtPct(vjPct)}` : '—'}
@@ -758,8 +844,8 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Personal Kennzahlen" icon={<Clock className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Personalkosten Ist"  value={fmtChf(summary.laborActual)} bold />
-              <Row label="Personalkosten Plan" value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} />
+              <Row label="Personalkosten Ist"  value={fmtChf(summary.laborActual)} bold hint="gemäss Dienstplan" />
+              <Row label="Personalkosten Plan" value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} hint="gemäss Dienstplan" />
               <Row label="Abw. Personalkosten"
                 value={summary.laborPlanned > 0 ? `${sgn(laborDiff)}${fmtChf(laborDiff)}` : '—'}
                 diff={summary.laborPlanned > 0 ? (laborDiff <= 0 ? 'pos' : 'neg') : undefined} />
@@ -774,9 +860,9 @@ export default function KennzahlenBerichtPage() {
               <p className="text-sm text-muted-foreground py-1">Keine Warenrechnungen für diesen Zeitraum.</p>
             ) : (
               <DGrid>
-                <Row label="Warenaufwand Food"     value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} />
+                <Row label="Warenaufwand Food"     value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} hint="gemäss Rechnungen" />
                 <Row label="WES Food %"            value={summary.foodNet > 0 && summary.warenFood > 0 ? fmtPct(wesFoodPct) : '—'} />
-                <Row label="Warenaufwand Beverage" value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} />
+                <Row label="Warenaufwand Beverage" value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} hint="gemäss Rechnungen" />
                 <Row label="WES Beverage %"        value={summary.bevNet > 0 && summary.warenBev > 0 ? fmtPct(wesBevPct) : '—'} />
                 <Row label="WES Total %"           value={summary.netTotal > 0 ? fmtPct(wesPct) : '—'} bold />
               </DGrid>
@@ -785,11 +871,82 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Gäste / Kunden Kennzahlen" icon={<Users className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Anzahl Gäste / Personen" value="—" hint="gastronovi Import" />
-              <Row label="Umsatz pro Gast"         value="—" hint="Gästezahlen" />
-              <Row label="Ø Gäste pro Tag"         value="—" hint="Gästezahlen" />
+              <Row label="Anzahl Gäste / Personen"
+                value={summary.tages.persons !== null ? NUM.format(Math.round(summary.tages.persons))
+                     : summary.guestCount > 0 ? NUM.format(summary.guestCount) : '—'}
+                hint="gastronovi Import" />
+              <Row label="Umsatz pro Gast"
+                value={summary.tages.revenuePerPerson !== null ? fmtChf(summary.tages.revenuePerPerson)
+                     : summary.revPerGuest > 0 ? fmtChf(summary.revPerGuest) : '—'}
+                hint="gewichtet" />
+              <Row label="Ø Gäste pro Tag"
+                value={summary.tages.persons !== null && summary.tages.personDayCount > 0
+                  ? NUM.format(Math.round(summary.tages.persons / summary.tages.personDayCount)) : '—'}
+                hint="Gästezahlen" />
+              <Row label="Personen pro Bon"
+                value={summary.tages.personsPerReceipt !== null ? summary.tages.personsPerReceipt.toFixed(1) : '—'}
+                hint="Personen ÷ Bons, berechnet" />
             </DGrid>
           </BSection>
+
+          {summary.zeit && (
+            <BSection title="Zeitabschnitte / Stundenumsätze" icon={<Clock className="h-4 w-4" />}>
+              <p className="text-xs text-muted-foreground mb-2">
+                Aus {summary.zeitDayCount} Tages-Z-Bericht{summary.zeitDayCount === 1 ? '' : 'en'} (brutto);
+                Zeitfenster zentral definiert, negative Stundenwerte bleiben erhalten.
+              </p>
+              <DGrid>
+                <Row label={GN_ZEITFENSTER.mittag.label}
+                  value={summary.zeit.mittagRevenue !== null ? fmtChf(summary.zeit.mittagRevenue) : '—'} />
+                <Row label={GN_ZEITFENSTER.abend.label}
+                  value={summary.zeit.abendRevenue !== null ? fmtChf(summary.zeit.abendRevenue) : '—'} />
+                <Row label="Umsatz vor 17:00"
+                  value={summary.zeit.vor17Revenue !== null ? fmtChf(summary.zeit.vor17Revenue) : '—'} />
+                <Row label="Umsatz ab 17:00"
+                  value={summary.zeit.ab17Revenue !== null ? fmtChf(summary.zeit.ab17Revenue) : '—'} />
+                <Row label="Stärkste Stunde"
+                  value={summary.zeit.strongestHour
+                    ? `${summary.zeit.strongestHour.label} · ${fmtChf(summary.zeit.strongestHour.totalAmount)}` : '—'} />
+                <Row label="Schwächste aktive Stunde"
+                  value={summary.zeit.weakestActiveHour
+                    ? `${summary.zeit.weakestActiveHour.label} · ${fmtChf(summary.zeit.weakestActiveHour.totalAmount)}` : '—'}
+                  hint="Stunden mit Wert ≠ 0" />
+                <Row label={`Peak-Zeitfenster (${GN_ZEITFENSTER.peakFensterStunden} Std.)`}
+                  value={summary.zeit.peakWindow
+                    ? `${summary.zeit.peakWindow.label} · ${fmtChf(summary.zeit.peakWindow.totalAmount)}` : '—'} bold />
+              </DGrid>
+              <details className="mt-2">
+                <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground"
+                  data-testid="toggle-stundenumsaetze">
+                  Umsatz je Stunde ({summary.zeit.hours.length})
+                </summary>
+                <div className="mt-2 max-h-64 overflow-y-auto rounded border border-border/50">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-muted text-right sticky top-0">
+                        <th className="px-3 py-1.5 text-left font-medium">Stunde</th>
+                        <th className="px-3 py-1.5 font-medium">Umsatz</th>
+                        <th className="px-3 py-1.5 font-medium">Anteil</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.zeit.hours.map(h => (
+                        <tr key={h.hour} className="border-b border-border/40 last:border-0">
+                          <td className="px-3 py-1">{h.label}</td>
+                          <td className={cn('px-3 py-1 text-right tabular-nums', h.totalAmount < 0 && 'text-red-600 dark:text-red-400')}>
+                            {fmtChf(h.totalAmount)}
+                          </td>
+                          <td className="px-3 py-1 text-right tabular-nums text-muted-foreground">
+                            {h.sharePct !== null ? `${h.sharePct.toFixed(1)} %` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </BSection>
+          )}
 
           {summary.chart.length > 0 && summary.chart.some(d => d.net > 0) && (
             <BSection title="Umsatzverlauf" icon={<BarChart2 className="h-4 w-4" />}>
@@ -981,8 +1138,8 @@ function DGrid({ children }: { children: ReactNode }) {
   return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-8">{children}</div>;
 }
 
-function Row({ label, value, bold, hint, diff }: {
-  label: string; value: string; bold?: boolean; hint?: string; diff?: 'pos' | 'neg';
+function Row({ label, value, bold, hint, diff, tip }: {
+  label: string; value: string; bold?: boolean; hint?: string; diff?: 'pos' | 'neg'; tip?: string;
 }) {
   const vc = diff === 'pos' ? 'text-emerald-600 dark:text-emerald-400'
            : diff === 'neg' ? 'text-red-600 dark:text-red-400' : '';
@@ -990,6 +1147,7 @@ function Row({ label, value, bold, hint, diff }: {
     <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border/30 last:border-0">
       <div className="flex items-baseline gap-1 min-w-0">
         <span className="text-xs text-muted-foreground truncate">{label}</span>
+        {tip && <InfoTip text={tip} />}
         {hint && <span className="text-[10px] text-muted-foreground/50 whitespace-nowrap shrink-0">({hint})</span>}
       </div>
       <span className={cn('text-xs font-medium whitespace-nowrap shrink-0', bold && 'font-bold text-sm', vc)}>

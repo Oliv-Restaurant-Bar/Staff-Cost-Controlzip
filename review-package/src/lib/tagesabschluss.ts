@@ -441,6 +441,11 @@ export interface TagesabschlussBlob {
   exportSettings: TagesabschlussExportSettings | null;
   /** Buchhaltungs-Export-Protokolle (write-once), Key = Export-ID. */
   exportProtokolle: Record<string, BuchhaltungsExportRecord>;
+  /**
+   * Schwelle des Umsatz-Abgleichs (Tagesumsätze-Import vs. Z-Bericht) in CHF —
+   * null = Standard (DEFAULT_UMSATZ_DIFF_SCHWELLE). Pro Mandant im Blob.
+   */
+  umsatzDiffSchwelle: { value: number; updatedAt: string } | null;
 }
 
 export function emptyTagesabschlussBlob(): TagesabschlussBlob {
@@ -449,6 +454,7 @@ export function emptyTagesabschlussBlob(): TagesabschlussBlob {
     cashDiffReasons: {}, anfangsbestand: {}, saldoAnker: {},
     abschluesse: {}, monatsabschluesse: {},
     exportSettings: null, exportProtokolle: {},
+    umsatzDiffSchwelle: null,
   };
 }
 
@@ -594,6 +600,17 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
     exportSettings:
       isObj(o.exportSettings) ? (o.exportSettings as unknown as TagesabschlussExportSettings) : null,
     exportProtokolle,
+    umsatzDiffSchwelle:
+      isObj(o.umsatzDiffSchwelle)
+        && typeof (o.umsatzDiffSchwelle as { value?: unknown }).value === 'number'
+        && Number.isFinite((o.umsatzDiffSchwelle as { value: number }).value)
+        && (o.umsatzDiffSchwelle as { value: number }).value >= 0
+        ? {
+            value: (o.umsatzDiffSchwelle as { value: number }).value,
+            updatedAt: typeof (o.umsatzDiffSchwelle as { updatedAt?: unknown }).updatedAt === 'string'
+              ? (o.umsatzDiffSchwelle as { updatedAt: string }).updatedAt : '',
+          }
+        : null,
   };
 }
 
@@ -1769,6 +1786,63 @@ export const DEFAULT_KONTO_BEZEICHNUNGEN: Readonly<Record<string, string>> = {
   '2003': 'Gutscheine',
 };
 
+// ── Umsatz-Abgleich: Tagesumsätze-Import vs. Z-Bericht ───────────────────────
+
+/** Standard-Schwelle des Umsatz-Abgleichs in CHF (Spec: 10.00, konfigurierbar). */
+export const DEFAULT_UMSATZ_DIFF_SCHWELLE = 10;
+
+/** Effektive Schwelle aus dem Blob (Standard, falls nie konfiguriert/ungültig). */
+export function umsatzDiffSchwelle(blob: TagesabschlussBlob): number {
+  const v = blob.umsatzDiffSchwelle?.value;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_UMSATZ_DIFF_SCHWELLE;
+}
+
+/** Setzt die Umsatz-Abgleich-Schwelle (null/ungültig = zurück auf Standard). */
+export function setUmsatzDiffSchwelle(
+  blob: TagesabschlussBlob,
+  value: number | null,
+  now: string,
+): TagesabschlussBlob {
+  const valid = value !== null && Number.isFinite(value) && value >= 0;
+  return {
+    ...blob,
+    umsatzDiffSchwelle: valid
+      ? { value: round2(value), updatedAt: now }
+      // Kein Key-Löschen (merge-Resurrection) — Standardwert explizit setzen:
+      : { value: DEFAULT_UMSATZ_DIFF_SCHWELLE, updatedAt: now },
+  };
+}
+
+export interface UmsatzAbgleich {
+  /** Angezeigter Umsatz: Tagesumsätze-Import, sonst Z-Bericht (nur vorhandene Quelle). */
+  anzeige: number | null;
+  /** Quelle des angezeigten Werts. */
+  quelle: 'import' | 'zbericht' | null;
+  importWert: number | null;
+  zWert: number | null;
+  /** Import − Z-Bericht; nur wenn BEIDE Quellen vorliegen. */
+  diff: number | null;
+  /** Rot-Markierung: beide Quellen vorhanden UND |diff| > Schwelle. */
+  rot: boolean;
+}
+
+/**
+ * Abgleich des Tagesumsatzes: MASSGEBLICH angezeigt wird der Wert aus dem
+ * Tagesumsätze-Import (Brutto); der Z-Bericht (Brutto, gleiche Basis) dient
+ * als Hintergrund-Kontrolle. Fehlt eine Quelle: nur den vorhandenen Wert
+ * zeigen, KEINE Rot-Markierung (leer statt 0, keine Differenz).
+ */
+export function umsatzAbgleich(
+  importWert: number | null,
+  zWert: number | null,
+  schwelle: number,
+): UmsatzAbgleich {
+  const anzeige = importWert ?? zWert;
+  const quelle = importWert !== null ? 'import' as const : zWert !== null ? 'zbericht' as const : null;
+  const diff = importWert !== null && zWert !== null ? round2(importWert - zWert) : null;
+  return { anzeige, quelle, importWert, zWert, diff, rot: diff !== null && Math.abs(diff) > schwelle };
+}
+
 /** Aktualisiert die Export-Einstellungen im Blob. */
 export function setExportSettings(
   blob: TagesabschlussBlob,
@@ -1880,9 +1954,17 @@ export function mergeTagesabschlussBlobs(
     if (!r || newer(rec.updatedAt, r.updatedAt)) exportProtokolle[id] = rec;
   }
 
+  const umsatzDiffSchwelle =
+    local.umsatzDiffSchwelle && remote.umsatzDiffSchwelle
+      ? (newer(local.umsatzDiffSchwelle.updatedAt, remote.umsatzDiffSchwelle.updatedAt)
+          ? local.umsatzDiffSchwelle
+          : remote.umsatzDiffSchwelle)
+      : local.umsatzDiffSchwelle ?? remote.umsatzDiffSchwelle;
+
   return {
     days, expenses, overrides, comments, cashDiffReasons, anfangsbestand,
     saldoAnker, abschluesse, monatsabschluesse, exportSettings, exportProtokolle,
+    umsatzDiffSchwelle,
   };
 }
 
@@ -1906,6 +1988,39 @@ export interface CloseDayCheck {
   blockers: string[];
 }
 
+/** Gate für eine Bestätigungs-Checkbox: ok oder Grund fürs Sperren (Tooltip). */
+export interface ConfirmCheckboxGate {
+  ok: boolean;
+  /** Anzeigbarer Sperr-Grund (nur bei !ok). */
+  reason?: string;
+}
+
+/**
+ * «Bar kontrolliert» darf erst AKTIVIERT werden, wenn BAR IST (gezählter
+ * Kassenbestand) erfasst ist. Reines Aktivierungs-Gate — ein bereits
+ * gesetztes Häkchen bleibt IMMER entfernbar (Audit beim Entfernen).
+ */
+export function canCheckBarKontrolliert(row: TagesabschlussRow): ConfirmCheckboxGate {
+  if (row.locked) return { ok: false, reason: 'Tag ist bereits abgeschlossen.' };
+  if (row.cashIst === null) return { ok: false, reason: 'BAR IST muss zuerst erfasst werden.' };
+  return { ok: true };
+}
+
+/**
+ * «Tagesabschluss geprüft» darf erst AKTIVIERT werden, wenn alle
+ * Pflichtwerte vorhanden sind: Z-Bericht + BAR IST + Kassensaldo bekannt.
+ * Die weitergehenden Validierungen (Differenz begründet etc.) prüft
+ * weiterhin AUSSCHLIESSLICH canCloseDay für den Abschließen-Button —
+ * keine doppelte Statuslogik.
+ */
+export function canCheckAbschlussGeprueft(row: TagesabschlussRow): ConfirmCheckboxGate {
+  if (row.locked) return { ok: false, reason: 'Tag ist bereits abgeschlossen.' };
+  if (!row.hasZbericht || row.cashIst === null || row.kassensaldoSoll === null) {
+    return { ok: false, reason: 'Es fehlen noch Pflichtwerte.' };
+  }
+  return { ok: true };
+}
+
 /**
  * Vorbedingungen für „Tagesabschluss abschließen":
  * Z-Bericht + Tagesbestätigung (Adyen geprüft/begründet via canConfirmDay)
@@ -1917,15 +2032,31 @@ export function canCloseDay(row: TagesabschlussRow): CloseDayCheck {
   if (row.locked) blockers.push('Tag ist bereits abgeschlossen.');
   if (!row.hasZbericht) blockers.push('Kein Z-Bericht vorhanden.');
   if (row.confirmation?.confirmed !== true) {
-    blockers.push('Tagesbestätigung fehlt (Adyen-Differenzen prüfen/begründen).');
+    blockers.push('«Tagesabschluss geprüft» nicht bestätigt.');
   }
-  if (row.confirmation?.cashCounted !== true) blockers.push('Barbestand nicht als gezählt bestätigt.');
-  if (row.cashIst === null) blockers.push('Cash Ist (gezählter Kassenbestand) fehlt.');
+  if (row.confirmation?.cashCounted !== true) blockers.push('«Bar kontrolliert» nicht bestätigt.');
+  if (row.cashIst === null) blockers.push('BAR IST (gezählter Kassenbestand) fehlt.');
   if (row.kassensaldoSoll === null) blockers.push('Kassensaldo unbekannt (Anfangsbestand fehlt).');
   if (row.cashDiff !== null && row.cashDiffStatus !== 'ok' && !row.cashDiffBegruendet) {
     blockers.push('Kassendifferenz weder grün noch begründet.');
   }
   return { ok: blockers.length === 0, blockers };
+}
+
+/**
+ * Sammelaktion «Alle auf grün»: wäre der Tag abschliessbar, wenn beide
+ * Bestätigungen (Bar kontrolliert + Abschluss geprüft) gesetzt WÄREN?
+ * Prüft dieselben Gates wie canCloseDay — nur die beiden Häkchen werden
+ * als gesetzt angenommen (die Sammelaktion setzt sie mit). Tage ohne
+ * Daten (kein Z-Bericht, kein BAR IST, unbekannter Saldo) oder mit
+ * unbegründeter Differenz bleiben unangetastet.
+ */
+export function canBulkCloseDay(row: TagesabschlussRow): CloseDayCheck {
+  const simulated: TagesabschlussRow = {
+    ...row,
+    confirmation: { ...(row.confirmation ?? {}), confirmed: true, cashCounted: true } as TagesabschlussRow['confirmation'],
+  };
+  return canCloseDay(simulated);
 }
 
 /**

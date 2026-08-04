@@ -18,11 +18,12 @@
  */
 
 import type { TenantId } from '@/contexts/TenantContext';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvGetStrict, kvSetStrict, notifyKVBackupProblem } from './supabase-kv';
 import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 import {
   ADYEN_ABSTIMMUNG_KEY,
   normalizeAdyenBlob,
+  mergeAdyenBlobs,
   type AdyenAbstimmungBlob,
 } from './adyen-abstimmung';
 
@@ -51,7 +52,8 @@ export function loadAdyenAbstimmungLocal(tenantId: TenantId): AdyenAbstimmungBlo
 
 /**
  * Lädt den Abgleichs-Blob: zuerst localStorage (sofort), dann KV-Backup.
- * Ist im KV ein Stand vorhanden, gilt dieser als Wahrheit und wird lokal
+ * Ist im KV ein Stand vorhanden, wird er mit dem lokalen Stand GEMERGT
+ * (jüngster Stand je Key gewinnt — nicht ersetzt) und das Ergebnis lokal
  * gespiegelt. Fehler werden geschluckt — im Zweifel localStorage-Stand.
  */
 export async function loadAdyenAbstimmung(tenantId: TenantId): Promise<AdyenAbstimmungBlob> {
@@ -64,9 +66,9 @@ export async function loadAdyenAbstimmung(tenantId: TenantId): Promise<AdyenAbst
   try {
     const remote = await kvGet(tenantKey(tenantId, ADYEN_ABSTIMMUNG_KEY));
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
-      const normalized = normalizeAdyenBlob(remote);
-      tlsSetJson(tenantId, ADYEN_ABSTIMMUNG_KEY, normalized);
-      return normalized;
+      const merged = mergeAdyenBlobs(local, normalizeAdyenBlob(remote));
+      tlsSetJson(tenantId, ADYEN_ABSTIMMUNG_KEY, merged);
+      return merged;
     }
   } catch {
     // Backup nicht erreichbar → localStorage-Stand nutzen.
@@ -75,12 +77,33 @@ export async function loadAdyenAbstimmung(tenantId: TenantId): Promise<AdyenAbst
 }
 
 /**
- * Speichert den Blob: localStorage sofort (durable über Reload), KV best-effort
- * als Backup. KV-Fehler brechen die Aktion NICHT ab.
+ * Speichert den Blob: KV-Stand STRIKT erneut lesen → mergen (jüngster Stand
+ * je Key gewinnt) → localStorage sofort, dann KV-Write.
+ *
+ * kvGetStrict statt kvGet: Ein transienter LESEFEHLER (Netz-Blip) ist NICHT
+ * dasselbe wie «Remote ist leer». Bei einem Lesefehler wird der KV-Write
+ * ÜBERSPRUNGEN (sonst würde der rein lokale Stand Overrides/Bestätigungen
+ * anderer Geräte komplett ersetzen) und ein sichtbarer Fehler mit «Erneut
+ * versuchen» gemeldet — gleiches Muster wie saveTagesabschluss. Der Retry
+ * bindet den toWrite-SNAPSHOT (nie erneut localStorage lesen — der könnte
+ * inzwischen anders sein). Nur ein BESTÄTIGT leerer Remote-Stand darf
+ * unverändert geschrieben werden.
  */
-export async function saveAdyenAbstimmung(tenantId: TenantId, blob: AdyenAbstimmungBlob): Promise<void> {
+export async function saveAdyenAbstimmung(tenantId: TenantId, blob: AdyenAbstimmungBlob): Promise<AdyenAbstimmungBlob> {
+  const key = tenantKey(tenantId, ADYEN_ABSTIMMUNG_KEY);
+  let toWrite = blob;
+  let remoteReadFailed: unknown = null;
   try {
-    tlsSetJson(tenantId, ADYEN_ABSTIMMUNG_KEY, blob);
+    const remote = await kvGetStrict(key);
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
+      toWrite = mergeAdyenBlobs(blob, normalizeAdyenBlob(remote));
+    }
+    // remote === null ⇒ bestätigt leer → blob darf unverändert geschrieben werden.
+  } catch (err) {
+    remoteReadFailed = err;
+  }
+  try {
+    tlsSetJson(tenantId, ADYEN_ABSTIMMUNG_KEY, toWrite);
   } catch {
     // localStorage voll/gesperrt → KV-Backup bleibt einzige Persistenz.
   }
@@ -91,9 +114,22 @@ export async function saveAdyenAbstimmung(tenantId: TenantId, blob: AdyenAbstimm
   } catch {
     // Event-Dispatch darf das Speichern nie brechen.
   }
-  try {
-    await kvSet(tenantKey(tenantId, ADYEN_ABSTIMMUNG_KEY), blob);
-  } catch {
-    // Backup fehlgeschlagen — localStorage bleibt primärer Speicher.
+  if (remoteReadFailed !== null) {
+    // KEIN KV-Write mit unklarem Remote-Zustand — sichtbar melden statt
+    // Overrides/Bestätigungen anderer Geräte zu überschreiben.
+    void notifyKVBackupProblem(remoteReadFailed, 'Adyen-Abstimmung', {
+      toastId: 'adyen-abstimmung-backup',
+      retry: async () => { await saveAdyenAbstimmung(tenantId, toWrite); },
+    });
+    return toWrite;
   }
+  try {
+    await kvSetStrict(key, toWrite);
+  } catch (err) {
+    void notifyKVBackupProblem(err, 'Adyen-Abstimmung', {
+      toastId: 'adyen-abstimmung-backup',
+      retry: async () => { await saveAdyenAbstimmung(tenantId, toWrite); },
+    });
+  }
+  return toWrite;
 }

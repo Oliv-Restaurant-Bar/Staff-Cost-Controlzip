@@ -1,17 +1,21 @@
 /**
- * GastronoviZBerichtPage — Z-Bericht, Personen & Durchschnittsbon CSV Import
+ * GastronoviZBerichtPage — Gastronovi-Import (nur PDF)
  *
- * Drei Importtypen:
- *   Z-Bericht        — Tagesumsatz, Kostenstellen, Kellner, Bezahlarten, etc.
- *   Personen         — Gäste / Umsatz pro Person (Analyse → Verkäufe → Personen)
- *   Durchschnittsbon — Durchschnittsbon pro Tag (offizielle Gastronovi-Kennzahl)
+ * Zwei Importbereiche:
+ *   Z-Bericht (PDF)            — Standard & Erweitert: Tagesumsatz, Zahlarten,
+ *                                Zeitabschnitte, Kundenkarten, Produktpositionen
+ *   Gäste & Bonanalyse (PDF)   — Anzahl Personen, Umsatz pro Person,
+ *                                Durchschnittsbon (bis zu 3 PDFs gleichzeitig)
+ *
+ * CSV-Import ist Legacy: bestehende CSV-Importe bleiben in Historie und
+ * Auswertungen erhalten, neue Importe laufen ausschliesslich über PDF.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Trash2, ChevronDown, ChevronUp, RefreshCw,
-  Info, AlertCircle, Database, Users, Copy, Receipt,
+  Info, AlertCircle, Database, Users, Copy, Mail,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -22,32 +26,32 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { parseGnZBericht } from '@/lib/gn-zbericht-parser';
-import type { GnParsedZBericht } from '@/lib/gn-zbericht-parser';
+import type { GnParsedZBericht, GnValidationStatus } from '@/lib/gn-zbericht-parser';
 import {
   saveGnImport, loadGnImports, deleteGnImport,
   checkOverlappingImports, importTypeLabel,
-  fetchBatchOverlaps, saveGnZBerichtBatch,
+  checkGnChecksumDuplicate,
   loadGnDayClosingsForMonth,
 } from '@/lib/gn-zbericht-db';
-import type { GnImportRow, OverlapInfo, BatchSaveItem, BatchSaveResult } from '@/lib/gn-zbericht-db';
-import {
-  parseZBerichtBatch, planBatchImport,
-} from '@/lib/gn-zbericht-multi';
-import type {
-  BatchParseResult, FileImportPlan, ConflictAction, ErrorPolicy,
-} from '@/lib/gn-zbericht-multi';
+import type { GnImportRow, OverlapInfo } from '@/lib/gn-zbericht-db';
 
-import { parseGnPersonReport } from '@/lib/gn-personen-parser';
-import type { GnParsedPersonReport, PersonCsvType } from '@/lib/gn-personen-parser';
+import { extractGnPdfTextItems } from '@/lib/gn-pdf-text';
+import { reconstructGnPdfLines, detectGnPdfReportKind } from '@/lib/gn-pdf-lines';
+import type { GnPdfPageItems } from '@/lib/gn-pdf-lines';
+import { parseGnZBerichtPdf } from '@/lib/gn-zbericht-pdf-parser';
+import {
+  parseGnKpiPdf, kpiPdfToAverageCheck, kpiPdfToPersonReport, GN_KPI_KIND_LABELS,
+} from '@/lib/gn-kpi-pdf-parser';
+import type { GnParsedKpiPdf } from '@/lib/gn-kpi-pdf-parser';
+import { parseGnKpiCsv } from '@/lib/gn-kpi-csv-parser';
+
 import {
   savePersonImport, loadPersonImports, deletePersonImport,
   checkPersonDuplicate,
 } from '@/lib/gn-personen-db';
 import type { GnPersonImportRow } from '@/lib/gn-personen-db';
+import type { GnParsedPersonReport } from '@/lib/gn-personen-parser';
 
-import { parseGnAverageCheck } from '@/lib/gn-average-check-parser';
-import type { GnParsedAverageCheck, GnAverageCheckDebug } from '@/lib/gn-average-check-parser';
 import {
   saveAverageCheckImport, loadAverageCheckImports, deleteAverageCheckImport,
   getOverlappingAverageCheckDates,
@@ -56,6 +60,19 @@ import type { GnAverageCheckImportGroup } from '@/lib/gn-average-check-db';
 
 import { runGnDiagnostic } from '@/lib/gn-diagnostic';
 import type { GnDiagnosticResult } from '@/lib/gn-diagnostic';
+
+import {
+  loadPendingZberichtInbox, downloadZberichtInboxPdf,
+  markZberichtInboxImported, markZberichtInboxIgnored,
+} from '@/lib/zbericht-inbox-db';
+import type { ZberichtInboxRow } from '@/lib/zbericht-inbox-db';
+import { runZberichtAutoImport, autoImportSummary, isZberichtRowClaimable } from '@/lib/zbericht-auto-import';
+
+import {
+  mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
+} from '@/lib/gn-tagesanalyse';
+import { analyzeGnZeitabschnitte, GN_ZEITFENSTER } from '@/lib/gn-zeitabschnitte';
+import { InfoTip } from '@/components/ui/info-tip';
 
 import type { GnDayClosing } from '@/lib/tagesabschluss';
 import {
@@ -75,23 +92,82 @@ const NUM  = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumF
 const NUM0 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 function fc(v: number) { return v > 0 ? `CHF ${NUM.format(v)}` : '—'; }
+/** Vorzeichenbehaftete Beträge (Zeitabschnitte/Validierung): 0 und negativ bleiben sichtbar. */
+function fcs(v: number | null | undefined) {
+  return v === null || v === undefined ? '—' : `CHF ${NUM.format(v)}`;
+}
+/** Anzeige-Label der Verzehrart aus dem erweiterten Z-Bericht. */
+function consumptionLabel(ct: 'in_house' | 'takeaway' | null) {
+  return ct === 'in_house' ? 'Inner Haus' : ct === 'takeaway' ? 'Außer Haus' : '—';
+}
 function fdate(iso: string | null | undefined) {
   if (!iso) return '—';
   try { return fmtDate(parseISO(iso.slice(0, 10)), 'dd.MM.yyyy', { locale: de }); }
   catch { return iso; }
 }
+/** Zeitstempel mit Uhrzeit (E-Mail-Eingang). */
+function fdatetime(iso: string | null | undefined) {
+  if (!iso) return '—';
+  try { return fmtDate(parseISO(iso), 'dd.MM.yyyy HH:mm', { locale: de }); }
+  catch { return iso; }
+}
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
-type ImportType  = 'zbericht' | 'personen' | 'durchschnittsbon_bericht';
+type ImportType  = 'zbericht' | 'kpi';
 type WizardStep  = 'upload' | 'preview' | 'saving' | 'done';
 type Tab         = 'import' | 'history';
+
+/** Eine hochgeladene Gäste-/Bonanalyse-Datei (PDF oder CSV) inkl. Duplikat-Infos. */
+interface KpiFileEntry {
+  id: string;
+  fileName: string;
+  /** Text-Items (PDF) für erneutes Parsen bei manueller Jahreswahl. */
+  pages: GnPdfPageItems[] | null;
+  /** Roher CSV-Text für erneutes Parsen bei manueller Jahreswahl. */
+  csvText: string | null;
+  parsed: GnParsedKpiPdf | null;
+  /** Erkennungs-/Konfliktfehler — Eintrag ist dann nicht importierbar. */
+  error: string | null;
+  /** Identischer Inhalt bereits importiert ⇒ beim Bestätigen No-op. */
+  dupNoop: boolean;
+  /** Gleicher Zeitraum + Berichtstyp bereits importiert ⇒ wird ersetzt. */
+  replaceId: string | null;
+  /** Bereits importierte Tage (nur Durchschnittsbon). */
+  avgOverlapDates: string[];
+  /** Manuell gewähltes Importjahr (Pflicht, wenn das PDF kein Jahr enthält). */
+  chosenYear: number | null;
+}
+
+interface KpiSaveResult {
+  fileName: string;
+  kindLabel: string;
+  status: 'ok' | 'noop' | 'error';
+  message?: string;
+}
+
+const GN_SCAN_ERROR =
+  'Dieses PDF enthält keinen auslesbaren Text. Bitte exportiere den Bericht '
+  + 'direkt aus Gastronovi und lade nicht einen Scan oder ein Foto hoch.';
+
+const VALIDATION_LABELS: Record<GnValidationStatus, string> = {
+  plausibel:         'Plausibel',
+  rundungsdifferenz: 'Rundungsdifferenz',
+  unvollstaendig:    'Unvollständig',
+  abweichung:        'Abweichung',
+};
+const VALIDATION_TONES: Record<GnValidationStatus, string> = {
+  plausibel:         'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+  rundungsdifferenz: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  unvollstaendig:    'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  abweichung:        'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+};
 
 // ── Komponente ────────────────────────────────────────────────────────────────
 
 export default function GastronoviZBerichtPage() {
   const { tenantId } = useTenant();
-  const { isAdmin }  = usePermissions();
+  const { isAdmin } = usePermissions();
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -104,44 +180,43 @@ export default function GastronoviZBerichtPage() {
   const [tablesOk,    setTablesOk]    = useState<boolean | null>(null);
   const [diagnostic,  setDiagnostic]  = useState<GnDiagnosticResult | null>(null);
 
-  // Z-Bericht State
+  // Z-Bericht State (PDF)
   const [parsed,           setParsed]           = useState<GnParsedZBericht | null>(null);
   const [overlapInfo,      setOverlapInfo]       = useState<OverlapInfo[]>([]);
   const [manualPeriodFrom, setManualPeriodFrom]  = useState('');
   const [manualPeriodTo,   setManualPeriodTo]    = useState('');
+  const [zDupInfo,         setZDupInfo]          = useState<{ fileName: string | null; importedAt: string | null } | null>(null);
   const [zHistory,         setZHistory]          = useState<GnImportRow[]>([]);
 
-  // Z-Bericht Multi-Datei (Batch) State
-  const [batchResult,      setBatchResult]      = useState<BatchParseResult | null>(null);
-  const [batchOverlaps,    setBatchOverlaps]    = useState<Record<string, OverlapInfo[]>>({});
-  const [batchConflict,    setBatchConflict]    = useState<ConflictAction>('replace');
-  const [batchErrorPolicy, setBatchErrorPolicy] = useState<ErrorPolicy>('only_valid');
-  const [batchPlans,       setBatchPlans]       = useState<FileImportPlan[] | null>(null);
-  const [batchSaveResults, setBatchSaveResults] = useState<BatchSaveResult[] | null>(null);
-  const [batchExpanded,    setBatchExpanded]    = useState<Set<string>>(new Set());
+  // E-Mail-Eingang (zbericht_inbox): ausstehende, per Webhook eingegangene PDFs
+  const [inboxRows,      setInboxRows]      = useState<ZberichtInboxRow[]>([]);
+  const [inboxError,     setInboxError]     = useState<string | null>(null);
+  /** false = Migration 20260723_zbericht_inbox noch nicht eingespielt → Abschnitt ausblenden. */
+  const [inboxAvailable, setInboxAvailable] = useState(true);
+  /** Zeilen-ID, für die gerade ein Download/Ignorieren läuft. */
+  const [inboxBusy,      setInboxBusy]      = useState<string | null>(null);
+  /** Inbox-Zeile, aus der der aktuelle Wizard-Durchlauf stammt (→ nach Save markieren). */
+  const [activeInboxId,  setActiveInboxId]  = useState<string | null>(null);
+  /** Auto-Import läuft (Seiten-Öffnung oder Button «Jetzt alle importieren»). */
+  const [autoRunning,    setAutoRunning]    = useState(false);
+  const [autoProgress,   setAutoProgress]   = useState<{ done: number; total: number } | null>(null);
+  /** Pro Mandant nur EIN Auto-Lauf je Seitenbesuch (kein Loop bei Fehlern). */
+  const autoRanForTenant = useRef<string | null>(null);
 
-  // Personen State
-  const [parsedPerson,    setParsedPerson]    = useState<GnParsedPersonReport | null>(null);
-  const [dupPersonInfo,   setDupPersonInfo]   = useState<{ existingId: string; importedAt: string } | null>(null);
-  const [personHistory,   setPersonHistory]   = useState<GnPersonImportRow[]>([]);
-  const [csvTypeOverride, setCsvTypeOverride] = useState<PersonCsvType | null>(null);
-
-  // Durchschnittsbon State
-  const [parsedAvg,       setParsedAvg]       = useState<GnParsedAverageCheck | null>(null);
-  const [avgHistory,      setAvgHistory]      = useState<GnAverageCheckImportGroup[]>([]);
-  const [avgOverlapDates, setAvgOverlapDates] = useState<string[]>([]);
-  const [avgDebug,        setAvgDebug]        = useState<GnAverageCheckDebug | null>(null);
-  const [avgImportYear,   setAvgImportYear]   = useState<number>(new Date().getFullYear());
-  const [avgRawText,      setAvgRawText]      = useState<string | null>(null);
+  // Gäste & Bonanalyse State (bis zu 3 KPI-PDFs gleichzeitig)
+  const [kpiFiles,       setKpiFiles]       = useState<KpiFileEntry[]>([]);
+  const [kpiSaveResults, setKpiSaveResults] = useState<KpiSaveResult[] | null>(null);
+  const [kpiProcessing,  setKpiProcessing]  = useState(false);
 
   // History
+  const [personHistory, setPersonHistory] = useState<GnPersonImportRow[]>([]);
+  const [avgHistory,    setAvgHistory]    = useState<GnAverageCheckImportGroup[]>([]);
   const [histLoading, setHistLoading] = useState(false);
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
   const [deleting,    setDeleting]    = useState<string | null>(null);
   const [showDebug,    setShowDebug]    = useState(false);
-  const [showAvgDebug, setShowAvgDebug] = useState(false);
 
-  const csvRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Setup prüfen ────────────────────────────────────────────────────────────
 
@@ -157,7 +232,8 @@ export default function GastronoviZBerichtPage() {
   const loadHistory = useCallback(async () => {
     setHistLoading(true);
     const [z, p, a] = await Promise.all([
-      loadGnImports(tenantId),
+      // Historie zeigt Details aus raw_csv_json (+ report_type-Badge) → volle Zeilen.
+      loadGnImports(tenantId, { includeRaw: true }),
       loadPersonImports(tenantId),
       loadAverageCheckImports(tenantId),
     ]);
@@ -176,14 +252,10 @@ export default function GastronoviZBerichtPage() {
   const resetWizard = useCallback(() => {
     setParsed(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
-    setBatchResult(null); setBatchOverlaps({}); setBatchPlans(null);
-    setBatchSaveResults(null); setBatchExpanded(new Set());
-    setBatchConflict('replace'); setBatchErrorPolicy('only_valid');
-    setParsedPerson(null); setDupPersonInfo(null);
-    setCsvTypeOverride(null);
-    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
-    setAvgRawText(null); setAvgImportYear(new Date().getFullYear());
+    setZDupInfo(null);
+    setKpiFiles([]); setKpiSaveResults(null); setKpiProcessing(false);
     setParseError(null); setStep('upload');
+    setActiveInboxId(null);
   }, []);
 
   const handleTypeChange = (t: ImportType) => {
@@ -191,136 +263,304 @@ export default function GastronoviZBerichtPage() {
     resetWizard();
   };
 
-  // ── CSV verarbeiten ──────────────────────────────────────────────────────
+  // ── PDF verarbeiten ──────────────────────────────────────────────────────
 
-  // Durchschnittsbon parsen (auch erneut bei manueller Jahreswahl aufrufbar).
-  const runAvgParse = useCallback(async (text: string, fileName: string, year: number): Promise<boolean> => {
-    const result = parseGnAverageCheck(text, fileName, year);
-    setAvgDebug(result.debug);
-    if (result.rows.length === 0) {
-      setShowAvgDebug(true);
-      setParsedAvg(null);
-      setAvgOverlapDates([]);
-      setParseError(
-        'Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. '
-        + 'Es wurden keine Tageswerte gefunden. Siehe Parser-Diagnose unten.',
-      );
-      return false;
-    }
-    setParseError(null);
-    if (result.periodFrom && result.periodTo) {
-      const existing = await getOverlappingAverageCheckDates(tenantId, result.periodFrom, result.periodTo);
-      const dates = new Set(result.rows.map(r => r.date));
-      setAvgOverlapDates(existing.filter(d => dates.has(d)));
-    } else {
-      setAvgOverlapDates([]);
-    }
-    setParsedAvg(result);
-    return true;
-  }, [tenantId]);
-
-  const processCSV = useCallback(async (file: File) => {
-    setParseError(null); setParsed(null); setParsedPerson(null);
+  /** Z-Bericht-PDF (Standard oder Erweitert) einlesen und prüfen. */
+  const processZPdf = useCallback(async (file: File) => {
+    setParseError(null); setParsed(null); setZDupInfo(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
-    setDupPersonInfo(null);
-    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null); setAvgRawText(null);
-
     try {
-      const text = await file.text();
-
-      if (importType === 'zbericht') {
-        const result = parseGnZBericht(text, file.name);
-        if (result.revenue.totalGross === 0 && result.taxes.length === 0) {
-          setParseError('Datei konnte nicht als Gastronovi Z-Bericht erkannt werden. Bitte prüfe das Format.');
-          return;
-        }
-        if (result.periodFrom && result.periodTo) {
-          const overlaps = await checkOverlappingImports(tenantId, result.periodFrom, result.periodTo);
-          setOverlapInfo(overlaps);
-        }
-        setParsed(result);
-      } else if (importType === 'personen') {
-        const result = parseGnPersonReport(text, file.name);
-        if (result.rowCount === 0 && result.totalGuests === 0) {
-          setParseError('Datei konnte nicht als Gastronovi Personen-Bericht erkannt werden. Bitte prüfe das Format.');
-          return;
-        }
-        const dup = await checkPersonDuplicate(tenantId, result.checksum, result.periodFrom, result.periodTo);
-        if (dup.isDuplicate && dup.existingId) {
-          setDupPersonInfo({ existingId: dup.existingId, importedAt: dup.existingImportedAt ?? '' });
-        }
-        setParsedPerson(result);
-      } else {
-        // Erst-Parse mit aktuellem Jahr als Benutzerwahl-Standard; Rohtext für
-        // späteres erneutes Parsen bei manueller Jahreswahl merken.
-        const yr = new Date().getFullYear();
-        setAvgImportYear(yr);
-        setAvgRawText(text);
-        const ok = await runAvgParse(text, file.name, yr);
-        if (!ok) return;
+      const extract = await extractGnPdfTextItems(file);
+      if (!extract.hasTextLayer) {
+        setParseError(GN_SCAN_ERROR);
+        return;
       }
+      const detection = detectGnPdfReportKind(reconstructGnPdfLines(extract.pages));
+      if (detection.kind !== 'zbericht' && detection.kind !== 'unbekannt') {
+        setParseError(
+          `Diese Datei ist ein «${GN_KPI_KIND_LABELS[detection.kind]}»-Bericht. `
+          + 'Bitte importiere sie im Bereich «Gäste & Bonanalyse (PDF)».',
+        );
+        return;
+      }
+      const result = parseGnZBerichtPdf(extract.pages, file.name);
+      if (result.revenue.totalGross === 0 && result.taxes.length === 0) {
+        const missing = result.debug.missingSections.length > 0
+          ? ` Fehlende Sektionen: ${result.debug.missingSections.join(', ')}.` : '';
+        const title = detection.titleLine ? ` Erkannte Titelzeile: «${detection.titleLine}».` : '';
+        setParseError(
+          'Das PDF konnte nicht als Gastronovi Z-Bericht gelesen werden — '
+          + `es wurden weder Umsatz- noch Steuerdaten gefunden.${missing}${title}`,
+        );
+        return;
+      }
+      // Idempotenz: identischer Bericht (Checksumme) bereits importiert?
+      const dup = await checkGnChecksumDuplicate(tenantId, result.checksum);
+      if (dup.isDuplicate) {
+        setZDupInfo({ fileName: dup.existingFileName, importedAt: dup.existingImportedAt });
+      }
+      if (result.periodFrom && result.periodTo) {
+        setOverlapInfo(await checkOverlappingImports(tenantId, result.periodFrom, result.periodTo));
+      }
+      setParsed(result);
       setStep('preview');
     } catch (e) {
-      setParseError('Fehler: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }, [importType, tenantId, runAvgParse]);
-
-  // Manuelle Jahreswahl (nur relevant, wenn das Jahr per Benutzerwahl bestimmt wurde):
-  // Rohtext mit dem neuen Jahr erneut parsen.
-  const handleAvgYearChange = async (year: number) => {
-    setAvgImportYear(year);
-    if (avgRawText && parsedAvg) {
-      await runAvgParse(avgRawText, parsedAvg.fileName, year);
-    }
-  };
-
-  const handleFileSelect = (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setParseError('Bitte eine CSV-Datei auswählen.');
-      return;
-    }
-    processCSV(file);
-  };
-
-  // Mehrere Z-Berichte gleichzeitig parsen, klassifizieren und Überschneidungen prüfen.
-  const processBatch = useCallback(async (files: File[]) => {
-    setParseError(null);
-    setParsed(null); setParsedPerson(null); setParsedAvg(null);
-    setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
-    setBatchResult(null); setBatchOverlaps({}); setBatchPlans(null); setBatchSaveResults(null);
-    setBatchExpanded(new Set());
-
-    try {
-      const inputs = await Promise.all(
-        files.map(async f => ({ name: f.name, text: await f.text() })),
-      );
-      const result = parseZBerichtBatch(inputs);
-      setBatchResult(result);
-
-      // Überschneidungen nur für erkennbare Dateien mit Zeitraum prüfen.
-      const items = result.files
-        .filter(f => f.status !== 'error' && f.periodFrom)
-        .map(f => ({ id: f.id, periodFrom: f.periodFrom, periodTo: f.periodTo, costCenter: f.costCenter }));
-      const overlaps = await fetchBatchOverlaps(tenantId, items);
-      setBatchOverlaps(overlaps);
-      setStep('preview');
-    } catch (e) {
-      setParseError('Fehler: ' + (e instanceof Error ? e.message : String(e)));
+      setParseError('Fehler beim Lesen des PDFs: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [tenantId]);
 
-  // Routing: bei Z-Bericht mit mehreren Dateien → Batch, sonst Einzeldatei-Pfad.
-  const handleFilesSelected = (files: File[]) => {
-    const csvs = files.filter(f => f.name.toLowerCase().endsWith('.csv'));
-    if (csvs.length === 0) {
-      setParseError('Bitte eine CSV-Datei auswählen.');
+  // ── E-Mail-Eingang (zbericht_inbox) ────────────────────────────────────────
+
+  /** Ausstehende Eingänge laden (read-only; fehlende Migration ⇒ Abschnitt aus). */
+  const refreshInbox = useCallback(async () => {
+    const r = await loadPendingZberichtInbox(tenantId);
+    setInboxRows(r.rows);
+    setInboxError(r.error);
+    setInboxAvailable(!r.missingSchema);
+  }, [tenantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setActiveInboxId(null); // Tenant-Wechsel: Inbox-Kontext verwerfen
+    loadPendingZberichtInbox(tenantId).then(r => {
+      if (cancelled) return;
+      setInboxRows(r.rows);
+      setInboxError(r.error);
+      setInboxAvailable(!r.missingSchema);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  /**
+   * Auto-Import: alle pending-PDFs des Mandanten automatisch verarbeiten
+   * (bestehender Weg parseGnZBerichtPdf → saveGnImport). Fehler eines PDFs
+   * blockieren nie den Rest (Zeile → status 'error' mit Grund).
+   */
+  const runAutoImport = useCallback(async (rows: ZberichtInboxRow[]) => {
+    const pendingRows = rows.filter(isZberichtRowClaimable);
+    if (pendingRows.length === 0 || autoRunning) return;
+    setAutoRunning(true);
+    setAutoProgress({ done: 0, total: pendingRows.length });
+    try {
+      const result = await runZberichtAutoImport(tenantId, pendingRows,
+        (done, total) => setAutoProgress({ done, total }));
+      const summary = autoImportSummary(result);
+      if (result.errorCount > 0 || result.skippedCount > 0) toast.warning(summary, { duration: 10000 });
+      else if (result.importedCount > 0 || result.duplicateCount > 0) toast.success(summary);
+      if (result.importedCount > 0) {
+        void loadHistory();
+        // Manuelle Tagesabschluss-Korrekturen NIE stillschweigend überschreiben —
+        // derselbe Konfliktdialog wie beim manuellen Import.
+        void checkTagesabschlussConflicts(result.importedDays);
+      }
+    } finally {
+      setAutoRunning(false);
+      setAutoProgress(null);
+      void refreshInbox();
+    }
+  }, [tenantId, autoRunning, loadHistory, refreshInbox]); // eslint-disable-line react-hooks/exhaustive-deps -- checkTagesabschlussConflicts ist stabil (useCallback[tenantId])
+
+  // Beim Öffnen der Seite (bzw. Mandantenwechsel) einmalig automatisch importieren.
+  useEffect(() => {
+    if (autoRanForTenant.current === tenantId) return;
+    if (inboxRows.some(r => isZberichtRowClaimable(r))) {
+      autoRanForTenant.current = tenantId;
+      void runAutoImport(inboxRows);
+    }
+  }, [inboxRows, tenantId, runAutoImport]);
+
+  /**
+   * Eingang importieren: PDF per signierter URL laden und in den BESTEHENDEN
+   * Z-Bericht-Wizard geben (processZPdf → Vorschau → Bestätigen). Erst nach
+   * erfolgreichem Save (handleConfirm) wird die Zeile auf 'imported' gesetzt.
+   */
+  const handleImportFromInbox = useCallback(async (row: ZberichtInboxRow) => {
+    setInboxBusy(row.id);
+    try {
+      const { blob, error } = await downloadZberichtInboxPdf(row.storage_path);
+      if (error || !blob) {
+        toast.error('PDF konnte nicht geladen werden: ' + (error ?? 'unbekannter Fehler'));
+        return;
+      }
+      setActiveInboxId(row.id);
+      const file = new File([blob], row.file_name, { type: 'application/pdf' });
+      await processZPdf(file);
+    } finally {
+      setInboxBusy(null);
+    }
+  }, [processZPdf]);
+
+  /** Eingang ohne Import ignorieren (Status 'ignored'). */
+  const handleIgnoreInbox = useCallback(async (row: ZberichtInboxRow) => {
+    setInboxBusy(row.id);
+    const { error } = await markZberichtInboxIgnored(row.id);
+    setInboxBusy(null);
+    if (error) {
+      toast.error('Ignorieren fehlgeschlagen: ' + error);
       return;
     }
-    if (importType === 'zbericht' && csvs.length > 1) {
-      processBatch(csvs);
-    } else {
-      handleFileSelect(csvs[0]);
+    if (activeInboxId === row.id) setActiveInboxId(null);
+    toast.success(`«${row.file_name}» wird nicht importiert.`);
+    void refreshInbox();
+  }, [activeInboxId, refreshInbox]);
+
+  /** Duplikat-/Überschneidungs-Infos für eine KPI-PDF ermitteln (read-only). */
+  const enrichKpiEntry = useCallback(async (
+    parsedKpi: GnParsedKpiPdf,
+  ): Promise<Pick<KpiFileEntry, 'dupNoop' | 'replaceId' | 'avgOverlapDates'>> => {
+    const none = { dupNoop: false, replaceId: null as string | null, avgOverlapDates: [] as string[] };
+    if (!parsedKpi.kind || parsedKpi.yearMissing) return none;
+    if (parsedKpi.kind === 'durchschnittsbon') {
+      // Speichern läuft über gn_average_checks: Tage werden ersetzt, identischer
+      // Inhalt wird dort per Checksumme übersprungen — hier nur Overlap anzeigen.
+      if (!parsedKpi.periodFrom || !parsedKpi.periodTo) return none;
+      const existing = await getOverlappingAverageCheckDates(tenantId, parsedKpi.periodFrom, parsedKpi.periodTo);
+      const dates = new Set(parsedKpi.days.filter(d => d.date && d.value !== null).map(d => d.date));
+      return { ...none, avgOverlapDates: existing.filter(d => dates.has(d)) };
     }
+    // Personen-Berichte: identischer Inhalt (Checksumme) ⇒ No-op;
+    // gleicher Zeitraum + gleicher Berichtstyp ⇒ bestehenden Import ersetzen.
+    const byChecksum = await checkPersonDuplicate(tenantId, parsedKpi.checksum, '', '');
+    if (byChecksum.isDuplicate) return { ...none, dupNoop: true };
+    if (parsedKpi.periodFrom && parsedKpi.periodTo) {
+      const byPeriod = await checkPersonDuplicate(
+        tenantId, '', parsedKpi.periodFrom, parsedKpi.periodTo, parsedKpi.kind,
+      );
+      if (byPeriod.isDuplicate && byPeriod.existingId) {
+        return { ...none, replaceId: byPeriod.existingId };
+      }
+    }
+    return none;
+  }, [tenantId]);
+
+  /** Bis zu 3 Gäste-/Bonanalyse-Dateien (PDF oder CSV) einlesen; Typ wird pro Datei erkannt. */
+  const processKpiFiles = useCallback(async (files: File[]) => {
+    setParseError(null);
+    setKpiSaveResults(null);
+    const room = 3 - kpiFiles.length;
+    if (room <= 0) {
+      setParseError('Es sind bereits 3 Dateien in der Auswahl — bitte zuerst eine Datei entfernen.');
+      return;
+    }
+    if (files.length > room) {
+      setParseError(
+        `Maximal 3 Dateien pro Import — es ${room === 1 ? 'wird nur die erste Datei' : `werden nur die ersten ${room} Dateien`} übernommen.`,
+      );
+    }
+    setKpiProcessing(true);
+    const additions: KpiFileEntry[] = [];
+    const kindsInUse = new Set(
+      kpiFiles.filter(e => !e.error && e.parsed?.kind).map(e => e.parsed!.kind),
+    );
+    for (const file of files.slice(0, room)) {
+      const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const isCsv = file.name.toLowerCase().endsWith('.csv');
+      const errEntry = (
+        error: string,
+        pages: GnPdfPageItems[] | null = null,
+        parsedKpi: GnParsedKpiPdf | null = null,
+        csvText: string | null = null,
+      ): KpiFileEntry =>
+        ({ id, fileName: file.name, pages, csvText, parsed: parsedKpi, error, dupNoop: false, replaceId: null, avgOverlapDates: [], chosenYear: null });
+      try {
+        let parsedKpi: GnParsedKpiPdf;
+        let pages: GnPdfPageItems[] | null = null;
+        let csvText: string | null = null;
+        if (isCsv) {
+          csvText = await file.text();
+          parsedKpi = parseGnKpiCsv(csvText, file.name);
+        } else {
+          const extract = await extractGnPdfTextItems(file);
+          if (!extract.hasTextLayer) {
+            additions.push(errEntry(GN_SCAN_ERROR));
+            continue;
+          }
+          pages = extract.pages;
+          parsedKpi = parseGnKpiPdf(extract.pages, file.name);
+          if (parsedKpi.debug.detectedKindRaw === 'zbericht') {
+            additions.push(errEntry(
+              'Diese Datei ist ein Z-Bericht. Bitte importiere sie im Bereich «Z-Bericht (PDF)».',
+              pages, parsedKpi,
+            ));
+            continue;
+          }
+        }
+        if (!parsedKpi.kind) {
+          additions.push(errEntry(
+            parsedKpi.debug.failureReason
+              ?? 'Die Datei konnte keinem Berichtstyp (Anzahl Personen, Umsatz pro Person, Durchschnittsbon) zugeordnet werden.',
+            pages, parsedKpi, csvText,
+          ));
+          continue;
+        }
+        if (kindsInUse.has(parsedKpi.kind)) {
+          additions.push(errEntry(
+            `Berichtstyp «${parsedKpi.kindLabel}» ist bereits in der Auswahl — pro Import nur eine Datei je Berichtsart.`,
+            pages, parsedKpi, csvText,
+          ));
+          continue;
+        }
+        kindsInUse.add(parsedKpi.kind);
+        const info = await enrichKpiEntry(parsedKpi);
+        additions.push({
+          id, fileName: file.name, pages, csvText, parsed: parsedKpi,
+          error: null, chosenYear: null, ...info,
+        });
+      } catch (e) {
+        additions.push(errEntry('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e))));
+      }
+    }
+    setKpiProcessing(false);
+    const next = [...kpiFiles, ...additions];
+    setKpiFiles(next);
+    if (next.length > 0) setStep('preview');
+  }, [kpiFiles, tenantId, enrichKpiEntry]);
+
+  /** Pflicht-Jahreswahl: Datei ohne erkennbares Jahr mit Benutzerjahr neu parsen. */
+  const handleKpiYearChange = async (entryId: string, year: number) => {
+    const entry = kpiFiles.find(e => e.id === entryId);
+    if (!entry || entry.error || (!entry.pages && entry.csvText == null)) return;
+    const reparsed = entry.csvText != null
+      ? parseGnKpiCsv(entry.csvText, entry.fileName, year)
+      : parseGnKpiPdf(entry.pages!, entry.fileName, year);
+    const info = await enrichKpiEntry(reparsed);
+    setKpiFiles(prev => prev.map(e =>
+      e.id === entryId ? { ...e, chosenYear: year, parsed: reparsed, ...info } : e,
+    ));
+  };
+
+  const removeKpiFile = (entryId: string) => {
+    setKpiFiles(prev => {
+      const next = prev.filter(e => e.id !== entryId);
+      if (next.length === 0) setStep('upload');
+      return next;
+    });
+  };
+
+  const handleFilesSelected = (files: File[]) => {
+    // Manuelle Dateiauswahl ersetzt einen laufenden Inbox-Durchlauf.
+    setActiveInboxId(null);
+    if (importType === 'zbericht') {
+      const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
+      if (pdfs.length === 0) {
+        setParseError(
+          'Bitte eine PDF-Datei auswählen. Der Z-Bericht-Import unterstützt nur direkt aus '
+          + 'Gastronovi exportierte PDF-Berichte (CSV-Import ist nicht mehr verfügbar).',
+        );
+        return;
+      }
+      void processZPdf(pdfs[0]);
+      return;
+    }
+    const accepted = files.filter(f => /\.(pdf|csv)$/i.test(f.name));
+    if (accepted.length === 0) {
+      setParseError(
+        'Bitte eine PDF- oder CSV-Datei auswählen — direkt aus Gastronovi exportiert '
+        + '(Anzahl Personen, Umsatz pro Person, Durchschnittsbon).',
+      );
+      return;
+    }
+    void processKpiFiles(accepted);
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -393,87 +633,97 @@ export default function GastronoviZBerichtPage() {
   // Manuelles Zeitraum-Update → Überschneidungen neu prüfen
   useEffect(() => {
     if (!parsed || importType !== 'zbericht') return;
-    if (parsed.periodFrom && parsed.periodTo) return; // bereits in processCSV gecheckt
+    if (parsed.periodFrom && parsed.periodTo) return; // bereits in processZPdf gecheckt
     if (!manualPeriodFrom || !manualPeriodTo) return;
     checkOverlappingImports(tenantId, manualPeriodFrom, manualPeriodTo).then(setOverlapInfo);
   }, [manualPeriodFrom, manualPeriodTo, tenantId, parsed, importType]);
 
-  const handleConfirm = async (replacePersonDup = false) => {
+  const handleConfirm = async () => {
+    if (importType === 'kpi') { await handleKpiConfirm(); return; }
+    if (!parsed) return;
+    // Idempotenz: identischer Bericht bereits importiert ⇒ KEINE Schreiboperation.
+    if (zDupInfo) {
+      toast.info(activeInboxId
+        ? 'Dieser Bericht wurde bereits importiert — der E-Mail-Eingang kann mit «Ignorieren» erledigt werden.'
+        : 'Dieser Bericht wurde bereits importiert — es wurde nichts erneut gespeichert.');
+      return;
+    }
     setStep('saving');
     let importedDays: string[] = [];
-    if (importType === 'zbericht' && parsed) {
-      const pFrom  = parsed.periodFrom || manualPeriodFrom || undefined;
-      const pTo    = parsed.periodTo   || manualPeriodTo   || undefined;
-      const ids    = overlapInfo.map(o => o.id);
-      const { error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
-      if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
-      // Nur echte TAGES-Importe für den Tagesabschluss-Abgleich vormerken.
-      if (pFrom && pTo && pFrom === pTo) importedDays = [pFrom];
-    } else if (importType === 'personen' && parsedPerson) {
-      const { error } = await savePersonImport(
-        tenantId, parsedPerson,
-        replacePersonDup && dupPersonInfo ? dupPersonInfo.existingId : undefined,
-        csvTypeOverride ?? undefined,
-      );
-      if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
-    } else if (importType === 'durchschnittsbon_bericht' && parsedAvg) {
-      const { error } = await saveAverageCheckImport(tenantId, parsedAvg);
-      if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
+    const pFrom  = parsed.periodFrom || manualPeriodFrom || undefined;
+    const pTo    = parsed.periodTo   || manualPeriodTo   || undefined;
+    const ids    = overlapInfo.map(o => o.id);
+    const { importId, error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
+    if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
+    // Kam das PDF aus dem E-Mail-Eingang: Zeile abschliessen (imported + Verweis).
+    if (activeInboxId && importId) {
+      const marked = await markZberichtInboxImported(activeInboxId, importId);
+      if (marked.error) {
+        toast.warning('Import gespeichert, aber der E-Mail-Eingang konnte nicht aktualisiert werden: ' + marked.error);
+      }
+      setActiveInboxId(null);
+      void refreshInbox();
     }
-    toast.success('Import erfolgreich gespeichert');
+    // Nur echte TAGES-Importe für den Tagesabschluss-Abgleich vormerken.
+    if (pFrom && pTo && pFrom === pTo) importedDays = [pFrom];
+    if (parsed.reportType === 'extended') {
+      toast.success('Umsatz-, Zahlungs- und Produktdaten wurden übernommen.');
+    } else {
+      toast.success('Import erfolgreich gespeichert');
+    }
     setStep('done');
     setTab('history');
     loadHistory();
     if (importedDays.length > 0) void checkTagesabschlussConflicts(importedDays);
   };
 
-  // Multi-Datei-Import bestätigen: Plan berechnen, pro Datei atomar speichern.
-  const handleBatchConfirm = async () => {
-    if (!batchResult) return;
-    const plan = planBatchImport(batchResult.files, batchOverlaps, {
-      conflictAction: batchConflict,
-      errorPolicy:    batchErrorPolicy,
-    });
-    setBatchPlans(plan.plans);
-    if (!plan.canProceed) {
-      toast.error(plan.abortReason || 'Import nicht möglich.');
+  /** Gäste & Bonanalyse: alle gültigen PDFs der Auswahl nacheinander speichern. */
+  const handleKpiConfirm = async () => {
+    const entries = kpiFiles.filter(e => !e.error && e.parsed?.kind);
+    if (entries.length === 0) {
+      toast.error('Keine importierbaren PDFs in der Auswahl.');
       return;
     }
-
+    if (entries.some(e => e.parsed!.yearMissing)) {
+      toast.error('Bitte zuerst für alle Berichte ohne erkennbares Jahr das Importjahr wählen.');
+      return;
+    }
     setStep('saving');
-    const byId = new Map(batchResult.files.map(f => [f.id, f]));
-    const items: BatchSaveItem[] = plan.plans.map(p => {
-      const f = byId.get(p.id);
-      return {
-        id:         p.id,
-        fileName:   p.fileName,
-        parsed:     f?.parsed ?? null,
-        action:     p.action,
-        overlapIds: p.overlapIds,
-        periodFrom: f?.periodFrom || undefined,
-        periodTo:   f?.periodTo   || undefined,
-      };
-    });
-
-    const results = await saveGnZBerichtBatch(tenantId, items);
-    setBatchSaveResults(results);
-
-    const okN   = results.filter(r => r.ok).length;
-    const failN = results.filter(r => !r.ok && !r.skipped).length;
-    if (failN > 0) toast.error(`${okN} importiert, ${failN} fehlgeschlagen`);
-    else           toast.success(`${okN} Bericht${okN === 1 ? '' : 'e'} importiert`);
-
+    const results: KpiSaveResult[] = [];
+    for (const e of entries) {
+      const p = e.parsed!;
+      const base = { fileName: e.fileName, kindLabel: p.kindLabel };
+      if (e.dupNoop) {
+        results.push({ ...base, status: 'noop', message: 'Identischer Inhalt bereits importiert — keine Schreiboperation.' });
+        continue;
+      }
+      try {
+        if (p.kind === 'durchschnittsbon') {
+          const r = await saveAverageCheckImport(tenantId, kpiPdfToAverageCheck(p));
+          if (r.error) results.push({ ...base, status: 'error', message: r.error });
+          else if (r.noop) results.push({ ...base, status: 'noop', message: 'Identischer Inhalt bereits importiert — keine Schreiboperation.' });
+          else results.push({ ...base, status: 'ok' });
+        } else {
+          const r = await savePersonImport(tenantId, kpiPdfToPersonReport(p), e.replaceId ?? undefined, p.kind);
+          if (r.error) results.push({ ...base, status: 'error', message: r.error });
+          else results.push({
+            ...base, status: 'ok',
+            message: e.replaceId ? 'Bestehender Import für denselben Zeitraum wurde ersetzt.' : undefined,
+          });
+        }
+      } catch (err) {
+        results.push({ ...base, status: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    setKpiSaveResults(results);
+    const okN   = results.filter(r => r.status === 'ok').length;
+    const noopN = results.filter(r => r.status === 'noop').length;
+    const failN = results.filter(r => r.status === 'error').length;
+    if (failN > 0)     toast.error(`${okN} importiert, ${failN} fehlgeschlagen`);
+    else if (okN > 0)  toast.success(`${okN} Bericht${okN === 1 ? '' : 'e'} importiert${noopN > 0 ? `, ${noopN} unverändert übersprungen` : ''}`);
+    else               toast.info(`Keine Änderungen — ${noopN} Bericht${noopN === 1 ? '' : 'e'} bereits vorhanden.`);
     setStep('done');
     loadHistory();
-
-    // Tagesabschluss-Abgleich für erfolgreich importierte TAGES-Berichte.
-    const importedDays = results
-      .filter(r => r.ok && !r.skipped)
-      .map(r => byId.get(r.id))
-      .filter((f): f is NonNullable<typeof f> =>
-        !!f && !!f.periodFrom && f.periodFrom === f.periodTo)
-      .map(f => f.periodFrom as string);
-    if (importedDays.length > 0) void checkTagesabschlussConflicts(importedDays);
   };
 
   // ── Löschen ────────────────────────────────────────────────────────────────
@@ -518,29 +768,48 @@ export default function GastronoviZBerichtPage() {
   const cancelCount        = parsed ? parsed.cancellations.length : 0;
   const acctCount          = parsed ? parsed.accountingLines.length : 0;
 
-  const pTotalGuests       = parsedPerson ? parsedPerson.totalGuests : 0;
-  const pAvgRev            = parsedPerson ? parsedPerson.avgRevPerPerson : 0;
-  const pTotalRev          = parsedPerson ? (parsedPerson.totalRevenue ?? 0) : 0;
-  const pRowCount          = parsedPerson ? parsedPerson.rowCount : 0;
-  const pWarnCount         = parsedPerson ? parsedPerson.warnings.length : 0;
-  const pDurchschnBon      = parsedPerson ? parsedPerson.avgReceiptMonthly : 0;
-
-  const avgRows            = parsedAvg ? parsedAvg.rows : [];
-  const avgDayCount        = avgRows.length;
-  const avgMean            = parsedAvg ? parsedAvg.averageMean : 0;
-  const avgMin             = parsedAvg ? parsedAvg.averageMin : 0;
-  const avgMax             = parsedAvg ? parsedAvg.averageMax : 0;
-  const avgWarnCount       = parsedAvg ? parsedAvg.warnings.length : 0;
-
-  const isBatch            = importType === 'zbericht' && !!batchResult;
-  const activeDupInfo      = importType === 'personen' ? dupPersonInfo : null;
-  const activeWarnCount    = importType === 'zbericht' ? warnCount
-    : importType === 'personen' ? pWarnCount : avgWarnCount;
-  const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? [])
-    : importType === 'personen' ? (parsedPerson?.warnings ?? []) : (parsedAvg?.warnings ?? []);
+  const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? []) : [];
+  const activeWarnCount    = activeWarnings.length;
   const hasOverlap         = importType === 'zbericht' && overlapInfo.length > 0;
-  const avgHasOverlap      = importType === 'durchschnittsbon_bericht' && avgOverlapDates.length > 0;
-  const showReplaceCta     = hasOverlap || avgHasOverlap;
+  const showReplaceCta     = hasOverlap;
+
+  // Gäste & Bonanalyse: Zustand der Auswahl
+  const kpiValidEntries    = kpiFiles.filter(e => !e.error && e.parsed?.kind);
+  const kpiValidCount      = kpiValidEntries.length;
+  const kpiYearPending     = kpiValidEntries.some(e => e.parsed!.yearMissing);
+
+  // Kompakte Tagesanalyse-Vorschau über die geladenen KPI-PDFs (reine Logik,
+  // nur Werte aus den aktuell geladenen Berichten — kein DB-Zugriff).
+  const kpiTagesVorschau = useMemo(() => {
+    const entries = kpiFiles.filter(e => !e.error && e.parsed?.kind && !e.parsed.yearMissing);
+    const kinds = new Set(entries.map(e => e.parsed!.kind));
+    if (kinds.size < 2) return null;
+    const personsByDate      = new Map<string, number>();
+    const revPerPersonByDate = new Map<string, number>();
+    const avgReceiptByDate   = new Map<string, number>();
+    for (const e of entries) {
+      const p = e.parsed!;
+      for (const d of p.days) {
+        if (d.value === null || !d.date) continue;
+        if (p.kind === 'anzahl_personen')       personsByDate.set(d.date, d.value);
+        else if (p.kind === 'umsatz_pro_person') revPerPersonByDate.set(d.date, d.value);
+        else if (p.kind === 'durchschnittsbon')  avgReceiptByDate.set(d.date, d.value);
+      }
+    }
+    const analysen = mergeGnTagesQuellen({
+      personsByDate,
+      revenuePerPersonByDate: revPerPersonByDate,
+      averageReceiptByDate:   avgReceiptByDate,
+    });
+    const periode = summarizeGnPeriode(analysen);
+    return periode.dayCount > 0 ? periode : null;
+  }, [kpiFiles]);
+
+  // Zeitabschnittsanalyse-Vorschau für den geladenen Z-Bericht (reine Logik).
+  const zeitVorschau = useMemo(
+    () => analyzeGnZeitabschnitte(parsed?.hourlyRevenue ?? null),
+    [parsed],
+  );
 
   // Effektiver Zeitraum (Parser-Ergebnis hat Vorrang, dann manuell)
   const effectivePeriodFrom = parsed?.periodFrom || manualPeriodFrom || '';
@@ -589,52 +858,6 @@ export default function GastronoviZBerichtPage() {
       .then(() => toast.success('Diagnose in Zwischenablage kopiert'))
       .catch(() => toast.error('Kopieren fehlgeschlagen'));
   };
-
-  const copyAvgDiagnostic = () => {
-    if (!avgDebug) return;
-    const d = avgDebug;
-    const lines: string[] = [
-      '=== Gastronovi Durchschnittsbon Parser-Diagnose ===',
-      `Datei: ${d.fileName || '—'}`,
-      `Trennzeichen: ${d.delimiter} (;=${d.delimCounts.semicolon} ,=${d.delimCounts.comma} Tab=${d.delimCounts.tab})`,
-      `Zeilen: ${d.rawLineCount} gesamt, ${d.nonEmptyLineCount} nicht leer`,
-      `Datumsartige Zellen gesamt: ${d.dateCellCount} · Geldwert-Zellen gesamt: ${d.moneyCellCount}`,
-      '',
-      `Layout: ${d.detectedFormat === 'wide' ? 'Wide (Datums-Spalten)' : d.detectedFormat === 'vertical' ? 'Langformat (eine Zeile pro Tag)' : 'NICHT ERKANNT'}`,
-      `Verwendetes Jahr: ${d.usedYear ?? '—'} (Quelle: ${d.usedYearSource})`,
-      `Erkannter Zeitraum: ${d.detectedPeriod || '—'}`,
-      `Datums-Kopfzeile: ${d.headerRowIdx ? `Zeile ${d.headerRowIdx}` : (d.detectedFormat === 'vertical' ? '— (Langformat)' : 'NICHT ERKANNT')}`,
-      `Datums-Spalten/-Zeilen (${d.dateColumns.length}): ${d.dateColumns.map(c => `${c.raw}→${c.iso}`).join(', ') || '—'}`,
-      `Durchschnitt-/Wertezeile: ${d.averageRowIdx ? `Zeile ${d.averageRowIdx} (Label: "${d.averageRowLabel}")` : (d.averageRowLabel || 'NICHT ERKANNT')}`,
-      `Übersprungene leere Tage: ${d.skippedEmptyColumns}`,
-      `Tageswerte extrahiert: ${parsedAvg?.rows.length ?? 0}`,
-      `Grund (falls keine): ${d.failureReason ?? '—'}`,
-    ];
-    if (d.averageCandidates.length > 0) {
-      lines.push('', '"Durchschnitt"-Kandidaten:');
-      d.averageCandidates.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
-    }
-    lines.push('', `Erste ${d.firstRawLines.length} Rohzeilen:`);
-    d.firstRawLines.forEach((l, i) => lines.push(`  Z${String(i + 1).padStart(2)}: ${l || '(leer)'}`));
-    navigator.clipboard.writeText(lines.join('\n'))
-      .then(() => toast.success('Diagnose in Zwischenablage kopiert'))
-      .catch(() => toast.error('Kopieren fehlgeschlagen'));
-  };
-
-// ── Typ-Konstanten ─────────────────────────────────────────────────────────────
-
-const CSV_TYPE_LABELS: Record<PersonCsvType, string> = {
-  personen:          'Personen (kombiniert)',
-  anzahl_personen:   'Anzahl Personen',
-  umsatz_pro_person: 'Umsatz pro Person',
-  durchschnittsbon:  'Durchschnittsbon',
-};
-const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
-  { value: 'anzahl_personen',   label: 'Anzahl Personen' },
-  { value: 'umsatz_pro_person', label: 'Umsatz pro Person' },
-  { value: 'durchschnittsbon',  label: 'Durchschnittsbon' },
-  { value: 'personen',          label: 'Personen (kombiniert)' },
-];
 
   // ── Setup-Banner ─────────────────────────────────────────────────────────────
 
@@ -800,7 +1023,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
       <div className="flex items-center gap-3 flex-wrap">
         <div>
           <h1 className="text-base font-bold">Gastronovi Import</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">CSV-Berichte importieren und strukturiert speichern</p>
+          <p className="text-xs text-muted-foreground mt-0.5">PDF-Berichte direkt aus Gastronovi importieren</p>
         </div>
         <div className="ml-auto flex items-center gap-0.5 bg-muted rounded-md p-0.5">
           {(['import', 'history'] as Tab[]).map(t => (
@@ -823,18 +1046,22 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
         {/* Import-Typ Auswahl */}
         <div className="flex gap-2 flex-wrap">
           <TypeBtn active={importType === 'zbericht'} onClick={() => handleTypeChange('zbericht')}
-            icon={<FileText className="h-4 w-4" />} label="Z-Bericht" desc="Tagesumsatz, Kostenstellen, Kellner, Bezahlarten" />
-          <TypeBtn active={importType === 'personen'} onClick={() => handleTypeChange('personen')}
-            icon={<Users className="h-4 w-4" />} label="Personen Bericht" desc="Gäste / Umsatz pro Person" />
-          <TypeBtn active={importType === 'durchschnittsbon_bericht'} onClick={() => handleTypeChange('durchschnittsbon_bericht')}
-            icon={<Receipt className="h-4 w-4" />} label="Durchschnittsbon Bericht" desc="Durchschnittsbon pro Tag" />
+            icon={<FileText className="h-4 w-4" />} label="Z-Bericht (PDF)"
+            desc="Standard & Erweitert: Tagesumsatz, Zahlarten, Zeitabschnitte, Produktpositionen" />
+          <TypeBtn active={importType === 'kpi'} onClick={() => handleTypeChange('kpi')}
+            icon={<Users className="h-4 w-4" />} label="Gäste & Bonanalyse (PDF/CSV)"
+            desc="Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 Dateien gleichzeitig" />
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          Z-Berichte laufen ausschliesslich über PDF; Gäste- & Bonanalyse-Berichte
+          können als PDF oder CSV aus Gastronovi importiert werden.
+        </p>
 
         {/* Wizard-Schritte */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {(['upload', 'preview', 'done'] as WizardStep[]).map((s, i) => {
             const labels: Record<WizardStep, string> = { upload: 'Hochladen', preview: 'Vorschau', saving: 'Speichern', done: 'Fertig' };
-            const done   = step === 'done' || (step !== 'upload' && s === 'upload') || (step === 'done' && s === 'preview');
+            const done   = step === 'done' || (step !== 'upload' && s === 'upload');
             const active = step === s;
             return <>
               {i > 0 && <span key={'sep' + i} className="text-border">›</span>}
@@ -845,6 +1072,16 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           })}
         </div>
 
+        {/* Datei-Input: auch im Preview-Schritt verfügbar («Weitere Datei hinzufügen») */}
+        <input ref={fileInputRef} type="file"
+          accept={importType === 'kpi' ? '.pdf,.csv,application/pdf,text/csv' : '.pdf,application/pdf'}
+          className="hidden"
+          multiple={importType === 'kpi'}
+          onChange={e => {
+            if (e.target.files && e.target.files.length) handleFilesSelected(Array.from(e.target.files));
+            e.target.value = '';
+          }} />
+
         {/* ── Step: Upload ──────────────────────────────────────────────────── */}
         {step === 'upload' && <>
           <DropZone
@@ -852,62 +1089,143 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
-            onClick={() => csvRef.current?.click()}
-            label={importType === 'zbericht' ? 'Gastronovi Z-Bericht CSV hier ablegen'
-              : importType === 'personen' ? 'Gastronovi Personen-Bericht CSV hier ablegen'
-              : 'Gastronovi Durchschnittsbon CSV hier ablegen'}
-            hint={importType === 'zbericht' ? 'Eine oder mehrere Tagesberichte gleichzeitig auswählbar'
-              : importType === 'personen' ? 'Analyse → Verkäufe → Personen / Umsatz pro Person'
-              : importType === 'durchschnittsbon_bericht' ? 'Analyse → Verkäufe → Durchschnittsbon (Tageswerte als Spalten)'
-              : undefined}
+            onClick={() => fileInputRef.current?.click()}
+            label={importType === 'zbericht'
+              ? 'Gastronovi Z-Bericht (PDF) hier ablegen'
+              : 'Gäste- & Bonanalyse-Dateien (PDF oder CSV) hier ablegen'}
+            hint={importType === 'zbericht'
+              ? 'Standard- oder erweiterter Z-Bericht — direkt aus Gastronovi als PDF exportiert'
+              : 'Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 Dateien gleichzeitig'}
           />
-          <input ref={csvRef} type="file" accept=".csv" className="hidden"
-            multiple={importType === 'zbericht'}
-            onChange={e => {
-              if (e.target.files && e.target.files.length) handleFilesSelected(Array.from(e.target.files));
-              e.target.value = '';
-            }} />
 
-          {parseError && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400">
-              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              {parseError}
+          {kpiProcessing && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Dateien werden gelesen…
             </div>
           )}
 
-          {/* Parser-Diagnose bei fehlgeschlagenem Durchschnittsbon-Import */}
-          {importType === 'durchschnittsbon_bericht' && avgDebug && (
-            <AvgDiagnostic
-              debug={avgDebug}
-              open={showAvgDebug}
-              onToggle={() => setShowAvgDebug(v => !v)}
-              onCopy={copyAvgDiagnostic}
-            />
+          {/* ── E-Mail-Eingang: per Webhook eingegangene Z-Bericht-PDFs ──── */}
+          {importType === 'zbericht' && inboxAvailable && (inboxRows.length > 0 || inboxError) && (
+            <div className="rounded-lg border p-4 space-y-3" data-testid="section-zbericht-inbox">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  Aus E-Mail eingegangen
+                  {inboxRows.filter(r => r.status === 'pending' || r.status === 'processing').length > 0 && (
+                    <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-2 py-0.5 text-xs font-medium"
+                      data-testid="badge-inbox-pending">
+                      Pending: {inboxRows.filter(r => r.status === 'pending' || r.status === 'processing').length}
+                    </span>
+                  )}
+                  {inboxRows.filter(r => r.status === 'error').length > 0 && (
+                    <span className="rounded-full bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 px-2 py-0.5 text-xs font-medium"
+                      data-testid="badge-inbox-error">
+                      Prüfung nötig: {inboxRows.filter(r => r.status === 'error').length}
+                    </span>
+                  )}
+                </p>
+                {inboxRows.some(r => isZberichtRowClaimable(r)) && (
+                  <button onClick={() => void runAutoImport(inboxRows)}
+                    disabled={autoRunning || inboxBusy !== null}
+                    className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                    data-testid="button-inbox-import-all">
+                    {autoRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {autoRunning && autoProgress
+                      ? `Importiere… ${autoProgress.done}/${autoProgress.total}`
+                      : 'Jetzt alle importieren'}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Ausstehende Z-Berichte werden beim Öffnen der Seite automatisch importiert.
+                Nur eindeutige Tagesberichte laufen automatisch — alles andere landet hier zur manuellen Prüfung.
+              </p>
+              {inboxError && (
+                <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 dark:bg-red-950/20 p-2.5 text-xs text-red-700 dark:text-red-400" data-testid="text-inbox-error">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>E-Mail-Eingang konnte nicht geladen werden: {inboxError}</span>
+                  <button onClick={() => void refreshInbox()}
+                    className="underline shrink-0 hover:text-red-900 dark:hover:text-red-300"
+                    data-testid="button-inbox-retry">
+                    Erneut versuchen
+                  </button>
+                </div>
+              )}
+              {inboxRows.map(row => (
+                <div key={row.id}
+                  className="flex items-center justify-between gap-3 rounded border bg-muted/30 px-3 py-2"
+                  data-testid={`row-inbox-${row.id}`}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      {row.file_name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Eingegangen am {fdatetime(row.received_at)}
+                    </p>
+                    {row.status === 'error' && (
+                      <p className="text-xs text-red-700 dark:text-red-400 flex items-start gap-1 mt-0.5"
+                        data-testid={`text-inbox-error-reason-${row.id}`}>
+                        <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        {row.error_message ?? 'Automatischer Import fehlgeschlagen — manuell prüfen.'}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => void handleImportFromInbox(row)}
+                      disabled={inboxBusy !== null || autoRunning}
+                      className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                      data-testid={`button-inbox-import-${row.id}`}>
+                      {inboxBusy === row.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Importieren
+                    </button>
+                    <button onClick={() => void handleIgnoreInbox(row)}
+                      disabled={inboxBusy !== null || autoRunning}
+                      className="px-3 py-1.5 text-xs rounded border hover:bg-muted disabled:opacity-50"
+                      data-testid={`button-inbox-ignore-${row.id}`}>
+                      Ignorieren
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {parseError && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400" data-testid="text-parse-error">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              {parseError}
+            </div>
           )}
         </>}
 
         {/* ── Step: Preview ─────────────────────────────────────────────────── */}
         {(step === 'preview' || step === 'saving') && <>
 
-          {/* Duplikat-Warnung */}
-          {activeDupInfo && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2">
+          {/* Fehler beim Nachladen weiterer PDFs (Gäste & Bonanalyse) */}
+          {parseError && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400" data-testid="text-parse-error-preview">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              {parseError}
+            </div>
+          )}
+
+          {/* Duplikat: identischer Z-Bericht bereits importiert ⇒ Import blockiert */}
+          {importType === 'zbericht' && zDupInfo && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2" data-testid="banner-duplikat">
               <p className="font-semibold text-amber-800 dark:text-amber-300 text-sm flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4" />
                 Dieser Bericht wurde bereits importiert
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                Importiert am: {fdate(activeDupInfo.importedAt)}
+                Identischer Inhalt{zDupInfo.fileName ? ` («${zDupInfo.fileName}»)` : ''} — importiert am {fdate(zDupInfo.importedAt)}.
+                Es wird nichts erneut gespeichert.
               </p>
               <div className="flex gap-2 mt-2">
                 <button onClick={resetWizard}
                   className="px-3 py-1.5 text-xs rounded border border-amber-400 text-amber-700 hover:bg-amber-100">
                   Abbrechen
-                </button>
-                <button onClick={() => handleConfirm(true)} disabled={step === 'saving'}
-                  className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 flex items-center gap-1.5 disabled:opacity-50">
-                  {step === 'saving' && <Loader2 className="h-3 w-3 animate-spin" />}
-                  Bestehenden Import ersetzen
                 </button>
               </div>
             </div>
@@ -926,130 +1244,82 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             </div>
           )}
 
-          {/* ── Z-Bericht Multi-Datei Vorschau (Batch) ─────────────────────── */}
-          {isBatch && batchResult && <>
-            {/* Aggregat-Kacheln */}
-            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <MetaCell label="Dateien"      value={String(batchResult.aggregate.fileCount)} />
-              <MetaCell label="Tagesberichte" value={String(batchResult.aggregate.dailyReportCount)} />
-              <MetaCell label="Zeitraum-Berichte" value={String(batchResult.aggregate.periodReportCount)} />
-              <MetaCell label="Fehlerhaft"   value={String(batchResult.aggregate.errorCount)} />
-              <MetaCell label="Zeitraum"     value={`${fdate(batchResult.aggregate.dayFrom)} – ${fdate(batchResult.aggregate.dayTo)}`} />
-              <MetaCell label="Brutto Σ"     value={fc(batchResult.aggregate.totalGross)} />
-              <MetaCell label="Netto Σ"      value={fc(batchResult.aggregate.totalNet)} />
-              <MetaCell label="Getränke Σ"   value={fc(batchResult.aggregate.totalBev)} />
-            </div>
-
-            {/* Steuerung: Fehler-Richtlinie & Konfliktaktion */}
-            <div className="rounded-lg border border-border bg-muted/10 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold text-muted-foreground">Bei fehlerhaften Dateien</span>
-                <select value={batchErrorPolicy} disabled={step === 'saving'}
-                  onChange={e => setBatchErrorPolicy(e.target.value as ErrorPolicy)}
-                  className="w-full text-sm rounded-md border border-border bg-background px-3 py-2">
-                  <option value="only_valid">Nur gültige importieren</option>
-                  <option value="abort_on_error">Bei Fehlern abbrechen</option>
-                </select>
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold text-muted-foreground">Bei bestehenden Daten (Konflikt)</span>
-                <select value={batchConflict} disabled={step === 'saving'}
-                  onChange={e => setBatchConflict(e.target.value as ConflictAction)}
-                  className="w-full text-sm rounded-md border border-border bg-background px-3 py-2">
-                  <option value="replace">Ersetzen</option>
-                  <option value="skip">Überspringen</option>
-                  <option value="abort">Abbrechen</option>
-                </select>
-              </label>
-            </div>
-
-            {/* Datei-Liste */}
-            <div className="space-y-2">
-              {batchResult.files.map((f, i) => {
-                const hasOv = (batchOverlaps[f.id]?.length ?? 0) > 0;
-                const open = batchExpanded.has(f.id);
-                const tone =
-                  f.status === 'error'   ? 'border-red-300 bg-red-50 dark:bg-red-950/20'
-                  : f.status === 'warning' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/20'
-                  : 'border-border bg-card';
-                return (
-                  <div key={`${f.fileName}-${i}`} className={cn('rounded-lg border', tone)}>
-                    <button type="button"
-                      onClick={() => setBatchExpanded(prev => {
-                        const n = new Set(prev); open ? n.delete(f.id) : n.add(f.id); return n;
-                      })}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left">
-                      {f.status === 'error'   ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-                       : f.status === 'warning' ? <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
-                       : <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{f.fileName}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {f.periodFrom ? `${fdate(f.periodFrom)}${f.isMultiDay ? ` – ${fdate(f.periodTo)}` : ''}` : 'Kein Zeitraum'}
-                          {' · '}{f.importKindLabel}
-                          {f.costCenter ? ` · ${f.costCenter}` : ''}
-                          {f.zCounter ? ` · Z-Nr. ${f.zCounter}` : ''}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {hasOv && (
-                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                            Bestehende Daten
-                          </span>
-                        )}
-                        <span className="text-sm font-semibold tabular-nums">{fc(f.grossRevenue ?? 0)}</span>
-                        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-                      </div>
-                    </button>
-                    {open && (
-                      <div className="border-t border-border px-4 py-3 space-y-3">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <MetaCell label="Brutto"   value={fc(f.grossRevenue ?? 0)} />
-                          <MetaCell label="Netto"    value={fc(f.netRevenue ?? 0)} />
-                          <MetaCell label="Food"     value={fc(f.foodRevenue ?? 0)} />
-                          <MetaCell label="Getränke" value={fc(f.bevRevenue ?? 0)} />
-                        </div>
-                        {f.errorReason && (
-                          <p className="text-xs text-red-600 dark:text-red-400">{f.errorReason}</p>
-                        )}
-                        {f.warnings.length > 0 && (
-                          <div className="space-y-1">
-                            {f.warnings.map((w, wi) => (
-                              <p key={wi} className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
-                                <Info className="h-3 w-3 mt-0.5 shrink-0" />{w}
-                              </p>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Aktionen */}
-            <div className="flex gap-3 pt-2 flex-wrap">
-              <button onClick={resetWizard} disabled={step === 'saving'}
-                className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50">
-                Abbrechen
-              </button>
-              <button onClick={handleBatchConfirm} disabled={step === 'saving'}
-                className="px-5 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2 transition-colors">
-                {step === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                {batchConflict === 'replace' ? 'Importieren / Ersetzen' : 'Import bestätigen'}
-              </button>
-            </div>
-          </>}
-
           {/* ── Z-Bericht Vorschau ─────────────────────────────────────────── */}
           {importType === 'zbericht' && parsed && <>
-            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"     value={`${fdate(effectivePeriodFrom || parsed.periodFrom)} – ${fdate(effectivePeriodTo || parsed.periodTo)}`} />
-              <MetaCell label="Z-Zähler"     value={parsed.zCounter || '—'} />
-              <MetaCell label="Kostenstelle" value={parsed.costCenter || '—'} />
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <MetaCell label="Zeitraum"     value={`${fdate(effectivePeriodFrom || parsed.periodFrom)} – ${fdate(effectivePeriodTo || parsed.periodTo)}`} />
+                <MetaCell label="Z-Zähler"     value={parsed.zCounter || '—'} />
+                <MetaCell label="Kostenstelle" value={parsed.costCenter || '—'} />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap" data-testid="badge-berichtstyp">
+                {parsed.reportType === 'extended' ? (
+                  <>
+                    <span className="text-[11px] font-semibold rounded-full px-2.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+                      Erweiterter Z-Bericht
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Erweiterter Z-Bericht: Produktanalyse wird aktualisiert.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] font-semibold rounded-full px-2.5 py-0.5 bg-muted text-muted-foreground">
+                      Standard-Z-Bericht
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Standard-Z-Bericht: keine Produktdetailpositionen enthalten.
+                    </span>
+                  </>
+                )}
+              </div>
+              {parsed.businessDay && (parsed.periodFromTime || parsed.periodToTime) && (
+                <p className="text-xs text-muted-foreground flex items-start gap-1.5" data-testid="text-geschaeftstag">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  Bericht über Mitternacht ({parsed.periodFromTime ?? '—'}–{parsed.periodToTime ?? '—'} Uhr) —
+                  wird als Geschäftstag {fdate(parsed.businessDay)} gespeichert.
+                </p>
+              )}
             </div>
+
+            {/* Plausibilitätsprüfung (nur PDF) */}
+            {parsed.validation && parsed.validation.checks.length > 0 && (
+              <div className="rounded-lg border border-border overflow-hidden" data-testid="card-plausibilitaet">
+                <div className="px-4 py-2 bg-muted/40 border-b text-xs font-semibold flex items-center gap-2">
+                  Plausibilitätsprüfung
+                  <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-semibold', VALIDATION_TONES[parsed.validation.status])}>
+                    {VALIDATION_LABELS[parsed.validation.status]}
+                  </span>
+                </div>
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b bg-muted/20 text-right">
+                    <th className="px-3 py-1.5 text-left font-medium">Prüfung</th>
+                    <th className="px-3 py-1.5 font-medium">Erwartet</th>
+                    <th className="px-3 py-1.5 font-medium">Ist</th>
+                    <th className="px-3 py-1.5 font-medium">Differenz</th>
+                    <th className="px-3 py-1.5 text-left font-medium">Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {parsed.validation.checks.map(c => (
+                      <tr key={c.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-3 py-1.5">
+                          {c.label}
+                          {c.note && <span className="block text-muted-foreground">{c.note}</span>}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{fcs(c.expected)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{fcs(c.actual)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{fcs(c.diff)}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-semibold', VALIDATION_TONES[c.status])}>
+                            {VALIDATION_LABELS[c.status]}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Manueller Zeitraum (nur wenn Parser keinen Zeitraum erkennt) */}
             {needsManualPeriod && (
@@ -1153,8 +1423,82 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               render={r => [r.name, NUM0.format(r.count), fc(r.amount)]} />
             <SectionTable title={`Bezahlarten (${pmCount})`} rows={parsed.paymentMethods} cols={['Name', 'Anzahl', 'Betrag']}
               render={r => [r.name, NUM0.format(r.count), fc(r.amount)]} />
+            {parsed.paymentMethodProviders && parsed.paymentMethodProviders.length > 0 && (
+              <SectionTable
+                title={`Zahlungsanbieter — informativ, nicht doppelt gezählt (${parsed.paymentMethodProviders.length})`}
+                rows={parsed.paymentMethodProviders}
+                cols={['Zahlart', 'Anbieter', 'Anzahl', 'Betrag']}
+                render={r => [r.parent, r.name, NUM0.format(r.count), fcs(r.amount)]} />
+            )}
+            {parsed.hourlyRevenue && parsed.hourlyRevenue.length > 0 && (
+              <SectionTable
+                title={`Zeitabschnitte (${parsed.hourlyRevenue.length})${parsed.hourlyRevenueTotal !== null && parsed.hourlyRevenueTotal !== undefined ? ` — Gesamt ${fcs(parsed.hourlyRevenueTotal)}` : ''}`}
+                rows={parsed.hourlyRevenue}
+                cols={['Zeitabschnitt', 'Betrag', 'Anteil']}
+                render={r => [r.label, fcs(r.totalAmount), r.sharePct !== null ? `${NUM.format(r.sharePct)} %` : '—']} />
+            )}
+            {zeitVorschau && (
+              <div className="rounded-lg border border-border bg-card p-4" data-testid="zeitabschnitts-vorschau">
+                <div className="text-sm font-semibold mb-2">Zeitabschnittsanalyse (Vorschau)</div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-2 text-sm">
+                  <MetaCell label={GN_ZEITFENSTER.mittag.label}
+                    value={zeitVorschau.mittagRevenue !== null ? fcs(zeitVorschau.mittagRevenue) : '—'} />
+                  <MetaCell label={GN_ZEITFENSTER.abend.label}
+                    value={zeitVorschau.abendRevenue !== null ? fcs(zeitVorschau.abendRevenue) : '—'} />
+                  <MetaCell label="Umsatz vor 17:00"
+                    value={zeitVorschau.vor17Revenue !== null ? fcs(zeitVorschau.vor17Revenue) : '—'} />
+                  <MetaCell label="Umsatz ab 17:00"
+                    value={zeitVorschau.ab17Revenue !== null ? fcs(zeitVorschau.ab17Revenue) : '—'} />
+                  <MetaCell label="Stärkste Stunde"
+                    value={zeitVorschau.strongestHour
+                      ? `${zeitVorschau.strongestHour.label} · ${fcs(zeitVorschau.strongestHour.totalAmount)}` : '—'} />
+                  <MetaCell label="Schwächste aktive Stunde"
+                    value={zeitVorschau.weakestActiveHour
+                      ? `${zeitVorschau.weakestActiveHour.label} · ${fcs(zeitVorschau.weakestActiveHour.totalAmount)}` : '—'} />
+                  <MetaCell label={`Peak-Zeitfenster (${GN_ZEITFENSTER.peakFensterStunden} Std.)`}
+                    value={zeitVorschau.peakWindow
+                      ? `${zeitVorschau.peakWindow.label} · ${fcs(zeitVorschau.peakWindow.totalAmount)}` : '—'} />
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Zeitfenster zentral definiert; negative Stundenwerte bleiben erhalten.
+                </p>
+              </div>
+            )}
+            {parsed.customerCardTopups && parsed.customerCardTopups.length > 0 && (
+              <SectionTable
+                title={`Aufladungen Kundenkarten (${parsed.customerCardTopups.length})${parsed.customerCardTopupTotal !== null && parsed.customerCardTopupTotal !== undefined ? ` — Total ${fcs(parsed.customerCardTopupTotal)}` : ''}`}
+                rows={parsed.customerCardTopups}
+                cols={['Karte', 'Anzahl', 'Betrag']}
+                render={r => [r.name, NUM0.format(r.count), fcs(r.amount)]} />
+            )}
             <SectionTable title={`Hauptwarengruppen (${pgCount})`} rows={parsed.productGroups} cols={['Name', 'Anzahl', 'Betrag']}
               render={r => [r.name, NUM0.format(r.count), fc(r.amount)]} />
+
+            {/* Detailbericht des erweiterten Z-Berichts */}
+            {parsed.extendedData && (
+              <>
+                <SectionTable
+                  title={`Detailbericht — Hauptwarengruppen inner/außer Haus (${parsed.extendedData.mainCategoriesByConsumptionType.length})`}
+                  rows={parsed.extendedData.mainCategoriesByConsumptionType}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Warengruppen (${parsed.extendedData.categories.length})`}
+                  rows={parsed.extendedData.categories}
+                  cols={['Name', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Warengruppen inner/außer Haus (${parsed.extendedData.categoriesByConsumptionType.length})`}
+                  rows={parsed.extendedData.categoriesByConsumptionType}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Positionen (${parsed.extendedData.positions.length})`}
+                  rows={parsed.extendedData.positions}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+              </>
+            )}
             <SectionTable title={`Rabatte & Positionsrabatte (${discCount})`} rows={parsed.discounts} cols={['Typ', 'Name', 'Betrag']}
               render={r => [r.type, r.name, fc(r.amount)]} />
             <SectionTable title={`Stornierte Artikel (${cancelCount})`} rows={parsed.cancellations} cols={['Name', 'Anzahl', 'Betrag']}
@@ -1331,7 +1675,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                     <details className="rounded border border-slate-200 dark:border-slate-700">
                       <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
                         <span>Rohdaten anzeigen</span>
-                        <span className="text-[10px] font-normal text-muted-foreground">(erste 30 CSV-Zeilen)</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">(erste 30 Zeilen)</span>
                       </summary>
                       <div className="overflow-x-auto max-h-72 overflow-y-auto">
                         <table className="w-full font-mono text-[10px] border-collapse">
@@ -1367,199 +1711,201 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             )}
           </>}
 
-          {/* ── Personen Vorschau ─────────────────────────────────────────── */}
-          {importType === 'personen' && parsedPerson && <>
-            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"    value={`${fdate(parsedPerson.periodFrom)} – ${fdate(parsedPerson.periodTo)}`} />
-              <MetaCell label="Datenzeilen" value={String(pRowCount)} />
-              <MetaCell label="Datei"       value={parsedPerson.fileName} />
-            </div>
+          {/* ── Gäste & Bonanalyse Vorschau (bis zu 3 PDFs) ────────────────── */}
+          {importType === 'kpi' && kpiFiles.length > 0 && <>
+            {kpiFiles.map(entry => {
+              const p = entry.parsed;
+              const fmtVal = (v: number | null) =>
+                v === null ? '—'
+                : p?.kind === 'anzahl_personen' ? NUM0.format(v)
+                : `CHF ${NUM.format(v)}`;
+              return (
+                <div key={entry.id}
+                  className={cn('rounded-lg border',
+                    entry.error ? 'border-red-300 bg-red-50 dark:bg-red-950/20' : 'border-border bg-card')}
+                  data-testid={`card-kpi-${entry.fileName}`}>
+                  <div className="flex items-center gap-3 px-4 py-3 border-b border-border/60">
+                    <FileText className={cn('h-4 w-4 shrink-0', entry.error ? 'text-red-500' : 'text-muted-foreground')} />
+                    <p className="text-sm font-medium truncate flex-1 min-w-0">{entry.fileName}</p>
+                    <span className={cn('text-[11px] font-semibold rounded-full px-2.5 py-0.5 shrink-0',
+                      entry.error
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                        : 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300')}>
+                      {p?.kindLabel ?? 'Unbekannter Bericht'}
+                    </span>
+                    <button onClick={() => removeKpiFile(entry.id)} disabled={step === 'saving'}
+                      className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-red-600 disabled:opacity-50"
+                      title="PDF entfernen" data-testid={`button-remove-${entry.fileName}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
 
-            {/* Erkannter Typ + Override */}
-            <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-muted/20 px-4 py-3">
-              <span className="text-xs text-muted-foreground">Erkannter Analysetyp:</span>
-              <span className={cn('px-2 py-0.5 rounded text-[11px] font-semibold',
-                (csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon'
-                  ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
-                  : (csvTypeOverride ?? parsedPerson.detectedCsvType) === 'umsatz_pro_person'
-                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-              )}>
-                {CSV_TYPE_LABELS[csvTypeOverride ?? parsedPerson.detectedCsvType]}
-              </span>
-              <span className="text-[11px] text-muted-foreground ml-auto">Typ ändern:</span>
-              <select
-                value={csvTypeOverride ?? parsedPerson.detectedCsvType}
-                onChange={e => setCsvTypeOverride(e.target.value as PersonCsvType)}
-                className="text-xs rounded border border-border bg-background px-2 py-1">
-                {CSV_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
+                  {entry.error ? (
+                    <p className="px-4 py-3 text-xs text-red-700 dark:text-red-400 whitespace-pre-wrap">{entry.error}</p>
+                  ) : p && (
+                    <div className="px-4 py-3 space-y-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <MetaCell label="Zeitraum"
+                          value={p.periodFrom ? `${fdate(p.periodFrom)} – ${fdate(p.periodTo)}` : (p.periodRaw || '—')} />
+                        <MetaCell label="Tageswerte" value={String(p.filledDayCount)} />
+                        <MetaCell label="Leere Felder" value={String(p.emptyDayCount)} />
+                        <MetaCell label={p.summaryLabel ?? 'Gesamt'} value={fmtVal(p.summaryValue)} />
+                      </div>
 
-            {/* KPIs je nach Typ */}
-            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <KpiMini label="Ø Durchschnittsbon"  value={pDurchschnBon > 0 ? fc(pDurchschnBon) : '—'} bold />
-                <KpiMini label="Tageswerte erkannt"  value={pRowCount > 0 ? 'Ja' : 'Nein'} />
-                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
-                <KpiMini label="Zeitraum"            value={`${fdate(parsedPerson.periodFrom)} – ${fdate(parsedPerson.periodTo)}`} />
-              </div>
-            )}
-            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'umsatz_pro_person' && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <KpiMini label="Ø Umsatz pro Person" value={pAvgRev > 0 ? fc(pAvgRev) : '—'} bold />
-                <KpiMini label="Umsatz Total"        value={pTotalRev > 0 ? fc(pTotalRev) : '—'} />
-                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
-              </div>
-            )}
-            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'anzahl_personen' && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <KpiMini label="Gäste Total"         value={pTotalGuests > 0 ? NUM0.format(pTotalGuests) : '—'} bold />
-                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
-              </div>
-            )}
-            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'personen' && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <KpiMini label="Gäste Total"         value={pTotalGuests > 0 ? NUM0.format(pTotalGuests) : '—'} bold />
-                <KpiMini label="Ø Umsatz pro Gast"   value={pAvgRev > 0 ? fc(pAvgRev) : '—'} />
-                <KpiMini label="Umsatz Total"        value={pTotalRev > 0 ? fc(pTotalRev) : '—'} />
-                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
-              </div>
-            )}
+                      <p className="text-xs text-muted-foreground">{p.diagnosis}</p>
 
-            {parsedPerson.rows.length > 0 && (
-              <div className="rounded-lg border border-border overflow-hidden">
-                <div className="px-4 py-2 bg-muted/40 border-b text-xs font-semibold">
-                  Vorschau (erste {Math.min(parsedPerson.rows.length, 20)} Zeilen)
+                      {p.warnings.length > 0 && (
+                        <div className="space-y-1">
+                          {p.warnings.map((w, wi) => (
+                            <p key={wi} className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+                              <Info className="h-3 w-3 mt-0.5 shrink-0" />{w}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Pflicht-Jahreswahl: Bericht ohne erkennbares Jahr */}
+                      {(p.yearMissing || entry.chosenYear !== null) && (
+                        <div className={cn('rounded-lg border p-3 space-y-2',
+                          p.yearMissing
+                            ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/20'
+                            : 'border-border bg-muted/20')}>
+                          {p.yearMissing ? (
+                            <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              Kein Jahr im Bericht erkennbar — bitte Importjahr wählen (Pflicht).
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              Importjahr manuell gewählt (Quelle: {p.debug.usedYearSource}).
+                            </p>
+                          )}
+                          <select
+                            value={entry.chosenYear ?? ''}
+                            onChange={e => { const y = Number(e.target.value); if (y) void handleKpiYearChange(entry.id, y); }}
+                            disabled={step === 'saving'}
+                            className="px-2 py-1 text-sm rounded border border-border bg-background disabled:opacity-50"
+                            data-testid={`select-jahr-${entry.fileName}`}>
+                            <option value="" disabled>Jahr wählen…</option>
+                            {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() + 1 - i).map(y => (
+                              <option key={y} value={y}>{y}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Idempotenz / Ersetzen-Hinweise */}
+                      {entry.dupNoop && (
+                        <p className="text-xs text-muted-foreground flex items-start gap-1.5 rounded border border-border bg-muted/20 px-3 py-2">
+                          <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          Identischer Inhalt bereits importiert — wird beim Bestätigen übersprungen (keine Schreiboperation).
+                        </p>
+                      )}
+                      {!entry.dupNoop && entry.replaceId && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          Für denselben Zeitraum existiert bereits ein Import — er wird beim Bestätigen ersetzt.
+                        </p>
+                      )}
+                      {!entry.dupNoop && entry.avgOverlapDates.length > 0 && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5 rounded border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/20 px-3 py-2">
+                          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          {entry.avgOverlapDates.length === 1
+                            ? '1 bereits importierter Tag wird beim Bestätigen ersetzt.'
+                            : `${entry.avgOverlapDates.length} bereits importierte Tage werden beim Bestätigen ersetzt.`}
+                        </p>
+                      )}
+
+                      {p.days.length > 0 && (
+                        <details className="rounded border border-border">
+                          <summary className="px-3 py-2 cursor-pointer text-xs font-semibold text-muted-foreground hover:bg-muted/40">
+                            Tageswerte anzeigen ({p.filledDayCount})
+                          </summary>
+                          <div className="max-h-72 overflow-y-auto">
+                            <table className="w-full text-xs">
+                              <thead><tr className="border-b bg-muted/20 text-right sticky top-0 bg-card">
+                                <th className="px-3 py-1.5 text-left font-medium">Datum</th>
+                                <th className="px-3 py-1.5 font-medium">Wert</th>
+                              </tr></thead>
+                              <tbody>
+                                {p.days.map((d, di) => (
+                                  <tr key={di} className="border-b border-border/40 last:border-0">
+                                    <td className="px-3 py-1.5">{fdate(d.date)}</td>
+                                    <td className="px-3 py-1.5 text-right tabular-nums">
+                                      {d.value === null ? <span className="text-muted-foreground">leer</span> : fmtVal(d.value)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <table className="w-full text-xs">
-                  <thead><tr className="border-b bg-muted/20 text-right">
-                    <th className="px-3 py-1.5 text-left font-medium">Datum / Periode</th>
-                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
-                      <th className="px-3 py-1.5 font-medium">Personen</th>}
-                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'anzahl_personen' &&
-                     (csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
-                      <th className="px-3 py-1.5 font-medium">Umsatz / Person</th>}
-                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' &&
-                      <th className="px-3 py-1.5 font-medium">Durchschnittsbon</th>}
-                    <th className="px-3 py-1.5 font-medium">Umsatz Total</th>
-                  </tr></thead>
-                  <tbody>
-                    {parsedPerson.rows.slice(0, 20).map((r, i) => (
-                      <tr key={i} className="border-b border-border/40 last:border-0">
-                        <td className="px-3 py-1.5">{r.date ? fdate(r.date) : (r.periodLabel ?? '—')}</td>
-                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
-                          <td className="px-3 py-1.5 text-right">{r.guestsCount > 0 ? NUM0.format(r.guestsCount) : '—'}</td>}
-                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'anzahl_personen' &&
-                         (csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
-                          <td className="px-3 py-1.5 text-right">{r.revPerPerson > 0 ? fc(r.revPerPerson) : '—'}</td>}
-                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' &&
-                          <td className="px-3 py-1.5 text-right">{r.averageReceipt ? fc(r.averageReceipt) : '—'}</td>}
-                        <td className="px-3 py-1.5 text-right">{r.revTotal ? fc(r.revTotal) : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              );
+            })}
+
+            {kpiFiles.length < 3 && (
+              <button onClick={() => fileInputRef.current?.click()} disabled={step === 'saving' || kpiProcessing}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-dashed border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                data-testid="button-weitere-pdf">
+                {kpiProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Weitere Datei hinzufügen
+              </button>
+            )}
+
+            {kpiTagesVorschau && (
+              <div className="rounded-lg border border-border bg-card p-4" data-testid="kpi-tagesanalyse-vorschau">
+                <div className="text-sm font-semibold mb-1">Tagesanalyse (Vorschau)</div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Zusammenführung der geladenen Berichte über das Kalenderdatum — berechnete Werte,
+                  gewichtet über {kpiTagesVorschau.dayCount} Tag{kpiTagesVorschau.dayCount === 1 ? '' : 'e'}.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Personen</div>
+                    <div className="text-sm font-medium tabular-nums">
+                      {kpiTagesVorschau.persons !== null ? NUM0.format(Math.round(kpiTagesVorschau.persons)) : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Umsatz, berechnet</div>
+                    <div className="text-sm font-medium tabular-nums">
+                      {kpiTagesVorschau.primaryRevenue !== null ? `CHF ${NUM.format(kpiTagesVorschau.primaryRevenue)}` : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Bons, berechnet
+                      <InfoTip text={BONS_BERECHNET_TOOLTIP} />
+                    </div>
+                    <div className="text-sm font-medium tabular-nums">
+                      {kpiTagesVorschau.derivedReceiptCount !== null ? NUM0.format(Math.round(kpiTagesVorschau.derivedReceiptCount)) : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Personen pro Bon</div>
+                    <div className="text-sm font-medium tabular-nums">
+                      {kpiTagesVorschau.personsPerReceipt !== null ? kpiTagesVorschau.personsPerReceipt.toFixed(1) : '—'}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </>}
 
-          {/* ── Durchschnittsbon Vorschau ─────────────────────────────────── */}
-          {importType === 'durchschnittsbon_bericht' && parsedAvg && <>
-            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"    value={`${fdate(parsedAvg.periodFrom)} – ${fdate(parsedAvg.periodTo)}`} />
-              <MetaCell label="Anzahl Tage" value={String(avgDayCount)} />
-              <MetaCell label="Datei"       value={parsedAvg.fileName} />
-            </div>
-
-            {/* Importjahr-Wahl — nur wenn im Bericht kein Jahr gefunden wurde */}
-            {parsedAvg.debug.usedYearSource === 'Benutzerwahl' && (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2">
-                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  Importjahr prüfen
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Bitte Importjahr prüfen, da im Bericht kein Jahr enthalten ist
-                  (weder in Datumsspalten, Zeitraum noch Dateiname). Die Tageswerte
-                  werden dem gewählten Jahr zugeordnet.
-                </p>
-                <div className="flex items-center gap-2">
-                  <label htmlFor="avg-import-year" className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                    Importjahr:
-                  </label>
-                  <select
-                    id="avg-import-year"
-                    value={avgImportYear}
-                    onChange={e => handleAvgYearChange(Number(e.target.value))}
-                    disabled={step === 'saving'}
-                    className="px-2 py-1 text-sm rounded border border-amber-400 bg-white dark:bg-slate-900 text-foreground disabled:opacity-50">
-                    {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() + 1 - i).map(y => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <KpiMini label="Ø Durchschnittsbon" value={avgMean > 0 ? fc(avgMean) : '—'} bold />
-              <KpiMini label="Minimum"            value={avgMin > 0 ? fc(avgMin) : '—'} />
-              <KpiMini label="Maximum"            value={avgMax > 0 ? fc(avgMax) : '—'} />
-              <KpiMini label="Tageswerte"         value={avgDayCount > 0 ? `${avgDayCount} Tage` : '—'} />
-            </div>
-
-            {avgOverlapDates.length > 0 && (
-              <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-xs text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                {avgOverlapDates.length === 1
-                  ? '1 bereits importierter Tag wird beim Bestätigen ersetzt.'
-                  : `${avgOverlapDates.length} bereits importierte Tage werden beim Bestätigen ersetzt.`}
-              </div>
-            )}
-
-            {avgRows.length > 0 && (
-              <div className="rounded-lg border border-border overflow-hidden">
-                <div className="px-4 py-2 bg-muted/40 border-b text-xs font-semibold">
-                  Tageswerte ({avgRows.length})
-                </div>
-                <div className="max-h-80 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead><tr className="border-b bg-muted/20 text-right sticky top-0 bg-card">
-                      <th className="px-3 py-1.5 text-left font-medium">Datum</th>
-                      <th className="px-3 py-1.5 font-medium">Durchschnittsbon</th>
-                    </tr></thead>
-                    <tbody>
-                      {avgRows.map((r, i) => (
-                        <tr key={i} className="border-b border-border/40 last:border-0">
-                          <td className="px-3 py-1.5">{fdate(r.date)}</td>
-                          <td className="px-3 py-1.5 text-right">{r.averageCheck > 0 ? fc(r.averageCheck) : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {avgDebug && (
-              <AvgDiagnostic
-                debug={avgDebug}
-                open={showAvgDebug}
-                onToggle={() => setShowAvgDebug(v => !v)}
-                onCopy={copyAvgDiagnostic}
-              />
-            )}
-          </>}
-
-          {/* Bestätigen-Buttons (Einzeldatei) */}
-          {!activeDupInfo && !isBatch && (
+          {/* Bestätigen-Buttons */}
+          {((importType === 'zbericht' && parsed && !zDupInfo) || (importType === 'kpi' && kpiFiles.length > 0)) && (
             <div className="flex gap-3 pt-2 flex-wrap">
-              <button onClick={resetWizard}
-                className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+              <button onClick={resetWizard} disabled={step === 'saving'}
+                className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50">
                 Abbrechen
               </button>
-              <button onClick={() => handleConfirm(false)} disabled={step === 'saving'}
+              <button onClick={() => void handleConfirm()}
+                disabled={step === 'saving' || (importType === 'kpi' && (kpiValidCount === 0 || kpiYearPending))}
+                data-testid="button-import-bestaetigen"
                 className={cn(
                   'px-5 py-2 text-sm rounded-md disabled:opacity-50 flex items-center gap-2 transition-colors',
                   showReplaceCta
@@ -1568,14 +1914,22 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                 )}>
                 {step === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                {showReplaceCta ? 'Importieren und Daten ersetzen' : 'Import bestätigen'}
+                {showReplaceCta ? 'Importieren und Daten ersetzen'
+                  : importType === 'kpi' && kpiValidCount > 0
+                    ? `${kpiValidCount} Bericht${kpiValidCount === 1 ? '' : 'e'} importieren`
+                    : 'Import bestätigen'}
               </button>
+              {importType === 'kpi' && kpiYearPending && (
+                <p className="text-xs text-amber-700 dark:text-amber-400 self-center">
+                  Bitte zuerst für alle Berichte ohne erkennbares Jahr das Importjahr wählen.
+                </p>
+              )}
             </div>
           )}
         </>}
 
-        {/* ── Step: Done (Einzeldatei) ──────────────────────────────────────── */}
-        {step === 'done' && !batchSaveResults && (
+        {/* ── Step: Done (Z-Bericht) ────────────────────────────────────────── */}
+        {step === 'done' && !kpiSaveResults && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20 p-8 flex flex-col items-center gap-3 text-center">
             <CheckCircle2 className="h-10 w-10 text-emerald-500" />
             <p className="font-semibold text-emerald-800 dark:text-emerald-300">Import erfolgreich</p>
@@ -1586,39 +1940,40 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           </div>
         )}
 
-        {/* ── Step: Done (Multi-Datei Ergebnis) ─────────────────────────────── */}
-        {step === 'done' && batchSaveResults && (() => {
-          const okN   = batchSaveResults.filter(r => r.ok).length;
-          const skipN = batchSaveResults.filter(r => r.skipped).length;
-          const failN = batchSaveResults.filter(r => !r.ok && !r.skipped).length;
-          const reasonFor = (id: string) =>
-            batchPlans?.find(p => p.id === id)?.reason ?? '';
+        {/* ── Step: Done (Gäste & Bonanalyse Ergebnis) ──────────────────────── */}
+        {step === 'done' && kpiSaveResults && (() => {
+          const okN   = kpiSaveResults.filter(r => r.status === 'ok').length;
+          const noopN = kpiSaveResults.filter(r => r.status === 'noop').length;
+          const failN = kpiSaveResults.filter(r => r.status === 'error').length;
           return (
             <div className="space-y-4">
               <div className="rounded-xl border border-border bg-card p-5 flex flex-wrap items-center gap-4">
                 <CheckCircle2 className={cn('h-8 w-8', failN > 0 ? 'text-amber-500' : 'text-emerald-500')} />
                 <div className="text-sm">
                   <p className="font-semibold">
-                    {okN} importiert{skipN > 0 ? ` · ${skipN} übersprungen` : ''}{failN > 0 ? ` · ${failN} fehlgeschlagen` : ''}
+                    {okN} importiert{noopN > 0 ? ` · ${noopN} unverändert` : ''}{failN > 0 ? ` · ${failN} fehlgeschlagen` : ''}
                   </p>
-                  <p className="text-muted-foreground text-xs">{batchSaveResults.length} Datei{batchSaveResults.length === 1 ? '' : 'en'} verarbeitet</p>
+                  <p className="text-muted-foreground text-xs">{kpiSaveResults.length} Bericht{kpiSaveResults.length === 1 ? '' : 'e'} verarbeitet</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                {batchSaveResults.map((r, i) => {
-                  const tone = r.ok ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20'
-                    : r.skipped ? 'border-border bg-muted/20'
+                {kpiSaveResults.map((r, i) => {
+                  const tone = r.status === 'ok' ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20'
+                    : r.status === 'noop' ? 'border-border bg-muted/20'
                     : 'border-red-300 bg-red-50 dark:bg-red-950/20';
                   return (
-                    <div key={`${r.fileName}-${i}`} className={cn('rounded-lg border px-4 py-3 flex items-center gap-3', tone)}>
-                      {r.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-                        : r.skipped ? <Info className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div key={`${r.fileName}-${i}`} className={cn('rounded-lg border px-4 py-3 flex items-center gap-3', tone)}
+                      data-testid={`result-${r.fileName}`}>
+                      {r.status === 'ok' ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                        : r.status === 'noop' ? <Info className="h-4 w-4 text-muted-foreground shrink-0" />
                         : <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />}
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{r.fileName}</p>
+                        <p className="text-sm font-medium truncate">{r.fileName} <span className="text-muted-foreground font-normal">· {r.kindLabel}</span></p>
                         <p className="text-xs text-muted-foreground truncate">
-                          {r.ok ? 'Importiert' : r.skipped ? `Übersprungen${reasonFor(r.id) ? ` — ${reasonFor(r.id)}` : ''}` : `Fehler: ${r.error ?? 'Unbekannt'}`}
+                          {r.status === 'ok' ? (r.message ?? 'Importiert')
+                            : r.status === 'noop' ? (r.message ?? 'Unverändert übersprungen')
+                            : `Fehler: ${r.message ?? 'Unbekannt'}`}
                         </p>
                       </div>
                     </div>
@@ -1812,7 +2167,7 @@ function DropZone({ isDragging, onDragOver, onDragLeave, onDrop, onClick, label,
         {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
         <p className="text-xs text-muted-foreground mt-1">oder klicken zum Auswählen</p>
       </div>
-      <span className="text-xs bg-muted px-2 py-0.5 rounded font-mono">.csv</span>
+      <span className="text-xs bg-muted px-2 py-0.5 rounded font-mono">.pdf</span>
     </div>
   );
 }
@@ -1884,184 +2239,6 @@ function CandidateBlock({ title, color = 'blue', candidates }: {
   );
 }
 
-function AvgDiagnostic({ debug, open, onToggle, onCopy }: {
-  debug: GnAverageCheckDebug;
-  open: boolean;
-  onToggle: () => void;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onToggle}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-        className="w-full cursor-pointer flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
-        <span className="flex items-center gap-2">
-          <Info className="h-3.5 w-3.5" />
-          Parser-Diagnose (Durchschnittsbon)
-          {debug.failureReason && (
-            <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">
-              keine Tageswerte
-            </span>
-          )}
-        </span>
-        <span className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); onCopy(); }}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-[10px] font-medium">
-            <Copy className="h-2.5 w-2.5" />
-            Diagnose kopieren
-          </button>
-          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        </span>
-      </div>
-
-      {open && (
-        <div className="p-4 space-y-4 text-xs">
-
-          {/* Grund (falls Erkennung fehlgeschlagen) */}
-          {debug.failureReason && (
-            <div className="rounded border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-3 text-amber-800 dark:text-amber-300">
-              <span className="font-semibold">Grund: </span>{debug.failureReason}
-            </div>
-          )}
-
-          {/* Trennzeichen + Metadaten */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Trennzeichen</div>
-              <div className="font-mono font-bold">{debug.delimiter}</div>
-              <div className="text-muted-foreground mt-1">
-                ;={debug.delimCounts.semicolon} ,={debug.delimCounts.comma} ⇥={debug.delimCounts.tab}
-              </div>
-            </div>
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Zeilen</div>
-              <div className="font-mono font-bold">{debug.rawLineCount}</div>
-              <div className="text-muted-foreground mt-1">{debug.nonEmptyLineCount} nicht leer</div>
-            </div>
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">
-                Datums-Kopfzeile
-              </div>
-              <div className={`font-mono font-bold ${debug.detectedFormat === 'wide' && !debug.headerRowIdx ? 'text-red-500' : ''}`}>
-                {debug.headerRowIdx ? `Zeile ${debug.headerRowIdx}` : (debug.detectedFormat === 'vertical' ? '(Langformat)' : '(nicht erkannt)')}
-              </div>
-              <div className="text-muted-foreground mt-1">{debug.dateColumns.length} Datums-Spalten/-Zeilen</div>
-            </div>
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Durchschnitt-/Wertezeile</div>
-              <div className={`font-mono font-bold ${!debug.averageRowIdx && !debug.averageRowLabel ? 'text-red-500' : ''}`}>
-                {debug.averageRowIdx ? `Zeile ${debug.averageRowIdx}` : (debug.averageRowLabel ? '(Langformat)' : '(nicht erkannt)')}
-              </div>
-              {debug.averageRowLabel && (
-                <div className="text-muted-foreground mt-1 truncate">&ldquo;{debug.averageRowLabel}&rdquo;</div>
-              )}
-            </div>
-          </div>
-
-          {/* Layout / Jahr / übersprungene Tage */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Layout</div>
-              <div className={`font-mono font-bold ${!debug.detectedFormat ? 'text-red-500' : ''}`}>
-                {debug.detectedFormat === 'wide'
-                  ? 'Wide (Spalten)'
-                  : debug.detectedFormat === 'vertical'
-                    ? 'Langformat'
-                    : '(nicht erkannt)'}
-              </div>
-            </div>
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Verwendetes Jahr</div>
-              <div className={`font-mono font-bold ${debug.usedYearSource === 'Benutzerwahl' ? 'text-amber-600 dark:text-amber-400' : ''}`}>
-                {debug.usedYear ?? '—'}
-              </div>
-              <div className="text-muted-foreground mt-1">Quelle: {debug.usedYearSource}</div>
-            </div>
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Leere Tage übersprungen</div>
-              <div className="font-mono font-bold">{debug.skippedEmptyColumns}</div>
-            </div>
-          </div>
-
-          {/* Erkannter Zeitraum */}
-          <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5 text-muted-foreground">
-            Erkannter Zeitraum: <span className="font-mono font-bold text-foreground">{debug.detectedPeriod || '—'}</span>
-          </div>
-
-          {/* Zellzähler-Hinweis (Wide vs. Long) */}
-          <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5 text-muted-foreground">
-            Datumsartige Zellen gesamt: <span className="font-mono font-bold text-foreground">{debug.dateCellCount}</span>
-            {' · '}Geldwert-Zellen gesamt: <span className="font-mono font-bold text-foreground">{debug.moneyCellCount}</span>
-          </div>
-
-          {/* Erkannte Datums-Spalten */}
-          {debug.dateColumns.length > 0 && (
-            <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
-              <div className="font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                {debug.detectedFormat === 'vertical' ? 'Erkannte Datums-Zeilen' : 'Erkannte Datums-Spalten'} ({debug.dateColumns.length})
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {debug.dateColumns.map((c, i) => (
-                  <span key={i} className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    {c.raw} → {c.iso}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* "Durchschnitt"-Kandidaten */}
-          {debug.averageCandidates.length > 0 && (
-            <CandidateBlock
-              title="Zeilen mit &ldquo;Durchschnitt&rdquo;"
-              color="violet"
-              candidates={debug.averageCandidates}
-            />
-          )}
-
-          {/* Rohdaten anzeigen */}
-          <details className="rounded border border-slate-200 dark:border-slate-700" open={!!debug.failureReason}>
-            <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
-              <span>Rohdaten anzeigen</span>
-              <span className="text-[10px] font-normal text-muted-foreground">(erste {debug.firstRawLines.length} CSV-Zeilen)</span>
-            </summary>
-            <div className="overflow-x-auto max-h-72 overflow-y-auto">
-              <table className="w-full font-mono text-[10px] border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 dark:bg-slate-800 sticky top-0">
-                    <th className="px-2 py-1 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400 w-8">#</th>
-                    <th className="px-2 py-1 text-left text-slate-500">Zeile</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {debug.firstRawLines.map((line, i) => (
-                    <tr key={i} className={`border-t border-slate-100 dark:border-slate-800 ${
-                      debug.averageRowIdx === i + 1 ? 'bg-violet-50 dark:bg-violet-950/20 font-bold'
-                        : debug.headerRowIdx === i + 1 ? 'bg-blue-50 dark:bg-blue-950/20 font-bold' : ''
-                    }`}>
-                      <td className="px-2 py-0.5 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400">
-                        {i + 1}
-                      </td>
-                      <td className="px-2 py-0.5 text-slate-700 dark:text-slate-300 whitespace-pre max-w-0 overflow-hidden">
-                        {line || <span className="text-slate-300">(leer)</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-
-        </div>
-      )}
-    </div>
-  );
-}
 
 function HistoryRow({ id, fileName, subLine, badge, mainValue, subValue, importedAt, isOpen, deleting, onToggle, onDelete, children }: {
   id: string; fileName: string; subLine: string; badge: string;

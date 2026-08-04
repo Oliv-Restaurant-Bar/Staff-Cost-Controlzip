@@ -22,7 +22,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -66,10 +65,8 @@ export default function GaesteImportPage(
 ) {
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
-  // Schreibender CRM-Import: nur echte Admins, niemals read-only Gast-Sessions
-  // (usePermissions().isAdmin schliesst Gäste ein — daher hier explizit ausgeschlossen).
-  const canImport = isAdmin && !isGuest;
+  // Schreibender CRM-Import: nur Admins.
+  const canImport = isAdmin;
 
   const [step, setStep] = useState<WizardStep>('upload');
   const [isDragging, setIsDragging] = useState(false);

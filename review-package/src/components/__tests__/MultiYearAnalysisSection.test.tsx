@@ -60,8 +60,7 @@ describe('MultiYearAnalysisSection', () => {
     expect(screen.getByTestId('mya-section')).toBeTruthy();
     expect(screen.getByTestId('mya-position')).toBeTruthy();
     expect(screen.getByTestId('mya-years')).toBeTruthy();
-    expect(screen.getByTestId('mya-export-pdf')).toBeTruthy();
-    expect(screen.getByTestId('mya-export-excel')).toBeTruthy();
+    expect(screen.getByTestId('mya-export')).toBeTruthy();
   });
 
   it('zeigt 4 sichtbare KPI-Karten + „Weitere Kennzahlen" (MoreKpis)', () => {

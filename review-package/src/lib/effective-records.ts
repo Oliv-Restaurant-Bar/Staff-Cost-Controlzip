@@ -14,15 +14,19 @@
  *   2. Personalkosten: Buchhaltung (5000–5009) hat Vorrang vor dem
  *      Dienstplan-Wert (personnelCostActual wird entfernt).
  *
- * Die VJ-Umsatz-Regel (revenuePreviousYear) bleibt bewusst in der
- * Erfolgsrechnung: sie betrifft nur die VJ-Spalte der Monatssicht, nicht
- * die IST-Serien der Mehrjahresanalyse.
+ * Zusätzlich zentral (für Monatssicht-VJ-Konsumenten — PLView UND
+ * Financial-Metrics-Registry/Dashboard):
+ *   3. VJ-Umsatz (`applyVjRevenueRule`): Tagesansicht-VJ-NETTO schlägt
+ *      reporting_v1, AUSSER wenn Sage 3xxx-PY-Konten vorhanden sind;
+ *      Fallback auf revenueActual des Vorjahres-Records.
+ *      (Die IST-Serien der Mehrjahresanalyse brauchen diese Regel nicht.)
  *
  * Rein: kein DOM, kein Supabase, keine Seiteneffekte (nur Typ-Importe).
  */
 
 import type { MonthlyFinancialRecord } from '@/types/reporting';
-import { computeMonthlyIstNet, computeMonthlyIstGross } from './revenue-sync';
+import type { VjDayRecord } from './vj-daily-supabase';
+import { computeMonthlyIstNet, computeMonthlyIstGross, computeMonthlyVjNet } from './revenue-sync';
 
 interface DailyEntry {
   actualRevenue?:       number;
@@ -113,6 +117,121 @@ export function applyEffectiveMonthRules(
     r = { ...r, personnelCostActual: undefined };
   }
 
+  return r;
+}
+
+// ─── Kanonischer IST-Umsatz (umsatz.ts) — gemeinsame Regel für ER + Reporting ──
+/** Netto/Brutto-Summe eines Monats aus den gn-Imports (Tage ohne Import fehlen). */
+export interface CanonicalMonthRevenue { net: number; gross: number; hasData: boolean }
+export type CanonicalRevenueByMonth = Record<number, CanonicalMonthRevenue>;
+
+export interface CanonicalIstDeps {
+  /** Geschäftsjahr (für die Take-Away-Monats-Keys "YYYY-MM") */
+  year: number;
+  /** Kanonische Monats-Umsätze (1-basiert) aus umsatz.ts (ladeUmsatzTage → aggregat). */
+  canonical: CanonicalRevenueByMonth;
+  /** Monatliche Take-Away-Nettowerte (Keys "YYYY-MM"), manueller Override. */
+  takeawayMonthly?: Record<string, number>;
+  /** true = Netto-Anzeige (Standard), false = Brutto. */
+  net: boolean;
+}
+
+/**
+ * Gemeinsame IST-Umsatz-Regel für Erfolgsrechnung (PLView) UND Reporting.
+ * Setzt revenueActual = EXAKT dem kanonischen Netto/Brutto-Wert (Σ nettoUmsatzTag)
+ * — KEIN additiver Maison-Zuschlag (Maison ist ggf. eine reine Anzeige-Spalte).
+ * Regeln (identisch auf beiden Seiten):
+ *   - 3xxx-Umsatzkonten haben Vorrang: bei individuellen Konten wird nichts gesetzt.
+ *   - Take-Away Kto. 3000/3010-Split bei monatlichem Override (Netto direkt,
+ *     Brutto = Netto × 1.026).
+ *   - Personalkosten: Buchhaltung 5000–5009 schlägt Dienstplan
+ *     (personnelCostActual wird entfernt).
+ * VJ-Umsatz + Budget werden separat behandelt.
+ */
+export function applyCanonicalIstRule(
+  rec: MonthlyFinancialRecord,
+  month: number,
+  deps: CanonicalIstDeps,
+): MonthlyFinancialRecord {
+  let r = rec;
+  const { year, canonical, takeawayMonthly, net } = deps;
+
+  if (!hasIndividualRevenueAccounts(r)) {
+    const mm = String(month).padStart(2, '0');
+    const um = canonical[month];
+    if (um?.hasData) {
+      const base = net ? um.net : um.gross;
+      const istRev = Math.round(base * 100) / 100;
+      if (istRev > 0) {
+        const taMonthly = takeawayMonthly?.[`${year}-${mm}`] ?? 0;
+        if (taMonthly > 0) {
+          // Kto. 3000/3010 aufteilen: Netto = direkt; Brutto = Netto × 1.026
+          const kto3010 = net ? taMonthly : Math.round(taMonthly * 1.026 * 100) / 100;
+          const kto3000 = istRev - kto3010;
+          r = {
+            ...r,
+            revenueActual: istRev,
+            expenseCategories: [
+              ...r.expenseCategories,
+              { categoryId: '3000', amount: kto3000, label: net ? 'Betriebsertrag Netto' : 'Betriebsertrag Brutto' },
+              { categoryId: '3010', amount: kto3010, label: 'Take-Away Umsatz' },
+            ],
+          };
+        } else {
+          r = { ...r, revenueActual: istRev };
+        }
+      }
+    }
+  }
+
+  // Personalkosten: Buchhaltung (5000–5009) hat Vorrang vor Dienstplan.
+  if (hasAccountingWageAccounts(r) && r.personnelCostActual !== undefined) {
+    r = { ...r, personnelCostActual: undefined };
+  }
+  return r;
+}
+
+/** Hat der Record individuelle Sage-Umsatzkonten (3xxx) im VORJAHR (PY-Spalte)? */
+export function hasIndividualPYRevenueAccounts(rec: MonthlyFinancialRecord): boolean {
+  return (rec.expenseCategoriesPreviousYear ?? []).some(c => {
+    const n = parseInt(c.categoryId);
+    return !isNaN(n) && n >= 3000 && n <= 3999;
+  });
+}
+
+export interface VjRevenueDeps {
+  /** Geschäftsjahr des Records (VJ = year − 1) */
+  year: number;
+  /** Tagesumsätze (tenant-Blob "dailyBudgets", jahresübergreifend) */
+  dailyBudgets: Record<string, DailyEntry>;
+  /** Exakte VJ-Tageswerte aus Supabase (loadVjDailyYear(year−1)); leer = nur Blob-Fallbacks */
+  vjDaily: Record<string, VjDayRecord>;
+  /** reporting_v1-Record des ECHTEN Vorjahres (loadMonth(year−1, month)) — Fallback-Quelle */
+  prevYearRecord?: MonthlyFinancialRecord;
+}
+
+/**
+ * VJ-Umsatz-Regel der Erfolgsrechnung (extrahiert aus PLView.effectiveAllRecords):
+ * setzt `revenuePreviousYear` auf den Tagesansicht-VJ-NETTO-Wert
+ * (computeMonthlyVjNet), AUSSER es sind individuelle 3xxx-PY-Konten vorhanden.
+ * Fallback: revenueActual des Vorjahres-Records, wenn weder Tagesansicht-VJ
+ * noch ein bestehender revenuePreviousYear-Wert existiert.
+ */
+export function applyVjRevenueRule(
+  rec: MonthlyFinancialRecord,
+  month: number,
+  deps: VjRevenueDeps,
+): MonthlyFinancialRecord {
+  let r = rec;
+  if (!hasIndividualPYRevenueAccounts(r)) {
+    const tagesansichtVj = computeMonthlyVjNet(deps.year, month, deps.dailyBudgets, deps.vjDaily);
+    if (tagesansichtVj > 0) {
+      r = { ...r, revenuePreviousYear: tagesansichtVj };
+    } else if (!r.revenuePreviousYear) {
+      const prevActual = deps.prevYearRecord?.revenueActual;
+      if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
+    }
+  }
   return r;
 }
 

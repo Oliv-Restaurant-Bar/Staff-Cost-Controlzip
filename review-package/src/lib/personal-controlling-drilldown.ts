@@ -269,25 +269,29 @@ export function buildFactCells(input: DrilldownInput): DrilldownFactCell[] {
     return cell;
   };
 
+  // Rundung r2 pro Zelle — identisch zur zentralen Quelle personalkosten.ts
+  // (flexKostenProTag rundet planKosten/istKosten je Zelle auf 2 Stellen).
+  // Ausschlüsse (FE/Absenzen/Zusatzkosten der Fix-MA) sind bereits von den
+  // Seiten-Loadern angewandt; zusatz* fliesst hier bewusst separat ein.
   for (const p of input.planDays) {
     const c = get(p.empId, p.date);
     if (!c) continue;
-    c.planH += p.hours; c.planCHF += p.cost;
+    c.planH = round2(c.planH + p.hours); c.planCHF = round2(c.planCHF + p.cost);
   }
   for (const p of input.zusatzPlanDays) {
     const c = get(p.empId, p.date);
     if (!c) continue;
-    c.planH += p.hours; c.planCHF += p.cost; c.zusatz = true;
+    c.planH = round2(c.planH + p.hours); c.planCHF = round2(c.planCHF + p.cost); c.zusatz = true;
   }
   for (const i of input.istDays) {
     const c = get(i.empId, i.date);
     if (!c) continue;
-    c.istH += i.hours; c.istCHF += i.cost;
+    c.istH = round2(c.istH + i.hours); c.istCHF = round2(c.istCHF + i.cost);
   }
   for (const i of input.zusatzIstDays) {
     const c = get(i.empId, i.date);
     if (!c) continue;
-    c.istH += i.hours; c.istCHF += i.cost; c.zusatz = true;
+    c.istH = round2(c.istH + i.hours); c.istCHF = round2(c.istCHF + i.cost); c.zusatz = true;
   }
   for (const a of input.absences) {
     const c = get(a.empId, a.date);

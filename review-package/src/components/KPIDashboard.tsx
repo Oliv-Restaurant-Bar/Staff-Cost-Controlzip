@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, TrendingUp, TrendingDown, Minus, BarChart3, Calendar, ArrowUpRight, ArrowDownRight, Equal, FileText } from "lucide-react";
+import { ChevronDown, TrendingUp, TrendingDown, Minus, BarChart3, Calendar, ArrowUpRight, ArrowDownRight, Equal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportDashboardPDF } from "@/lib/kpi-export";
+import { UnifiedExportButton } from "@/components/UnifiedExportButton";
 import { useSocialCostRates } from "@/hooks/useSocialCostRates";
 import {
   ChartContainer,
@@ -417,15 +418,12 @@ export const KPIDashboard = ({
           <CardContent className="space-y-6">
             {/* Export Button */}
             <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => exportDashboardPDF(employees, timeEntries, dailyBudgets, selectedDate, socialCostRates)}
-                className="gap-2"
-              >
-                <FileText className="h-4 w-4" />
-                Dashboard PDF exportieren
-              </Button>
+              <UnifiedExportButton
+                data-testid="kpi-dashboard-export"
+                actions={[
+                  { key: 'pdf', label: 'Dashboard (PDF)', kind: 'pdf', onSelect: () => exportDashboardPDF(employees, timeEntries, dailyBudgets, selectedDate, socialCostRates) },
+                ]}
+              />
             </div>
 
             {/* Summary Cards */}

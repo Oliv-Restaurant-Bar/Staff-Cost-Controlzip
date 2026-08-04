@@ -65,6 +65,17 @@ export function kategorieOf(entry: WarenkostenEntryInput): WarenKategorie {
   return entry.kategorie ?? kategorieFromKonto(entry.warenkonto);
 }
 
+/**
+ * Kategorie eines Kontos: explizite Konto-Kategorie (Stammdaten) vor
+ * Nummernkreis-Heuristik. Pure — nimmt die Konten-Liste als Parameter.
+ */
+export function kontoKategorie(
+  value: string,
+  konten: { value: string; kategorie?: WarenKategorie }[],
+): WarenKategorie {
+  return konten.find(k => k.value === value)?.kategorie ?? kategorieFromKonto(value);
+}
+
 /** Gehört die Kategorie in die Warenkostenquote? (Food/Beverage = ja) */
 export function istInQuote(kategorie: WarenKategorie): boolean {
   return kategorie === 'Food' || kategorie === 'Beverage';

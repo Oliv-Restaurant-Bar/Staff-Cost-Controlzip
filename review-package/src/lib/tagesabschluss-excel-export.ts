@@ -18,17 +18,25 @@ import {
   type TagesabschlussField,
 } from './tagesabschluss';
 
+/**
+ * Spalten: Datum · Umsatz · Bargeld · Kreditkarten (ALLE elektronischen
+ * Kartenzahlungen in EINER Spalte) · Debitoren · Barausgaben · Gutscheine ·
+ * Bargeld Soll · Kassensaldo · Differenz · Kommentar. Die Zahlungsarten
+ * kommen aus DENSELBEN Zeilen wie die Bildschirm-Tabelle
+ * (buildTagesabschlussRows auf Basis loadGnDayClosingsForMonth, pro
+ * Mandant) — Effektivwerte, null = leer, nie 0 bei fehlendem Z-Bericht.
+ */
 export const TAGESABSCHLUSS_EXCEL_HEADERS = [
   'Datum',
   'Umsatz',
-  'Bargeld Soll',
-  'Kassensaldo Soll',
-  'KK Adyen',
-  'Barausgaben',
+  'Bargeld',
+  'Kreditkarten',
   'Debitoren',
+  'Barausgaben',
   'Verkaufte Gutscheine',
   'Eingelöste Gutscheine',
-  'Einzahlung Bank',
+  'Bargeld Soll',
+  'Kassensaldo Soll',
   'Kassendifferenz',
   'Kommentar',
 ] as const;
@@ -49,15 +57,16 @@ function round2(n: number): number {
 }
 
 /**
- * „KK Adyen" mit der Doppelsemantik der Übersichts-Spalte: bei karten-Override
- * der EFFEKTIVE Z-KK-Wert (karten + TWINT), sonst das Adyen-Import-Total
- * (effektiv inkl. Adyen-Overrides). null = weder Override noch Adyen-Import.
+ * „Kreditkarten": ALLE elektronischen Kartenzahlungen in EINER Spalte —
+ * Karten + TWINT aus dem Z-Bericht (Effektivwerte inkl. Korrekturen).
+ * Liefert der Z-Bericht keine Kartenwerte, greift das Adyen-Import-Total
+ * als Fallback (NIE additiv zu den Z-Werten — das wäre eine Doppelzählung,
+ * Adyen ist die Abgleichs-Sicht derselben Zahlungen). null = keine Quelle.
  */
-export function excelKkAdyenValue(row: TagesabschlussRow): number | null {
-  if (row.cells.karten.source === 'corrected') {
-    if (row.cells.karten.value === null && row.cells.twint.value === null) return null;
-    return round2((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0));
-  }
+export function excelKreditkartenValue(row: TagesabschlussRow): number | null {
+  const karten = row.cells.karten.value;
+  const twint = row.cells.twint.value;
+  if (karten !== null || twint !== null) return round2((karten ?? 0) + (twint ?? 0));
   return row.adyenTotal;
 }
 
@@ -119,30 +128,25 @@ export function buildTagesabschlussExcelData(month: TagesabschlussMonth): Tagesa
     rows.push([
       row.date,
       row.cells.umsatz.value,
-      row.bargeldSoll,
-      excelKassensaldoValue(row),
-      excelKkAdyenValue(row),
-      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
+      // Zahlungsarten — Effektivwerte derselben Zellen wie die Übersicht;
+      // fehlt der Z-Bericht, sind die Werte null (leere Zelle, nie 0).
+      row.cells.bar.value,
+      excelKreditkartenValue(row),
       row.cells.rechnung.value,
+      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
       row.cells.gutscheinVerkauft.value,
       row.cells.gutscheinEingeloest.value,
-      row.cells.einzahlungBank.value,
+      row.bargeldSoll,
+      excelKassensaldoValue(row),
       row.cashDiff,
       excelKommentar(row),
     ]);
   }
   const totalsRow: TagesabschlussExcelCell[] = [
     'Total',
-    sumColumn(rows, 1),
-    sumColumn(rows, 2),
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map(i => sumColumn(rows, i)),
     // Kassensaldo ist ein fortlaufender Bestand — Total = Monatsend-Saldo.
     month.endSaldo,
-    sumColumn(rows, 4),
-    sumColumn(rows, 5),
-    sumColumn(rows, 6),
-    sumColumn(rows, 7),
-    sumColumn(rows, 8),
-    sumColumn(rows, 9),
     sumColumn(rows, 10),
     null,
   ];
@@ -179,20 +183,21 @@ export function buildTagesabschlussExcelWorkbook(data: TagesabschlussExcelData):
     const excelRow = i + 1; // Zeile 0 = Header
     const dateCell = ws[XLSX.utils.encode_cell({ r: excelRow, c: 0 })];
     if (dateCell) dateCell.z = DATE_FORMAT;
-    for (let c = 1; c <= 10; c++) {
+    // Alle Betragsspalten (zwischen Datum und Kommentar) als Zahl formatieren.
+    for (let c = 1; c <= data.header.length - 2; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r: excelRow, c })];
       if (cell && cell.t === 'n') cell.z = NUMBER_FORMAT;
     }
   }
   const totalRowIdx = data.rows.length + 1;
-  for (let c = 1; c <= 10; c++) {
+  for (let c = 1; c <= data.header.length - 2; c++) {
     const cell = ws[XLSX.utils.encode_cell({ r: totalRowIdx, c })];
     if (cell && cell.t === 'n') cell.z = NUMBER_FORMAT;
   }
   ws['!cols'] = [
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 },
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-    { wch: 14 }, { wch: 50 },
+    { wch: 12 },
+    ...Array.from({ length: TAGESABSCHLUSS_EXCEL_HEADERS.length - 2 }, () => ({ wch: 14 })),
+    { wch: 50 },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Tagesabschlüsse');

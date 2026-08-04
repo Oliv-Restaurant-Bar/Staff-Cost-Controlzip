@@ -29,7 +29,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { getDailyBudgetMap } from '@/lib/budget-day';
 import { loadMonth, calcAnnualSummary } from '@/lib/reporting-store';
@@ -43,41 +42,32 @@ import {
 import { Employee, grossToNet } from '@/types/personnel';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
-import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { socialCostFactorFromRates } from '@/lib/social-costs';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
-import { HeuteWichtigBanner } from '@/components/HeuteWichtigBanner';
+import { HeuteWichtigBannerView } from '@/components/HeuteWichtigBanner';
+import { FinancialMonthSection } from '@/components/dashboard/FinancialMonthSection';
+import { OperationalDaySection } from '@/components/dashboard/OperationalDaySection';
+import { useStartOverview } from '@/hooks/useStartOverview';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
-import { kvGet } from '@/lib/supabase-kv';
-import { computeMonthlyIstNet } from '@/lib/revenue-sync';
+import { useFinancialMonthInput } from '@/hooks/useFinancialMonthInput';
+import {
+  calcDayHours,
+  calcDayHoursForEmployees,
+  calcPlannedCostForDay,
+  agHourlyRate,
+  agMonthlySalary,
+  sumDailyRevenue,
+} from '@/lib/operational-day';
+import {
+  ladeUmsatzTage,
+  nettoUmsatzTag,
+  type UmsatzTag,
+} from '@/lib/umsatz';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
-
-function parseTimeToHours(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return h + m / 60;
-}
-
-function shiftHours(start: string, end: string): number {
-  const s = parseTimeToHours(start);
-  let e = parseTimeToHours(end);
-  if (e < s) e += 24;
-  return Math.max(0, e - s);
-}
-
-function calcDayHours(schedule: DaySchedule): number {
-  let total = 0;
-  if (schedule.früh && !schedule.frühAbsence) {
-    total += shiftHours(schedule.früh.start, schedule.früh.end);
-  }
-  if (schedule.spät && !schedule.spätAbsence) {
-    total += shiftHours(schedule.spät.start, schedule.spät.end);
-  }
-  return total;
-}
 
 function formatCHF(value: number, decimals = 0): string {
   return new Intl.NumberFormat('de-CH', {
@@ -243,7 +233,9 @@ const Dashboard = () => {
   } = useStichtag();
   const { showNetRevenue } = useRevenueDisplay();
   const { rates: socialCostRates } = useSocialCostRates();
-  const { tenantId, tenantKey } = useTenant();
+  const { tenantId, tenantKey, tenant } = useTenant();
+  // EIN gemeinsamer Overview-Fetch für Banner + Operativen Tagesstand (nur Admin).
+  const { state: overviewState } = useStartOverview(isAdmin);
   const { maisonExclude } = useMaison();
   const maisonOn = getMaisonEnabledSync(tenantKey);
   const [maisonDaily, setMaisonDaily] = useState<Record<string, number>>(() => getMaisonDailySync(tenantKey));
@@ -266,19 +258,25 @@ const Dashboard = () => {
   const [loading, setLoading]           = useState(true);
 
   useEffect(() => {
+    // D007: Bei Monats-/Tenantwechsel sichtbar laden statt alte Zahlen zeigen;
+    // veraltete Antworten eines abgelösten Effekts werden verworfen.
+    let cancelled = false;
     const load = async () => {
+      setLoading(true);
       // Pass tenantId so only the correct tenant's employees are loaded
       const [emps, sched, actual] = await Promise.all([
         loadEmployees(tenantId),
         loadScheduleForMonth(referenceDate, tenantId),
         loadActualHoursForMonth(referenceDate, tenantId),
       ]);
+      if (cancelled) return;
       if (emps)   setEmployees(emps);
       if (sched)  setScheduleData(sched);
       if (actual) setActualData(actual);
       setLoading(false);
     };
     load();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthKey, tenantId]);
 
@@ -291,6 +289,21 @@ const Dashboard = () => {
   // Tick-Zähler: wird hochgezählt wenn Supabase→localStorage-Sync 'reporting_v1' aktualisiert hat.
   // Dadurch re-berechnen alle useMemos die loadMonth/loadYear nutzen – auch nach dem Sync.
   const [reportingTick, setReportingTick] = useState(0);
+
+  // ── Kanonische IST-Umsätze (Single Source of Truth: src/lib/umsatz.ts) ──────
+  // Alle IST-Umsatz-Anzeigen (Netto UND Brutto) des aktuellen Zeitraums stammen
+  // aus den Tages-Z-Berichten (gn_imports). Tage ohne Import FEHLEN in der Map
+  // (→ Anzeige leer/'–', nie 0 erfinden). Geladen wird das ganze Jahr des
+  // referenceDate, damit Tag/Woche/Monat/Jahr alle abgedeckt sind.
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const y = referenceDate.getFullYear();
+    ladeUmsatzTage(tenantId, `${y}-01-01`, `${y}-12-31`)
+      .then(map => { if (!cancelled) setUmsatzTage(map); })
+      .catch(() => { if (!cancelled) setUmsatzTage(new Map()); });
+    return () => { cancelled = true; };
+  }, [tenantId, referenceDate]);
 
   // Mandantenwechsel: dailyBudgets + reportingTick neu laden
   useEffect(() => {
@@ -426,20 +439,24 @@ const Dashboard = () => {
   const currentYear  = referenceDate.getFullYear();
   const currentMonth = referenceDate.getMonth() + 1;
 
-  // ── Monatliches Take-Away (Kto. 3010 Netto) – für Umsatz-Korrektur ──────────
-  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
-  useEffect(() => {
-    if (period !== 'month') { setMonthlyTakeaway(0); return; }
-    const mm = String(currentMonth).padStart(2, '0');
-    kvGet(tenantKey(`takeaway-monthly-${currentYear}`)).then(raw => {
-      const val = (raw as Record<string, number> | null)?.[`${currentYear}-${mm}`] ?? 0;
-      setMonthlyTakeaway(val);
-    }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, currentYear, currentMonth, tenantId]);
-
   const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
+
+  // ── Financial Metrics Registry (Monat) — gemeinsames Wiring (Hook) ──────────
+  // Finanzkarten kommen aus der Erfolgsrechnung: IST = P&L-Engine, PLAN =
+  // Budget-Spalte, VORJAHR = P&L des Vorjahres — EIN computePLForMonth,
+  // immer NETTO, Quoten aus Rohwerten (Nenner fehlt/0 ⇒ null). Rein lesend.
+  // Take-Away-Monatswert + VJ-Tageswerte lädt der Hook (verbatim extrahiert).
+  const { financialInput } = useFinancialMonthInput(currentYear, currentMonth, {
+    dailyBudgets,
+    maisonDaily,
+    maisonOn,
+    maisonExclude,
+    reportingTick,
+  });
+
+  // Die Registry-Werte/-Abweichungen (Umsatz/Personalkosten/Quoten IST/Budget/VJ)
+  // konsumiert ausschliesslich die FinancialMonthSection — keine lokalen Ableitungen.
 
   // ── Mitarbeiter nach Abteilung UND aktivem Monat filtern ────────────────────
   const visibleEmployees = useMemo(() => {
@@ -472,7 +489,7 @@ const Dashboard = () => {
 
   // ── Umsatz-Berechnungen ─────────────────────────────────────────────────────
   const sumRevenue = (days: string[], field: keyof DailyBudget) =>
-    days.reduce((s, d) => s + (dailyBudgets[d]?.[field] ?? 0), 0);
+    sumDailyRevenue(dailyBudgets, days, field);
 
   // Vorjahr-Umsatz: erst 'previousYearRevenue' des aktuellen Datums prüfen,
   // Fallback: 'actualRevenue' vom gleichen Tag im Vorjahr (z.B. 2025-02-15)
@@ -484,61 +501,56 @@ const Dashboard = () => {
       return s + (dailyBudgets[prevYearDate]?.actualRevenue ?? 0);
     }, 0);
 
-  const revenueMonthDaily    = sumRevenue(monthDays,  'actualRevenue');
+  // ── Kanonischer IST-Umsatz aus umsatz.ts (Netto & Brutto) ───────────────────
+  // istUmsatzForDays(): summiert die kanonischen Tages-Z-Berichte über die
+  // gewählten Tage. Tage ohne Import FEHLEN in der Map und werden übersprungen
+  // (nie als 0 gewertet). Rückgabe: netto/brutto sowie hatImport (mind. 1 Tag).
+  const istUmsatzForDays = (days: string[]): { netto: number; brutto: number; hatImport: boolean } => {
+    let netto = 0, brutto = 0, hatImport = false;
+    for (const d of days) {
+      const tag = umsatzTage.get(d);
+      if (!tag || tag.gesamtBrutto <= 0) continue;
+      netto += nettoUmsatzTag(tag);
+      brutto += tag.gesamtBrutto;
+      hatImport = true;
+    }
+    return { netto: Math.round(netto * 100) / 100, brutto: Math.round(brutto * 100) / 100, hatImport };
+  };
+  // Anzeigewert (netto oder brutto je nach globalem Switch); null wenn kein Import
+  const istUmsatzBase = (days: string[]): number | null => {
+    const { netto, brutto, hatImport } = istUmsatzForDays(days);
+    if (!hatImport) return null;
+    return showNetRevenue ? netto : brutto;
+  };
+
   const revenuePlannedMonth  = sumRevenue(monthDays,  'plannedRevenue');
 
-  // Fallback: wenn keine Gastronovi-Tagesdaten, lese Ist-Umsatz aus Reporting-Modul
-  // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird
-  const reportingActualRevenue = useMemo(
-    () => loadMonth(currentYear, currentMonth).revenueActual ?? 0,
-    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const revenueMonthBase = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
-
-  // Maison-Aufschlag: Marketing-Tageswerte werden zum Basisumsatz addiert
-  // (Das reguläre Umsatzfile enthält KEIN Marketing — es wird separat importiert)
-  const maisonSumGross = (days: string[]) =>
-    maisonOn && !maisonExclude
-      ? days.reduce((s, d) => s + (maisonDaily[d] ?? 0), 0)
-      : 0;
-  const maisonActiveGross = maisonSumGross(activeDays);
-  const maisonMonthGross  = maisonSumGross(monthDays);
-  // Marketing MWST-Satz: 8.1% (Restaurationsumsatz)
-  const maisonActiveNet = showNetRevenue ? maisonActiveGross / 1.081 : maisonActiveGross;
-  const maisonMonthNet  = showNetRevenue ? maisonMonthGross  / 1.081 : maisonMonthGross;
-
-  const revenueMonth = revenueMonthBase + maisonMonthNet;
+  // Hinweis: Maison (getrennter manueller/XLSX-Kanal, maisonDaily/maisonOn) wird
+  // NICHT mehr auf den IST-Umsatz der Dashboard-Kacheln addiert. Die IST-Anzeige
+  // ist ausschliesslich die kanonische Σ nettoUmsatzTag aus umsatz.ts. maisonDaily/
+  // maisonOn/maisonExclude bleiben nur als Input für die P&L-Registry (Hook).
 
   // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
   // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
   // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird.
   const reportingPrevYearRevenue = useMemo(() => {
+    const storeKey = tenantKey('reporting_v1');
     if (period === 'month') {
-      const rec = loadMonth(currentYear, currentMonth);
-      const directPY = rec.revenuePreviousYear;
-      console.log('[DASH] reportingPrevYearRevenue (month)',
-        { currentYear, currentMonth, reportingTick, directPY,
-          prevYearActual: loadMonth(currentYear - 1, currentMonth).revenueActual });
-      if (directPY) return directPY;
-      return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
+      const rec = loadMonth(currentYear, currentMonth, storeKey);
+      if (rec.revenuePreviousYear) return rec.revenuePreviousYear;
+      return loadMonth(currentYear - 1, currentMonth, storeKey).revenueActual ?? 0;
     }
     if (period === 'year') {
       // SSoT: Jahresaggregation zentral über calcAnnualSummary (reporting-store) —
       // keine eigene reduce-Zweitberechnung (identische Semantik: fehlende Monate = 0).
-      const cur = calcAnnualSummary(currentYear);
+      const cur = calcAnnualSummary(currentYear, storeKey);
       if (cur.totalRevenuePreviousYear > 0) return cur.totalRevenuePreviousYear;
-      return calcAnnualSummary(currentYear - 1).totalRevenueActual;
+      return calcAnnualSummary(currentYear - 1, storeKey).totalRevenueActual;
     }
     return 0;
-  }, [period, currentYear, currentMonth, reportingTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [period, currentYear, currentMonth, reportingTick, tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodenspezifische Umsatz-Werte
-  // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
-  const revenueActiveDailyRaw = sumRevenue(activeDays, 'actualRevenue');
-  const revenueActiveBase = (period === 'month' && revenueActiveDailyRaw === 0)
-    ? reportingActualRevenue
-    : revenueActiveDailyRaw;
-  const revenueActive = revenueActiveBase + maisonActiveNet;
+  // Periodenspezifische Umsatz-Werte — IST kommt kanonisch aus umsatz.ts.
   const revenuePrevYearDailyRaw = sumRevenuePrevYear(activeDays);
   const revenuePrevYearActive = revenuePrevYearDailyRaw > 0
     ? revenuePrevYearDailyRaw
@@ -563,47 +575,41 @@ const Dashboard = () => {
       : budgetData.revenueBudget * 12   // Jahr: Monatsbudget × 12
     : 0;
 
-  // ── Umsatzbasis-Konvertierung ─────────────────────────────────────────────────
+  // ── Umsatzbasis-Konvertierung (nur für PLAN/BUDGET/VORJAHR) ─────────────────
   // toBase(): gibt Netto (exkl. MWST) oder Brutto zurück je nach globalem Switch.
-  // - Restaurant: ÷ 1.081  |  Take Away: ÷ 1.026
+  // NICHT mehr für IST-Umsatz — der stammt kanonisch aus umsatz.ts.
   const toBase = (gross: number, takeaway = 0): number => {
     if (!showNetRevenue) return gross;
     return grossToNet(gross, takeaway);
   };
-  const takeawayActiveSum  = sumRevenue(activeDays, 'takeawayRevenue');
-  const takeawayMonthSum   = sumRevenue(monthDays,  'takeawayRevenue');
-  console.log('[UMSATZBASIS] mode:', showNetRevenue ? 'netto' : 'brutto');
-  if (showNetRevenue && revenueActive > 0) {
-    const ta  = takeawayActiveSum;
-    const reg = revenueActive - ta;
-    console.log('[UMSATZBASIS] restaurant gross ->', reg.toFixed(0), '-> net:', (reg / 1.081).toFixed(0));
-    if (ta > 0) console.log('[UMSATZBASIS] takeaway gross ->', ta.toFixed(0), '-> net:', (ta / 1.026).toFixed(0));
-  }
-  // Monatliches Take-Away Korrektur (Kto. 3010 Netto)
-  // Wenn ein buchhaltungsseitiger Monats-Take-Away bekannt ist, überschreibt der
-  // korrekt berechnete Netto-Wert die per-Tag-Summe (identisch zu TagesansichtPage).
-  const maisonArg = maisonOn && !maisonExclude ? maisonDaily : undefined;
-  const revenueMonthCorrected = showNetRevenue && monthlyTakeaway > 0
-    ? computeMonthlyIstNet(currentYear, currentMonth, dailyBudgets as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>, undefined, maisonArg, monthlyTakeaway)
-    : 0;
 
-  let revenueActiveB = toBase(revenueActive, takeawayActiveSum);
-  if (showNetRevenue && period === 'month' && revenueMonthCorrected > 0) revenueActiveB = revenueMonthCorrected;
+  // ── IST-Umsatz (kanonisch aus umsatz.ts) ─────────────────────────────────────
+  // Die IST-Umsatz-Anzeige ist EXAKT die Summe der nettoUmsatzTag-Werte aller
+  // importierten Tage (inkl. Marketing-Netto, das bereits in nettoUmsatzTag
+  // steckt). KEIN additiver Maison-Aufschlag mehr auf den Z-Bericht-IST — Maison
+  // ist ein separater manueller/XLSX-Kanal und würde die Kennzahl verfälschen
+  // (E2E Juli 2026 'oliv': Soll = 223'902.19 = Σ nettoUmsatzTag der 26 Tage).
+  // Netto/Brutto je nach Switch aus istUmsatzBase(); null (kein Import) → 0 für
+  // die bestehende '> 0 ⇒ anzeigen, sonst –'-Logik der KPI-Karten.
+  const istActiveBase = istUmsatzBase(activeDays);
+  const istMonthBase   = istUmsatzBase(monthDays);
+  const revenueActiveB = istActiveBase !== null ? istActiveBase : 0;
+  const revenueMonthB  = istMonthBase !== null ? istMonthBase : 0;
+
   const revenuePrevYearActiveB = toBase(revenuePrevYearActive);
   const budgetActiveB          = toBase(budgetActive);
-  const revenueMonthB          = revenueMonthCorrected > 0 ? revenueMonthCorrected : toBase(revenueMonth, takeawayMonthSum);
-  const revenuePlannedMonthB   = toBase(revenuePlannedMonth, takeawayMonthSum);
+  const revenuePlannedMonthB   = toBase(revenuePlannedMonth, sumRevenue(monthDays, 'takeawayRevenue'));
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
   // Alle Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten).
   const monthDateSet = new Set(monthDays);
   const agFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
   const agRate = useCallback(
-    (emp: Employee) => getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+    (emp: Employee) => agHourlyRate(emp, socialCostRates),
     [socialCostRates]
   );
   const agMonthly = useCallback(
-    (emp: Employee) => (emp.monthlySalaryWith13th ?? emp.monthlySalary ?? 0) * agFactor,
+    (emp: Employee) => agMonthlySalary(emp, agFactor),
     [agFactor]
   );
 
@@ -645,6 +651,37 @@ const Dashboard = () => {
       .reduce((sum, e) => sum + agMonthly(e), 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleEmployees, agMonthly]);
+
+  // ── Operativer Tagesstand (HEUTE, unabhängig von der gewählten Periode) ─────
+  // Stunden/Kosten stammen aus den bereits geladenen Monatsdaten (scheduleData/
+  // actualData) — die sind nur für den ANGEZEIGTEN Monat geladen. Zeigt der
+  // Nutzer einen anderen Monat an, bleiben die Heute-Werte null (fehlend ≠ 0).
+  const todayStr = format(today, 'yyyy-MM-dd');
+  const todayInLoadedMonth = isSameMonth(referenceDate, today);
+
+  // IST-Umsatz heute kanonisch aus umsatz.ts (Z-Bericht). Kein Import → null.
+  const revenueTodayB = istUmsatzBase([todayStr]);
+
+  // Geplante/Ist-Stunden heute: null wenn keine Einträge existieren (nicht erfasst ≠ 0 h).
+  const todayHours = useMemo(() => {
+    if (!todayInLoadedMonth) return { planned: null as number | null, actual: null as number | null };
+    return calcDayHoursForEmployees({ scheduleData, actualData, visibleIds, dateStr: todayStr });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayInLoadedMonth, scheduleData, actualData, visibleIds, todayStr]);
+
+  // Geplante Personalkosten heute gemäss Dienstplan: Stunden×AG-Satz plus
+  // Tagesanteil der Fixlöhne (dieselbe AG-Kostenlogik wie die Monats-Memos).
+  const plannedCostToday = useMemo(() => {
+    if (!todayInLoadedMonth || todayHours.planned === null) return null;
+    return calcPlannedCostForDay({
+      employees: visibleEmployees,
+      scheduleData,
+      dateStr: todayStr,
+      daysInMonth: daysInRefMonth,
+      rates: socialCostRates,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayInLoadedMonth, todayHours.planned, visibleEmployees, scheduleData, socialCostRates, daysInRefMonth, todayStr]);
 
   // ── Absenzen-KPIs (admin only) ────────────────────────────────────────────
   const absenceData = useMemo(() => {
@@ -691,8 +728,8 @@ const Dashboard = () => {
 
   // ── Buchhaltungs-Personalkosten (aus P&L-Import, 5xxx Konten) ───────────────
   const accountingMonthRecord = useMemo(
-    () => loadMonth(currentYear, currentMonth),
-    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
+    () => loadMonth(currentYear, currentMonth, tenantKey('reporting_v1')),
+    [currentYear, currentMonth, reportingTick, tenantId] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const accountingPersonnelCost = useMemo(() => {
     const fromCategories = accountingMonthRecord.expenseCategories
@@ -736,27 +773,9 @@ const Dashboard = () => {
         : `${referenceDate.getFullYear()}`;
 
   // ── Budget-Vergleichs-Berechnungen ───────────────────────────────────────────
-  // Abweichung Umsatz: Ist (aus dailyBudgets) vs. Jahresbudget
-  const budgetMonthB = budgetData.revenueBudget > 0 ? toBase(budgetData.revenueBudget) : 0;
-  const revVsBudgetAbs = budgetMonthB > 0
-    ? revenueMonthB - budgetMonthB
-    : null;
-  const revVsBudgetPct = budgetMonthB > 0
-    ? ((revenueMonthB - budgetMonthB) / budgetMonthB) * 100
-    : null;
-
-  // Abweichung Personalkosten: Ist vs. Jahresbudget
-  const laborVsBudgetAbs = budgetData.personnelBudget > 0
-    ? actualLaborCost - budgetData.personnelBudget
-    : null;
-  const laborVsBudgetPct = budgetData.personnelBudget > 0
-    ? ((actualLaborCost - budgetData.personnelBudget) / budgetData.personnelBudget) * 100
-    : null;
-
-  // Ist-Personalkostenquote (vs. budgetiertem Umsatz)
-  const actualRatioVsBudgetRevenue = budgetData.revenueBudget > 0 && actualLaborCost > 0
-    ? (actualLaborCost / budgetData.revenueBudget) * 100
-    : null;
+  // Die monatlichen Finanzkarten (Umsatz/Personalkosten vs. Budget/Vorjahr)
+  // beziehen ihre Werte aus der Financial Metrics Registry und leben in der
+  // FinancialMonthSection — keine eigene Budget-Zweitberechnung an dieser Stelle.
 
   // Hilfsfunktion: Ratio-Statusfarbe (Budget-Target als Basis)
   const budgetRatioColor = (ratio: number | null, target: number | null): 'green' | 'yellow' | 'red' | 'default' => {
@@ -794,19 +813,18 @@ const Dashboard = () => {
     ? Math.round(budgetData.personnelBudget * stichtagDay / daysInRefMonth)
     : null;
 
-  // Ist-Umsatz bis Stichtag
-  const revenueIstStichtag = stichtagDateStr
-    ? sumRevenue(daysUpToStichtag, 'actualRevenue')
+  // Ist-Umsatz bis Stichtag — kanonisch aus umsatz.ts (Σ nettoUmsatzTag, kein
+  // additiver Maison-Aufschlag — s. revenueActiveB/revenueMonthB oben).
+  const revenueIstStichtagB = stichtagDateStr
+    ? istUmsatzBase(daysUpToStichtag)
     : null;
+  // revenueIstStichtag: number-Alias für bestehende '!== null'-Checks im Render
+  const revenueIstStichtag = revenueIstStichtagB;
 
-  // Vorjahr bis Stichtag
+  // Vorjahr bis Stichtag (Vorjahreswerte bleiben unverändert)
   const revenuePrevYearStichtag = stichtagDateStr
     ? sumRevenuePrevYear(daysUpToStichtag)
     : null;
-
-  // Umsatzbasis-Stichtag
-  const takeawayStichtagSum    = stichtagDateStr ? sumRevenue(daysUpToStichtag, 'takeawayRevenue') : 0;
-  const revenueIstStichtagB    = revenueIstStichtag !== null ? toBase(revenueIstStichtag, takeawayStichtagSum) : null;
   const revenuePrevYearStichtagB = revenuePrevYearStichtag !== null ? toBase(revenuePrevYearStichtag) : null;
 
   // Personalkosten bis Stichtag (aus Ist-Stunden × Total-AG-Stundensatz)
@@ -827,9 +845,11 @@ const Dashboard = () => {
   }, [visibleEmployees, actualData, stichtagDateStr, agRate]);
 
   // ── Effektiver Stichtag: letzter Tag mit Ist-Umsatz (oder expliziter Stichtag) ──
-  // Für den "zweiten Budget pro rata"-Vergleich
+  // Für den "zweiten Budget pro rata"-Vergleich. Letzter Tag mit kanonischem
+  // Z-Bericht-Import (umsatz.ts) — nicht mehr dailyBudgets.actualRevenue.
   const lastRevenueDay = monthDays.reduce<string | null>((last, d) => {
-    return (dailyBudgets[d]?.actualRevenue ?? 0) > 0 ? d : last;
+    const tag = umsatzTage.get(d);
+    return (tag && tag.gesamtBrutto > 0) ? d : last;
   }, null);
 
   // Wir bevorzugen den expliziten Stichtag (wenn im aktuellen Monat), sonst letzten Ist-Tag
@@ -846,13 +866,11 @@ const Dashboard = () => {
       )
     : null;
 
-  const revenueIstEffective = effectiveCutoff
-    ? sumRevenue(effectiveDays, 'actualRevenue')
+  // IST-Umsatz pro rata bis effectiveCutoff — kanonisch aus umsatz.ts
+  // (Σ nettoUmsatzTag, kein additiver Maison-Aufschlag).
+  const revenueIstEffectiveB = effectiveCutoff
+    ? istUmsatzBase(effectiveDays)
     : null;
-
-  // Umsatzbasis-Effective
-  const takeawayEffectiveSum  = effectiveDays.length > 0 ? sumRevenue(effectiveDays, 'takeawayRevenue') : 0;
-  const revenueIstEffectiveB  = revenueIstEffective !== null ? toBase(revenueIstEffective, takeawayEffectiveSum) : null;
   const budgetEffectiveB      = budgetEffective !== null ? toBase(budgetEffective) : null;
 
   const revEffectiveVsBudgetAbs = budgetEffectiveB !== null && revenueIstEffectiveB !== null
@@ -942,7 +960,7 @@ const Dashboard = () => {
               <LayoutDashboard className="h-5 w-5 text-muted-foreground flex-shrink-0" />
               <div>
                 <h1 className="text-base font-bold leading-tight">Dashboard</h1>
-                <p className="text-xs text-muted-foreground">oLiv Restaurant & Bar · {monthName}</p>
+                <p className="text-xs text-muted-foreground">{tenant.name} · {monthName}</p>
               </div>
             </div>
 
@@ -1017,7 +1035,6 @@ const Dashboard = () => {
               )}
               {isAdmin && (
                 <>
-                  <GuestLinkGenerator />
                   <Link to="/import">
                     <Button variant="outline" size="sm" className="h-8">
                       <Upload className="h-3.5 w-3.5 mr-1.5" />
@@ -1079,8 +1096,9 @@ const Dashboard = () => {
 
       <main ref={dashboardMainRef} className="max-w-6xl mx-auto px-4 py-6 pb-24 space-y-2">
 
-        {/* ── Heute wichtig (nur echte Handlungsbedarfe + Schnellaktionen) ── */}
-        <HeuteWichtigBanner />
+        {/* ── Heute wichtig (nur echte Handlungsbedarfe + Schnellaktionen) ──
+            Nutzt den EINEN gemeinsamen useStartOverview-State (kein Doppel-Fetch). */}
+        <HeuteWichtigBannerView state={overviewState} />
 
         {loading && (
           <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
@@ -1092,6 +1110,29 @@ const Dashboard = () => {
           <>
             {/* ── Stichtag-Hinweisbanner ────────────────────────────────────── */}
             <StichtagBanner />
+
+            {/* ── Bereich 1: Finanzielle Monatsübersicht (Registry, nur Admin) ── */}
+            {isAdmin && (
+              <FinancialMonthSection
+                input={financialInput}
+                monthLabel={monthName}
+                personnelRatioTarget={budgetData.personnelRatioTarget}
+              />
+            )}
+
+            {/* ── Bereich 2: Operativer Tagesstand (heute, alle Rollen) ──────── */}
+            <OperationalDaySection
+              dayLabel={format(today, 'EEEE, d. MMMM yyyy', { locale: de })}
+              revenueToday={isAdmin ? revenueTodayB : null}
+              revenueBasisLabel={showNetRevenue ? 'netto' : 'brutto'}
+              plannedHoursToday={todayHours.planned}
+              actualHoursToday={todayHours.actual}
+              plannedCostToday={plannedCostToday}
+              todayInLoadedMonth={todayInLoadedMonth}
+              canSeeRevenue={isAdmin}
+              canSeeCosts={canSeePersonnelCostTotals}
+              overview={isAdmin ? overviewState : null}
+            />
 
             {/* ── Warnung: Kostenquote überschritten ───────────────────────── */}
             {showPersonal && canSeePersonnelCostTotals && plannedRatioStatus === 'high' && (
@@ -1137,7 +1178,7 @@ const Dashboard = () => {
                   <KpiCard
                     title={`Umsatz Ist · ${PERIOD_LABELS[period]}`}
                     value={revenueActiveB > 0 ? formatCHF(revenueActiveB) : '–'}
-                    subtitle="Tatsächlicher Umsatz"
+                    subtitle="Tagesumsatz gemäss Z-Bericht"
                     icon={<TrendingUp className="h-5 w-5" />}
                     color={revenueActiveB > 0 ? 'green' : 'default'}
                   />
@@ -1153,7 +1194,7 @@ const Dashboard = () => {
                   <KpiCard
                     title={`Vorjahr · ${PERIOD_LABELS[period]}`}
                     value={revenuePrevYearActiveB > 0 ? formatCHF(revenuePrevYearActiveB) : '–'}
-                    subtitle="Vergleich Vorjahr"
+                    subtitle="Tagesumsatz Vorjahr gemäss Z-Bericht"
                     delta={revenuePrevYearActiveB > 0 ? ((revenueActiveB - revenuePrevYearActiveB) / revenuePrevYearActiveB) * 100 : null}
                     deltaLabel="% vs. Vorjahr"
                     icon={<TrendingUp className="h-5 w-5" />}
@@ -1165,7 +1206,7 @@ const Dashboard = () => {
                 {period === 'today' && (
                   <Card className={cn(
                     'border-l-4 transition-all',
-                    revenueActive > 0
+                    revenueActiveB > 0
                       ? 'border-l-green-400 dark:border-l-green-600 bg-green-50/30 dark:bg-green-950/10'
                       : 'border-l-blue-400 dark:border-l-blue-600 bg-blue-50/30 dark:bg-blue-950/10',
                   )}>
@@ -1246,46 +1287,11 @@ const Dashboard = () => {
                   Jahresbudget-Vergleich · {monthName}
                 </SectionTitle>
 
-                {/* Umsatz: Budget vs. Ist (nur Admin) */}
+                {/* Die Monats-Finanzkarten (Registry: Umsatz/Personalkosten/Quoten,
+                    IST/Budget/VJ) leben jetzt zentral in der FinancialMonthSection
+                    oben — hier bleiben nur die operativen Pro-rata-/Stichtag-Vergleiche. */}
                 {isAdmin && (
                   <>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      <KpiCard
-                        title="Ist Umsatz"
-                        value={revenueMonthB > 0 ? formatCHF(revenueMonthB) : '–'}
-                        subtitle="Tatsächlich erfasst"
-                        icon={<TrendingUp className="h-5 w-5" />}
-                        color={
-                          revVsBudgetPct === null ? 'default' :
-                          revVsBudgetPct >= 0 ? 'green' : 'red'
-                        }
-                        delta={revVsBudgetPct}
-                        deltaLabel="% vs. Budget"
-                      />
-                      <KpiCard
-                        title="Budget Umsatz"
-                        value={formatCHF(budgetData.revenueBudget)}
-                        subtitle={`Monatsbudget ${currentYear}`}
-                        icon={<BookOpen className="h-5 w-5" />}
-                        color="blue"
-                      />
-                      {revVsBudgetAbs !== null && (
-                        <KpiCard
-                          title="Abweichung CHF"
-                          value={`${revVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revVsBudgetAbs)}`}
-                          subtitle={revVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
-                          icon={revVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-                          color={revVsBudgetAbs >= 0 ? 'green' : 'red'}
-                          badge={revVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
-                          badgeColor={
-                            revVsBudgetAbs >= 0
-                              ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                              : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
-                          }
-                        />
-                      )}
-                    </div>
-
                     {/* ── Pro-rata Vergleich (nur wenn KEIN Stichtag gesetzt): bis letztem Ist-Tag ── */}
                     {!stichtagInMonth && budgetEffective !== null && effectiveCutoffLabel && (
                       <div className="mt-3">
@@ -1474,70 +1480,23 @@ const Dashboard = () => {
                   </div>
                 )}
 
-                {/* Personalkosten: Ist vs. Plan vs. Budget */}
-                {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
+                {/* Personalkosten operativ: Dienstplan-Plan vs. Ist (Dienstplan) —
+                    die Registry-Karten (Ist/Budget/Quote gemäss Erfolgsrechnung)
+                    leben jetzt zentral in der FinancialMonthSection oben. */}
+                {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && plannedLaborCost > 0 && (
                   <div className="mt-3">
-                    {/* Zeile 1: Dreiweg-Vergleich Ist · Plan · Budget */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      {actualLaborCost > 0 && (
-                        <KpiCard
-                          title="Ist Personalkosten"
-                          value={formatCHF(actualLaborCost)}
-                          subtitle={actualCostRatio !== null
-                            ? `${actualCostRatio.toFixed(1)} % v. Ist-Umsatz`
-                            : 'Effektive Kosten'}
-                          icon={<Users className="h-5 w-5" />}
-                          color={laborVsBudgetAbs !== null && laborVsBudgetAbs <= 0 ? 'green' : 'red'}
-                          delta={laborVsBudgetPct}
-                          deltaLabel="% vs. Budget"
-                        />
-                      )}
-                      {plannedLaborCost > 0 && (
-                        <KpiCard
-                          title="Plan-Kosten"
-                          value={formatCHF(plannedLaborCost)}
-                          subtitle="Aus Dienstplanung"
-                          icon={<CalendarDays className="h-5 w-5" />}
-                          color="default"
-                          delta={actualLaborCost > 0 && plannedLaborCost > 0
-                            ? ((actualLaborCost - plannedLaborCost) / plannedLaborCost) * 100
-                            : null}
-                          deltaLabel="% Ist vs. Plan"
-                        />
-                      )}
                       <KpiCard
-                        title="Budget Personalkosten"
-                        value={formatCHF(budgetData.personnelBudget)}
-                        subtitle="Aus Jahresplanung"
-                        icon={<BookOpen className="h-5 w-5" />}
-                        color="blue"
+                        title="Geplante Personalkosten"
+                        value={formatCHF(plannedLaborCost)}
+                        subtitle="gemäss Dienstplan"
+                        icon={<CalendarDays className="h-5 w-5" />}
+                        color="default"
+                        delta={actualLaborCost > 0 && plannedLaborCost > 0
+                          ? ((actualLaborCost - plannedLaborCost) / plannedLaborCost) * 100
+                          : null}
+                        deltaLabel="% Ist (Dienstplan) vs. Plan"
                       />
-                      {actualRatioVsBudgetRevenue !== null && budgetData.personnelRatioTarget !== null && (
-                        <KpiCard
-                          title="Ist-Quote vs. Ziel"
-                          value={`${actualCostRatio !== null ? actualCostRatio.toFixed(1) : actualRatioVsBudgetRevenue.toFixed(1)} %`}
-                          subtitle={`Ziel: ≤ ${budgetData.personnelRatioTarget.toFixed(1)} % v. Umsatz`}
-                          icon={<Target className="h-5 w-5" />}
-                          color={budgetRatioColor(
-                            actualCostRatio ?? actualRatioVsBudgetRevenue,
-                            budgetData.personnelRatioTarget,
-                          )}
-                          badge={
-                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
-                              ? '✓ Im Ziel'
-                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
-                              ? '~ Grenzwertig'
-                              : '↑ Über Ziel'
-                          }
-                          badgeColor={
-                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
-                              ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
-                              ? 'bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/30'
-                              : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
-                          }
-                        />
-                      )}
                     </div>
                   </div>
                 )}
@@ -1627,7 +1586,7 @@ const Dashboard = () => {
                   <KpiCard
                     title="Geplante Kosten"
                     value={plannedLaborCost > 0 ? formatCHF(plannedLaborCost) : '–'}
-                    subtitle={`${visibleEmployees.length} Mitarbeiter`}
+                    subtitle={`gemäss Dienstplan · ${visibleEmployees.length} Mitarbeiter`}
                     icon={<Users className="h-5 w-5" />}
                     color="blue"
                   />
@@ -1635,7 +1594,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Ist-Kosten"
                       value={formatCHF(actualLaborCost)}
-                      subtitle="Effektive Kosten"
+                      subtitle="gemäss Ist-Stunden (Dienstplan)"
                       delta={plannedLaborCost > 0 ? actualLaborCost - plannedLaborCost : null}
                       deltaLabel="CHF"
                       icon={<Users className="h-5 w-5" />}
@@ -1665,7 +1624,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Kostenquote (Ist)"
                       value={`${actualCostRatio.toFixed(1)} %`}
-                      subtitle="Effektive Quote"
+                      subtitle="Dienstplan-Kosten / Umsatz"
                       icon={<TrendingUp className="h-5 w-5" />}
                       color={ratioStatus(actualCostRatio) === 'good' ? 'green' : ratioStatus(actualCostRatio) === 'ok' ? 'yellow' : 'red'}
                     />
@@ -1687,7 +1646,7 @@ const Dashboard = () => {
                         <KpiCard
                           title="Plan pro rata"
                           value={formatCHF(plannedLaborCostEffective)}
-                          subtitle="Aus Dienstplanung"
+                          subtitle="gemäss Dienstplan"
                           icon={<Users className="h-5 w-5" />}
                           color="blue"
                           small
@@ -1821,7 +1780,7 @@ const Dashboard = () => {
                   <KpiCard
                     title="Ist-Stunden"
                     value={actualHours > 0 ? formatHours(actualHours) : '–'}
-                    subtitle="Erfasste Stunden"
+                    subtitle="Arbeitsstunden gemäss Mirus"
                     delta={hoursVariance}
                     deltaLabel="h vs. Plan"
                     icon={<Clock className="h-5 w-5" />}
@@ -1849,14 +1808,14 @@ const Dashboard = () => {
                 </SectionTitle>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <KpiCard
-                    title="Ist-Dienstplan"
+                    title="Personalkosten gemäss Dienstplan"
                     value={actualLaborCost > 0 ? formatCHF(actualLaborCost) : '–'}
                     subtitle="Aus Ist-Stunden × Lohn"
                     icon={<Users className="h-5 w-5" />}
                     color="blue"
                   />
                   <KpiCard
-                    title="Buchhaltung Ist"
+                    title="Personalkosten gemäss Erfolgsrechnung"
                     value={accountingPersonnelCost > 0 ? formatCHF(accountingPersonnelCost) : '–'}
                     subtitle="Total Personalaufwand (5xxx)"
                     icon={<BookOpen className="h-5 w-5" />}
@@ -1866,7 +1825,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Abweichung CHF"
                       value={`${pkDiff >= 0 ? '+' : ''}${formatCHF(pkDiff)}`}
-                      subtitle="Buchhaltung − Dienstplan"
+                      subtitle="Erfolgsrechnung − Dienstplan"
                       icon={pkDiff >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
                       color={Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.05 ? 'green' : Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.15 ? 'yellow' : 'red'}
                     />

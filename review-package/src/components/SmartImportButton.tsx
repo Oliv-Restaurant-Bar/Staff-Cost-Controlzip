@@ -179,7 +179,10 @@ export const SmartImportButton = ({
         case 'actual-hours': {
           const result = await parseMirusDailyExcel(file);
           setParsedActualHours(result.entries);
-          if (result.entries.length > 0) {
+          if (result.failureReason) {
+            console.warn('[MIRUS] import gestoppt:', result.failureReason, result.debug);
+            toast.error(`Import gestoppt: ${result.failureReason}`);
+          } else if (result.entries.length > 0) {
             const matches = generateNameMatches(result.entries.map(e => e.name));
             setNameMatches(matches);
             setMatchDialogType('actual');

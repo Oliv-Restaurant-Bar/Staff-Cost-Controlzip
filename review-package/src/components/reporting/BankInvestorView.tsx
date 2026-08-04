@@ -7,12 +7,13 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Landmark, FileDown, FileSpreadsheet } from 'lucide-react';
+import { Landmark } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
   CartesianGrid, Tooltip as RechartsTooltip, Legend,
 } from 'recharts';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -206,12 +207,14 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
             <Label htmlFor="bank-same-month" className="text-xs cursor-pointer">Bis gleicher Monat</Label>
             <InfoTip text="Vergleicht nur die Monate, für die im aktuellen Jahr Daten vorliegen (z. B. Januar–August 2025 mit Januar–August 2024). Verhindert irreführende Vergleiche eines unvollständigen Jahres mit einem vollständigen Vorjahr." />
           </div>
-          <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handlePdf} disabled={exporting != null || !analysis.hasData} data-testid="bank-export-pdf">
-            <FileDown className="h-3.5 w-3.5" /> {exporting === 'pdf' ? 'Erstelle…' : 'PDF-Bericht'}
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleExcel} disabled={exporting != null || !analysis.hasData} data-testid="bank-export-excel">
-            <FileSpreadsheet className="h-3.5 w-3.5" /> {exporting === 'excel' ? 'Erstelle…' : 'Excel'}
-          </Button>
+          <UnifiedExportButton
+            data-testid="bank-export"
+            disabled={exporting != null || !analysis.hasData}
+            actions={[
+              { key: 'pdf', label: 'PDF-Bericht', kind: 'pdf', onSelect: () => { void handlePdf(); } },
+              { key: 'excel', label: 'Excel', kind: 'excel', onSelect: () => { void handleExcel(); } },
+            ]}
+          />
         </div>
       </div>
 

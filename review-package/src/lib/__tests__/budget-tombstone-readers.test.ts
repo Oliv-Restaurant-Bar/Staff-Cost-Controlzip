@@ -4,7 +4,7 @@
  * ========================================================
  * Seit deleteBudgetYear Tombstones schreibt (deleted:true statt Hard-Delete),
  * müssen ALLE direkten budget_v1-Blob-Leser gelöschte Jahre filtern:
- *   - Import-Checkliste (budgetCoverage): Tombstone-Jahr ist NICHT «erledigt».
+ *   - Budget-Seite (availableBudgetYears): Tombstone-Jahr wird NICHT gelistet.
  *   - Import-Cockpit (jahresbudgetSignal): Tombstone-Jahre zählen nicht als
  *     Datenbestand (recordCount, dataFrom/dataUntil, lastImport).
  */
@@ -21,7 +21,11 @@ vi.stubGlobal('localStorage', {
 
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => ({}) } }));
 
-import { budgetCoverage } from '../import-tasks-db';
+vi.mock('sonner', () => ({
+  toast: Object.assign(() => {}, { error: () => {}, success: () => {}, warning: () => {}, info: () => {} }),
+}));
+
+import { availableBudgetYears, STORAGE_KEY } from '../budget-store';
 import { jahresbudgetSignal } from '../import-cockpit-db';
 
 const ctx = {
@@ -33,27 +37,24 @@ beforeEach(() => {
   Object.keys(localStorageStore).forEach(k => delete localStorageStore[k]);
 });
 
-describe('budgetCoverage (Import-Checkliste) — Tombstone-Filter', () => {
-  it('vorhandenes Jahr → yearDone=true mit lastImportAt', () => {
-    localStorageStore['budget_v1'] = JSON.stringify({
+describe('availableBudgetYears (Budget-Seite) — Tombstone-Filter', () => {
+  it('vorhandenes Jahr wird gelistet', () => {
+    localStorageStore[STORAGE_KEY] = JSON.stringify({
       2026: { year: 2026, updatedAt: '2026-07-01T00:00:00.000Z' },
     });
-    expect(budgetCoverage(ctx, 2026)).toEqual({
-      yearDone: true,
-      lastImportAt: '2026-07-01T00:00:00.000Z',
-    });
+    expect(availableBudgetYears(STORAGE_KEY)).toEqual([2026]);
   });
 
-  it('Tombstone-Jahr → yearDone=false (gelöscht zählt NICHT als erledigt)', () => {
-    localStorageStore['budget_v1'] = JSON.stringify({
+  it('Tombstone-Jahr wird NICHT gelistet (gelöscht zählt nicht als vorhanden)', () => {
+    localStorageStore[STORAGE_KEY] = JSON.stringify({
       2026: { year: 2026, updatedAt: '2026-07-01T00:00:00.000Z', deleted: true },
     });
-    expect(budgetCoverage(ctx, 2026)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).toEqual([]);
   });
 
-  it('fehlendes Jahr → yearDone=false', () => {
-    localStorageStore['budget_v1'] = JSON.stringify({});
-    expect(budgetCoverage(ctx, 2026)).toEqual({ yearDone: false });
+  it('fehlendes Jahr wird nicht gelistet', () => {
+    localStorageStore[STORAGE_KEY] = JSON.stringify({});
+    expect(availableBudgetYears(STORAGE_KEY)).toEqual([]);
   });
 });
 

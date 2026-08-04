@@ -85,6 +85,13 @@ export interface ControllingDrilldownDialogProps {
   /** Überstundenkosten des Monats (separat ausgewiesen, nicht im Flex-Total). */
   overtimeCostCHF: number;
   er: ErfolgsrechnungVergleich;
+  /**
+   * ER-Überleitung: Kern-Zerlegung (pkZentral.kHr) der App-Hochrechnung —
+   * Fix + Flex = er.berechnetCHF (dieselbe SSOT wie Kopf/Block B). NICHT die
+   * alte pfix-Zerlegung (Fix + VarArbeit + Ferien), deren Total abweichen kann.
+   */
+  coreFixCHF: number;
+  coreFlexCHF: number;
   /** Navigation zum Dienstplan (bestehende Route) — optional, ohne Router-Kopplung. */
   onOpenSchedule?: () => void;
 }
@@ -490,7 +497,7 @@ export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProp
 // ── ER-Überleitung (monatlich, keine Tagesdaten) ─────────────────────────────
 
 function ErBridgeView(props: ControllingDrilldownDialogProps) {
-  const { bridge, er } = props;
+  const { er, coreFixCHF, coreFlexCHF } = props;
   if (er.status !== 'ok') {
     return (
       <HintBox tone="info" title="Erfolgsrechnung fehlt">
@@ -499,16 +506,20 @@ function ErBridgeView(props: ControllingDrilldownDialogProps) {
       </HintBox>
     );
   }
+  // Kern-Zerlegung (SSOT): Fix + Flex = er.berechnetCHF (= pkZentral.kHr.total).
+  // Rundungsrest gegen die angezeigte Summe der Vollständigkeit halber ausweisen.
+  const rest = Math.round((er.berechnetCHF - coreFixCHF - coreFlexCHF) * 100) / 100;
   const rows: Array<{ label: string; value: number; sub?: string }> = [
-    { label: 'Personal FIX (Monatslöhne inkl. AG-Kosten)', value: bridge.fixCHF },
-    { label: 'Variable Arbeit + Zusatzkosten', value: bridge.varArbeitIstCHF },
-    { label: 'Ferienabbau', value: bridge.ferienIstCHF },
+    { label: 'Personal FIX (Monatslöhne inkl. AG-Kosten)', value: coreFixCHF },
+    { label: 'Flex (variable Arbeit + Zusatzkosten, Hochrechnung)', value: coreFlexCHF },
+    ...(Math.abs(rest) >= 0.5 ? [{ label: 'Rundung', value: rest }] : []),
   ];
   return (
     <div className="space-y-3" data-testid="pfix-dd-er-bridge">
       <HintBox tone="info" title="Monatliche Kontrolle">
         Die Erfolgsrechnung liegt nur monatlich vor — hier gibt es bewusst keine Tagesaufschlüsselung.
-        Verglichen wird der App-Ist-Personalaufwand mit „Löhne (Total)" + „Sozialleistungen" der FIBU.
+        Verglichen wird die App-Hochrechnung des Personalaufwands (Fix + Flex aus dem
+        Personalkosten-Kern) mit „Löhne (Total)" + „Sozialleistungen" der FIBU.
       </HintBox>
       <table className="w-full text-sm tabular-nums">
         <tbody>
@@ -519,8 +530,8 @@ function ErBridgeView(props: ControllingDrilldownDialogProps) {
             </tr>
           ))}
           <tr className="border-t border-border font-semibold">
-            <td className="py-1.5">App: Total Personalaufwand Ist</td>
-            <td className="py-1.5 text-right">{fmtChfWhole(er.berechnetCHF)}</td>
+            <td className="py-1.5">App: Total Personalaufwand (Hochrechnung)</td>
+            <td className="py-1.5 text-right" data-testid="pfix-dd-er-app-total">{fmtChfWhole(er.berechnetCHF)}</td>
           </tr>
           <tr className="border-t border-border/60">
             <td className="py-1.5">Erfolgsrechnung: Löhne + Sozialleistungen</td>

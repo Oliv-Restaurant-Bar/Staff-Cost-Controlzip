@@ -34,6 +34,34 @@ const FPCT = (v: number | null | undefined): string =>
 const FABW = (v: number | null | undefined): string =>
   v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} %` : '';
 
+// ─── Ampel-Töne (Runde 2.6 / T007): Schwellen IMMER auf dem fachlichen
+// Rohwert prüfen — nie auf dem gerundeten Anzeigestring (parseFloat auf
+// formatierte Zellen war fehleranfällig: 33.04 → «33.0» → fälschlich grün).
+export type ExportTone = 'good' | 'warn' | 'critical';
+
+/** Warenquote: > 33 % kritisch, > 28 % Achtung, sonst gut. */
+export const warenPctTone = (v: number): ExportTone =>
+  v > 33 ? 'critical' : v > 28 ? 'warn' : 'good';
+
+/** Personalquote (Monatsdaten): > Ziel+5 kritisch, > Ziel Achtung, sonst gut. */
+export const personalPctTone = (v: number, threshold: number): ExportTone =>
+  v > threshold + 5 ? 'critical' : v > threshold ? 'warn' : 'good';
+
+/** Datenvollständigkeit: ≥ 80 % gut, ≥ 50 % Achtung, sonst kritisch. */
+export const vollstaendigkeitTone = (v: number): ExportTone =>
+  v >= 80 ? 'good' : v >= 50 ? 'warn' : 'critical';
+
+/** PK-Quote ER (Jahresbericht): > Ziel+2 kritisch, > Ziel−2 Achtung, sonst gut. */
+export const pkQuoteTone = (v: number, threshold: number): ExportTone =>
+  v > threshold + 2 ? 'critical' : v > threshold - 2 ? 'warn' : 'good';
+
+const TONE_TEXT: Record<ExportTone, [number, number, number]> = {
+  good: [21, 128, 61], warn: [146, 64, 14], critical: [153, 27, 27],
+};
+const TONE_FILL: Record<ExportTone, [number, number, number]> = {
+  good: [220, 252, 231], warn: [254, 243, 199], critical: [254, 226, 226],
+};
+
 function addPortraitHeader(doc: jsPDF, restaurantName: string, title: string, sub: string, pageW: number) {
   doc.setFillColor(30, 64, 175);
   doc.rect(0, 0, pageW, 22, 'F');
@@ -100,10 +128,11 @@ export function exportMonatsdatenToPDF(
   const totalPkER      = sumField('pkER');
   const totalPkPlan    = sumField('pkPlan');
 
+  // Rohwerte durchreichen — gerundet wird erst im Anzeige-Formatter (FPCT/FABW).
   const safeQ = (num: number | null, denom: number | null): number | null =>
-    num && denom && denom > 1000 ? parseFloat(((num / denom) * 100).toFixed(1)) : null;
+    num && denom && denom > 1000 ? (num / denom) * 100 : null;
   const safeAbw = (a: number | null, b: number | null): number | null =>
-    a != null && b != null && b !== 0 ? parseFloat((((a - b) / Math.abs(b)) * 100).toFixed(1)) : null;
+    a != null && b != null && b !== 0 ? ((a - b) / Math.abs(b)) * 100 : null;
 
   const totAbwVj  = safeAbw(totalUmsatz, totalVorjahr);
   const totAbwBdg = safeAbw(totalUmsatz, totalBudget);
@@ -168,7 +197,6 @@ export function exportMonatsdatenToPDF(
     didParseCell: (data) => {
       const rowIdx  = data.row.index;
       const colIdx  = data.column.index;
-      const rawVal  = String(data.cell.raw ?? '');
       const isTotal = rowIdx === body.length - 1;
 
       if (isTotal && data.section === 'body') {
@@ -202,43 +230,22 @@ export function exportMonatsdatenToPDF(
         }
       }
 
-      // Waren %
-      if (colIdx === 5 && rawVal !== '–') {
-        const num = parseFloat(rawVal);
-        if (!isNaN(num)) {
-          data.cell.styles.fontStyle  = 'bold';
-          data.cell.styles.textColor  = num > 33
-            ? ([153, 27, 27] as [number, number, number])
-            : num > 28
-              ? ([146, 64, 14] as [number, number, number])
-              : ([21, 128, 61] as [number, number, number]);
-        }
+      // Waren % — Ampel auf dem ROHWERT, nie auf dem gerundeten Anzeigestring
+      if (colIdx === 5 && row?.warenPct != null) {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.textColor = TONE_TEXT[warenPctTone(row.warenPct)];
       }
 
-      // Personal %
-      if (colIdx === 7 && rawVal !== '–') {
-        const num = parseFloat(rawVal);
-        if (!isNaN(num)) {
-          data.cell.styles.fontStyle  = 'bold';
-          data.cell.styles.textColor  = num > threshold + 5
-            ? ([153, 27, 27] as [number, number, number])
-            : num > threshold
-              ? ([146, 64, 14] as [number, number, number])
-              : ([21, 128, 61] as [number, number, number]);
-        }
+      // Personal % — Ampel auf dem ROHWERT
+      if (colIdx === 7 && row?.personalPct != null) {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.textColor = TONE_TEXT[personalPctTone(row.personalPct, threshold)];
       }
 
-      // Vollständigkeit
-      if (colIdx === 10 && rawVal !== '–' && rawVal !== '') {
-        const num = parseFloat(rawVal);
-        if (!isNaN(num)) {
-          data.cell.styles.textColor  = num >= 80
-            ? ([21, 128, 61] as [number, number, number])
-            : num >= 50
-              ? ([146, 64, 14] as [number, number, number])
-              : ([153, 27, 27] as [number, number, number]);
-          data.cell.styles.fontStyle  = 'bold';
-        }
+      // Vollständigkeit (Spalte 11; vormals falscher Index 10 → Ampel war wirkungslos)
+      if (colIdx === 11 && row && row.vollstaendigkeit > 0) {
+        data.cell.styles.textColor = TONE_TEXT[vollstaendigkeitTone(row.vollstaendigkeit)];
+        data.cell.styles.fontStyle = 'bold';
       }
     },
     showHead: 'everyPage',
@@ -366,6 +373,8 @@ export function exportReportingToPDF(
   const totalPkER1 = pkERByMonth ? pkERByMonth.reduce((s, v) => s + (v ?? 0), 0) : null;
   const pkERTotal  = totalPkER1 && totalPkER1 > 0 ? totalPkER1 : null;
   const head1 = [['Monat', 'Umsatz Ist', 'Budget', 'Abw. Budget', 'Vorjahr', 'Abw. VJ', 'PK Dienstpl.', 'PK ER', 'PK Geplant', 'PK-Quote ER']];
+  // Rohwerte parallel zum Anzeige-Body — Ampeln entscheiden auf dem Rohwert (T007)
+  const raw1: { abwBudget: number | null; abwVJ: number | null; pkQER: number | null }[] = [];
   const body1: (string | number)[][] = months.map((m, idx) => {
     const abwBudget = m.revenueActual != null && m.revenueBudget != null && m.revenueBudget > 0
       ? ((m.revenueActual / m.revenueBudget - 1) * 100) : null;
@@ -374,6 +383,7 @@ export function exportReportingToPDF(
     const pkER = pkERByMonth?.[idx] ?? null;
     const pkQER = m.revenueActual && pkER
       ? (pkER / m.revenueActual) * 100 : null;
+    raw1.push({ abwBudget, abwVJ, pkQER });
     return [
       MONTH_NAMES_SHORT_DE[m.month],
       CHF(m.revenueActual),
@@ -431,29 +441,20 @@ export function exportReportingToPDF(
         data.cell.styles.textColor = [20, 20, 60];
       }
       if (!isTotal && data.section === 'body') {
-        const rawVal = String(data.cell.raw ?? '');
-        if ((colIdx === 3 || colIdx === 5) && rawVal !== '–') {
-          const num = parseFloat(rawVal);
-          if (!isNaN(num)) {
-            data.cell.styles.textColor = num >= 0 ? [21, 128, 61] : [153, 27, 27];
-          }
+        const raw = raw1[rowIdx];
+        // Abw. Budget / Abw. VJ — Vorzeichenfarbe auf dem ROHWERT
+        if (colIdx === 3 && raw?.abwBudget != null) {
+          data.cell.styles.textColor = raw.abwBudget >= 0 ? TONE_TEXT.good : TONE_TEXT.critical;
         }
-        // PK-Quote ER (col 9) — Ampelfarbe
-        if (colIdx === 9 && rawVal !== '–') {
-          const num = parseFloat(rawVal);
-          if (!isNaN(num)) {
-            if (num > threshold + 2) {
-              data.cell.styles.fillColor = [254, 226, 226];
-              data.cell.styles.textColor = [153, 27, 27];
-              data.cell.styles.fontStyle = 'bold';
-            } else if (num > threshold - 2) {
-              data.cell.styles.fillColor = [254, 243, 199];
-              data.cell.styles.textColor = [146, 64, 14];
-            } else {
-              data.cell.styles.fillColor = [220, 252, 231];
-              data.cell.styles.textColor = [21, 128, 61];
-            }
-          }
+        if (colIdx === 5 && raw?.abwVJ != null) {
+          data.cell.styles.textColor = raw.abwVJ >= 0 ? TONE_TEXT.good : TONE_TEXT.critical;
+        }
+        // PK-Quote ER (col 9) — Ampelfarbe auf dem ROHWERT
+        if (colIdx === 9 && raw?.pkQER != null) {
+          const tone = pkQuoteTone(raw.pkQER, threshold);
+          data.cell.styles.fillColor = TONE_FILL[tone];
+          data.cell.styles.textColor = TONE_TEXT[tone];
+          if (tone === 'critical') data.cell.styles.fontStyle = 'bold';
         }
       }
     },
@@ -465,6 +466,8 @@ export function exportReportingToPDF(
 
   // PK-Ampel Tabelle
   const head2 = [['Monat', 'Umsatz Ist', 'PK Ist\n(Dienstpl.)', 'PK ER', 'PK Geplant', 'PK-Quote Ist', 'PK-Quote ER', 'PK-Quote Geplant', 'Abw. PK (ER)', 'Status']];
+  // Rohwerte parallel zum Anzeige-Body — Ampeln entscheiden auf dem Rohwert (T007)
+  const raw2: { pkQER: number | null; abwPK: number | null }[] = [];
   const body2: (string | number)[][] = months.map((m, idx) => {
     const pkER   = pkERByMonth?.[idx] ?? null;
     const pkQ    = m.revenueActual && m.personnelCostActual
@@ -482,6 +485,7 @@ export function exportReportingToPDF(
       else if (refQ <= threshold + 2) status = '≈ OK';
       else status = '↑ Hoch';
     }
+    raw2.push({ pkQER, abwPK });
     return [
       MONTH_NAMES_DE[m.month] ?? MONTH_NAMES_SHORT_DE[m.month],
       CHF(m.revenueActual),
@@ -518,30 +522,18 @@ export function exportReportingToPDF(
     didParseCell: (data) => {
       if (data.section !== 'body') return;
       const colIdx = data.column.index;
+      const rowIdx = data.row.index;
       const rawVal = String(data.cell.raw ?? '');
-      // PK-Quote ER (col 6) — Ampelfarbe
-      if (colIdx === 6 && rawVal !== '–') {
-        const num = parseFloat(rawVal);
-        if (!isNaN(num)) {
-          if (num > threshold + 2) {
-            data.cell.styles.fillColor = [254, 226, 226];
-            data.cell.styles.textColor = [153, 27, 27];
-          } else if (num > threshold - 2) {
-            data.cell.styles.fillColor = [254, 243, 199];
-            data.cell.styles.textColor = [146, 64, 14];
-          } else {
-            data.cell.styles.fillColor = [220, 252, 231];
-            data.cell.styles.textColor = [21, 128, 61];
-          }
-        }
+      const raw = raw2[rowIdx];
+      // PK-Quote ER (col 6) — Ampelfarbe auf dem ROHWERT
+      if (colIdx === 6 && raw?.pkQER != null) {
+        const tone = pkQuoteTone(raw.pkQER, threshold);
+        data.cell.styles.fillColor = TONE_FILL[tone];
+        data.cell.styles.textColor = TONE_TEXT[tone];
       }
-      // Abw. PK (ER) (col 8) — Farbe
-      if (colIdx === 8 && rawVal !== '–') {
-        const raw = rawVal.replace(/[^0-9.-]/g, '');
-        const num = parseFloat(raw);
-        if (!isNaN(num)) {
-          data.cell.styles.textColor = num > 0 ? [153, 27, 27] : [21, 128, 61];
-        }
+      // Abw. PK (ER) (col 8) — Vorzeichenfarbe auf dem ROHWERT
+      if (colIdx === 8 && raw?.abwPK != null) {
+        data.cell.styles.textColor = raw.abwPK > 0 ? TONE_TEXT.critical : TONE_TEXT.good;
       }
       if (colIdx === 9) {
         if (rawVal.startsWith('✓')) {
@@ -583,6 +575,8 @@ export function exportReportingToPDF(
   addPageHeader(doc, `Umsatzentwicklung ${year}`, `Exportiert am ${now}`, pageW);
 
   const head3 = [['Monat', 'Umsatz Ist', 'Budget', 'Abw. abs.', 'Abw. %', 'Vorjahr', 'YoY abs.', 'YoY %', 'Notizen']];
+  // Rohwerte parallel zum Anzeige-Body — Vorzeichenfarben auf dem Rohwert (T007)
+  const raw3: { abwPct: number | null; yoyPct: number | null }[] = [];
   const body3: (string | number)[][] = months.map(m => {
     const abwAbs = m.revenueActual != null && m.revenueBudget != null
       ? m.revenueActual - m.revenueBudget : null;
@@ -592,6 +586,7 @@ export function exportReportingToPDF(
       ? m.revenueActual - m.revenuePreviousYear : null;
     const yoyPct = m.revenuePreviousYear && m.revenueActual
       ? ((m.revenueActual / m.revenuePreviousYear - 1) * 100) : null;
+    raw3.push({ abwPct, yoyPct });
     return [
       MONTH_NAMES_DE[m.month] ?? MONTH_NAMES_SHORT_DE[m.month],
       CHF(m.revenueActual),
@@ -645,13 +640,15 @@ export function exportReportingToPDF(
         return;
       }
       const colIdx = data.column.index;
-      const rawVal = String(data.cell.raw ?? '');
-      if ((colIdx === 4 || colIdx === 7) && rawVal !== '–') {
-        const num = parseFloat(rawVal);
-        if (!isNaN(num)) {
-          data.cell.styles.textColor = num >= 0 ? [21, 128, 61] : [153, 27, 27];
-          data.cell.styles.fontStyle = 'bold';
-        }
+      const raw = raw3[rowIdx];
+      // Abw. % / YoY % — Vorzeichenfarbe auf dem ROHWERT
+      if (colIdx === 4 && raw?.abwPct != null) {
+        data.cell.styles.textColor = raw.abwPct >= 0 ? TONE_TEXT.good : TONE_TEXT.critical;
+        data.cell.styles.fontStyle = 'bold';
+      }
+      if (colIdx === 7 && raw?.yoyPct != null) {
+        data.cell.styles.textColor = raw.yoyPct >= 0 ? TONE_TEXT.good : TONE_TEXT.critical;
+        data.cell.styles.fontStyle = 'bold';
       }
     },
   });
@@ -666,13 +663,6 @@ export function exportMonatsdatenToExcel(
   threshold = 40,
   tenantId = 'oliv',
 ): void {
-  const fmtN = (v: number | null | undefined): string =>
-    v != null
-      ? new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(v)
-      : '–';
-  const fmtP = (v: number | null | undefined): string =>
-    v != null ? `${v.toFixed(1)} %` : '–';
-
   const dataRows = rows.filter(r => r.monat !== 'Total');
 
   const header = [
@@ -682,28 +672,32 @@ export function exportMonatsdatenToExcel(
     'PK Ist', 'PK Plan', 'Vollst. %',
   ];
 
+  // Runde 2.6 / T006: echte Zahlenzellen mit ROHWERTEN — die Anzeige-Rundung
+  // (1 Dezimalstelle bei Quoten) erfolgt ausschliesslich über das Zellformat,
+  // nie über toFixed/Math.round in der Zahlenbasis. Fehlende Werte bleiben
+  // leere Zellen (null), nie 0.
   const body: (string | number | null)[][] = dataRows.map(r => [
     r.monat,
     r.umsatzIst    ?? null,
     r.umsatzBudget ?? null,
     r.umsatzVorjahr ?? null,
     r.warenaufwand ?? null,
-    r.warenPct     != null ? parseFloat(r.warenPct.toFixed(1)) : null,
+    r.warenPct     ?? null,
     r.personalaufwand ?? null,
-    r.personalPct  != null ? parseFloat(r.personalPct.toFixed(1)) : null,
+    r.personalPct  ?? null,
     r.pkIst        ?? null,
     r.pkPlan       ?? null,
-    r.vollstaendigkeit > 0 ? Math.round(r.vollstaendigkeit) : null,
+    r.vollstaendigkeit > 0 ? r.vollstaendigkeit : null,
   ]);
 
-  // Summenzeile
+  // Summenzeile — Quoten aus den ROHEN Summen, nicht aus gerundeten Werten
   const sumNum = (key: keyof MonatsdatenRow) =>
     dataRows.reduce((s, r) => s + ((r[key] as number | null) ?? 0), 0) || null;
   const totU = sumNum('umsatzIst');
   const totW = sumNum('warenaufwand');
   const totP = sumNum('personalaufwand');
   const safeQ = (n: number | null, d: number | null) =>
-    n && d && d > 1000 ? parseFloat(((n / d) * 100).toFixed(1)) : null;
+    n && d && d > 1000 ? (n / d) * 100 : null;
 
   body.push([
     'Total',
@@ -713,31 +707,34 @@ export function exportMonatsdatenToExcel(
     sumNum('pkIst'), sumNum('pkPlan'), null,
   ]);
 
-  // Formatted sheet for display (string values, easier to read)
-  const displayRows: string[][] = [
-    [`${restaurantName} — Monatsdaten ${year}`, '', '', '', '', '', '', '', '', '', ''],
-    [`Exportiert am ${new Date().toLocaleDateString('de-CH')} · PK-Ziel ≤ ${threshold} % · Waren-Ziel ≤ 30 %`,
-      '', '', '', '', '', '', '', '', '', ''],
+  const aoa: (string | number | null)[][] = [
+    [`${restaurantName} — Monatsdaten ${year}`],
+    [`Exportiert am ${new Date().toLocaleDateString('de-CH')} · PK-Ziel ≤ ${threshold} % · Waren-Ziel ≤ 30 %`],
     [],
     header,
-    ...dataRows.map(r => [
-      r.monat,
-      fmtN(r.umsatzIst), fmtN(r.umsatzBudget), fmtN(r.umsatzVorjahr),
-      fmtN(r.warenaufwand), fmtP(r.warenPct),
-      fmtN(r.personalaufwand), fmtP(r.personalPct),
-      fmtN(r.pkIst), fmtN(r.pkPlan),
-      r.vollstaendigkeit > 0 ? `${Math.round(r.vollstaendigkeit)} %` : '–',
-    ]),
-    [
-      'Total',
-      fmtN(sumNum('umsatzIst')), fmtN(sumNum('umsatzBudget')), fmtN(sumNum('umsatzVorjahr')),
-      fmtN(totW), fmtP(safeQ(totW, totU)),
-      fmtN(totP), fmtP(safeQ(totP, totU)),
-      fmtN(sumNum('pkIst')), fmtN(sumNum('pkPlan')), '',
-    ],
-  ] as string[][];
+    ...body,
+  ];
 
-  const ws = XLSX.utils.aoa_to_sheet(displayRows);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Zellformate (Anzeige): CHF ganze Franken, Quoten 1 Dezimalstelle.
+  // #,##0 = Gruppierungs-Platzhalter — Excel rendert das Trennzeichen lokalspezifisch.
+  const CHF_FMT = '"CHF "#,##0';
+  const PCT_FMT = '0.0" %"';
+  const INT_PCT_FMT = '0" %"';
+  const colFmt: (string | null)[] = [
+    null, CHF_FMT, CHF_FMT, CHF_FMT, CHF_FMT, PCT_FMT,
+    CHF_FMT, PCT_FMT, CHF_FMT, CHF_FMT, INT_PCT_FMT,
+  ];
+  const firstBodyRow = 4; // 0-basiert: Titel, Untertitel, Leerzeile, Header
+  for (let ri = 0; ri < body.length; ri++) {
+    for (let ci = 0; ci < colFmt.length; ci++) {
+      const fmt = colFmt[ci];
+      if (!fmt) continue;
+      const cell = ws[XLSX.utils.encode_cell({ r: firstBodyRow + ri, c: ci })];
+      if (cell && cell.t === 'n') cell.z = fmt;
+    }
+  }
   ws['!cols'] = [
     { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
     { wch: 18 }, { wch: 10 },
@@ -756,15 +753,14 @@ export function exportReportingToExcel(
   totals: ReportingTotals,
   year: number,
 ) {
-  const numFmt = '#\'##0.00" CHF"';
-
   const rows: (string | number | null)[][] = [
     ['Oliv Gastro AG – Reporting', year],
     [],
     ['Monat', 'Umsatz Ist', 'Budget', 'Vorjahr', 'PK Ist', 'PK Geplant', 'PK-Quote %'],
     ...months.map(m => {
+      // Rohwert in die Zahlenzelle — Anzeige-Rundung nur über das Zellformat (T006)
       const pkQ = m.revenueActual && m.personnelCostActual
-        ? Math.round((m.personnelCostActual / m.revenueActual) * 1000) / 10
+        ? (m.personnelCostActual / m.revenueActual) * 100
         : null;
       return [
         MONTH_NAMES_SHORT_DE[m.month],
@@ -784,12 +780,18 @@ export function exportReportingToExcel(
       totals.personnelCostActual || null,
       totals.personnelCostPlanned || null,
       totals.revenueActual > 0 && totals.personnelCostActual > 0
-        ? Math.round((totals.personnelCostActual / totals.revenueActual) * 1000) / 10
+        ? (totals.personnelCostActual / totals.revenueActual) * 100
         : null,
     ],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  // PK-Quote-Spalte: Anzeige auf 1 Dezimalstelle NUR über das Zellformat
+  for (let ri = 3; ri < rows.length; ri++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: ri, c: 6 })];
+    if (cell && cell.t === 'n') cell.z = '0.0';
+  }
 
   ws['!cols'] = [
     { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 },

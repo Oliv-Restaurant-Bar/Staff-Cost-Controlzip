@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   canConfirmDay,
   type DayComparison,
-  type DayConfirmation,
+  type DayConfirmationInput,
 } from '@/lib/adyen-abstimmung';
 import {
   AmountCell, CommentButton, DayStateBadges, DiffCell, diffColorClass, fmtChf,
@@ -34,7 +34,11 @@ interface AdyenDayTableProps {
   disabled: boolean;
   onOverride: (fieldKey: string, originalValue: number, corrected: number | null, comment: string) => void;
   onComment: (fieldKey: string, text: string) => void;
-  onConfirm: (date: string, confirmation: DayConfirmation | null) => void;
+  /**
+   * Ziel-Zustand der Bestätigung — Audit-Stempel (Benutzer/Zeit) und
+   * Dirty-Check vergibt zentral applyDayConfirmation in der Section.
+   */
+  onConfirm: (date: string, confirmation: DayConfirmationInput) => void;
 }
 
 export function AdyenDayTable({ days, disabled, onOverride, onComment, onConfirm }: AdyenDayTableProps) {
@@ -272,10 +276,11 @@ export function AdyenDayTable({ days, disabled, onOverride, onComment, onConfirm
                             checked={cashCounted}
                             disabled={disabled || confirmed}
                             onCheckedChange={v => {
+                              // comment weglassen = bestehenden Kommentar behalten
+                              // (Semantik von DayConfirmationInput).
                               onConfirm(cmp.date, {
                                 confirmed: false,
                                 cashCounted: v === true,
-                                ...(cmp.confirmation?.comment ? { comment: cmp.confirmation.comment } : {}),
                               });
                             }}
                           />
@@ -306,12 +311,13 @@ export function AdyenDayTable({ days, disabled, onOverride, onComment, onConfirm
                               className="h-7 text-xs mt-2 w-full"
                               disabled={disabled || !check.ok}
                               onClick={() => {
+                                // comment IMMER mitgeben — leerer String entfernt
+                                // einen bestehenden Kommentar bewusst.
                                 const comment = (confirmComments[cmp.date] ?? cmp.confirmation?.comment ?? '').trim();
                                 onConfirm(cmp.date, {
                                   confirmed: true,
                                   cashCounted: true,
-                                  confirmedAt: new Date().toISOString(),
-                                  ...(comment ? { comment } : {}),
+                                  comment,
                                 });
                               }}
                             >
@@ -339,7 +345,6 @@ export function AdyenDayTable({ days, disabled, onOverride, onComment, onConfirm
                               onClick={() => onConfirm(cmp.date, {
                                 confirmed: false,
                                 cashCounted,
-                                ...(cmp.confirmation?.comment ? { comment: cmp.confirmation.comment } : {}),
                               })}
                             >
                               Bestätigung aufheben
