@@ -23,7 +23,10 @@ import {
   type LieferantenProfil, type ProfilBelegtyp,
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
-import { abgleicheMonatsrechnung, type MonatsrechnungAbgleich } from '@/lib/monatsrechnung-abgleich';
+import {
+  abgleicheMonatsrechnung, vorschauProvisorischeErsetzungen,
+  type MonatsrechnungAbgleich, type ProvisorischVorschau,
+} from '@/lib/monatsrechnung-abgleich';
 import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
@@ -50,6 +53,8 @@ interface VorschauZeile {
   modus: 'lieferschein' | 'monatsrechnung';
   /** Abgleich (nur modus='monatsrechnung'): vorhanden vs. fehlt. */
   abgleich?: MonatsrechnungAbgleich;
+  /** AB-als-Lieferschein-Profile: Vorschau «provisorisch ersetzt / neu». */
+  provVorschau?: ProvisorischVorschau;
 }
 
 function num(s: string): number | null {
@@ -97,13 +102,20 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           // Lieferungen = Monatsrechnung (Kontrolle + Lückenfüller),
           // genau eine Lieferung = Einzel-Lieferschein (führend).
           const istDual = erg.profil?.belegtyp === 'dual';
+          // AB-als-Lieferschein-Profile (Terravigna): die RECHNUNG ist massgeblich
+          // und bucht direkt (ersetzt provisorische ABs) — nie Kontroll-Modus.
           const modus: VorschauZeile['modus'] =
-            istDual && erg.positionenErkannt && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein';
+            istDual && erg.positionenErkannt && erg.lieferungen.length > 1
+              && !erg.profil?.abAlsLieferschein ? 'monatsrechnung' : 'lieferschein';
           const abgleich = modus === 'monatsrechnung' && erg.profil
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen)
             : undefined;
+          // AB-als-LS-Profil: Rechnung zeigt «provisorisch ersetzt: K · neu: M».
+          const provVorschau = erg.profil?.abAlsLieferschein && erg.belegart === 'rechnung' && erg.positionenErkannt
+            ? await vorschauProvisorischeErsetzungen(tenantId, erg.profil.name, erg.lieferungen)
+            : undefined;
           neu.push({
-            modus, abgleich,
+            modus, abgleich, provVorschau,
             fileName: f.name, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
@@ -172,25 +184,32 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
     }
   }
 
-  // Belegart-Sperre: Auftragsbestätigungen/Offerten/Bestellungen sind NIE buchbar.
+  // Belegart-Sperre: Auftragsbestätigungen/Offerten/Bestellungen sind NIE buchbar —
+  // AUSNAHME: AB bei Profilen mit «Auftragsbestätigung = Lieferschein» (provisorisch).
+  const istBuchbar = (z: VorschauZeile) => z.ergebnis.belegart === 'rechnung'
+    || (z.ergebnis.belegart === 'auftragsbestaetigung' && profilById.get(z.lieferant)?.abAlsLieferschein === true);
   const bereit = zeilen.filter(z => z.lieferant !== ''
-    && z.ergebnis.belegart === 'rechnung'
+    && istBuchbar(z)
     && (z.modus === 'monatsrechnung'
       // Monatsrechnung: nur importierbar, wenn der Abgleich Lücken gefunden hat.
       ? (z.abgleich?.fehlt ?? 0) > 0
       : (z.datum !== '' && num(z.netto) !== null)));
-  const offen = zeilen.filter(z => z.ergebnis.belegart === 'rechnung'
+  const offen = zeilen.filter(z => istBuchbar(z)
     && (z.lieferant === ''
       || (z.modus !== 'monatsrechnung' && (z.datum === '' || num(z.netto) === null)))).length;
-  const gesperrt = zeilen.filter(z => z.ergebnis.belegart !== 'rechnung').length;
+  const gesperrt = zeilen.filter(z => !istBuchbar(z)).length;
 
   async function handleImport() {
     if (bereit.length === 0) { toast.error('Keine importierbaren Rechnungen (Lieferant/Datum/Netto fehlen).'); return; }
     setBusy(true);
     try {
-      // Buchungen pro Profil UND Quelle sammeln (Monatsrechnungs-Lückenfüller
-      // laufen als eigener Kern-Aufruf mit quelle='monatsrechnung').
-      const proProfil = new Map<string, { profil: LieferantenProfil; rechnungen: FsImportRechnung[]; monatsrechnung: boolean }>();
+      // Buchungen pro Profil UND Quelle sammeln (provisorische Quellen —
+      // Monatsrechnungs-Lückenfüller bzw. Auftragsbestätigungen — laufen als
+      // eigene Kern-Aufrufe mit gesetzter quelle).
+      const proProfil = new Map<string, {
+        profil: LieferantenProfil; rechnungen: FsImportRechnung[];
+        quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+      }>();
       for (const row of bereit) {
         const profil = profilById.get(row.lieferant);
         if (!profil) continue;
@@ -198,8 +217,12 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         const netto = num(row.netto) ?? 0;
         const mwst = num(row.mwst) ?? 0;
         const istMr = row.modus === 'monatsrechnung';
-        const key = istMr ? `${profil.id}|mr` : profil.id;
-        const eintrag = proProfil.get(key) ?? { profil: { ...profil, konto }, rechnungen: [], monatsrechnung: istMr };
+        // AB-als-Lieferschein (Terravigna): AB wird als PROVISORISCHE Lieferung
+        // gebucht (quelle='auftragsbestaetigung'); die Rechnung ersetzt sie später.
+        const istAbZeile = row.ergebnis.belegart === 'auftragsbestaetigung' && profil.abAlsLieferschein === true;
+        const quelle = istMr ? 'monatsrechnung' as const : istAbZeile ? 'auftragsbestaetigung' as const : undefined;
+        const key = quelle ? `${profil.id}|${quelle}` : profil.id;
+        const eintrag = proProfil.get(key) ?? { profil: { ...profil, konto }, rechnungen: [], quelle };
         if (istMr) {
           // Dual-Modell: Monatsrechnung = Kontrolle + Lückenfüller. NUR die
           // fehlenden Lieferungen werden (provisorisch) gebucht — vorhandene
@@ -264,17 +287,20 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       }
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
 
-      let neu = 0, ersetzt = 0, aenderungen = 0;
+      let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0;
       const lieferanten: string[] = [];
-      for (const { profil, rechnungen, monatsrechnung } of proProfil.values()) {
+      for (const { profil, rechnungen, quelle } of proProfil.values()) {
         if (rechnungen.length === 0) continue;
         const erg = await kernImportiereFsRechnungen(tenantId, profil.name, rechnungen, {
           noteLabel: 'Lieferanten-PDF', idPrefix: 'lpdf',
           extraMapping: { [profil.kategorie]: profil.konto },
           defaultKonto: profil.konto,
-          ...(monatsrechnung ? { quelle: 'monatsrechnung' as const } : {}),
+          ...(quelle ? { quelle } : {}),
+          // Rechnung↔AB-Match ohne Referenz-Treffer: enges ±3-Tage-Fenster.
+          ...(!quelle && profil.abAlsLieferschein ? { ersatzFensterTage: 3 } : {}),
         });
         neu += erg.neu; ersetzt += erg.ersetzt; aenderungen += erg.preisAenderungen;
+        provErsetzt += erg.provisorischErsetzt;
         if (!lieferanten.includes(profil.name)) lieferanten.push(profil.name);
       }
       await syncSuppliers([...proProfil.values()].map(x => x.profil));
@@ -289,7 +315,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       });
       setUndoRefresh(k => k + 1);
       setZeilen(z => z.filter(row => !bereit.includes(row)));
-      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
+      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${provErsetzt > 0 ? ` (davon ${provErsetzt} provisorische)` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
       onImported();
     } catch (e) {
       console.error('[BEAULIEU-PDF] Import fehlgeschlagen:', e);
@@ -319,7 +345,8 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         <div className="space-y-2" data-testid="beaulieu-pdf-vorschau">
           {zeilen.map((row, i) => {
             const erg = row.ergebnis;
-            const istGesperrt = erg.belegart !== 'rechnung';
+            const istGesperrt = !istBuchbar(row);
+            const istAb = !istGesperrt && erg.belegart === 'auftragsbestaetigung';
             const istOffen = !istGesperrt && row.lieferant === '';
             if (istGesperrt) {
               // Belegart-Sperre: erkannt, aber NIE buchbar — nur Hinweis.
@@ -351,7 +378,9 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                   {istOffen
                     ? <span className="text-amber-600 font-medium">Lieferant offen{erg.mwstNrn[0] ? ` · CHE-${erg.mwstNrn[0]}` : ''}</span>
                     : <span className="text-muted-foreground">
-                        {row.modus === 'monatsrechnung'
+                        {istAb
+                          ? 'Auftragsbestätigung → provisorische Lieferung (Monatsrechnung ersetzt sie)'
+                          : row.modus === 'monatsrechnung'
                           ? `Monatsrechnung (Kontrolle + Lückenfüller) · ${erg.lieferungen.length} Lieferungen`
                           : erg.positionenErkannt
                           ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen`
@@ -440,6 +469,13 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                       data-testid={`beaulieu-pdf-zuordnen-${i}`}>
                       Zuordnung speichern (gilt künftig)
                     </Button>
+                  </div>
+                )}
+
+                {row.provVorschau && (
+                  <div className="text-[11px] text-muted-foreground" data-testid={`beaulieu-pdf-provvorschau-${i}`}>
+                    provisorisch ersetzt: {row.provVorschau.ersetzt} · neu aus Rechnung: {row.provVorschau.neu} · Summe
+                    netto CHF {row.provVorschau.summeNetto.toFixed(2)}
                   </div>
                 )}
 

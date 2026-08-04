@@ -461,18 +461,25 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   let lieferdatum = kopf.lieferdatum;
   if (!lieferdatum && positionenErkannt && lieferungen.length === 1) lieferdatum = lieferungen[0].datum;
 
-  // Belegart-Sperre: Nicht-Rechnungen werden NIE gebucht — Beleg-Nr für die
-  // Meldung trotzdem ermitteln (z.B. «Auftragsbestätigung 145095»).
+  // Belegart-Sperre: Nicht-Rechnungen werden NIE gebucht — AUSNAHME:
+  // Profile mit «Auftragsbestätigung = Lieferschein» (z.B. Terravigna) buchen
+  // die AB als PROVISORISCHE Lieferung; die Monatsrechnung ersetzt sie später.
   let rechnungsNr = kopf.rechnungsNr;
-  if (belegart !== 'rechnung') {
+  const abBuchbar = belegart === 'auftragsbestaetigung' && profil?.abAlsLieferschein === true;
+  if (belegart !== 'rechnung' && !abBuchbar) {
     rechnungsNr = rechnungsNr
       ?? suche(text, [/(?:Auftragsbest(?:ä|ae)tigung|Offerte|Angebot|Bestellung)\s*(?:Nr\.?\s*)?:?\s*(\d{3,12})/i]);
     hinweise.length = 0;
     hinweise.push(`${BELEGART_LABEL[belegart]} ${rechnungsNr ?? ''} — keine Rechnung, wird nicht gebucht`.replace(/\s+—/, ' —'));
   } else {
+    if (abBuchbar) {
+      rechnungsNr = rechnungsNr
+        ?? suche(text, [/Auftragsbest(?:ä|ae)tigung\s*(?:Nr\.?\s*)?:?\s*(\d{3,12})/i]);
+      hinweise.push('Auftragsbestätigung — wird als provisorische Lieferung gebucht; die Monatsrechnung ersetzt/korrigiert sie.');
+    }
     if (!profil) hinweise.push('Lieferant nicht erkannt — bitte in der Vorschau zuordnen (wird dauerhaft gespeichert).');
     if (netto === null) hinweise.push('Netto-Betrag nicht erkannt — bitte in der Vorschau erfassen.');
-    if (!kopf.rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');
+    if (!rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');
     if (!kopf.rechnungsdatum) hinweise.push('Rechnungsdatum nicht erkannt.');
   }
 

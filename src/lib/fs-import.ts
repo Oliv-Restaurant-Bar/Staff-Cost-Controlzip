@@ -46,7 +46,12 @@ export async function kernImportiereFsRechnungen(
   lieferant: string,
   rechnungen: FsImportRechnung[],
   opts?: {
-    quelle?: 'monatsrechnung';
+    /** Provisorische Quelle: 'monatsrechnung' (Lückenfüller) oder
+     *  'auftragsbestaetigung' (AB gilt als Lieferschein, z.B. Terravigna). */
+    quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+    /** Fenster (Tage) für den Ersatz naher provisorischer Buchungen ohne
+     *  Referenz-Treffer (Default 7; Terravigna-Rechnung↔AB: 3). */
+    ersatzFensterTage?: number;
     /** Notiz-Präfix (Default «Feldschlösschen-PDF») — z.B. «Lieferanten-PDF». */
     noteLabel?: string;
     /** ID-Präfix (Default 'fs') — z.B. 'lpdf' für Profil-PDF-Importe. */
@@ -96,22 +101,25 @@ export async function kernImportiereFsRechnungen(
       && e.date === r.datum
       && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
     let vorhandenMonat = month;
-    // Monatsrechnung = Kontrolle + Lückenfüller: eine ECHTE (nicht-provisorische)
-    // Buchung wird NIE überschrieben — nur eigene provisorische Einträge dürfen
-    // per Upsert aktualisiert werden (z.B. erneuter Upload derselben Monatsrechnung).
-    if (opts?.quelle === 'monatsrechnung' && vorhanden && vorhanden.quelle !== 'monatsrechnung') {
+    // Provisorische Importe (Monatsrechnung/Auftragsbestätigung): eine ECHTE
+    // (nicht-provisorische) Buchung wird NIE überschrieben — nur eigene
+    // provisorische Einträge dürfen per Upsert aktualisiert werden.
+    const istProv = (q: InvoiceEntry['quelle']) => q === 'monatsrechnung' || q === 'auftragsbestaetigung';
+    if (opts?.quelle && vorhanden && !istProv(vorhanden.quelle)) {
       uebersprungen++;
       continue;
     }
-    // Lieferschein ersetzt eine nahe provisorische Monatsrechnungs-Lieferung.
-    if (!vorhanden && opts?.quelle !== 'monatsrechnung') {
+    // Lieferschein/Rechnung ersetzt eine nahe provisorische Buchung
+    // (aus Monatsrechnung ODER Auftragsbestätigung).
+    if (!vorhanden && !opts?.quelle) {
       const brutto = bruttoOffiziell ?? r.bruttoTotal;
+      const fenster = opts?.ersatzFensterTage ?? 7;
       for (const nm of nachbarMonate(r.datum)) {
         const nb = (await holeMonat(nm)).bestand;
-        const prov = nb.find(e => e.quelle === 'monatsrechnung'
+        const prov = nb.find(e => istProv(e.quelle)
           && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase()
           && ((e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-            || (tageDiff(e.date, r.datum) <= 7 && Math.abs(e.amountGross - brutto) <= 0.10)));
+            || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
         if (prov) { vorhanden = prov; vorhandenMonat = nm; provisorischErsetzt++; break; }
       }
     }
@@ -143,12 +151,14 @@ export async function kernImportiereFsRechnungen(
         const basis = echte > 0 ? `${label} · ${echte} Positionen` : label;
         return opts?.quelle === 'monatsrechnung'
           ? `Aus Monatsrechnung übernommen (provisorisch) · ${r.positionen.length} Positionen`
+          : opts?.quelle === 'auftragsbestaetigung'
+          ? `provisorisch (Auftragsbestätigung) · ${r.positionen.length} Positionen`
           : basis;
       })(),
       ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
       kategorie: kategorieFromKonto(haupt),
       ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
-      ...(opts?.quelle === 'monatsrechnung' ? { quelle: 'monatsrechnung' as const } : {}),
+      ...(opts?.quelle ? { quelle: opts.quelle } : {}),
       createdAt: vorhanden?.createdAt ?? jetzt,
       updatedAt: jetzt,
     };

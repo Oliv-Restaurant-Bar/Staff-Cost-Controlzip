@@ -49,13 +49,17 @@ export interface LieferantenProfil {
   parser?: ProfilParser;
   /** Belegtyp (Default 'einzelrechnung'); 'dual' = Lieferschein führend. */
   belegtyp?: ProfilBelegtyp;
+  /** Auftragsbestätigung gilt als Lieferschein: wird PROVISORISCH gebucht,
+   *  die (massgebliche) Monatsrechnung ersetzt/korrigiert sie später.
+   *  Standard = false: AB/Offerte/Bestellung werden NIE gebucht (Sperre). */
+  abAlsLieferschein?: boolean;
 }
 
 /** Vorbelegung gemäss Aufgabe — Konto in den Einstellungen anpassbar. */
 export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
   { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
-  { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual' },
+  { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true },
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual' },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
@@ -99,6 +103,8 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
       parser: def?.parser,
       erkennungTokens: def?.erkennungTokens ?? g.erkennungTokens,
       iban: def?.iban ?? g.iban,
+      // AB-als-Lieferschein ist fest an die Default-Profile gebunden (Terravigna).
+      abAlsLieferschein: def?.abAlsLieferschein,
     });
   }
   return [...proId.values()];

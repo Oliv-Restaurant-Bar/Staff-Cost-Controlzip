@@ -75,7 +75,7 @@ export interface InvoiceEntry {
    * Lieferschein fehlte. Wird der Lieferschein später hochgeladen, ersetzt er
    * diesen Eintrag (Lieferschein ist führend). Fehlt das Feld = regulär erfasst.
    */
-  quelle?: 'monatsrechnung';
+  quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
   createdAt: string;
   updatedAt: string;
 }

@@ -1,0 +1,30 @@
+AUFGABE: Terravigna (Wein, Beaulieu) — Auftragsbestätigung = Lieferschein (buchen), Monatsrechnung ist massgeblich und korrigiert. Plus Backfill Jan–Juli 2026 nach Lieferdatum. Mandant Beaulieu.
+
+PROFIL Terravigna: Wein, Konto 4020, MwSt 8.1 %, Belegtyp "Dual", Stufe 2.
+
+BELEGART-EINSTELLUNG PRO LIEFERANT (korrigiert):
+- Standard (Fideco, Spahni, Gasser, Bohnenblust, alle anderen): "Auftragsbestätigung/Offerte" = KEINE Rechnung → nicht buchen (bisherige Sperre bleibt).
+- Terravigna: "Auftragsbestätigung = Lieferschein" → WIRD gebucht (provisorisch, führend während des Monats).
+
+WÄHREND DES MONATS (Auftragsbestätigung = Lieferschein):
+1) Auftragsbestätigung erkennen (Beleg-Nr, Belegdatum, Positionen, Total netto, 8.1 %) und als provisorische Lieferung buchen: Konto 4020, Lieferdatum = Belegdatum (bis die Rechnung das exakte Lieferdatum liefert). Markierung "provisorisch (Auftragsbestätigung)".
+2) Identität = Beleg-Nr der Auftragsbestätigung; Re-Upload = Upsert, nie doppelt.
+
+MONATSRECHNUNG = MASSGEBLICH (korrigiert, kein Doppel):
+3) Rechnung listet je Lieferung "Lieferungsnr. <Nr> vom <Datum>" mit Positionen + finalen Beträgen. Das ist die massgebliche Quelle.
+4) Jede Rechnungs-Lieferung gegen die provisorischen Auftragsbestätigungen matchen über Datum (±3 Tage) + Betrag (±0.10); wo eindeutig, die provisorische Buchung ersetzen durch die finalen Werte (exaktes Lieferdatum, finaler Betrag, Positionen) und "provisorisch" entfernen.
+5) Keine passende Auftragsbestätigung vorhanden → Lieferung frisch aus der Rechnung buchen (mit Lieferdatum).
+6) Nie doppelt: eine Lieferung existiert am Ende genau einmal. Mehrere Rechnungen pro Monat möglich (verschiedene Kunden-/Beleg-Nr, z.B. 211343/Kd 50955 und 211363/Kd 51457) — Dedup über Lieferungsnr.
+7) Vorschau: "provisorisch ersetzt: K · neu aus Rechnung: M · Summe netto".
+
+BACKFILL JAN–JULI 2026:
+8) Die Monatsrechnungen Jan–Juli 2026 mehrfach aufs Mal hochladbar → jede Lieferung auf ihr Lieferdatum gebucht, Monate rückwirkend gefüllt (Vergleichsbasis ab August). Für die Vergangenheit reichen die Monatsrechnungen (keine Auftragsbestätigungen nötig).
+
+RAHMEN: Mandant Beaulieu. Dublettensicher, Vorschau vor Schreiben, bestehender Import-Undo. Nie durch 0 teilen, leer statt 0.
+
+KONTROLLWERTE (Beaulieu):
+   - Rechnung 211343: 4 Lieferungen (09./13./20./23.07.), netto 2'339.69 / MwSt 189.51 (8.1%)
+   - Rechnung 211363: 7 Lieferungen (05.–24.07.), Kunden-Nr 51457 (Summe netto in Vorschau prüfen)
+   - Auftragsbestätigung 145095 (23.07., netto 828.39): wird als provisorische Lieferung gebucht und später durch die Rechnungs-Lieferung 287812 vom 23.07. ersetzt (kein Doppel).
+
+Kurz zusammenfassen: dass bei Terravigna die Auftragsbestätigung als Lieferschein gilt und die Monatsrechnung sie ersetzt/korrigiert.

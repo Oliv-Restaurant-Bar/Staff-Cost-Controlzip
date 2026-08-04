@@ -23,7 +23,7 @@ vi.mock('@/lib/waren-db', async (orig) => {
   };
 });
 
-import { abgleicheMonatsrechnung } from '@/lib/monatsrechnung-abgleich';
+import { abgleicheMonatsrechnung, vorschauProvisorischeErsetzungen } from '@/lib/monatsrechnung-abgleich';
 import type { ParsedCsvRechnung } from '@/lib/waren-positionen';
 import type { InvoiceEntry } from '@/lib/waren-db';
 
@@ -104,6 +104,22 @@ describe('abgleicheMonatsrechnung (Fideco-Kontrollszenario)', () => {
     const a = await abgleicheMonatsrechnung('beaulieu', 'Fideco', ls);
     expect(a.eintraege[14].status).toBe('vorhanden');
     expect(a.vorhanden).toBe(1);
+  });
+
+  it('vorschauProvisorischeErsetzungen: zählt nur provisorische Treffer im ±3-Tage-Fenster', async () => {
+    const ls = fidecoLieferungen().slice(0, 4);
+    bestand.set('2026-07', [
+      // provisorische AB, Datum 2 Tage daneben, Betrag gleich → ersetzt
+      { ...eintrag({ id: 'p1', date: '2026-07-03', net: ls[0].nettoTotal }), quelle: 'auftragsbestaetigung' } as InvoiceEntry,
+      // provisorisch, aber 5 Tage daneben → NICHT ersetzt
+      { ...eintrag({ id: 'p2', date: '2026-07-08', net: ls[1].nettoTotal }), quelle: 'auftragsbestaetigung' } as InvoiceEntry,
+      // ECHTE Buchung gleichen Datums/Betrags → zählt NICHT als provisorisch
+      eintrag({ id: 'r1', date: ls[2].datum, net: ls[2].nettoTotal }),
+    ]);
+    const v = await vorschauProvisorischeErsetzungen('beaulieu', 'Fideco', ls, 3);
+    expect(v.ersetzt).toBe(1);
+    expect(v.neu).toBe(3);
+    expect(v.summeNetto).toBe(Math.round(ls.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100);
   });
 
   it('fremde Lieferanten im Bestand werden ignoriert', async () => {

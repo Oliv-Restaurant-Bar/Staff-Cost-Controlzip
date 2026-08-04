@@ -99,6 +99,36 @@ describe('kernImportiereFsRechnungen', () => {
     expect(monat[0].quelle).toBe('monatsrechnung');
   });
 
+  it('AB-als-Lieferschein (Terravigna): AB provisorisch, Rechnung ersetzt via ±3 Tage/±0.10 — kein Doppel', async () => {
+    // 1) Auftragsbestätigung 145095 vom 23.07. provisorisch buchen
+    await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('145095', '2026-07-23', 30) }], { quelle: 'auftragsbestaetigung' });
+    const prov = (kv.get('supplier_invoices_2026-07') as InvoiceEntry[])[0];
+    expect(prov.quelle).toBe('auftragsbestaetigung');
+    expect(prov.note).toContain('provisorisch (Auftragsbestätigung)');
+    // 2) Monatsrechnung: Lieferung 287812 vom 23.07., gleicher Betrag, andere Referenz
+    const res = await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('287812', '2026-07-23', 30) }], { ersatzFensterTage: 3 });
+    expect(res.provisorischErsetzt).toBe(1);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].quelle).toBeUndefined();
+    expect(monat[0].reference).toBe('287812');
+  });
+
+  it('ersatzFensterTage=3: AB ausserhalb des Fensters wird NICHT ersetzt (frisch gebucht)', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('145000', '2026-07-10', 30) }], { quelle: 'auftragsbestaetigung' });
+    const res = await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('287800', '2026-07-15', 30) }], { ersatzFensterTage: 3 });
+    expect(res.provisorischErsetzt).toBe(0);
+    expect(res.neu).toBe(1);
+    expect((kv.get('supplier_invoices_2026-07') as InvoiceEntry[])).toHaveLength(2);
+  });
+
+  it('AB-Re-Upload = Upsert der eigenen provisorischen Buchung (nie doppelt)', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('145095', '2026-07-23', 30) }], { quelle: 'auftragsbestaetigung' });
+    const res = await kernImportiereFsRechnungen(TENANT, 'Terravigna', [{ r: rechnung('145095', '2026-07-23', 31) }], { quelle: 'auftragsbestaetigung' });
+    expect(res.ersetzt).toBe(1);
+    expect((kv.get('supplier_invoices_2026-07') as InvoiceEntry[])).toHaveLength(1);
+  });
+
   it('ersetzt provisorisch auch bei abweichender Referenz via ±7 Tage/±0.10', async () => {
     await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('FAKT-9', '2026-07-29', 30) }], { quelle: 'monatsrechnung' });
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-555', '2026-08-02', 30) }]);

@@ -47,13 +47,22 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.mwst).toBe(98.7);
     expect(r.mwstSatz).toBe(2.6);
   });
-  it('Belegart-Sperre: Terravigna Auftragsbestätigung 145095 wird NIE gebucht', () => {
+  it('Terravigna AB 145095: AB = Lieferschein → buchbar als provisorische Lieferung', () => {
     const r = parse('terravigna-ab-145095.txt');
     expect(r.belegart).toBe('auftragsbestaetigung');
     expect(r.profil?.id).toBe('terravigna');
+    expect(r.profil?.abAlsLieferschein).toBe(true);
     expect(r.rechnungsNr).toBe('145095');
     expect(r.netto).toBe(828.39);
-    expect(r.hinweise[0]).toContain('Auftragsbestätigung 145095');
+    expect(r.hinweise[0]).toContain('provisorische Lieferung');
+    expect(r.hinweise.join(' ')).not.toContain('wird nicht gebucht');
+  });
+  it('Belegart-Sperre bleibt für Profile OHNE AB-als-Lieferschein', () => {
+    // Gleicher AB-Text, aber ohne Terravigna-MWST-Nr ⇒ Profil ohne Ausnahme.
+    const text = fx('terravigna-ab-145095.txt').replace(/108\.008\.709/g, '219.630.115');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('obrist');
+    expect(r.belegart).toBe('auftragsbestaetigung');
     expect(r.hinweise[0]).toContain('wird nicht gebucht');
   });
   it('Belegart: echte Rechnungen bleiben «rechnung» (alle Fixtures)', () => {

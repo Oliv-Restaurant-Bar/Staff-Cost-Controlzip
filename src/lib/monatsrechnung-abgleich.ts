@@ -79,3 +79,50 @@ export async function abgleicheMonatsrechnung(
     summeMonatsrechnung: R2(lieferungen.reduce((s, l) => s + l.nettoTotal, 0)),
   };
 }
+
+export interface ProvisorischVorschau {
+  /** Lieferungen, die eine PROVISORISCHE Buchung (AB/Monatsrechnung) ersetzen. */
+  ersetzt: number;
+  /** Lieferungen ohne provisorischen Treffer (werden frisch gebucht). */
+  neu: number;
+  summeNetto: number;
+}
+
+/**
+ * Vorschau für AB-als-Lieferschein-Profile (Terravigna): wie viele Lieferungen
+ * der (massgeblichen) Rechnung ersetzen eine provisorische Auftragsbestätigungs-/
+ * Monatsrechnungs-Buchung? Match wie im Kern: exakte Referenz (Monate ±1),
+ * sonst Datum ±fensterTage + Betrag (brutto ±0.10); keine Doppelvergabe.
+ * NUR Anzeige — massgeblich bleibt der Kern-Schreibpfad.
+ */
+export async function vorschauProvisorischeErsetzungen(
+  tenantId: TenantId,
+  lieferant: string,
+  lieferungen: ParsedCsvRechnung[],
+  fensterTage = 3,
+): Promise<ProvisorischVorschau> {
+  const monate = new Set<string>();
+  for (const l of lieferungen) for (const m of nachbarMonate(l.datum)) monate.add(m);
+  const bestand: InvoiceEntry[] = [];
+  for (const m of [...monate].sort()) bestand.push(...await loadMonthInvoices(tenantId, m));
+  const lief = lieferant.trim().toLowerCase();
+  const prov = bestand.filter(e =>
+    (e.quelle === 'auftragsbestaetigung' || e.quelle === 'monatsrechnung')
+    && e.supplierName.trim().toLowerCase() === lief);
+  const tageDiff = (a: string, b: string) => Math.abs((Date.parse(a) - Date.parse(b)) / 86400000);
+
+  const vergeben = new Set<string>();
+  let ersetzt = 0;
+  for (const l of lieferungen) {
+    const lsNr = l.rechnungsNr.trim().toLowerCase();
+    const match = prov.find(e => !vergeben.has(e.id)
+      && ((lsNr !== '' && (e.reference ?? '').trim().toLowerCase() === lsNr)
+        || (tageDiff(e.date, l.datum) <= fensterTage && Math.abs(e.amountGross - l.bruttoTotal) <= 0.10)));
+    if (match) { vergeben.add(match.id); ersetzt++; }
+  }
+  return {
+    ersetzt,
+    neu: lieferungen.length - ersetzt,
+    summeNetto: R2(lieferungen.reduce((s, l) => s + l.nettoTotal, 0)),
+  };
+}
