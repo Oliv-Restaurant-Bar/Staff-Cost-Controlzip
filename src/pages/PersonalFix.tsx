@@ -64,6 +64,7 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import { aggregatePlanHours, mirrorPlanMonthToLocalStorage } from '@/lib/plan-stunden-sync';
 import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
@@ -408,18 +409,8 @@ function loadPlanHoursFromStorage(year: number, month: number, keyFn: (k: string
     const raw = localStorage.getItem(key);
     if (!raw) return {};
     const data: Record<string, any> = JSON.parse(raw);
-    const out: Record<string, number> = {};
-    for (const [cellKey, ds] of Object.entries(data)) {
-      // cellKey = "${empId}-YYYY-MM-DD" → empId = alles außer letzten 11 Zeichen
-      const empId = cellKey.slice(0, cellKey.length - 11);
-      if (!empId) continue;
-      // FE-markierte Einträge überspringen — konsistent mit loadDailyPlanDetails
-      if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
-      // Netto via SSoT (Pause pro Einsatz abgezogen)
-      const net = calculateDayNetHours(ds);
-      if (net > 0) out[empId] = (out[empId] ?? 0) + Math.round(net * 100) / 100;
-    }
-    return out;
+    // SSoT-Aggregation: Monatsfilter + FE-Skip + calculateDayNetHours
+    return aggregatePlanHours(data, year, month);
   } catch { return {}; }
 }
 
@@ -2397,43 +2388,31 @@ export default function PersonalFixPage() {
     setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
 
-    // tick-only refresh (schedule-updated event): localStorage is already current,
-    // skip the expensive async Supabase round-trips.
-    if (scheduleRefreshTick > 0) return;
-
-    // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
-    // This ensures plan data is always current even if the user never opened Dienstplanung
-    // on this device (Supabase is the canonical write path for the schedule planner).
+    // SSoT: Supabase (schedule_entries) ist die kanonische Quelle für Plan-Stunden.
+    // Der Monat wird bei JEDEM Refresh (Mount, Monats-/Tenant-Wechsel UND
+    // schedule-updated-Tick nach Import/Dienstplan-Änderung) frisch gespiegelt —
+    // localStorage ist ein reiner Cache und wird VOLLSTÄNDIG ersetzt (kein Merge).
+    // Einziger Guard: echter Supabase-Fehler (null) → lokales Ergebnis behalten.
+    // Stale-Guard: bei Monats-/Tenant-Wechsel oder neuem Tick werden ältere,
+    // noch laufende Requests verworfen (sonst könnte ein out-of-order Response
+    // den frischeren Spiegel/State wieder mit alten Daten überschreiben).
+    let stale = false;
     const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadScheduleForMonth(scheduleMonthDate, tenantId).then(supabaseSchedule => {
+      if (stale) return; // veralteter Request – verwerfen
       if (!supabaseSchedule) return; // Supabase error – keep local result
       const totalEntries = Object.keys(supabaseSchedule).length;
       console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
-      if (totalEntries === 0) {
-        // Guard: never overwrite a populated localStorage cache with an empty Supabase result.
-        // An empty result can mean transient RLS/auth timing issues (not a genuinely empty month).
-        const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
-        try {
-          const existing = localStorage.getItem(scheduleKey);
-          const existingCount = existing ? Object.keys(JSON.parse(existing)).length : 0;
-          if (existingCount > 0) {
-            console.warn(`[PLAN] personal-fix: Supabase returned 0 rows but localStorage has ${existingCount} entries – skipping overwrite`);
-            return;
-          }
-        } catch { /* ignore parse errors */ }
-        // Both empty – ok to skip write (no point writing {})
-        return;
-      }
       const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
-      try {
-        // isAdditionalCostPlan is saved to Supabase by SchedulePlanner → trust Supabase only.
-        // Do NOT copy it from old localStorage (would perpetuate stale flags indefinitely).
-        // isAdditionalCost (actual-hours) is localStorage-only → no merge needed here (handled below).
-        const merged: Record<string, unknown> = { ...supabaseSchedule };
-        localStorage.setItem(scheduleKey, JSON.stringify(merged));
-      } catch { /* quota exceeded */ }
-      // Re-read plan hours and ferien plan from the freshly written cache
-      setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
+      // Vollersatz: localStorage = exakt die Supabase-Einträge des Monats.
+      // isAdditionalCostPlan kommt aus Supabase (SchedulePlanner schreibt es dorthin);
+      // alte lokale Flags/Geister-Einträge werden bewusst NICHT übernommen.
+      const written = mirrorPlanMonthToLocalStorage(supabaseSchedule, scheduleKey);
+      if (!written) console.warn('[PLAN] personal-fix: localStorage-Spiegel fehlgeschlagen (Quota?) – verwende Supabase-Daten direkt');
+      // Re-read plan hours and ferien plan — bei Schreibfehler direkt aus Supabase-Daten
+      setPlanHours(written
+        ? loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey)
+        : aggregatePlanHours(supabaseSchedule as Record<string, unknown>, selectedYear, selectedMonth));
       setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     });
 
@@ -2444,6 +2423,7 @@ export default function PersonalFixPage() {
     // Then enrich with Supabase (async)
     const monthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadActualHoursForMonth(monthDate, tenantId).then(supabaseRaw => {
+      if (stale) return; // veralteter Request – verwerfen
       if (!supabaseRaw) return; // Supabase error – keep local result
       // Vollständige Einträge speichern (inkl. isAdditionalCost für Zusatzkosten-Berechnung)
       setSupabaseActualHours(supabaseRaw);
@@ -2500,6 +2480,9 @@ export default function PersonalFixPage() {
         console.log(`[FERIEN] saved persistently: source=supabase+local merged=${Object.keys(mergedRaw).length}`);
       }
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
+
+    // Cleanup: markiert laufende Requests dieses Laufs als veraltet.
+    return () => { stale = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick]);
 

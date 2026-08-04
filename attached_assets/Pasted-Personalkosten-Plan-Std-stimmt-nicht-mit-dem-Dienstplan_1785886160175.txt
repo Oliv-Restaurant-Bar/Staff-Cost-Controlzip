@@ -1,0 +1,17 @@
+Personalkosten „Plan Std" stimmt nicht mit dem Dienstplan überein — Single Source of Truth erzwingen.
+
+Symptom (verifiziert, August 2026, Oliv, Küche): Personalkosten „Plan Std" weicht vom echten Dienstplan ab (Personalkosten zeigt durchweg MEHR), Reload ändert nichts:
+- Aushilfe 2 Küche A: Dienstplan 164.0 h  ·  Personalkosten 169.5 h
+- Momand Sajed:       Dienstplan 178.5 h  ·  Personalkosten 187.0 h
+- Party:              Dienstplan 161.5 h  ·  Personalkosten 161.0 h (praktisch ok)
+- Pizza 2 Aushilfe:   Dienstplan 154.0 h  ·  Personalkosten 186.5 h  (war NICHT importiert – trotzdem +32.5 h)
+
+Diagnose: PersonalFix berechnet „Plan Std" aus localStorage `schedule-v2-YYYY-MM` (loadPlanHoursFromStorage / loadDailyPlanDetails). Der Dienstplan/SchedulePlanner schreibt kanonisch nach Supabase (schedule_entries). Der Supabase→localStorage-Spiegel in PersonalFix (loadScheduleForMonth → `merged = {...supabaseSchedule}`) ist durch Guards bedingt: `if (scheduleRefreshTick > 0) return` überspringt das Nachladen bei Tick-Refreshes, plus Leer-Guard. Dadurch bleibt eine veraltete localStorage-Kopie stehen und wird für „Plan Std" verwendet. Da calculateDayNetHours Pausen abzieht (also ≤ Zeitspanne), kann die höhere Personalkosten-Zahl NICHT aus der Berechnung kommen — es sind veraltete/zusätzliche Schicht-Einträge im localStorage.
+
+Anforderung (SSoT):
+1. „Plan Std" in Personalkosten MUSS für jeden Mitarbeiter und Monat exakt dem entsprechen, was der Dienstplan (SchedulePlanner) für denselben Mitarbeiter/Monat zeigt — gleiche Quelle (Supabase schedule_entries als Single Source of Truth) und gleiche Netto-Stundenberechnung (calculateDayNetHours).
+2. Der Supabase→localStorage-Spiegel muss die localStorage-Kopie beim Laden VOLLSTÄNDIG ERSETZEN (reiner Cache, kein Merge, keine Reste): localStorage schedule-v2 = exakt die Supabase-Einträge des Monats. Guards nur gegen echte Supabase-Fehler/Timeouts, nicht so, dass veraltete Stände dauerhaft bestehen bleiben. Nach jedem Import/Dienstplan-Update muss Personalkosten den Monat frisch aus Supabase spiegeln.
+3. Bei Divergenz gewinnt immer Supabase. Optional ein „Neu synchronisieren"-Knopf, der den Monat deterministisch frisch aus Supabase zieht.
+4. Regressionstest mit genau diesen Kontrollwerten: nachdem der Dienstplan X Plan-Stunden für einen MA zeigt, muss die Personalkosten-„Plan Std" identisch sein (±0.1 h). Insbesondere Pizza 2 Aushilfe (nicht importiert) darf keine Abweichung haben.
+
+Kontrolle nach dem Fix (August 2026, Oliv): Personalkosten „Plan Std" = Dienstplan-Stunden — Aushilfe 2 Küche A ≈ 164, Momand Sajed ≈ 178.5, Party ≈ 161.5, Pizza 2 Aushilfe ≈ 154 (bzw. exakt die Werte, die der Dienstplan für August zeigt). Mandantengetrennt (oliv/beaulieu). Dieselbe SSoT-Logik auch für „Ist Std" prüfen, damit dort nicht dasselbe Problem entsteht.

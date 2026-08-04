@@ -1,0 +1,16 @@
+Personalbedarf — Teildienste (geteilte Schichten) als EINE Schicht/Person darstellen + Darstellung schöner und lesbarer machen.
+
+Ziel: Eine Person, die z. B. 10:00–14:00 UND 17:00–22:30 arbeitet, ist ein Teildienst (Mittag + Abend) = 1 Kopf, nicht zwei Schichten. Das soll überall visuell als EINE zusammengehörige Einheit erscheinen. Die bestehende Kopfzahl-Logik (auto = max(Mittag, Abend), durchgehende/geteilte Person zählt 1×) bleibt unverändert — das hier ist Modell-/Darstellungs-, keine Zähl-Änderung.
+
+TEIL A — Teildienst als eine Einheit:
+1. Datenmodell/Editor (Soll-Matrix / Bedarf-Editor): Eine Schicht kann „durchgehend" (ein Block) ODER „Teildienst" (zwei Blöcke: Mittag + Abend) sein. Beim Anlegen eines Teildiensts werden beide Blöcke zusammen erfasst (Von1–Bis1 „Mittag", Von2–Bis2 „Abend") und zählen als 1 Kopf. Sie werden als EINE gruppierte Karte/Zeile dargestellt (nicht zwei lose Von/Bis-Zeilen), mit Badge „Teildienst" und Label „Mittag + Abend". Ein „Teildienst hinzufügen"-Knopf neben „Schicht hinzufügen".
+2. Tages-Popup (z. B. „Kochen (heiss) — Montag 03.08."): Teildienst-Personen in EINER Zeile als „10:00–14:00 / 17:00–22:30" mit Badge „Teildienst" und Schicht-Label „Mittag + Abend". Kein doppeltes Auftauchen derselben Person. Netto-Stunden = Summe beider Blöcke (Pausen/Gap korrekt), rechtsbündig ausgerichtet.
+3. Konsistente Notation der zwei Blöcke überall gleich (z. B. „10:00–14:00  /  17:00–22:30", Trenner „/" oder Mittelpunkt), damit sofort klar ist: gehört zusammen.
+
+TEIL B — Darstellung schöner & lesbarer (Tages-Popup + Soll-Matrix-Editor):
+4. Tabellen sauber ausrichten: Spalten (Mitarbeiter · Zeit · Schicht · Netto-H) linksbündig bzw. Zahlen rechtsbündig monospaced, genug Zeilenabstand, dezente Trennlinien, klare Kopfzeile. Netto-H nicht abgeschnitten.
+5. Kopfbereich des Popups klar: „Bedarf 4 · Plan 5" mit ruhigem +1/-1-Badge (grün = über, gelb = unter Bedarf), darunter die Personenliste, unten „Total Köpfe" und Hinweis „Teildienste zählen 1×".
+6. Soll-Matrix-Editor: Von/Bis/Anzahl-Zeilen weniger gedrängt, Mittag-/Abend-Blöcke eines Teildiensts sichtbar zusammengefasst (eingerückt/geklammert), Live-Zusammenfassung „= X Köpfe (Teildienste 1×)". Zeit-Eingaben und „Anzahl" klar beschriftet.
+7. Farben/Badges konsistent mit dem Rest der App, dezent, gut lesbar (auch im Dark Mode). Keine funktionale Änderung an Bedarf/Plan/Kopfzahl-Berechnung — nur Modell für Teildienst-Gruppierung und Optik.
+
+Mandantengetrennt, keine Änderung an den Zähl-Regeln. Vorschau/Speichern/Verwerfen wie bisher.
