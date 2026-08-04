@@ -70,12 +70,17 @@ export interface InvoiceEntry {
   /** Optionaler Beleg/Screenshot im privaten Storage-Bucket `waren-belege` (Pfad `<tenantId>/<id>.<ext>`). */
   receiptPath?: string;
   /**
-   * Herkunft «aus Monatsrechnung» (provisorisch): Lieferung wurde aus den
-   * Anhang-Seiten der Monats-/Sammelrechnung übernommen, weil der echte
-   * Lieferschein fehlte. Wird der Lieferschein später hochgeladen, ersetzt er
-   * diesen Eintrag (Lieferschein ist führend). Fehlt das Feld = regulär erfasst.
+   * Herkunft der Buchung. Rangordnung (Dual-Lieferanten):
+   * Monatsrechnung (final) > Lieferschein/Auftragsbestätigung (provisorisch).
+   * 'monatsrechnung' + final=true: massgebliche finale Buchung aus der
+   * Monatsrechnung. Ohne final (Alt-Daten): provisorischer Lückenfüller.
+   * 'auftragsbestaetigung': provisorisch (AB gilt als Lieferschein, Terravigna).
+   * Fehlt das Feld = regulär/Lieferschein erfasst (provisorisch im Dual-Modell).
    */
   quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+  /** true = durch die massgebliche Monatsrechnung finalisiert; spätere
+   *  Lieferschein-/AB-Uploads dürfen diese Werte NICHT mehr verschlechtern. */
+  final?: boolean;
   createdAt: string;
   updatedAt: string;
 }

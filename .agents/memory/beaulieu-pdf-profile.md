@@ -21,3 +21,12 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 - **Belegart-Sperre (alle Lieferanten):** erkenneBelegart klassifiziert Auftragsbestätigung/Offerte/Bestellung — nie buchbar (rote gesperrte Karte, nur Hinweis). Expliziter Rechnungs-Kopf («RECHNUNG…», «Rechnung <Nr>», «Faktura») gewinnt IMMER, damit Fusstexte die Sperre nicht auslösen. Backfill/Mehrfach-Rechnungen pro Monat laufen über die Lieferungsnr-Identität (Upsert), nie zusammenfassen.
 - **Terravigna-Ausnahme (abAlsLieferschein, fest an Defaults gebunden):** AB wird als PROVISORISCHE Lieferung gebucht (quelle='auftragsbestaetigung', Identität = AB-Nr); die RECHNUNG ist massgeblich, bucht direkt (nie Kontroll-Modus) und ersetzt provisorische ABs via exakte Ref oder Datum ±3 Tage (opts.ersatzFensterTage, Default 7) + Brutto ±0.10. Beide quelle-Werte gelten im Kern als provisorisch: echte Buchungen werden NIE überschrieben. vorschauProvisorischeErsetzungen ist NUR Anzeige — massgeblich ist der Kern-Schreibpfad.
 - Monatsrechnung bucht NIE ihren Gesamtbetrag; nur fehlende Lieferungen als provisorisch (`quelle:'monatsrechnung'`), Gruppierungsschlüssel `profilId|mr` hält MR- und LS-Buchungen im selben Import getrennt.
+
+## Rangordnung neu (Aug 2026): Monatsrechnung MASSGEBLICH
+- Modell: MR (final) > Lieferschein/AB (provisorisch). Kern-MR-Pfad überschreibt provisorische Buchungen mit finalen Werten, Lieferdatum je EINZELNER Lieferung aus der Rechnung (nie Belegdatum), setzt `final:true`; ohne Match frisch (final) gebucht, nie Gesamtbetrag zusätzlich.
+- Ergebnis-Interface fs-import: `uebersprungen` entfernt → `bereitsFinal` + `ueberschrieben`.
+- FINAL-Wache: finale Buchung wird von weiterer MR nur bei EXAKTER Referenz aktualisiert (idempotenter Re-Import); Datum/Betrag-Treffer ⇒ bereitsFinal-Skip. LS/AB-Upload nach Finalisierung ⇒ bereitsFinal (auch Ref-Match Monate ±1).
+- MR-Match: exakte Ref (Monate ±1), sonst Datum ≤ ersatzFensterTage (Default 0; Terravigna 3) + Brutto ±0.10; `vergeben`-Set: eine Bestandsbuchung deckt max. eine Lieferung pro Lauf.
+- Manuell-Heuristik: match.id beginnt NICHT mit `fs-`/`lpdf-` ⇒ manuell erfasst; UI verlangt Bestätigungs-Checkbox; Bestätigung an Fingerprint (id|date|amountGross sortiert) gebunden — jede Abweichung bricht Import ab.
+- MR-Altdaten ohne final-Flag = weiterhin provisorisch (rückwärtskompatibel).
+- Feldschlösschen-Grenze: gebündelte Fakturas (Teilmengen-Match) werden NICHT 1:1 überschrieben, nur bestätigt; Lückenfüller sind final.

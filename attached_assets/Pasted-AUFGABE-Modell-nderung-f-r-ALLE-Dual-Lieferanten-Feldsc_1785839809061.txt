@@ -1,0 +1,25 @@
+AUFGABE: Modell-Änderung für ALLE Dual-Lieferanten (Feldschlösschen, Fideco, Spahni, Gasser, Bohnenblust, Terravigna): Die Monatsrechnung ist MASSGEBLICH und überschreibt/korrigiert die Lieferscheine. Mandant Beaulieu (Struktur mandantenweit gültig).
+
+ÄNDERUNG gegenüber bisher: Bisher war der Lieferschein führend und die Monatsrechnung nur Lückenfüller. NEU: Die Monatsrechnung ist die massgebliche Quelle und überschreibt die während des Monats erfassten Lieferscheine mit den finalen Werten.
+
+RANGORDNUNG (neu): Monatsrechnung (final) > Lieferschein/Auftragsbestätigung (provisorisch).
+
+WÄHREND DES MONATS:
+1) Lieferscheine (bzw. bei Terravigna Auftragsbestätigungen) werden weiterhin erfasst — provisorisch, mit ihrem Lieferdatum und Positionen, damit die Kosten zeitnah sichtbar sind. Markierung "provisorisch".
+
+MONATSRECHNUNG (massgeblich, überschreibt):
+2) Beim Import der Monatsrechnung jede gelistete Lieferung gegen die erfassten Lieferscheine matchen — exakt über LS-Nr / Lieferungsnr, sonst Datum+Betrag (±0.10).
+3) Match gefunden → die provisorische Buchung wird mit den FINALEN Rechnungswerten ÜBERSCHRIEBEN: finaler Betrag, Positionen, und das LIEFERDATUM je Lieferung AUS DER RECHNUNG.
+4) KRITISCH: Immer das Lieferdatum der EINZELNEN Lieferung verwenden (aus „…vom <Datum>"), NIEMALS das Rechnungs-/Belegdatum am Monatsende. Die Wochen-Kostenanalyse muss auf dem echten Lieferdatum bleiben.
+5) Keine passende Lieferung vorhanden → frisch aus der Rechnung buchen (mit Lieferdatum).
+6) Die Monatsrechnung bucht NIE zusätzlich ihren Gesamtbetrag; jede Lieferung existiert am Ende genau einmal (Dedup über LS-Nr/Lieferungsnr).
+7) Nach Finalisierung durch die Rechnung: ein späterer erneuter Lieferschein-Upload derselben Lieferung verschlechtert die finalen Werte NICHT (Rechnung bleibt massgeblich) — er wird als „bereits final" angezeigt.
+
+SICHERHEIT / TRANSPARENZ:
+8) Vorschau vor dem Schreiben zeigt je Lieferung: "überschrieben (provisorisch→final): K · neu aus Rechnung: M · unverändert: U", inkl. alt→neu bei Betrag/Datum wo abweichend.
+9) Wurde eine Lieferung MANUELL bearbeitet, vor dem Überschreiben markieren/warnen (nicht still verwerfen) — erst nach Bestätigung überschreiben.
+10) Mehrere Rechnungen pro Monat/Zeitraum sind normal (Spahni 2×/Monat; Terravigna verschiedene Kunden-Nr) und stören sich nicht.
+
+RAHMEN: Mandantengetrennt, Konto/Kategorie je Profil, Preisüberwachung je Artikel-Nr, bestehender Import-Undo. Nie durch 0 teilen, leer statt 0.
+
+Kurz zusammenfassen: dass die Monatsrechnung überschreibt, aber das Lieferdatum je einzelner Lieferung erhalten bleibt.

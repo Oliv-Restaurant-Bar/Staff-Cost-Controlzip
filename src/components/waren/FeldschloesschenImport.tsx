@@ -7,12 +7,12 @@
  *   Zu-/Abschläge→4701 Betriebskosten, Leergut→Depot neutral). Preisüberwachung
  *   pro Material-Nr (gleiche Mechanik wie Transgourmet). Dublettensicher:
  *   Lieferant + Lieferung-Nr + Datum ersetzt den bestehenden Eintrag.
- * Teil B — Sammelrechnung = KONTROLLE (bucht NIE von selbst): Fakturas werden
- *   über Datum (±7 Tage) + Betrag (±0.10) gegen die erfassten Einzel-Lieferungen
- *   gematcht; VORHANDENE werden nie angefasst, FEHLENDE können aus den
- *   eingebetteten Rechnungs-Seiten übernommen werden — gekennzeichnet
- *   quelle='monatsrechnung' (provisorisch). Lädt man den echten Lieferschein
- *   später hoch, ersetzt er die provisorische Version (Lieferschein führend).
+ * Teil B — Sammelrechnung = MASSGEBLICH: Fakturas werden über Datum (±7 Tage)
+ *   + Betrag (±0.10) gegen die erfassten Einzel-Lieferungen gematcht;
+ *   VORHANDENE gelten als bestätigt (Fakturas bündeln oft mehrere Lieferscheine
+ *   — kein 1:1-Überschreiben möglich), FEHLENDE werden aus den eingebetteten
+ *   Rechnungs-Seiten übernommen — quelle='monatsrechnung' + final: ein späterer
+ *   Lieferschein-Upload verschlechtert die finalen Werte nicht mehr.
  * Teil C — Jahres-ZIP (Sammelrechnungen 2024/2025/…): bucht ALLE eingebetteten
  *   Lieferscheine mit ihrem Lieferdatum als Warenkosten (inkl. Preis-Historie)
  *   UND speichert die Monats-Zusammenfassungen als Historie; Upsert auf
@@ -282,7 +282,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         'Monatsrechnung: fehlende Lieferungen ergänzt',
         { quelle: 'monatsrechnung' },
       );
-      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferung(en) aus der Monatsrechnung ergänzt (provisorisch — echter Lieferschein ersetzt sie später)${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
+      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferung(en) aus der Monatsrechnung ergänzt (final — massgebliche Monatsrechnung)${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
       setUebernommen(prev => new Set([...prev, fakturaNr]));
       // Abgleich mit frischem Bestand aktualisieren
       const monate = [...new Set(sammel.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];
@@ -322,7 +322,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true, jahre });
       const res = lieferungen.length > 0
         ? await kernImportiereRechnungen(lieferungen.map(a => ({ r: fsAnhangAlsRechnung(a) })))
-        : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[] };
+        : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[], bereitsFinal: 0, ueberschrieben: 0 };
       const teile: string[] = [];
       for (const [jahr, eintraege] of proJahr) {
         const hres = await upsertFsHistorie(tenantId, jahr, eintraege); // Lock wird im Save-Pfad erneut geprüft
@@ -562,9 +562,9 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Die Monatsrechnung dient NUR der Kontrolle — vorhandene Lieferungen werden NIE angefasst. Fehlende können aus den
-            eingebetteten Rechnungs-Seiten übernommen werden (gekennzeichnet «aus Monatsrechnung», provisorisch); lädst du den
-            echten Lieferschein später hoch, ersetzt er die provisorische Version.
+            Die Monatsrechnung ist MASSGEBLICH. Vorhandene Lieferungen gelten als bestätigt (Fakturas bündeln oft mehrere
+            Lieferscheine). Fehlende werden aus den eingebetteten Rechnungs-Seiten final übernommen (gekennzeichnet
+            «aus Monatsrechnung»); ein späterer Lieferschein-Upload derselben Lieferung wird als «bereits final» übersprungen.
           </p>
           <div className="space-y-0.5">
             {abgleich.matches.map(m => (

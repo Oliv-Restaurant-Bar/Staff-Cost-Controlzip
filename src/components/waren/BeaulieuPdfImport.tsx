@@ -24,8 +24,7 @@ import {
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
 import {
-  abgleicheMonatsrechnung, vorschauProvisorischeErsetzungen,
-  type MonatsrechnungAbgleich, type ProvisorischVorschau,
+  abgleicheMonatsrechnung, type MonatsrechnungAbgleich,
 } from '@/lib/monatsrechnung-abgleich';
 import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
@@ -49,12 +48,13 @@ interface VorschauZeile {
   neuName: string;
   neuKonto: string;
   neuKategorie: string;
-  /** Dual-Lieferanten: Rolle dieses PDFs (Lieferschein führend vs. Kontrolle). */
+  /** Dual-Lieferanten: Rolle dieses PDFs. Monatsrechnung ist MASSGEBLICH und
+   *  überschreibt provisorische Lieferscheine/ABs mit den finalen Werten. */
   modus: 'lieferschein' | 'monatsrechnung';
-  /** Abgleich (nur modus='monatsrechnung'): vorhanden vs. fehlt. */
+  /** Abgleich (nur modus='monatsrechnung'): überschreiben/neu/unverändert. */
   abgleich?: MonatsrechnungAbgleich;
-  /** AB-als-Lieferschein-Profile: Vorschau «provisorisch ersetzt / neu». */
-  provVorschau?: ProvisorischVorschau;
+  /** Bestätigung nötig, weil manuell erfasste Buchungen überschrieben würden. */
+  bestaetigt?: boolean;
 }
 
 function num(s: string): number | null {
@@ -98,24 +98,18 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           }
           const text = reconstructGnPdfLines(extract.pages).map(l => l.text).join('\n');
           const erg = parseProfilPdf(text, aktuelleProfile);
-          // Dual-Lieferant (Feldschlösschen-Modell): PDF mit MEHREREN
-          // Lieferungen = Monatsrechnung (Kontrolle + Lückenfüller),
-          // genau eine Lieferung = Einzel-Lieferschein (führend).
+          // Dual-Lieferant: PDF mit MEHREREN Lieferungen = Monatsrechnung
+          // (MASSGEBLICH — überschreibt provisorische Buchungen final),
+          // genau eine Lieferung = Einzel-Lieferschein (provisorisch).
           const istDual = erg.profil?.belegtyp === 'dual';
-          // AB-als-Lieferschein-Profile (Terravigna): die RECHNUNG ist massgeblich
-          // und bucht direkt (ersetzt provisorische ABs) — nie Kontroll-Modus.
           const modus: VorschauZeile['modus'] =
-            istDual && erg.positionenErkannt && erg.lieferungen.length > 1
-              && !erg.profil?.abAlsLieferschein ? 'monatsrechnung' : 'lieferschein';
+            istDual && erg.positionenErkannt && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein';
           const abgleich = modus === 'monatsrechnung' && erg.profil
-            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen)
-            : undefined;
-          // AB-als-LS-Profil: Rechnung zeigt «provisorisch ersetzt: K · neu: M».
-          const provVorschau = erg.profil?.abAlsLieferschein && erg.belegart === 'rechnung' && erg.positionenErkannt
-            ? await vorschauProvisorischeErsetzungen(tenantId, erg.profil.name, erg.lieferungen)
+            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
+                erg.profil.abAlsLieferschein ? 3 : 0)
             : undefined;
           neu.push({
-            modus, abgleich, provVorschau,
+            modus, abgleich,
             fileName: f.name, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
@@ -191,12 +185,17 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
   const bereit = zeilen.filter(z => z.lieferant !== ''
     && istBuchbar(z)
     && (z.modus === 'monatsrechnung'
-      // Monatsrechnung: nur importierbar, wenn der Abgleich Lücken gefunden hat.
-      ? (z.abgleich?.fehlt ?? 0) > 0
+      // Monatsrechnung (MASSGEBLICH): importierbar, sobald Lieferungen erkannt
+      // sind; würden MANUELL erfasste Buchungen überschrieben, erst nach
+      // ausdrücklicher Bestätigung.
+      ? (z.ergebnis.lieferungen.length > 0
+        && ((z.abgleich?.manuell ?? 0) === 0 || z.bestaetigt === true))
       : (z.datum !== '' && num(z.netto) !== null)));
   const offen = zeilen.filter(z => istBuchbar(z)
     && (z.lieferant === ''
-      || (z.modus !== 'monatsrechnung' && (z.datum === '' || num(z.netto) === null)))).length;
+      || (z.modus === 'monatsrechnung'
+        ? ((z.abgleich?.manuell ?? 0) > 0 && z.bestaetigt !== true)
+        : (z.datum === '' || num(z.netto) === null)))).length;
   const gesperrt = zeilen.filter(z => !istBuchbar(z)).length;
 
   async function handleImport() {
@@ -224,21 +223,27 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         const key = quelle ? `${profil.id}|${quelle}` : profil.id;
         const eintrag = proProfil.get(key) ?? { profil: { ...profil, konto }, rechnungen: [], quelle };
         if (istMr) {
-          // Dual-Modell: Monatsrechnung = Kontrolle + Lückenfüller. NUR die
-          // fehlenden Lieferungen werden (provisorisch) gebucht — vorhandene
-          // bleiben unangetastet, der Gesamtbetrag wird NIE zusätzlich gebucht.
-          // Abgleich UNMITTELBAR vor dem Schreiben frisch rechnen (Vorschau
-          // kann veraltet sein, z.B. wenn inzwischen Lieferscheine erfasst
-          // wurden) — weicht er ab, abbrechen und neu anzeigen.
-          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, row.ergebnis.lieferungen);
-          if (row.abgleich && frisch.fehlt !== row.abgleich.fehlt) {
-            patch(zeilen.indexOf(row), { abgleich: frisch });
-            toast.warning(`${row.fileName}: Der Abgleich hat sich geändert (inzwischen erfasste Lieferungen) — bitte neu prüfen. Nichts importiert.`);
+          // MASSGEBLICH: ALLE Lieferungen der Monatsrechnung werden gebucht —
+          // der Kern überschreibt gematchte provisorische Buchungen mit den
+          // finalen Werten (Lieferdatum je Lieferung aus der Rechnung) und
+          // bucht Fehlendes frisch; der Gesamtbetrag wird NIE zusätzlich
+          // gebucht. Manuell-Schutz UNMITTELBAR vor dem Schreiben frisch
+          // prüfen (Vorschau kann veraltet sein).
+          const fenster = profil.abAlsLieferschein ? 3 : 0;
+          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, row.ergebnis.lieferungen, fenster);
+          // Bestätigung ist an den EXAKTEN Manuell-Fingerprint gebunden
+          // (IDs + alte Werte der manuell erfassten Treffer) — jede Abweichung
+          // (auch bei gleicher Anzahl) macht sie ungültig.
+          const fingerprint = (a?: MonatsrechnungAbgleich) => (a?.eintraege ?? [])
+            .filter(e => e.manuell && e.match)
+            .map(e => `${e.match!.id}|${e.match!.date}|${e.match!.amountGross}`)
+            .sort().join(';');
+          if (frisch.manuell > 0 && fingerprint(frisch) !== fingerprint(row.abgleich)) {
+            patch(zeilen.indexOf(row), { abgleich: frisch, bestaetigt: false });
+            toast.warning(`${row.fileName}: Die manuell erfassten Treffer haben sich seit der Vorschau geändert — bitte neu prüfen und bestätigen. Nichts importiert.`);
             return;
           }
-          for (const e of frisch.eintraege) {
-            if (e.status === 'fehlt') eintrag.rechnungen.push({ r: e.lieferung });
-          }
+          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l });
           proProfil.set(key, eintrag);
           continue;
         }
@@ -287,7 +292,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       }
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
 
-      let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0;
+      let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0, ueberschrieben = 0, bereitsFinal = 0;
       const lieferanten: string[] = [];
       for (const { profil, rechnungen, quelle } of proProfil.values()) {
         if (rechnungen.length === 0) continue;
@@ -296,11 +301,12 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           extraMapping: { [profil.kategorie]: profil.konto },
           defaultKonto: profil.konto,
           ...(quelle ? { quelle } : {}),
-          // Rechnung↔AB-Match ohne Referenz-Treffer: enges ±3-Tage-Fenster.
-          ...(!quelle && profil.abAlsLieferschein ? { ersatzFensterTage: 3 } : {}),
+          // AB↔Rechnungs-Match ohne Referenz-Treffer: enges ±3-Tage-Fenster.
+          ...(profil.abAlsLieferschein ? { ersatzFensterTage: 3 } : {}),
         });
         neu += erg.neu; ersetzt += erg.ersetzt; aenderungen += erg.preisAenderungen;
         provErsetzt += erg.provisorischErsetzt;
+        ueberschrieben += erg.ueberschrieben; bereitsFinal += erg.bereitsFinal;
         if (!lieferanten.includes(profil.name)) lieferanten.push(profil.name);
       }
       await syncSuppliers([...proProfil.values()].map(x => x.profil));
@@ -315,7 +321,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       });
       setUndoRefresh(k => k + 1);
       setZeilen(z => z.filter(row => !bereit.includes(row)));
-      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${provErsetzt > 0 ? ` (davon ${provErsetzt} provisorische)` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
+      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final überschrieben)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
       onImported();
     } catch (e) {
       console.error('[BEAULIEU-PDF] Import fehlgeschlagen:', e);
@@ -379,9 +385,9 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                     ? <span className="text-amber-600 font-medium">Lieferant offen{erg.mwstNrn[0] ? ` · CHE-${erg.mwstNrn[0]}` : ''}</span>
                     : <span className="text-muted-foreground">
                         {istAb
-                          ? 'Auftragsbestätigung → provisorische Lieferung (Monatsrechnung ersetzt sie)'
+                          ? 'Auftragsbestätigung → provisorische Lieferung (Monatsrechnung überschreibt sie final)'
                           : row.modus === 'monatsrechnung'
-                          ? `Monatsrechnung (Kontrolle + Lückenfüller) · ${erg.lieferungen.length} Lieferungen`
+                          ? `Monatsrechnung (massgeblich — überschreibt provisorische Buchungen) · ${erg.lieferungen.length} Lieferungen`
                           : erg.positionenErkannt
                           ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen`
                           : 'Kopf-Buchung (ohne Positionen)'}
@@ -392,7 +398,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                         const modus = v as VorschauZeile['modus'];
                         if (modus === 'monatsrechnung' && !row.abgleich) {
                           const p = profilById.get(row.lieferant);
-                          const abgleich = p ? await abgleicheMonatsrechnung(tenantId, p.name, erg.lieferungen) : undefined;
+                          const abgleich = p ? await abgleicheMonatsrechnung(tenantId, p.name, erg.lieferungen, p.abAlsLieferschein ? 3 : 0) : undefined;
                           patch(i, { modus, abgleich });
                         } else patch(i, { modus });
                       }}>
@@ -400,8 +406,8 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="lieferschein">Einzel-Lieferschein(e) — führend</SelectItem>
-                        <SelectItem value="monatsrechnung">Monatsrechnung — Kontrolle + Lückenfüller</SelectItem>
+                        <SelectItem value="lieferschein">Einzel-Lieferschein(e) — provisorisch</SelectItem>
+                        <SelectItem value="monatsrechnung">Monatsrechnung — massgeblich (überschreibt)</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
@@ -472,31 +478,37 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                   </div>
                 )}
 
-                {row.provVorschau && (
-                  <div className="text-[11px] text-muted-foreground" data-testid={`beaulieu-pdf-provvorschau-${i}`}>
-                    provisorisch ersetzt: {row.provVorschau.ersetzt} · neu aus Rechnung: {row.provVorschau.neu} · Summe
-                    netto CHF {row.provVorschau.summeNetto.toFixed(2)}
-                  </div>
-                )}
-
                 {row.modus === 'monatsrechnung' && row.abgleich && (
                   <div className="text-[11px] border-t border-border/40 pt-2 space-y-1"
                     data-testid={`beaulieu-pdf-abgleich-${i}`}>
-                    <div className={row.abgleich.fehlt === 0 ? 'text-emerald-600 font-medium' : 'text-foreground font-medium'}>
-                      bereits vorhanden, unverändert: {row.abgleich.vorhanden} · aus Monatsrechnung
-                      ergänzt (fehlten): {row.abgleich.fehlt} · Summe erfasst
-                      CHF {row.abgleich.summeErfasst.toFixed(2)} / Monatsrechnung
-                      CHF {row.abgleich.summeMonatsrechnung.toFixed(2)}
+                    <div className="text-foreground font-medium">
+                      überschrieben (provisorisch→final): {row.abgleich.ueberschrieben} · neu aus
+                      Rechnung: {row.abgleich.neu} · unverändert: {row.abgleich.unveraendert} · Summe
+                      Monatsrechnung CHF {row.abgleich.summeMonatsrechnung.toFixed(2)}
                     </div>
-                    {row.abgleich.fehlt === 0 && (
-                      <div className="text-emerald-600">Vollständig — die Monatsrechnung bucht nichts zusätzlich.</div>
-                    )}
-                    {row.abgleich.eintraege.filter(e => e.status === 'fehlt').map((e, j) => (
-                      <div key={j} className="text-amber-600">
-                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} fehlte
-                        — wird ergänzt (provisorisch; echter Lieferschein ersetzt sie später)
+                    {row.abgleich.eintraege.filter(e => e.status === 'ueberschreiben').map((e, j) => (
+                      <div key={j} className="text-muted-foreground">
+                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} wird final
+                        {e.diffBetrag ? ` · Betrag CHF ${e.diffBetrag.alt.toFixed(2)} → ${e.diffBetrag.neu.toFixed(2)}` : ''}
+                        {e.diffDatum ? ` · Datum ${e.diffDatum.alt.split('-').reverse().join('.')} → ${e.diffDatum.neu.split('-').reverse().join('.')}` : ''}
+                        {e.manuell ? ' · manuell erfasst!' : ''}
                       </div>
                     ))}
+                    {row.abgleich.eintraege.filter(e => e.status === 'neu').map((e, j) => (
+                      <div key={j} className="text-amber-600">
+                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} fehlte
+                        — wird frisch (final) gebucht
+                      </div>
+                    ))}
+                    {row.abgleich.manuell > 0 && (
+                      <label className="flex items-center gap-2 text-amber-600 font-medium cursor-pointer"
+                        data-testid={`beaulieu-pdf-manuell-bestaetigen-${i}`}>
+                        <input type="checkbox" checked={row.bestaetigt === true}
+                          onChange={e => patch(i, { bestaetigt: e.target.checked })} />
+                        {row.abgleich.manuell} manuell erfasste Buchung{row.abgleich.manuell === 1 ? '' : 'en'} würde
+                        {row.abgleich.manuell === 1 ? '' : 'n'} überschrieben — Überschreiben ausdrücklich bestätigen.
+                      </label>
+                    )}
                   </div>
                 )}
 

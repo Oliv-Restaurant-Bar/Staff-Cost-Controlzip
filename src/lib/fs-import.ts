@@ -3,11 +3,17 @@
  * Bucht Rechnungen/Lieferscheine mit ihrem LIEFERDATUM, per-Monat gecacht
  * (jahresgrosse Läufe = wenige KV-Writes).
  * - Upsert auf (Mandant + Lieferant + Lieferung-Nr + Datum) — nie doppelt.
- * - Lieferschein ist FÜHREND: ohne exakten Treffer ersetzt er eine nahe
- *   PROVISORISCHE «aus Monatsrechnung»-Lieferung (gleiche Referenz oder
- *   ±7 Tage / ±0.10 CHF), auch über Nachbarmonatsgrenzen; deren Positionen
- *   und Preis-Hinweise werden mit aufgeräumt.
- * - opts.quelle='monatsrechnung' kennzeichnet Lückenfüller aus der Monatsrechnung.
+ * - RANGORDNUNG (Dual-Modell): Monatsrechnung (final) > Lieferschein/AB
+ *   (provisorisch). opts.quelle='monatsrechnung' ist MASSGEBLICH: jede
+ *   Lieferung matcht bestehende Buchungen (exakte Referenz, sonst Datum im
+ *   Fenster + Brutto ±0.10, Monate ±1) und ÜBERSCHREIBT sie mit den finalen
+ *   Rechnungswerten — Lieferdatum je EINZELNER Lieferung aus der Rechnung,
+ *   nie das Belegdatum. Ohne Treffer wird frisch (final) gebucht; der
+ *   Gesamtbetrag der Rechnung wird NIE zusätzlich gebucht.
+ * - Lieferschein/AB nach Finalisierung: ein erneuter Upload derselben
+ *   Lieferung überschreibt die finale Buchung NICHT (Zähler bereitsFinal).
+ * - Lieferschein ersetzt weiterhin nahe provisorische Buchungen (Monats-
+ *   rechnungs-Altdaten ohne final-Flag oder Auftragsbestätigungen).
  */
 import {
   loadMonthInvoices, saveMonthInvoices, loadPreisHistorie, savePreisHistorie,
@@ -36,9 +42,12 @@ export interface FsImportErgebnis {
   provisorischErsetzt: number;
   preisAenderungen: number;
   monate: string[];
-  /** Nur quelle='monatsrechnung': übersprungen, weil bereits eine ECHTE
-   *  (nicht-provisorische) Buchung existiert — die wird NIE überschrieben. */
-  uebersprungen: number;
+  /** Lieferschein/AB-Upload traf eine FINALE (Monatsrechnungs-)Buchung —
+   *  die wird NIE verschlechtert; der Upload wurde übersprungen. */
+  bereitsFinal: number;
+  /** Nur quelle='monatsrechnung': bestehende provisorische Buchungen, die mit
+   *  den finalen Rechnungswerten überschrieben wurden. */
+  ueberschrieben: number;
 }
 
 export async function kernImportiereFsRechnungen(
@@ -46,11 +55,13 @@ export async function kernImportiereFsRechnungen(
   lieferant: string,
   rechnungen: FsImportRechnung[],
   opts?: {
-    /** Provisorische Quelle: 'monatsrechnung' (Lückenfüller) oder
-     *  'auftragsbestaetigung' (AB gilt als Lieferschein, z.B. Terravigna). */
+    /** 'monatsrechnung' = MASSGEBLICH/final (überschreibt provisorische
+     *  Buchungen); 'auftragsbestaetigung' = provisorisch (AB gilt als
+     *  Lieferschein, z.B. Terravigna). */
     quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
-    /** Fenster (Tage) für den Ersatz naher provisorischer Buchungen ohne
-     *  Referenz-Treffer (Default 7; Terravigna-Rechnung↔AB: 3). */
+    /** Datums-Fenster (Tage) für Matches ohne Referenz-Treffer.
+     *  Lieferschein→provisorisch: Default 7. Monatsrechnung→Bestand:
+     *  Default 0 (exaktes Datum); Terravigna Rechnung↔AB: 3. */
     ersatzFensterTage?: number;
     /** Notiz-Präfix (Default «Feldschlösschen-PDF») — z.B. «Lieferanten-PDF». */
     noteLabel?: string;
@@ -70,7 +81,9 @@ export async function kernImportiereFsRechnungen(
   const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
   const mapping = [...extraRegeln, ...mitFsDefaults(mappingRoh)];
   let hist = historie;
-  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, uebersprungen = 0;
+  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, bereitsFinal = 0, ueberschrieben = 0;
+  // Jede bestehende Buchung deckt höchstens EINE Lieferung dieses Laufs.
+  const vergeben = new Set<string>();
   const alleAenderungen: PreisAenderung[] = [];
   // Per-Monat-Caches: einmal lesen, am Ende einmal schreiben.
   const bestandCache = new Map<string, InvoiceEntry[]>();
@@ -96,33 +109,80 @@ export async function kernImportiereFsRechnungen(
   for (const { r, nettoOffiziell, bruttoOffiziell } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
-    let vorhanden = bestand.find(e =>
-      (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
+    const lief = lieferant.trim().toLowerCase();
+    let vorhanden = bestand.find(e => !vergeben.has(e.id)
+      && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
       && e.date === r.datum
-      && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
+      && e.supplierName.trim().toLowerCase() === lief);
     let vorhandenMonat = month;
-    // Provisorische Importe (Monatsrechnung/Auftragsbestätigung): eine ECHTE
-    // (nicht-provisorische) Buchung wird NIE überschrieben — nur eigene
-    // provisorische Einträge dürfen per Upsert aktualisiert werden.
-    const istProv = (q: InvoiceEntry['quelle']) => q === 'monatsrechnung' || q === 'auftragsbestaetigung';
-    if (opts?.quelle && vorhanden && !istProv(vorhanden.quelle)) {
-      uebersprungen++;
-      continue;
-    }
-    // Lieferschein/Rechnung ersetzt eine nahe provisorische Buchung
-    // (aus Monatsrechnung ODER Auftragsbestätigung).
-    if (!vorhanden && !opts?.quelle) {
+    // Provisorisch = Lieferschein/AB oder Monatsrechnungs-ALTDATEN ohne
+    // final-Flag; final = massgebliche Monatsrechnungs-Buchung.
+    const istProv = (e: InvoiceEntry) => !e.final;
+    const istMr = opts?.quelle === 'monatsrechnung';
+    if (istMr) {
+      // MASSGEBLICH: ohne exakten Treffer matcht die Lieferung JEDE bestehende
+      // Buchung des Lieferanten — exakte Referenz (Monate ±1), sonst Datum im
+      // Fenster (Default 0 = exakt) + Brutto ±0.10 — und überschreibt sie.
       const brutto = bruttoOffiziell ?? r.bruttoTotal;
-      const fenster = opts?.ersatzFensterTage ?? 7;
-      for (const nm of nachbarMonate(r.datum)) {
-        const nb = (await holeMonat(nm)).bestand;
-        const prov = nb.find(e => istProv(e.quelle)
-          && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase()
-          && ((e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-            || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
-        if (prov) { vorhanden = prov; vorhandenMonat = nm; provisorischErsetzt++; break; }
+      const fenster = opts?.ersatzFensterTage ?? 0;
+      const refMatch = (e: InvoiceEntry) =>
+        r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase();
+      if (!vorhanden) {
+        for (const nm of nachbarMonate(r.datum)) {
+          const nb = (await holeMonat(nm)).bestand;
+          const m = nb.find(e => !vergeben.has(e.id)
+            && e.supplierName.trim().toLowerCase() === lief
+            && (refMatch(e)
+              || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+          if (m) { vorhanden = m; vorhandenMonat = nm; break; }
+        }
+      }
+      // FINAL-WACHE: eine bereits finalisierte Buchung wird von einer weiteren
+      // Monatsrechnung NUR bei exakter Referenz (= dieselbe Lieferung, idem-
+      // potenter Re-Import) aktualisiert — ein blosser Datum/Betrag-Treffer
+      // überschreibt sie NIE (falsche/zweite MR darf finale Daten nicht ändern).
+      if (vorhanden && vorhanden.final === true && !refMatch(vorhanden)) {
+        vergeben.add(vorhanden.id);
+        bereitsFinal++;
+        continue;
+      }
+      if (vorhanden && istProv(vorhanden)) ueberschrieben++;
+    } else {
+      // Lieferschein/AB: eine FINALE Buchung wird NIE verschlechtert —
+      // Upload derselben Lieferung wird übersprungen («bereits final»).
+      if (vorhanden?.final) { bereitsFinal++; continue; }
+      if (opts?.quelle === 'auftragsbestaetigung' && vorhanden && vorhanden.quelle !== 'auftragsbestaetigung') {
+        // AB upsertet nur die EIGENE provisorische Buchung, nie fremde.
+        continue;
+      }
+      // Lieferschein ersetzt eine nahe provisorische Buchung (AB/MR-Altdaten).
+      if (!vorhanden && !opts?.quelle) {
+        const brutto = bruttoOffiziell ?? r.bruttoTotal;
+        const fenster = opts?.ersatzFensterTage ?? 7;
+        for (const nm of nachbarMonate(r.datum)) {
+          const nb = (await holeMonat(nm)).bestand;
+          const kandidat = nb.find(e => !vergeben.has(e.id)
+            && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung')
+            && e.supplierName.trim().toLowerCase() === lief
+            && ((e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
+              || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+          if (kandidat) { vorhanden = kandidat; vorhandenMonat = nm; provisorischErsetzt++; break; }
+        }
+        // FINALE Buchung derselben Lieferung (Referenz, Monate ±1)? Dann ist
+        // sie bereits finalisiert — Lieferschein überspringen («bereits final»).
+        if (!vorhanden && r.rechnungsNr.trim() !== '') {
+          let final = false;
+          for (const nm of nachbarMonate(r.datum)) {
+            const nb = (await holeMonat(nm)).bestand;
+            if (nb.some(e => e.final === true
+              && e.supplierName.trim().toLowerCase() === lief
+              && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase())) { final = true; break; }
+          }
+          if (final) { bereitsFinal++; continue; }
+        }
       }
     }
+    if (vorhanden) vergeben.add(vorhanden.id);
     const positionen = uebernehmeManuelleKontierung(
       positionenAusRechnung(r, mapping),
       vorhanden ? posCache.get(vorhandenMonat)?.[vorhanden.id] : undefined,
@@ -150,7 +210,7 @@ export async function kernImportiereFsRechnungen(
         const echte = r.positionen.filter(p => p.artNr !== '' || p.preis > 0).length;
         const basis = echte > 0 ? `${label} · ${echte} Positionen` : label;
         return opts?.quelle === 'monatsrechnung'
-          ? `Aus Monatsrechnung übernommen (provisorisch) · ${r.positionen.length} Positionen`
+          ? `Aus Monatsrechnung (final) · ${r.positionen.length} Positionen`
           : opts?.quelle === 'auftragsbestaetigung'
           ? `provisorisch (Auftragsbestätigung) · ${r.positionen.length} Positionen`
           : basis;
@@ -159,6 +219,9 @@ export async function kernImportiereFsRechnungen(
       kategorie: kategorieFromKonto(haupt),
       ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
       ...(opts?.quelle ? { quelle: opts.quelle } : {}),
+      // Monatsrechnung finalisiert die Lieferung — spätere LS/AB-Uploads
+      // dürfen diese Werte nicht mehr verschlechtern.
+      ...(istMr ? { final: true } : {}),
       createdAt: vorhanden?.createdAt ?? jetzt,
       updatedAt: jetzt,
     };
@@ -186,5 +249,5 @@ export async function kernImportiereFsRechnungen(
     await savePreisHinweise(tenantId, m, hinweisCache.get(m)!);
   }
   await savePreisHistorie(tenantId, hist);
-  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], uebersprungen };
+  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben };
 }
