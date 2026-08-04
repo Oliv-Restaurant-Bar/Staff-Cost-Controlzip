@@ -136,7 +136,16 @@ function position(
 
 /** Spahni: «01250  Rindsentrecôte   6.000 KG  43.10  [Rab]  258.60 1» */
 function parseSpahniLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
-  const { bloecke } = teileInBloecke(lines, /LS-Nr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+  let { bloecke } = teileInBloecke(lines, /LS-Nr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+  // Einzel-Lieferschein-Layout: keine «LS-Nr. … vom …»-Blöcke, dafür
+  // «Liefersch./Kd.-Nr. : <LS-Nr> / XBEA» + «Lieferdatum» → EIN Block übers Ganze.
+  if (bloecke.length === 0) {
+    const text = lines.join('\n');
+    const ls = /Liefersch\.?\s*\/?\s*Kd\.-?Nr\.?\s*:?\s*(\d{4,10})\s*\/\s*\w+/i.exec(text);
+    const datum = /Lieferdatum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(text);
+    const iso = datum ? parseDatumCH(datum[1]) : null;
+    if (ls && iso) bloecke = [{ nr: ls[1], datum: iso, zeilen: lines }];
+  }
   const zeileRe = /^\s*([A-Z]?\d{4,6})\s+(.+?)\s+(-?[\d’'.,]+)\s+(KG|STK?|PC|LT)\b\s+([\d’'.,]+)\s+(?:([\d’'.,]+)\s+)?(-?[\d’'.,]+)\s+(\d)\s*$/i;
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
@@ -292,14 +301,21 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     mwst: sucheBetrag(text, [new RegExp(`[\\d.]+\\s*%\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]),
     mwstSatz: 8.1,
   }),
-  spahni: (text) => ({
-    ...generischerKopf(text),
-    rechnungsNr: suche(text, [/RECHNUNG\s*:?\s*(\d{4,10})/i]),
-    // «Total CHF 3'796.25» (netto) und «1 MWST 2.60 % 98.70»
-    netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
-    mwst: sucheBetrag(text, [new RegExp(`MWST\\s+[\\d.]+\\s*%\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
-    mwstSatz: 2.6,
-  }),
+  spahni: (text) => {
+    const g = generischerKopf(text);
+    // Einzel-Lieferschein: «Liefersch./Kd.-Nr. : 5210840 / XBEA» + «Lieferdatum».
+    const ls = /Liefersch\.?\s*\/?\s*Kd\.-?Nr\.?\s*:?\s*(\d{4,10})\s*\/\s*\w+/i.exec(text);
+    const lieferdatum = parseDatumCH(suche(text, [/Lieferdatum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/RECHNUNG\s*:?\s*(\d{4,10})/i]) ?? (ls ? ls[1] : null),
+      lieferdatum: lieferdatum ?? g.lieferdatum,
+      // «Total CHF 3'796.25» (netto) und «1 MWST 2.60 % 98.70»
+      netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
+      mwst: sucheBetrag(text, [new RegExp(`MWST\\s+[\\d.]+\\s*%\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
+      mwstSatz: 2.6,
+    };
+  },
   fideco: (text) => {
     const g = generischerKopf(text);
     // «MwSt.-Kz. 1: Netto 2.60% 3.416,45 CHF MwSt. 2.60% 88,85 CHF» — Kz-Zeilen summieren.

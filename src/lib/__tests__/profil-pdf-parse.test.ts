@@ -47,6 +47,22 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.mwst).toBe(98.7);
     expect(r.mwstSatz).toBe(2.6);
   });
+  it('Spahni Einzel-Lieferschein 5210840: netto 284.90 / MwSt 7.40 (2.6%), Lieferdatum 04.08.26', () => {
+    const r = parse('spahni-ls-5210840.txt');
+    expect(r.profil?.id).toBe('spahni');
+    expect(r.rechnungsNr).toBe('5210840');
+    expect(r.netto).toBe(284.9);
+    expect(r.mwst).toBe(7.4);
+    expect(r.mwstSatz).toBe(2.6);
+    expect(r.lieferdatum).toBe('2026-08-04');
+    // Stufe 2: EIN Block mit LS-Nr als Rechnungs-Nr, Positionssumme = Netto
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].rechnungsNr).toBe('5210840');
+    expect(r.lieferungen[0].datum).toBe('2026-08-04');
+    expect(r.lieferungen[0].positionen).toHaveLength(2);
+    expect(r.lieferungen[0].nettoTotal).toBe(284.9);
+  });
   it('Fideco 5356149: netto 3416.45 / MwSt 88.85 (2.6%)', () => {
     const r = parse('fideco-5356149.txt');
     expect(r.profil?.id).toBe('fideco');

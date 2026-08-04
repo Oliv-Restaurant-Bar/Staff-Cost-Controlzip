@@ -1,0 +1,23 @@
+AUFGABE: Metzgerei Spahni auf Dual-Modell (wie Fideco/Feldschlösschen), mit ZWEI Sammelrechnungen pro Monat. Mandant Beaulieu.
+
+BELEGTYP Spahni = "Einzel-Lieferscheine + Sammelrechnung (Dual)". Besonderheit: Spahni liefert die Sammelrechnung ZWEIMAL pro Monat — eine für 01.–15., eine für 16.–Monatsende.
+
+VERHALTEN:
+1) EINZEL-LIEFERSCHEIN (PDF oder manuell) = FÜHREND:
+   - Erkennung: "Liefersch./Kd.-Nr. : <LS-Nr> / XBEA", "Lieferdatum", Positionen, "Total CHF" (netto), MWST 2.6 %.
+   - bucht Warenkosten mit Lieferdatum, Konto 4060 (Fleisch). Identität = LS-Nr; Re-Upload = Upsert (nie doppelt).
+   - Preisüberwachung pro Art.-Nr (Stufe 2).
+2) SAMMELRECHNUNG = KONTROLLE + LÜCKENFÜLLER, NIE Überschreiben:
+   a) WICHTIG: NICHT "eine Rechnung pro Monat" annehmen. Jede Sammelrechnung kontrolliert GENAU die von IHR aufgelisteten Lieferscheine (die "LS-Nr … vom …"-Zeilen) — das deckt automatisch die Monatshälfte ab. Mehrere Sammelrechnungen pro Monat sind normal und dürfen sich nicht gegenseitig stören.
+   b) Jede gelistete LS-Nr gegen die erfassten Lieferscheine matchen (exakt über LS-Nr, sonst Datum+Betrag ±0.10).
+   c) Bereits vorhanden → unverändert (Lieferdatum bleibt).
+   d) Fehlt → aus der Sammelrechnung ergänzen (Positionen + LS-Datum), als "aus Sammelrechnung ergänzt (provisorisch)" markieren, mit Hinweis "Lieferung <LS-Nr> vom <Datum> fehlte — ergänzt".
+   e) Späterer echter Lieferschein ersetzt die provisorische Version.
+   f) Ein Lieferschein gehört zu genau EINER Sammelrechnung(-Hälfte) — kein Doppel, keine Kollision zwischen der 1.–15. und der 16.–Monatsende-Rechnung.
+3) VORSCHAU je Sammelrechnung: "Zeitraum lt. gelisteten Lieferungen · bereits vorhanden: K · ergänzt (fehlten): M · Summe erfasst vs. Sammelrechnung".
+
+RAHMEN: Mandant Beaulieu. Vorschau vor Schreiben + Undo. Nie durch 0 teilen, leer statt 0.
+
+KONTROLLWERTE (Beaulieu): Lieferschein 5210840 (04.08.26) = netto 284.90 / MwSt 7.40 (2.6%) / Total 292.30, Konto 4060. Sammelrechnung 8646158 (30.06.26) = netto 3'796.25.
+
+Kurz zusammenfassen: dass Spahni zwei Sammelrechnungen/Monat verträgt und wie fehlende Lieferungen markiert werden.
