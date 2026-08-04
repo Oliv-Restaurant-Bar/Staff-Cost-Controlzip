@@ -52,6 +52,14 @@ export interface PersonalkostenExportInput {
   pkqProzent: number | null;
   fixRows: FixExportRow[];
   flexRows: FlexExportRow[];
+  /**
+   * Manuell übersteuertes Flex-Ist-Total (Lohnabrechnung). Wenn gesetzt,
+   * zeigt auch die Abschnitts-Totalzeile «Total FLEX» diesen Wert statt der
+   * Zeilensumme — sonst stünden zwei verschiedene Flex-Totale in der Datei.
+   */
+  flexIstTotalOverride?: number | null;
+  /** Hinweis zu manuellen Werten (z.B. «2 Zeilen manuell überschrieben»). */
+  flexManualNote?: string | null;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -141,10 +149,18 @@ export function buildPersonalkostenWorkbook(input: PersonalkostenExportInput): E
   }
   const fsumStd = (f: (r: FlexExportRow) => number) => r2(input.flexRows.reduce((s, r) => s + f(r), 0));
   const fsumChf = (f: (r: FlexExportRow) => number) => r0(input.flexRows.reduce((s, r) => s + f(r), 0));
+  // Total-Override (Lohnabrechnung): Abschnitts-Total zeigt denselben Wert wie
+  // die Übersicht — nie zwei verschiedene Flex-Totale in einer Datei.
+  const flexIstTotal = input.flexIstTotalOverride != null
+    ? r0(input.flexIstTotalOverride)
+    : fsumChf((r) => r.flexIst);
+  const flexPlanTotal = fsumChf((r) => r.flexPlan);
   fmtCells(addBold([
-    'Total FLEX', '', '', fsumStd((r) => r.planStd), fsumStd((r) => r.istStd),
-    fsumChf((r) => r.flexPlan), fsumChf((r) => r.flexIst), fsumChf((r) => r.diff),
+    input.flexIstTotalOverride != null ? 'Total FLEX (Ist manuell)' : 'Total FLEX',
+    '', '', fsumStd((r) => r.planStd), fsumStd((r) => r.istStd),
+    flexPlanTotal, flexIstTotal, r0(flexIstTotal - flexPlanTotal),
   ]), FLEX_FMT);
+  if (input.flexManualNote) addRow([input.flexManualNote]);
 
   return wb;
 }

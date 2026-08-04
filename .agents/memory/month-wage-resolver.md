@@ -10,3 +10,7 @@ Regeln (SSOT `applyEffectiveWagesForMonth` in wage-history.ts, konsumiert von Pe
 - Logging: `[WAGE-MONTH] employee|monat|lohnart|quelle`.
 **Why:** Stammsatz-Klassifikation ordnete MA mit Lohnhistorie im falschen Topf ein (FLEX statt FIX) → massiv falsche Flex-Plan-Kosten.
 **How to apply:** Jede neue Ansicht, die FIX/FLEX klassifiziert, MUSS über den Monats-Resolver gehen; nie `contractType` aus dem Stammsatz direkt für Monatslogik verwenden; bei id-keyed Stundenmaps immer an `::flexsplit` denken.
+
+## salary13 & Rückschreib-Schutz
+- has13thSalary kommt IMMER aus dem salary13 der massgebenden Lohnhistorie-Phase (beide Enricher, beide Phasen; Split: FIX-Seite = monthly.salary13, FLEX-Pseudo-MA = split.hourly.salary13). Stammsatz-Flag nur als Fallback ohne Historie — sonst leckt der 13. des Monatslohn-Vertrags in frühere Stundenlohn-Phasen (calcSL).
+- **Achtung Rückfluss:** Ansichten, die monats-angereicherte Employee-Objekte halten, dürfen bei Edits NIE das angereicherte Objekt upserten — immer den unangereicherten Stammsatz (Raw-Map) als Persistenz-Basis nehmen, sonst werden verdrängte Löhne/Phasen-Flags in employees geschrieben.

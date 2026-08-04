@@ -78,3 +78,69 @@ describe('applyEffectiveWages — Stundenlohn-Phase verdrängt Stammsatz-Monatsl
     expect(out.contractType).toBe('monthly');
   });
 });
+
+// ── Regression: has13thSalary aus der Historie-Phase, nie aus dem Stammsatz ──
+// Fall Ibrahim: Juli-Phase Stundenlohn 25.00 OHNE 13. (salary_13=false), ab
+// August Monatslohn 5'700 MIT 13. Der Stammsatz trägt has13thSalary=true —
+// vor dem Fix leckte das Flag in die Stundenlohn-Phase und calcSL rechnete
+// den 13. fälschlich in den AG-Stundensatz ein.
+const hourlyJulyNo13 = {
+  id: 'w3', employee_id: '105', restaurant_id: 'oliv', valid_from: '2026-07-01',
+  hourly_wage: 25.00, monthly_salary: 0, monthly_salary_with_13th: 0,
+  salary_13: false, notes: '', created_at: 'x',
+};
+
+const empWith13Flag = (): Employee => ({ ...emp(), has13thSalary: true } as unknown as Employee);
+
+describe('applyEffectiveWages — salary13 der massgebenden Phase überschreibt Stammsatz-Flag', () => {
+  it('Juli (hourly, salary13=false) → has13thSalary false, AG/h 32.66 bei 15.7% Sozial', async () => {
+    mockRows = [hourlyJulyNo13, hourlyRow]; // order desc: neueste zuerst
+    const [out] = await applyEffectiveWages([empWith13Flag()], '2026-07-01', 'oliv');
+    expect(out.hourlyWage).toBe(25.00);
+    expect(out.has13thSalary).toBe(false);
+    // Kontrollwert: 25.00 × (1 + 10.65% Ferien + 2.27% Feiertag) × 1.157 = 32.66
+    const { getEmployerCostRate } = await import('@/lib/employee-rate');
+    const { DEFAULT_SOCIAL_COST_RATES } = await import('@/lib/social-costs');
+    const rate = getEmployerCostRate(out, DEFAULT_SOCIAL_COST_RATES);
+    expect(rate?.source).toBe('sl');
+    expect(rate!.totalHourly).toBeCloseTo(32.66, 2);
+  });
+
+  it('August (monthly, salary13=true) → has13thSalary true (FIX mit 13.)', async () => {
+    mockRows = [monthlyRow, hourlyJulyNo13, hourlyRow];
+    const [out] = await applyEffectiveWages([{ ...emp(), has13thSalary: false } as unknown as Employee], '2026-08-01', 'oliv');
+    expect(out.contractType).toBe('monthly');
+    expect(out.has13thSalary).toBe(true);
+  });
+
+  it('frühere Stundenlohn-Phase MIT 13. bleibt unangetastet (Mai/Juni)', async () => {
+    mockRows = [hourlyRow]; // 2026-05-11, salary_13=true
+    const [out] = await applyEffectiveWages([empWith13Flag()], '2026-06-01', 'oliv');
+    expect(out.hourlyWage).toBe(31.32);
+    expect(out.has13thSalary).toBe(true);
+  });
+});
+
+describe('applyEffectiveWagesForMonth — salary13 pro Monatsphase, auch bei Split', () => {
+  it('Juli (hourly-Phase salary13=false) → FLEX ohne 13.', async () => {
+    mockRows = [hourlyRow, hourlyJulyNo13]; // order asc
+    const { applyEffectiveWagesForMonth } = await import('@/lib/wage-history');
+    const { employees: [out], splits } = await applyEffectiveWagesForMonth([empWith13Flag()], 2026, 7, 'oliv');
+    expect(out.contractType).toBe('hourly');
+    expect(out.hourlyWage).toBe(25.00);
+    expect(out.has13thSalary).toBe(false);
+    expect(splits['105']).toBeUndefined();
+  });
+
+  it('Split-Monat: FIX-Seite salary13 aus Monatslohn-Phase, split.hourly behält eigenes Flag', async () => {
+    // Wechsel MITTEN im August (hypothetisch 15.08.): hourly false → monthly true
+    const monthlyMid = { ...monthlyRow, valid_from: '2026-08-15' };
+    mockRows = [hourlyRow, hourlyJulyNo13, monthlyMid]; // order asc
+    const { applyEffectiveWagesForMonth } = await import('@/lib/wage-history');
+    const { employees: [out], splits } = await applyEffectiveWagesForMonth(
+      [{ ...emp(), has13thSalary: false } as unknown as Employee], 2026, 8, 'oliv');
+    expect(out.contractType).toBe('monthly');
+    expect(out.has13thSalary).toBe(true);          // FIX-Seite: Monatslohn mit 13.
+    expect(splits['105']?.hourly.salary13).toBe(false); // FLEX-Split-Seite: ohne 13.
+  });
+});

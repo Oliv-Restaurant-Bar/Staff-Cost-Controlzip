@@ -526,6 +526,8 @@ export async function ladePersonalkostenDaten(
       hourlyWage: s.hourly.hourlyWage,
       monthlySalary: 0,
       monthlySalaryWith13th: 0,
+      // 13. der STUNDENLOHN-Phase (Split): nie das Flag der Monatslohn-Seite
+      has13thSalary: s.hourly.salary13,
     });
   }
 

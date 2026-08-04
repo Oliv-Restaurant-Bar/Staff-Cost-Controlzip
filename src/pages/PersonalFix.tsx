@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
@@ -30,6 +30,10 @@ import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { socialCostFactorFromRates, EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT, EMPLOYER_COST_INFO } from '@/lib/social-costs';
+import {
+  FlexIstOverrides, EMPTY_FLEX_OVERRIDES, loadFlexIstOverrides, saveFlexIstOverrides, effectiveFlexIst,
+} from '@/lib/personalfix-flex-overrides';
+import { FlexIstOverrideCell } from '@/components/personalfix/FlexIstOverrideCell';
 import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
@@ -2148,6 +2152,8 @@ export default function PersonalFixPage() {
   const [istHours, setIstHours] = useState<Record<string, number>>({});
   /** Lohnart-Wechsel MITTEN im Anzeigemonat (empId → Split mit Tage-Anteilen). */
   const [wageSplits, setWageSplits] = useState<Record<string, MonthWageSplit>>({});
+  /** Unangereicherte employees-Stammsätze (Quelle für alle upsertEmployee-Saves). */
+  const rawEmployeesRef = useRef<Map<string, Employee>>(new Map());
   // empId → Anzahl FE-Tage im Ist (absenceType='FE' in actual-hours-* localStorage)
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
@@ -2167,6 +2173,8 @@ export default function PersonalFixPage() {
   const [showFerienDayDetail, setShowFerienDayDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string} | null>(null);
   // Checkbox: Ferienabbau in Budget-Auswertung einbeziehen
   const [ferienInBudget, setFerienInBudget] = useState(false);
+  // Manuelle Flex-Ist-Overrides (pro MA + Total, pro Mandant/Jahr/Monat, KV-Upsert)
+  const [flexOverrides, setFlexOverrides] = useState<FlexIstOverrides>({ ...EMPTY_FLEX_OVERRIDES });
   // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
   const [monthlyRevenues, setMonthlyRevenues] = useState<Record<string, { actualRevenue?: number; takeawayRevenue?: number }>>({});
   // Manuelle Umsatz-Annahme für PKQ-Berechnung (gespeichert per Monat/Tenant)
@@ -2306,6 +2314,10 @@ export default function PersonalFixPage() {
         // Stundenlohn = FLEX); employees-Stammsatz nur als Fallback ohne Historie.
         const { employees: enriched, splits } =
           await applyEffectiveWagesForMonth(emps, selectedYear, selectedMonth, tenantId);
+        // Unangereicherte Stammsätze für Save-Pfade aufbewahren: die Anreicherung
+        // (verdrängter Monatslohn, has13thSalary der Historie-Phase) darf beim
+        // Editieren NIE in die employees-Tabelle zurückgeschrieben werden.
+        rawEmployeesRef.current = new Map(emps.map(e => [String(e.id), e]));
         setEmployees(enriched);
         setWageSplits(splits);
         console.log(`[EMPLOYEE LOAD] count: ${enriched.length} + ${extraPeople.length} ExtraCost`);
@@ -2738,9 +2750,13 @@ export default function PersonalFixPage() {
     }
     const emp = employees.find(e => e.id === empId);
     if (!emp) { setSaving(null); return; }
-    const updated: Employee = { ...emp, hourlyWage: val };
-    await upsertEmployee(updated, tenantId);
-    setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
+    // Persistenz IMMER auf dem unangereicherten Stammsatz: nur das editierte
+    // Feld ändern, keine abgeleiteten Monats-Felder (has13thSalary etc.) schreiben.
+    const raw = rawEmployeesRef.current.get(String(empId)) ?? emp;
+    const persisted: Employee = { ...raw, hourlyWage: val };
+    await upsertEmployee(persisted, tenantId);
+    rawEmployeesRef.current.set(String(empId), persisted);
+    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, hourlyWage: val } : e));
     setSaving(null);
   }, [employees, extraCostPeople, tenantId]);
 
@@ -2748,15 +2764,22 @@ export default function PersonalFixPage() {
     setSaving(empId);
     const emp = employees.find(e => e.id === empId);
     if (!emp) { setSaving(null); return; }
-    let updated: Employee;
+    // Persistenz auf dem Stammsatz (nicht dem monats-angereicherten Objekt),
+    // damit has13thSalary/verdrängte Löhne der Historie-Phase nie zurückfliessen.
+    const raw = rawEmployeesRef.current.get(String(empId)) ?? emp;
+    let persisted: Employee;
+    let patch: Partial<Employee>;
     if (field === 'monthlySalary') {
-      const with13 = emp.has13thSalary ? (val * 13) / 12 : undefined;
-      updated = { ...emp, monthlySalary: val, monthlySalaryWith13th: with13 ?? emp.monthlySalaryWith13th };
+      const with13 = raw.has13thSalary ? (val * 13) / 12 : undefined;
+      patch = { monthlySalary: val, monthlySalaryWith13th: with13 ?? raw.monthlySalaryWith13th };
+      persisted = { ...raw, ...patch };
     } else {
-      updated = { ...emp, monthlySalaryWith13th: val };
+      patch = { monthlySalaryWith13th: val };
+      persisted = { ...raw, ...patch };
     }
-    await upsertEmployee(updated, tenantId);
-    setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
+    await upsertEmployee(persisted, tenantId);
+    rawEmployeesRef.current.set(String(empId), persisted);
+    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, ...patch } : e));
     setSaving(null);
   };
 
@@ -2787,6 +2810,8 @@ export default function PersonalFixPage() {
           hourlyWage: s.hourly.hourlyWage,
           monthlySalary: 0,
           monthlySalaryWith13th: 0,
+          // 13. der Stundenlohn-Phase (nicht das Monatslohn-Flag der FIX-Seite)
+          has13thSalary: s.hourly.salary13,
         };
       });
     const existingIds = new Set([...fromEmployees, ...splitFlex].map(e => e.id));
@@ -3071,6 +3096,48 @@ export default function PersonalFixPage() {
     });
     return () => { cancelled = true; };
   }, [tenantId]);
+
+  // Flex-Ist-Overrides laden (mandantengetrennt, pro Jahr/Monat). Beim Wechsel
+  // sofort leeren, damit nie Overrides des vorherigen Mandanten/Monats greifen.
+  useEffect(() => {
+    let cancelled = false;
+    setFlexOverrides({ ...EMPTY_FLEX_OVERRIDES });
+    flexOverridesRef.current = { ...EMPTY_FLEX_OVERRIDES };
+    loadFlexIstOverrides(tenantKey, selectedYear, selectedMonth).then(ov => {
+      if (!cancelled) { setFlexOverrides(ov); flexOverridesRef.current = ov; }
+    });
+    return () => { cancelled = true; };
+  }, [tenantId, selectedYear, selectedMonth]);
+
+  // Synchroner Spiegel (nie stale) + serialisierte Save-Queue mit latest-wins
+  // pro Scope: schnelle Folge-Änderungen können sich so nie gegenseitig
+  // überschreiben, und ein Monats-/Mandantenwechsel schliesst den alten Scope
+  // sauber ab (Closure hält tenantKey/Jahr/Monat des Aufrufzeitpunkts).
+  const flexOverridesRef = useRef<FlexIstOverrides>(flexOverrides);
+  const flexSaveQueue = useRef<{ chain: Promise<void>; latest: Map<string, FlexIstOverrides> }>({
+    chain: Promise.resolve(), latest: new Map(),
+  });
+
+  // Optimistisch lokal, Persistenz als KV-Upsert (dublettensicher, ein Blob je Monat).
+  const updateFlexOverrides = useCallback((updater: (prev: FlexIstOverrides) => FlexIstOverrides) => {
+    const next = updater(flexOverridesRef.current);
+    flexOverridesRef.current = next;
+    setFlexOverrides(next);
+    const scope = `${selectedYear}-${selectedMonth}`;
+    const tk = tenantKey; const y = selectedYear; const m = selectedMonth;
+    const q = flexSaveQueue.current;
+    q.latest.set(tk(scope), next);
+    q.chain = q.chain.then(async () => {
+      const data = q.latest.get(tk(scope));
+      if (!data) return; // bereits von neuerem Save dieses Scopes abgedeckt
+      q.latest.delete(tk(scope));
+      try {
+        await saveFlexIstOverrides(tk, y, m, data);
+      } catch {
+        toast.error('Flex-Ist-Override konnte nicht gespeichert werden');
+      }
+    });
+  }, [tenantKey, selectedYear, selectedMonth]);
 
   // Überstundenberechnung für einen Mitarbeiter (de)aktivieren — optimistisch lokal,
   // Persistenz best-effort (saveOvertimeDisabledIds zeigt bei Fehler einen Toast).
@@ -4007,6 +4074,25 @@ export default function PersonalFixPage() {
       getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey,
       scheduleRefreshTick, supabaseActualHours, socialCostRates]);
 
+  // ── Flex-Ist-Overrides: wirksame Werte für Tabelle + Export ────────────────
+  const flexAgFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
+  const flexManualCount = useMemo(
+    () => pfixPerEmp.filter(r => flexOverrides.employees[r.id]).length,
+    [pfixPerEmp, flexOverrides],
+  );
+  /** Summe der Zeilen: berechnete + manuell überschriebene (ohne Total-Override). */
+  const flexIstEffectiveSum = useMemo(
+    () => pfixPerEmp.reduce((s, r) => {
+      const ov = flexOverrides.employees[r.id];
+      return s + (ov ? effectiveFlexIst(ov, flexAgFactor) : r.istWork);
+    }, 0),
+    [pfixPerEmp, flexOverrides, flexAgFactor],
+  );
+  /** Anzeigewert der Total-Zeile: Total-Override vor Zeilensumme. */
+  const flexIstTotalDisplay = flexOverrides.total
+    ? effectiveFlexIst(flexOverrides.total, flexAgFactor)
+    : flexIstEffectiveSum;
+
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {
     days:      AbwDay[];
@@ -4216,24 +4302,38 @@ export default function PersonalFixPage() {
           agMt: cost,
           agJahr: yearlyCost,
         })));
-      const flexRows = pfixPerEmp.map((r) => ({
-        name: r.name,
-        department: DEPT_LABEL[r.dept] ?? r.dept,
-        agProStunde: r.hourlyWage,
-        planStd: r.planH,
-        istStd: r.istH,
-        flexPlan: r.planWork,
-        flexIst: r.istWork,
-        diff: r.diffWork,
-      }));
+      const flexRows = pfixPerEmp.map((r) => {
+        const ov = flexOverrides.employees[r.id];
+        const effIst = ov ? effectiveFlexIst(ov, flexAgFactor) : r.istWork;
+        return {
+          name: ov ? `${r.name} (Flex Ist manuell)` : r.name,
+          department: DEPT_LABEL[r.dept] ?? r.dept,
+          agProStunde: r.hourlyWage,
+          planStd: r.planH,
+          istStd: r.istH,
+          flexPlan: r.planWork,
+          flexIst: effIst,
+          diff: effIst - r.planWork,
+        };
+      });
       const tenantLabel = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
       await exportPersonalkostenExcel({
         tenantLabel,
         monthKey: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
         monthLabel: getMonthLabel(selectedYear, selectedMonth),
         totalFix: pkZentral?.kHr.fix ?? totalFixCost,
-        totalFlex: pkZentral?.kHr.flex ?? 0,
-        totalPersonalkosten: pkZentral?.kHr.total ?? totalFixCost,
+        // Bei manuellen Flex-Ist-Overrides übernimmt der Export die Tabellenwerte —
+        // konsistent in Übersicht UND Abschnitts-Total (totalPersonalkosten = FIX + FLEX).
+        totalFlex: (flexOverrides.total || flexManualCount > 0) ? flexIstTotalDisplay : (pkZentral?.kHr.flex ?? 0),
+        totalPersonalkosten: (flexOverrides.total || flexManualCount > 0)
+          ? (pkZentral?.kHr.fix ?? totalFixCost) + flexIstTotalDisplay
+          : (pkZentral?.kHr.total ?? totalFixCost),
+        flexIstTotalOverride: flexOverrides.total ? flexIstTotalDisplay : null,
+        flexManualNote: flexOverrides.total
+          ? 'Flex-Ist-Total manuell aus der Lohnabrechnung übersteuert'
+          : flexManualCount > 0
+            ? `${flexManualCount} Zeile${flexManualCount === 1 ? '' : 'n'} mit manuell überschriebenem Flex Ist`
+            : null,
         pkqProzent: pkZentral?.pkq.pkqHochrechnung != null ? pkZentral.pkq.pkqHochrechnung * 100 : null,
         fixRows,
         flexRows,
@@ -4736,8 +4836,41 @@ export default function PersonalFixPage() {
                               <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
                               <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istH > 0 ? `${row.istH.toFixed(1)} h` : '–'}</td>
                               {clickCell('planWork', row.planWork, 'text-blue-700 dark:text-blue-400')}
-                              {clickCell('istWork',  row.istWork,  'text-orange-700 dark:text-orange-400')}
-                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
+                              {(() => {
+                                const ov = flexOverrides.employees[row.id] ?? null;
+                                const effIst = ov ? effectiveFlexIst(ov, flexAgFactor) : row.istWork;
+                                const effDiff = effIst - row.planWork;
+                                return (
+                                  <>
+                                    <td className="px-3 py-1.5 text-right">
+                                      <FlexIstOverrideCell
+                                        computed={row.istWork}
+                                        override={ov}
+                                        agFactor={flexAgFactor}
+                                        fmtCHF={fmtCHF}
+                                        testId={`flex-ist-override-${row.id}`}
+                                        onSave={o => updateFlexOverrides(prev => ({
+                                          ...prev, employees: { ...prev.employees, [row.id]: o },
+                                        }))}
+                                        onReset={() => updateFlexOverrides(prev => {
+                                          const employees = { ...prev.employees };
+                                          delete employees[row.id];
+                                          return { ...prev, employees };
+                                        })}
+                                      >
+                                        {row.istWork > 0
+                                          ? <button onClick={() => openBreakdown('istWork')}
+                                              className="font-mono font-semibold underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer text-orange-700 dark:text-orange-400"
+                                              title="Tagesdetails anzeigen">
+                                              {fmtCHF(row.istWork)}
+                                            </button>
+                                          : <span className="text-muted-foreground font-mono">–</span>}
+                                      </FlexIstOverrideCell>
+                                    </td>
+                                    <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(effDiff))}>{effDiff === 0 ? '–' : `${effDiff > 0 ? '+' : ''}${fmtCHF(effDiff)}`}</td>
+                                  </>
+                                );
+                              })()}
                             </tr>
                           );
                         })}
@@ -4748,7 +4881,25 @@ export default function PersonalFixPage() {
                           <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planH,0).toFixed(1)} h</td>
                           <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istH,0).toFixed(1)} h</td>
                           <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
-                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
+                          <td className="px-3 py-2 text-right text-orange-700 dark:text-orange-400">
+                            <div className="flex flex-col items-end gap-0.5">
+                              <FlexIstOverrideCell
+                                computed={flexIstEffectiveSum}
+                                override={flexOverrides.total}
+                                agFactor={flexAgFactor}
+                                fmtCHF={fmtCHF}
+                                bold
+                                testId="flex-ist-override-total"
+                                onSave={o => updateFlexOverrides(prev => ({ ...prev, total: o }))}
+                                onReset={() => updateFlexOverrides(prev => ({ ...prev, total: null }))}
+                              />
+                              {flexManualCount > 0 && !flexOverrides.total && (
+                                <span className="text-[9px] font-normal text-muted-foreground">
+                                  davon {flexManualCount} Zeile{flexManualCount === 1 ? '' : 'n'} manuell
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-3 py-2" />
                         </tr>
                       </tfoot>

@@ -23,3 +23,9 @@ description: Alle Personalkosten-Ansichten müssen die zentrale Lib nutzen; Budg
 - Abteilungs-Splits dürfen lokale Detail-Logik behalten, müssen aber proportional aufs zentrale Total skaliert werden (Service+Küche=Gesamt); Randfall lokale Basis=0 explizit behandeln.
 - Kumulierter PKQ-Verlauf: Fix `totalMonat × d/daysInMonth` (nicht 31× fixKosten), Tage ohne kumulierten Umsatz → null-Lücke.
 - E2E hinter Login: Test-User-Rolle via Supabase-Management-API SQL setzen (PostgREST-PATCH mit service_role auf user_profiles gibt 42501 permission denied); nach Test auf kueche_manager zurückstufen.
+
+## Flex-Ist-Overrides (PersonalFix «Flex Kosten pro Mitarbeiter»)
+- Manuelle Flex-Ist-Beträge (pro MA + Total) sind reine Anzeige-/Export-Overrides: KV-Blob `pfix-flex-ist-overrides-YYYY-MM` via tenantKey, sie verändern NIE die zentrale personalkosten.ts-SSOT (pkZentral).
+- `addAg`-Häkchen = eingegebener Betrag ist Brutto ohne AG-Kosten → × socialCostFactorFromRates. Ohne Häkchen 1:1.
+- Save-Pfad: synchroner Ref-Spiegel + serialisierte latest-wins-Queue pro Scope (Monat/Mandant) — nie kvSet direkt aus dem setState-Updater (StrictMode/Races).
+- Export muss Übersichts-Total UND Abschnitts-Total «Total FLEX» konsistent aus demselben Override ableiten (flexIstTotalOverride), sonst zwei verschiedene Totale in einer Datei.

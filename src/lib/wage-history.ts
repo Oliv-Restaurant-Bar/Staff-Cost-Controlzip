@@ -237,6 +237,10 @@ export async function applyEffectiveWages(
         hourlyWage:            effective.hourlyWage,
         monthlySalary:         0,
         monthlySalaryWith13th: 0,
+        // 13. aus der massgebenden Historie-Phase — NIE aus dem Stammsatz,
+        // sonst leckt das Häkchen des späteren Monatslohn-Vertrags in frühere
+        // Stundenlohn-Phasen (getEmployerCostRate/calcSL lesen has13thSalary).
+        has13thSalary:         effective.salary13,
       };
     }
 
@@ -246,6 +250,7 @@ export async function applyEffectiveWages(
       hourlyWage:            effective.hourlyWage            || emp.hourlyWage,
       monthlySalary:         effective.monthlySalary         ?? emp.monthlySalary,
       monthlySalaryWith13th: effective.monthlySalaryWith13th ?? emp.monthlySalaryWith13th,
+      has13thSalary:         effective.salary13,
     };
   });
 }
@@ -428,6 +433,8 @@ export async function applyEffectiveWagesForMonth(
         hourlyWage:            w.hourlyWage,
         monthlySalary:         0,
         monthlySalaryWith13th: 0,
+        // 13. aus der Historie-Phase des Monats (nie Stammsatz-Flag, s.o.)
+        has13thSalary:         w.salary13,
       };
     }
     // Monatslohn-Phase (inkl. Split: FIX-Seite)
@@ -437,6 +444,7 @@ export async function applyEffectiveWagesForMonth(
       hourlyWage:            w.hourlyWage            || emp.hourlyWage,
       monthlySalary:         w.monthlySalary         ?? emp.monthlySalary,
       monthlySalaryWith13th: w.monthlySalaryWith13th ?? emp.monthlySalaryWith13th,
+      has13thSalary:         w.salary13,
     };
   });
 

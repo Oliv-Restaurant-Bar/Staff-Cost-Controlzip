@@ -1,0 +1,20 @@
+Warenkosten-/FIBU-Abgleich — fehlende Lieferanten-Rechnungen aus der Kosten-Buchhaltung direkt übernehmen
+
+Kontext: Beim Kosten-Upload (FIBU-/ER-Journal) läuft der Warenkosten-Abgleich (buildWarenAbgleich + FIBU-Matching in waren-fibu-matches). Buchungen auf Warenkonten, zu denen KEINE erfasste Rechnung existiert, tragen bereits den Status 'nur-gebucht' bzw. liegen in nichtZugeordnet / als unmatched Buchungen vor. Diese sollen nach dem Import prominent angezeigt und per Klick in die Warenrechnungen übernommen werden können. Mandantengetrennt (oliv/beaulieu), pro Monat, dublettensicher, mit Vorschau vor Schreiben und Rückgängig.
+
+1. Anzeige: Im Warenkosten-Abgleich einen Bereich „In der Buchhaltung, aber nicht erfasst" ergänzen. Er listet alle Warenkonto-Buchungen ohne zugeordnete erfasste Rechnung (Status 'nur-gebucht' + unmatched Buchungen + nichtZugeordnet). Pro Zeile: Datum, Lieferant/Buchungstext, Konto (Nr + Bezeichnung), Betrag (Soll−Haben, netto), Belegnummer. Anzahl + Summe oben anzeigen.
+
+2. Aktion „Übernehmen" pro Zeile und „Alle übernehmen": legt eine Warenrechnung (InvoiceEntry) an mit
+   - date ← Buchungsdatum (DD.MM.YYYY → YYYY-MM-DD)
+   - supplierName ← aufgelöster Lieferant (Alias-Auflösung), sonst Buchungstext
+   - amountNet ← Buchungsbetrag (Soll−Haben), vatIncluded=false
+   - vatRate ← aus Konto abgeleitet (Getränke 8.1 / Food 2.6), editierbar
+   - warenkonto ← accountNumber; kategorie ← kategorieFromKonto(accountNumber) (korrigierte FIBU-Zuordnung: 4000/4060/4070/4090→Food, 4020/4030/4040/4050→Beverage)
+   - reference ← belegNr; note ← „aus FIBU-Abgleich übernommen · <Kontobezeichnung>"
+   - Herkunft klar als „FIBU-Übernahme" gekennzeichnet; provisorisch (final=false), damit eine spätere Monatsrechnung/Lieferschein die Werte gemäss Dual-Modell noch finalisieren/ergänzen kann.
+
+3. Vorschau vor dem Schreiben: die zu erstellende Rechnung anzeigen (Lieferant, Konto, Kategorie, MwSt, Betrag), Felder editierbar — besonders Kategorie/Konto/Lieferantname bei unklarem Buchungstext. Dublettensicher: existiert bereits eine erfasste Rechnung mit gleichem Lieferant + Datum + Betrag (±Toleranz), Übernahme sperren und als Dublette markieren, statt doppelt anzulegen.
+
+4. Nach der Übernahme den Abgleich neu rechnen → die Zeile wird grün (matched), Warenkostenquote und Auswertung aktualisieren sich sofort. Die übernommene Rechnung ist in Warenrechnungen normal editier-/löschbar und als „FIBU-Übernahme" filterbar (Rückgängig).
+
+5. „leer statt 0" und „nie durch 0 teilen" beibehalten; keine Beträge verändern — der übernommene Nettobetrag entspricht exakt der Buchung.
