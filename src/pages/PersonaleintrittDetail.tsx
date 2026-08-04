@@ -918,8 +918,8 @@ export default function PersonaleintrittDetail() {
           <AlertDialogHeader>
             <AlertDialogTitle>Eintritt abbrechen?</AlertDialogTitle>
             <AlertDialogDescription>
-              Der Eintrag wird auf «Abgebrochen» gesetzt. Der Einladungslink wird dadurch ungültig;
-              der Eintrag kann anschliessend in der Übersicht gelöscht werden.
+              Der Eintrag wird auf «Abgebrochen» gesetzt und kann anschliessend
+              in der Übersicht gelöscht werden.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

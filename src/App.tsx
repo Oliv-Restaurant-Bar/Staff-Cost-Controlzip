@@ -26,7 +26,6 @@ import PersonaleintrittListe from "./pages/PersonaleintrittListe";
 import PersonaleintrittNeu from "./pages/PersonaleintrittNeu";
 import PersonaleintrittDetail from "./pages/PersonaleintrittDetail";
 import Betriebe from "./pages/Betriebe";
-import MitarbeiterEintritt from "./pages/MitarbeiterEintritt";
 import Positionen from "./pages/Positionen";
 import Personalbedarf from "./pages/Personalbedarf";
 import Rezensionen from "./pages/Rezensionen";
@@ -299,6 +298,21 @@ const AppContent = () => {
               element={<RequireAdmin path="/personaleintritt/:id" allowBeaulieu><PersonaleintrittDetail /></RequireAdmin>}
             />
 
+            {/* MIRUS-Werkzeuge (rein lokal, kein DB-Write) — früher bewusst
+                öffentlich isoliert, jetzt hinter dem Auth-Gate (Admin-only). */}
+            <Route path="/mirus-parser-test"
+              element={<RequireAdmin path="/mirus-parser-test"><MirusParserTest /></RequireAdmin>}
+            />
+            <Route path="/mirus-excel-test"
+              element={<RequireAdmin path="/mirus-excel-test"><MirusExcelTest /></RequireAdmin>}
+            />
+            <Route path="/mirus-import-preview"
+              element={<RequireAdmin path="/mirus-import-preview"><MirusImportPreview /></RequireAdmin>}
+            />
+            <Route path="/mirus-review"
+              element={<RequireAdmin path="/mirus-review"><MirusReview /></RequireAdmin>}
+            />
+
             {/* Betriebe-Verwaltung (Datensätze für Verträge/SEM/Dossier):
                 NUR Admin OHNE Gäste — kein beaulieu_manager */}
             <Route path="/betriebe"
@@ -476,22 +490,6 @@ const AppContent = () => {
 // ─── Root App — BrowserRouter hier oben, damit öffentliche Routen möglich ───
 
 const App = () => {
-  // ── Komplett isolierte öffentliche Seiten ────────────────────────────────
-  // Kein AuthProvider, kein Tenant-Redirect, kein Router-Redirect.
-  // Muss VOR jedem Provider stehen, damit nichts dazwischenfunken kann.
-  if (window.location.pathname === '/mirus-parser-test') {
-    return <MirusParserTest />;
-  }
-  if (window.location.pathname === '/mirus-excel-test') {
-    return <MirusExcelTest />;
-  }
-  if (window.location.pathname === '/mirus-import-preview') {
-    return <MirusImportPreview />;
-  }
-  if (window.location.pathname === '/mirus-review') {
-    return <MirusReview />;
-  }
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -505,12 +503,7 @@ const App = () => {
                 <LogoutStateBridge />
                 <BrowserRouter>
                   <Routes>
-                    {/* ── Öffentliche Routen — kein Login erforderlich ── */}
-                    {/* Personaleintritt Phase 2: Mitarbeiter füllt per Einladungs-Token aus
-                        (Edge Function personaleintritt-public, kein direkter DB-Zugriff) */}
-                    <Route path="/e/:token" element={<MitarbeiterEintritt />} />
-
-                    {/* ── Alle anderen Routen → Auth-Check ── */}
+                    {/* KEINE öffentlichen Routen — alles hinter dem Auth-Check. */}
                     <Route path="/*" element={<AppContent />} />
                   </Routes>
                 </BrowserRouter>

@@ -19,7 +19,7 @@
  */
 
 import type { TenantId } from '@/contexts/TenantContext';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvGetStrict, kvSetStrict, notifyKVBackupProblem } from './supabase-kv';
 import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 import {
   TAGESABSCHLUSS_KEY,
@@ -67,28 +67,50 @@ export function loadTagesabschlussLocal(tenantId: TenantId): TagesabschlussBlob 
 }
 
 /**
- * Speichert den Blob: KV-Stand erneut lesen → mergen → localStorage sofort,
- * KV best-effort. KV-Fehler brechen die Aktion NICHT ab.
+ * Speichert den Blob: KV-Stand STRIKT erneut lesen → mergen → localStorage
+ * sofort, dann KV-Write.
+ *
+ * kvGetStrict statt kvGet: Ein transienter LESEFEHLER (Netz-Blip) ist NICHT
+ * dasselbe wie «Remote ist leer». Bei einem Lesefehler wird der KV-Write
+ * ÜBERSPRUNGEN (sonst würde der rein lokale Stand Eingaben anderer Geräte
+ * komplett ersetzen) und ein sichtbarer Fehler mit «Erneut versuchen»
+ * gemeldet — gleiches Muster wie safeUpsertDailyBudgets/Import-Einstellungen.
+ * Nur ein BESTÄTIGT leerer Remote-Stand darf normal geschrieben werden.
  */
 export async function saveTagesabschluss(tenantId: TenantId, blob: TagesabschlussBlob): Promise<TagesabschlussBlob> {
+  const key = tenantKey(tenantId, TAGESABSCHLUSS_KEY);
   let toWrite = blob;
+  let remoteReadFailed: unknown = null;
   try {
-    const remote = await kvGet(tenantKey(tenantId, TAGESABSCHLUSS_KEY));
+    const remote = await kvGetStrict(key);
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
       toWrite = mergeTagesabschlussBlobs(blob, normalizeTagesabschlussBlob(remote));
     }
-  } catch {
-    // KV nicht lesbar → lokalen Stand schreiben (Backup bleibt best-effort).
+    // remote === null ⇒ bestätigt leer → blob darf unverändert geschrieben werden.
+  } catch (err) {
+    remoteReadFailed = err;
   }
   try {
     tlsSetJson(tenantId, TAGESABSCHLUSS_KEY, toWrite);
   } catch {
     // localStorage voll/gesperrt → KV-Backup bleibt einzige Persistenz.
   }
+  if (remoteReadFailed !== null) {
+    // KEIN KV-Write mit unklarem Remote-Zustand — sichtbar melden statt
+    // Tagesabschlüsse/Korrekturen anderer Geräte zu überschreiben.
+    void notifyKVBackupProblem(remoteReadFailed, 'Tagesabschluss', {
+      toastId: 'tagesabschluss-backup',
+      retry: async () => { await saveTagesabschluss(tenantId, toWrite); },
+    });
+    return toWrite;
+  }
   try {
-    await kvSet(tenantKey(tenantId, TAGESABSCHLUSS_KEY), toWrite);
-  } catch {
-    // Backup fehlgeschlagen — localStorage bleibt primärer Speicher.
+    await kvSetStrict(key, toWrite);
+  } catch (err) {
+    void notifyKVBackupProblem(err, 'Tagesabschluss', {
+      toastId: 'tagesabschluss-backup',
+      retry: async () => { await saveTagesabschluss(tenantId, toWrite); },
+    });
   }
   return toWrite;
 }

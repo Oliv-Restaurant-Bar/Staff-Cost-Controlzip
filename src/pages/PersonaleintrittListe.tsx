@@ -3,12 +3,13 @@
  * ============================================
  * Route /personaleintritt — Gate: (Admin && !Gast) oder beaulieu_manager.
  * Liste aller Eintritte des Mandanten mit Status-Badges (Personalstamm-Design).
- * Aktionen: Neuer Eintritt · Neuen Einladungslink erzeugen (rotiert Token,
- * alter Link wird ungültig) · Entwurf löschen.
+ * Aktionen: Neuer Eintritt · Entwurf löschen.
+ * (Der öffentliche Einladungslink-Flow /e/:token wurde entfernt —
+ * Personalien werden eingeloggt im Detail erfasst.)
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Link2, Plus, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Trash2, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageShell } from '@/components/layout/PageShell';
@@ -21,15 +22,11 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { InviteLinkDialog } from '@/components/personaleintritt/InviteLinkDialog';
 import { STATUS_TONES } from '@/components/personaleintritt/status-tone';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import {
-  deletePersonaleintritt, loadPersonaleintritte, updatePersonaleintritt,
-} from '@/lib/personaleintritt/db';
+import { deletePersonaleintritt, loadPersonaleintritte } from '@/lib/personaleintritt/db';
 import { STATUS_LABELS, type PersonaleintrittRecord } from '@/lib/personaleintritt/types';
-import { generateInviteToken, hashInviteToken, inviteExpiryIso, inviteLink } from '@/lib/personaleintritt/token';
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—';
@@ -53,9 +50,7 @@ export default function PersonaleintrittListe() {
   const [loading, setLoading] = useState(true);
   const [preMigration, setPreMigration] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PersonaleintrittRecord | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -91,26 +86,6 @@ export default function PersonaleintrittListe() {
     );
   }
 
-  /** Neuen Link erzeugen: Token rotieren (alter Link wird ungültig). */
-  const rotateInvite = async (r: PersonaleintrittRecord) => {
-    setBusyId(r.id);
-    const token = generateInviteToken();
-    const tokenHash = await hashInviteToken(token);
-    const res = await updatePersonaleintritt(r.id, tenantId, {
-      inviteTokenHash: tokenHash,
-      inviteExpires: inviteExpiryIso(),
-      eingeladenAm: new Date().toISOString(),
-      status: 'eingeladen',
-    }, ['entwurf', 'eingeladen']);
-    setBusyId(null);
-    if (res.error || !res.data) {
-      toast.error(`Link konnte nicht erzeugt werden: ${res.error}`);
-      return;
-    }
-    setInviteUrl(inviteLink(window.location.origin, token));
-    void reload();
-  };
-
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     const res = await deletePersonaleintritt(deleteTarget.id, tenantId);
@@ -127,7 +102,7 @@ export default function PersonaleintrittListe() {
         <PageHeader
           icon={<UserPlus />}
           title="Personaleintritte"
-          info="Digitaler Eintrittsprozess: GF erfasst Eckdaten, der Mitarbeiter füllt Personalien per Link aus, das Backoffice prüft und übernimmt in den Personalstamm."
+          info="Digitaler Eintrittsprozess: GF erfasst Eckdaten und Personalien, das Backoffice prüft und übernimmt in den Personalstamm."
           actions={
             <Button size="sm" onClick={() => navigate('/personaleintritt/neu')} data-testid="button-new-eintritt">
               <Plus className="mr-1 h-4 w-4" /> Neuer Eintritt
@@ -156,7 +131,7 @@ export default function PersonaleintrittListe() {
         <EmptyState
           icon={UserPlus}
           title="Noch keine Personaleintritte"
-          description="Erfassen Sie die Eckdaten eines neuen Mitarbeiters und laden Sie ihn per Link ein."
+          description="Erfassen Sie die Eckdaten eines neuen Mitarbeiters als Entwurf."
           action={
             <Button size="sm" onClick={() => navigate('/personaleintritt/neu')} data-testid="button-new-eintritt-empty">
               <Plus className="mr-1 h-4 w-4" /> Neuer Eintritt
@@ -200,17 +175,6 @@ export default function PersonaleintrittListe() {
                   </td>
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
-                      {(r.status === 'entwurf' || r.status === 'eingeladen') && (
-                        <Button
-                          size="sm" variant="outline"
-                          disabled={busyId === r.id}
-                          onClick={() => void rotateInvite(r)}
-                          data-testid={`button-rotate-invite-${r.id}`}
-                        >
-                          <Link2 className="mr-1 h-3.5 w-3.5" />
-                          {r.status === 'entwurf' ? 'Einladen' : 'Neuer Link'}
-                        </Button>
-                      )}
                       {(r.status === 'entwurf' || r.status === 'abgebrochen') && (
                         <Button
                           size="sm" variant="ghost"
@@ -228,8 +192,6 @@ export default function PersonaleintrittListe() {
           </table>
         </div>
       )}
-
-      <InviteLinkDialog open={inviteUrl != null} link={inviteUrl} onClose={() => setInviteUrl(null)} />
 
       <AlertDialog open={deleteTarget != null} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
         <AlertDialogContent>

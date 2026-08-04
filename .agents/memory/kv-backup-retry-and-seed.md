@@ -22,3 +22,8 @@ Ein Ladepfad (load*-Funktion), der «zur Sicherheit» das migrierte Ergebnis üb
 Wenn ein Store von Hard-Delete auf Tombstones umgestellt wird, genügt es nicht, die Store-eigenen Leser zu filtern — Read-only-Aggregatoren (Import-Checkliste, Import-Cockpit, Startseite) lesen den localStorage-Blob DIREKT und zählen Tombstones sonst still als Datenbestand.
 **Why:** Genau das passierte bei der Budget-Tombstone-Einführung: `budgetCoverage` meldete gelöschte Jahre als «erledigt», das Cockpit zählte sie als Records.
 **How to apply:** Nach jeder Tombstone-Einführung per grep nach dem Storage-Key (z. B. `budget_v1`) alle direkten JSON.parse-Leser finden und `!rec.deleted` filtern.
+
+## Retry-Closures müssen den Save-SNAPSHOT halten (2026-08)
+- «Erneut versuchen» bei notifyKVBackupProblem darf NICHT aus loadXxxLocal() nachlesen: ist localStorage gesperrt/voll oder inzwischen geleert, retryt man einen leeren Blob und verliert die ursprüngliche Mutation (bei bestätigt-leerem Remote wird sogar leer geschrieben).
+- Richtig: die Retry-Closure bindet den beim fehlgeschlagenen Save vorhandenen toWrite-Snapshot und ruft save(tenantId, snapshot) — der Save merged dann strikt gegen den frischen Remote-Stand.
+- Angewandt in saveTagesabschluss (tagesabschluss-db.ts); Muster gilt für alle kvGetStrict-Save-Pfade mit Retry.

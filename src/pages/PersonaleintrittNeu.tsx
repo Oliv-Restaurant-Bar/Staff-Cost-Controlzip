@@ -6,15 +6,15 @@
  *
  * Lohn: 3 Modi transparent (Grundlohn / L-GAV-Mindestlohn / Ziel-Total);
  * Berechnung + Mindestlohn-Prüfung zentral in lib/personaleintritt/lohn.ts.
- * «Einladung erstellen» erzeugt den Token client-seitig (nur der sha256-Hash
- * geht in die DB) und zeigt den Link genau einmal im Dialog.
+ * (Der öffentliche Einladungslink-Flow /e/:token wurde entfernt — Personalien
+ * werden eingeloggt im Detail erfasst; hier gibt es nur noch den Entwurf.)
  *
  * Pre-migration-tolerant: fehlen die Tabellen (Migration 20260724 noch nicht
  * ausgeführt), erscheint eine HintBox statt eines Crashs.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Save, UserPlus } from 'lucide-react';
+import { ArrowLeft, Save, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageShell } from '@/components/layout/PageShell';
@@ -30,7 +30,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { HintBox } from '@/components/ui/hint-box';
 import { StatusPill } from '@/components/ui/status-pill';
 import { LoadingState } from '@/components/ui/page-states';
-import { InviteLinkDialog } from '@/components/personaleintritt/InviteLinkDialog';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/contexts/TenantContext';
@@ -42,7 +41,6 @@ import {
   LOHNKLASSEN, LOHNKLASSE_LABELS,
   type LohnModus, type Lohnklasse, type Vertragstyp,
 } from '@/lib/personaleintritt/types';
-import { generateInviteToken, hashInviteToken, inviteExpiryIso, inviteLink } from '@/lib/personaleintritt/token';
 import { FUNKTIONEN } from '@/lib/funktionen';
 import {
   LEGACY_BETRIEB_ID_PREFIX, betriebAnzeigename, betriebFromLegacyConfig,
@@ -166,7 +164,6 @@ export default function PersonaleintrittNeu() {
   const [bewAusweisS, setBewAusweisS] = useState(false);
   const [bewArbeitsbewilligung, setBewArbeitsbewilligung] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
   const lohn = useMemo(() => {
     if (!vertragstyp) return null;
@@ -196,19 +193,7 @@ export default function PersonaleintrittNeu() {
 
   const einheitLabel = vertragstyp === 'SL' ? 'CHF/Std.' : 'CHF/Monat';
 
-  const fehlendeFelder = (): string[] => {
-    const f: string[] = [];
-    if (!betrieb) f.push('Betrieb');
-    if (!vertragstyp) f.push('Vertragstyp');
-    if (!funktion.trim()) f.push('Funktion');
-    if (!eintritt) f.push('Eintrittsdatum');
-    if (vertragstyp === 'ML' && !(Number(pensum) > 0)) f.push('Pensum');
-    if (vertragsdauer === 'befristet' && !befristetBis) f.push('Befristet bis');
-    if (lohn?.lohnBerechnet == null) f.push('Lohn');
-    return f;
-  };
-
-  const buildPatch = (status: 'entwurf' | 'eingeladen') => ({
+  const buildPatch = (status: 'entwurf') => ({
     status,
     vertragstyp: vertragstyp ?? undefined,
     betrieb: betrieb ? betriebAnzeigename(betrieb) : undefined,
@@ -260,32 +245,6 @@ export default function PersonaleintrittNeu() {
     navigate('/personaleintritt');
   };
 
-  const createInvitation = async () => {
-    const fehlend = fehlendeFelder();
-    if (fehlend.length > 0) {
-      toast.error(`Bitte ergänzen: ${fehlend.join(', ')}`);
-      return;
-    }
-    if (lohn?.blockierend) {
-      toast.error('Der Lohn liegt unter dem L-GAV-Mindestlohn — Einladung nicht möglich.');
-      return;
-    }
-    setSaving(true);
-    const token = generateInviteToken();
-    const tokenHash = await hashInviteToken(token);
-    const res = await createPersonaleintritt(zielTenantId, {
-      ...buildPatch('eingeladen'),
-      inviteTokenHash: tokenHash,
-      inviteExpires: inviteExpiryIso(),
-      eingeladenAm: new Date().toISOString(),
-    }, user?.id);
-    setSaving(false);
-    if (res.preMigration) { setPreMigration(true); return; }
-    if (res.error || !res.data) { toast.error(`Einladung fehlgeschlagen: ${res.error}`); return; }
-    hinweisBeiMandantAbweichung();
-    setInviteUrl(inviteLink(window.location.origin, token));
-  };
-
   return (
     <PageShell
       width="narrow"
@@ -293,7 +252,7 @@ export default function PersonaleintrittNeu() {
         <PageHeader
           icon={<UserPlus />}
           title="Neuer Personaleintritt"
-          info="Eckdaten erfassen und den Mitarbeiter per Link einladen. Der Mitarbeiter füllt seine Personalien selbst aus (Handy)."
+          info="Eckdaten als Entwurf erfassen. Personalien werden anschliessend eingeloggt in der Detailansicht ergänzt."
           width="narrow"
           actions={
             <Button variant="ghost" size="sm" onClick={() => navigate('/personaleintritt')} data-testid="button-back-to-list">
@@ -566,7 +525,7 @@ export default function PersonaleintrittNeu() {
                   )}
                   {lohn.hinweis && <p className="text-xs text-amber-700 dark:text-amber-400">{lohn.hinweis}</p>}
                   {lohn.blockierend && (
-                    <HintBox tone="critical" title="Einladung blockiert">
+                    <HintBox tone="critical" title="Unter Mindestlohn">
                       Der Lohn liegt unter dem L-GAV-Mindestlohn.
                     </HintBox>
                   )}
@@ -577,22 +536,12 @@ export default function PersonaleintrittNeu() {
 
           {/* ── Aktionen ── */}
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={saveDraft} disabled={saving || preMigration} data-testid="button-save-draft">
+            <Button onClick={saveDraft} disabled={saving || preMigration} data-testid="button-save-draft">
               <Save className="mr-1.5 h-4 w-4" /> Als Entwurf speichern
-            </Button>
-            <Button onClick={createInvitation} disabled={saving || preMigration || (lohn?.blockierend ?? false)}
-              data-testid="button-create-invite">
-              <Send className="mr-1.5 h-4 w-4" /> Einladung an Mitarbeiter erstellen
             </Button>
           </div>
         </div>
       )}
-
-      <InviteLinkDialog
-        open={inviteUrl != null}
-        link={inviteUrl}
-        onClose={() => { setInviteUrl(null); navigate('/personaleintritt'); }}
-      />
     </PageShell>
   );
 }

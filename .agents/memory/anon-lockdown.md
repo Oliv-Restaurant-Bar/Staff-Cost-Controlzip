@@ -30,3 +30,10 @@ description: Regeln & Ausnahmen nach dem flächendeckenden anon-Sperr-Durchlauf;
 - get_token_access ist gedroppt: useSupabaseSchedule hat kein Token-Plumbing mehr (canEdit/isAdmin fix true, Hook nur hinter Login); generierte types.ts enthält noch die alte Signatur (harmlos, beim nächsten Type-Regen weg).
 - Öffentlich bleibt NUR /e/:token (Personaleintritt Phase 2) über die Edge Function personaleintritt-public (Service-Role, kein anon-DB-Zugriff).
 - Tabellen onboarding_submissions + onboarding-docs-Bucket existieren noch (authenticated-only, Alt-Daten).
+
+## Update 2026-08-08 — Personaleintritt-per-Link entfernt, 0 öffentliche Fläche
+- Route /e/:token, MitarbeiterEintritt.tsx, public-api.ts, token.ts, InviteLinkDialog und alle Einladungs-Buttons (Liste rotateInvite, Neu createInvitation) sind gelöscht; PersonaleintrittNeu erzeugt nur noch Entwürfe.
+- Edge Function personaleintritt-public: Code gelöscht UND deployte Function via Management API DELETE /v1/projects/{ref}/functions/{slug} entfernt (öffentlicher Aufruf ⇒ 404).
+- Die 4 Mirus-Werkzeugrouten (/mirus-parser-test, -excel-test, -import-preview, -review) waren als Provider-freie Early-Returns in App.tsx ÖFFENTLICH — jetzt reguläre RequireAdmin-Routen. Bei «0 öffentliche Routen»-Audits App.tsx-Early-Returns VOR den Providern prüfen, nicht nur <Routes>.
+- Verifiziert: public-Schema anon = 0 Grants/0 Policies/0 EXECUTE; Rest-anon-Rechte nur in storage/realtime/graphql_public (Supabase-Plattform-Defaults, 0 Policies ⇒ kein Zugriff). KEINE öffentliche Ausnahme mehr, alles hinter Login.
+- Alt-Daten bleiben: personaleintritt-Records mit Status 'eingeladen'/invite_token_hash lesbar (db.ts-Mapping bewusst erhalten); Migration 20260724 unangetastet.
