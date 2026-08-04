@@ -9,6 +9,7 @@ import {
   makeFieldKey,
   normalizeGnPaymentName,
   effectiveValue,
+  mergeAdyenBlobs,
   buildDayComparison,
   canConfirmDay,
   setOverride,
@@ -265,16 +266,20 @@ describe('setOverride / setComment / setDayConfirmation', () => {
     expect(blob.overrides[key].correctedValue).toBe(120);
   });
 
-  it('entfernt Override bei correctedValue null und Kommentar bei Leertext', () => {
+  it('entfernt Override bei correctedValue null und Kommentar bei Leertext (Tombstone, Leser sehen nichts)', () => {
     let blob = emptyAdyenBlob();
     const key = makeFieldKey(DAY, 'adyen', 'visa');
     blob = setOverride(blob, key, 100, 110, undefined, '2026-06-02T09:00:00Z');
     blob = setOverride(blob, key, 100, null, undefined, '2026-06-02T10:00:00Z');
-    expect(blob.overrides[key]).toBeUndefined();
+    // Tombstone statt Key-Löschung (merge-on-save würde den Key sonst wiederbeleben) —
+    // für Leser ist der Override weg:
+    expect(blob.overrides[key].deleted).toBe(true);
+    expect(effectiveValue(blob.overrides, key, 100).overridden).toBe(false);
 
     blob = setComment(blob, key, 'Hinweis', '2026-06-02T09:00:00Z');
     blob = setComment(blob, key, '   ', '2026-06-02T10:00:00Z');
-    expect(blob.comments[key]).toBeUndefined();
+    expect(blob.comments[key].deleted).toBe(true);
+    expect(blob.comments[key].text).toBe('');
   });
 
   it('effectiveValue nutzt correctedValue nur bei gesetztem Override', () => {
@@ -302,6 +307,8 @@ describe('applyDayConfirmation (zentraler Audit-Schreibpfad)', () => {
     expect(c).toEqual({
       confirmed: false, cashCounted: true,
       cashCountedAt: T1, cashCountedBy: USER1,
+      // Merge-Stempel: JEDE fachliche Änderung setzt updatedAt (merge-on-save).
+      updatedAt: T1,
     });
     // confirmed hat sich nicht geändert (false → false) → KEIN Stempel.
     expect(c.confirmedAt).toBeUndefined();
@@ -387,5 +394,90 @@ describe('normalizeAdyenBlob / adyenDaysFromBlob', () => {
     blob.days['2026-07-15'] = storedDay({ visa: 1 }); // Zukunft → ignoriert
     blob.days['unsinn'] = storedDay({ visa: 1 });     // kein ISO-Tag → ignoriert
     expect(adyenDaysFromBlob(blob, '2026-07-06')).toEqual(['2026-06-01', '2026-06-02']);
+  });
+});
+
+// ─── mergeAdyenBlobs (merge-on-save, A6) ─────────────────────────────────────
+
+describe('mergeAdyenBlobs — jüngster Stand je Key gewinnt, Tombstones bleiben', () => {
+  const T1 = '2026-06-01T10:00:00.000Z';
+  const T2 = '2026-06-02T10:00:00.000Z';
+
+  it('vereinigt Tage/Overrides/Kommentare beider Seiten (Union)', () => {
+    const local = emptyAdyenBlob();
+    local.days['2026-06-01'] = storedDay({ visa: 10 });
+    local.comments['k1'] = { text: 'lokal', updatedAt: T1 };
+    const remote = emptyAdyenBlob();
+    remote.days['2026-06-02'] = storedDay({ visa: 20 });
+    remote.overrides['o1'] = { originalValue: 1, correctedValue: 2, correctedByManualOverride: true, updatedAt: T1 };
+
+    const m = mergeAdyenBlobs(local, remote);
+    expect(Object.keys(m.days).sort()).toEqual(['2026-06-01', '2026-06-02']);
+    expect(m.comments['k1'].text).toBe('lokal');
+    expect(m.overrides['o1'].correctedValue).toBe(2);
+  });
+
+  it('jüngerer Remote-Eintrag gewinnt gegen älteren lokalen (stale Gerät verdrängt nichts)', () => {
+    const local = emptyAdyenBlob();
+    local.overrides['o1'] = { originalValue: 1, correctedValue: 5, correctedByManualOverride: true, updatedAt: T1 };
+    const remote = emptyAdyenBlob();
+    remote.overrides['o1'] = { originalValue: 1, correctedValue: 9, correctedByManualOverride: true, updatedAt: T2 };
+    expect(mergeAdyenBlobs(local, remote).overrides['o1'].correctedValue).toBe(9);
+  });
+
+  it('bei gleichem/fehlendem Stempel gewinnt der lokale Stand (trägt die aktuelle Mutation)', () => {
+    const local = emptyAdyenBlob();
+    local.comments['k'] = { text: 'lokal', updatedAt: T1 };
+    const remote = emptyAdyenBlob();
+    remote.comments['k'] = { text: 'remote', updatedAt: T1 };
+    expect(mergeAdyenBlobs(local, remote).comments['k'].text).toBe('lokal');
+  });
+
+  it('Tombstone (jüngeres Löschen) überlebt den Merge — kein Wiederbeleben aus Remote', () => {
+    let local = emptyAdyenBlob();
+    local = setOverride(local, 'f1', 100, 90, undefined, T1);
+    local = setOverride(local, 'f1', 100, null, undefined, T2); // entfernen → Tombstone
+    const remote = emptyAdyenBlob();
+    remote.overrides['f1'] = { originalValue: 100, correctedValue: 90, correctedByManualOverride: true, updatedAt: T1 };
+
+    const m = mergeAdyenBlobs(local, remote);
+    expect(m.overrides['f1'].deleted).toBe(true);
+    // Leser sehen den Override nicht mehr:
+    expect(effectiveValue(m.overrides, 'f1', 100).overridden).toBe(false);
+  });
+
+  it('setComment("") schreibt Tombstone; Erst-Original bleibt über Tombstone hinweg verankert', () => {
+    let b = emptyAdyenBlob();
+    b = setComment(b, 'k', 'Text', T1);
+    b = setComment(b, 'k', '  ', T2);
+    expect(b.comments['k'].deleted).toBe(true);
+
+    b = setOverride(b, 'f', 100, 90, undefined, T1);
+    b = setOverride(b, 'f', 100, null, undefined, T1);
+    b = setOverride(b, 'f', 90, 80, undefined, T2); // "originalValue" 90 wäre falsch
+    expect(b.overrides['f'].originalValue).toBe(100);
+  });
+
+  it('Coverage-Regression: jüngerer lokaler Bestätigungs-Widerruf (Tombstone) schlägt älteres Remote-confirmed:true', () => {
+    // Szenario aus import-tasks-db.tagesabschlussCoverage: lokal wurde die
+    // Bestätigung widerrufen (Tombstone, jünger), das KV-Backup hängt noch auf
+    // confirmed:true (älter) — der Tag darf NICHT als erledigt zählen.
+    let local = emptyAdyenBlob();
+    local.confirmations['2026-06-01'] = { confirmed: true, cashCounted: true, updatedAt: T1 };
+    local = setDayConfirmation(local, '2026-06-01', null, T2); // Widerruf → Tombstone
+    const remote = emptyAdyenBlob();
+    remote.confirmations['2026-06-01'] = { confirmed: true, cashCounted: true, updatedAt: T1 };
+
+    const c = mergeAdyenBlobs(local, remote).confirmations['2026-06-01'];
+    expect(c.deleted).toBe(true);
+    expect(!c.deleted && c.confirmed === true).toBe(false); // Coverage-Prädikat
+  });
+
+  it('Bestätigungen: jüngerer updatedAt gewinnt; Altdaten ohne updatedAt via Audit-Stempel', () => {
+    const local = emptyAdyenBlob();
+    local.confirmations['2026-06-01'] = { confirmed: true, cashCounted: true, updatedAt: T2 };
+    const remote = emptyAdyenBlob();
+    remote.confirmations['2026-06-01'] = { confirmed: false, cashCounted: false, confirmedAt: T1 };
+    expect(mergeAdyenBlobs(local, remote).confirmations['2026-06-01'].confirmed).toBe(true);
   });
 });

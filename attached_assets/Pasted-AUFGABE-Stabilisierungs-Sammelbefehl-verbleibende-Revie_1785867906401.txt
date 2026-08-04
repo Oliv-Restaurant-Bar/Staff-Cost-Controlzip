@@ -1,0 +1,23 @@
+AUFGABE: Stabilisierungs-Sammelbefehl — verbleibende Review-Punkte. Für JEDEN Punkt zuerst prüfen, ob er im aktuellen Code noch existiert (der Review war auf einem alten Export); nur beheben, wenn vorhanden; berichten, welche bereits gefixt waren. Tests grün halten, mandantengetrennt, nie durch 0 teilen, leer statt 0.
+
+A) DATENINTEGRITÄT / SICHERE SCHREIBPFADE:
+1) tagesabschluss-db.ts Save: kvGetStrict statt kvGet; bei echtem Read-Fehler NICHT schreiben (kein lokaler Voll-Ersatz), sichtbarer Fehler (notifyKVBackupProblem, „Erneut versuchen").
+2) Gleiches Muster prüfen/anwenden bei weiteren Finanz-Schreibpfaden: reporting-store, budget.
+3) mergeDailyBudgets: „>0 gewinnt" durch updatedAt-basierten Merge ersetzen (stale Umsatz darf echten nicht verdrängen).
+4) gn_imports: partieller UNIQUE-Index (restaurant_id, checksum) sicherstellen (Z-Bericht-Dedup DB-erzwungen). restaurant_id per CHECK auf {oliv,beaulieu} einschränken, wo sinnvoll.
+5) Manuelle Warenrechnung: Dedup/Warnung auf (Lieferant + Rechnungs-/Beleg-Nr + Datum), damit Doppelerfassung nicht doppelt bucht.
+
+B) BERECHNUNG (Single Source of Truth):
+6) KennzahlenBerichtPage: netTotal aus der zentralen Monatslogik (computeMonthlyIstNet, inkl. Marketing/Maison VOLL ohne MwSt + Monats-Take-Away-Override) beziehen, statt selbst zu rechnen — konsistent zur Erfolgsrechnung.
+7) Food/Beverage-Breakdown: leere Werte NICHT als 0 schreiben (Key weglassen); undefined im Merge überspringen, damit eine bestehende Aufteilung nicht genullt wird.
+
+C) ZEIT/ZEITZONE:
+8) Warenrechnungen.tsx (getDaysInMonth / isoWeekRange): lokal formatieren (yyyy-MM-dd) statt new Date(...).toISOString() — Off-by-one an Monats-/Wochengrenzen der Warenkosten-Analyse beheben.
+
+D) NEBENLÄUFIGKEIT / STALE-RESPONSE:
+9) useStartOverview + useStaffingRequirements, usePositions, useSeasonDefinitions, usePersonnelData: cancelled-/Generations-Guard, damit eine späte Antwort nach Mandantenwechsel nicht den State des vorherigen Mandanten setzt (Vorlage: useDayDemandContext/useImportMonthProgress).
+
+E) PARSER:
+10) maison-import, annual-revenue-import, adyen-csv-parser: die zentrale parseAmount-Logik verwenden (Apostroph-Tausender, Komma- ODER Punkt-Dezimal, EU/US); unparsebar → melden, nie still 0.
+
+Am Ende: Liste je Punkt „behoben / war schon ok / nicht mehr vorhanden", plus was verändert wurde.

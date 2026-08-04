@@ -128,8 +128,20 @@ export function ManualEntryCard({ storageKey, tenantId }: { storageKey: string; 
       toast.error('Bitte gültiges Datum und Betrag eingeben');
       return;
     }
-    const foodNum = parseFloat(food.replace(',', '.')) || 0;
-    const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
+    // Leere Eingabe = «keine Angabe» (Key weglassen, bestehende Aufteilung
+    // nie nullen); explizite 0 ist ein echter Wert. Unlesbares → Fehler.
+    const parseSplit = (raw: string): number | undefined => {
+      if (raw.trim() === '') return undefined;
+      const n = parseFloat(raw.replace(',', '.'));
+      return isNaN(n) || n < 0 ? undefined : n;
+    };
+    if ((food.trim() !== '' && parseSplit(food) === undefined) ||
+        (beverage.trim() !== '' && parseSplit(beverage) === undefined)) {
+      toast.error('Food/Beverage: ungültiger Betrag');
+      return;
+    }
+    const foodNum = parseSplit(food);
+    const bevNum  = parseSplit(beverage);
     const dateLabel = format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de });
 
     if (target === 'previous_year') {
@@ -139,7 +151,8 @@ export function ManualEntryCard({ storageKey, tenantId }: { storageKey: string; 
       const year = parseInt(date.slice(0, 4), 10);
       const res = await commitGastronoviDays(
         storageKey,
-        [{ date, total: totalNum, food: foodNum, beverage: bevNum, takeAway: 0, currency: 'CHF' }],
+        // 0 = «keine Angabe»: commitGastronoviDays schreibt F/B nur bei > 0.
+        [{ date, total: totalNum, food: foodNum ?? 0, beverage: bevNum ?? 0, takeAway: 0, currency: 'CHF' }],
         'previous_year',
         { tenantId, year },
       );
@@ -154,9 +167,11 @@ export function ManualEntryCard({ storageKey, tenantId }: { storageKey: string; 
       return;
     }
 
-    // Aktuelles Jahr — unverändert: nur dailyBudgets.actualRevenue
-    const fields: Record<string, unknown> =
-      { actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum };
+    // Aktuelles Jahr — nur dailyBudgets; F/B-Keys nur bei tatsächlicher Angabe
+    // (undefined wird von safeUpsertDailyBudgets übersprungen, nie genullt).
+    const fields: Record<string, unknown> = { actualRevenue: totalNum };
+    if (foodNum !== undefined) fields.actualFood = foodNum;
+    if (bevNum !== undefined) fields.actualBeverage = bevNum;
 
     // Sicherer Upsert: immer KV-Stand holen, dann mergen — kein Blob-Overwrite
     console.log(`[UMSATZ] safe-upsert: ${date} field=${target} total=${totalNum} key=${storageKey}`);
@@ -559,7 +574,12 @@ export function GastronoviImportSection() {
 
       if (existingVal > 0 && !datesToReplace.has(r.date)) continue;
 
-      updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
+      // Food/Beverage NUR bei > 0 schreiben: 0 = Datei ohne Kategorie-Zeilen —
+      // eine bestehende Aufteilung darf ein Import ohne F/B nie nullen
+      // (gleiche Regel wie commitGastronoviDays).
+      updates[r.date] = { [field]: r.total };
+      if (r.food > 0) updates[r.date][foodKey] = r.food;
+      if (r.beverage > 0) updates[r.date][bevKey] = r.beverage;
       // Take-Away-Anteil (brutto) nur für Ist-Umsätze — Basis der Netto-Berechnung (2.6 % MwSt).
       // undefined = Datei ohne Take-Away-Zeile → bestehenden Wert nie überschreiben.
       if (target === 'actual' && r.takeAway !== undefined) updates[r.date].takeawayRevenue = r.takeAway;

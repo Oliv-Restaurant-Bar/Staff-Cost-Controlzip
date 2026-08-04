@@ -145,7 +145,7 @@ interface EntryForm {
 const WARE_KATEGORIEN: WarenKategorie[] = ['Food', 'Beverage', 'Sonstiges'];
 
 const EMPTY_FORM: EntryForm = {
-  date: new Date().toISOString().split('T')[0],
+  date: ymdLocal(new Date()),
   supplierName: '',
   amount: '',
   vatIncluded: true,
@@ -200,11 +200,18 @@ function relevantNetOf(list: InvoiceEntry[], grenze: number): number {
 function generateId(): string {
   return `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
+/**
+ * Lokales yyyy-MM-dd (NIE toISOString: das serialisiert in UTC und kippt an
+ * Monats-/Wochengrenzen je nach Zeitzone um einen Tag).
+ */
+function ymdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function getDaysInMonth(year: number, month: number): string[] {
   const days: string[] = [];
   const d = new Date(year, month - 1, 1);
   while (d.getMonth() === month - 1) {
-    days.push(d.toISOString().split('T')[0]);
+    days.push(ymdLocal(d));
     d.setDate(d.getDate() + 1);
   }
   return days;
@@ -237,8 +244,7 @@ function isoWeekRange(isoYear: number, week: number): { from: string; to: string
   monday.setDate(jan4.getDate() - dayOfWeek + (week - 1) * 7);
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
-  return { from: fmt(monday), to: fmt(sunday) };
+  return { from: ymdLocal(monday), to: ymdLocal(sunday) };
 }
 
 // ─── KPI-Box ──────────────────────────────────────────────────────────────────
@@ -337,7 +343,7 @@ export default function WarenrechnungenPage() {
   }, [role, canView, canCreate, canEdit, canDelete, canExport]);
 
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = ymdLocal(today);
 
   const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -503,7 +509,7 @@ export default function WarenrechnungenPage() {
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
   const [aYear,       setAYear]       = useState(today.getFullYear());
   const [aMonth,      setAMonth]      = useState(today.getMonth() + 1);
-  const [aWeekNum,    setAWeekNum]    = useState(() => getIsoWeek(new Date().toISOString().split('T')[0]).week);
+  const [aWeekNum,    setAWeekNum]    = useState(() => getIsoWeek(ymdLocal(new Date())).week);
   const [aFromYear,   setAFromYear]   = useState(today.getFullYear());
   const [aFromMonth,  setAFromMonth]  = useState(() => { const m = today.getMonth(); return m < 1 ? 12 : m; });
   const [aToYear,     setAToYear]     = useState(today.getFullYear());
@@ -1042,8 +1048,8 @@ export default function WarenrechnungenPage() {
       if (analyseMode === 'week') {
         const days: string[] = [];
         const d = new Date(analyseDates.from + 'T12:00:00');
-        while (d.toISOString().split('T')[0] <= analyseDates.to) {
-          days.push(d.toISOString().split('T')[0]);
+        while (ymdLocal(d) <= analyseDates.to) {
+          days.push(ymdLocal(d));
           d.setDate(d.getDate() + 1);
         }
         return days;
@@ -1798,7 +1804,7 @@ export default function WarenrechnungenPage() {
                         <Input
                           type="date"
                           value={form.date}
-                          max={today.toISOString().split('T')[0]}
+                          max={ymdLocal(today)}
                           onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
                           className="h-9 text-sm"
                         />

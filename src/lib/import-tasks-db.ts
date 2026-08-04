@@ -31,6 +31,7 @@ import { loadGnImports } from './gn-zbericht-db';
 import { getImportHistoryAll, type ImportHistoryEntry } from './timesheet-store';
 import { loadDocumentsForMonth } from './supplier-documents-store';
 import { isInventurDone, type InventurChecksBlob } from './import-settings';
+import { normalizeAdyenBlob, mergeAdyenBlobs } from './adyen-abstimmung';
 import { loadInventurChecks } from './import-settings-db';
 import type { TenantId } from '@/contexts/TenantContext';
 import {
@@ -359,34 +360,36 @@ async function mirusCoverage(
  * Tagesabschluss: bestätigte Tage aus dem Adyen-Abstimmungs-Blob
  * (`adyenAbstimmung_v1`, tenant-präfixiert) — ein Tag gilt als erledigt,
  * wenn «Abschluss geprüft» gesetzt ist (confirmations[date].confirmed).
- * localStorage primär, KV best-effort dazu-VEREINIGT (read-only, kein Write).
+ * localStorage + KV werden über mergeAdyenBlobs (jüngster Stand je Tag
+ * gewinnt) zusammengeführt — KEINE naive Union: ein jüngerer lokaler
+ * Tombstone/Widerruf darf nicht von einem älteren Remote-`confirmed:true`
+ * überstimmt werden. Tombstones (`deleted`) zählen nie als Bestätigung.
+ * Read-only, kein Write.
  */
 async function tagesabschlussCoverage(
   ctx: ImportTasksFetchContext,
   windowStart: string,
   windowEnd: string,
 ): Promise<TypeCoverage> {
-  const covered = new Set<string>();
-  const collect = (raw: unknown) => {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
-    const conf = (raw as { confirmations?: unknown }).confirmations;
-    if (!conf || typeof conf !== 'object' || Array.isArray(conf)) return;
-    for (const [date, entry] of Object.entries(conf as Record<string, unknown>)) {
-      if (!RE_DAY.test(date) || date < windowStart || date > windowEnd) continue;
-      if (entry && typeof entry === 'object' && (entry as { confirmed?: unknown }).confirmed === true) {
-        covered.add(date);
-      }
-    }
-  };
+  let local: ReturnType<typeof normalizeAdyenBlob> = normalizeAdyenBlob(null);
   try {
-    collect(JSON.parse(localStorage.getItem(ctx.tenantKey('adyenAbstimmung_v1')) || 'null'));
+    local = normalizeAdyenBlob(JSON.parse(localStorage.getItem(ctx.tenantKey('adyenAbstimmung_v1')) || 'null'));
   } catch {
     /* lokal nicht lesbar — KV unten */
   }
+  let merged = local;
   try {
-    collect(await kvGet(ctx.tenantKey('adyenAbstimmung_v1')));
+    const remote = await kvGet(ctx.tenantKey('adyenAbstimmung_v1'));
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
+      merged = mergeAdyenBlobs(local, normalizeAdyenBlob(remote));
+    }
   } catch {
     /* best-effort: lokaler Stand reicht */
+  }
+  const covered = new Set<string>();
+  for (const [date, entry] of Object.entries(merged.confirmations)) {
+    if (!RE_DAY.test(date) || date < windowStart || date > windowEnd) continue;
+    if (!entry.deleted && entry.confirmed === true) covered.add(date);
   }
   return { coveredDays: [...covered].sort() };
 }

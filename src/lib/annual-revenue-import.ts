@@ -18,6 +18,7 @@
  */
 
 import * as XLSX from 'xlsx';
+import { parseBetragZelle } from '@/lib/tagesdaten-zahlen';
 
 export interface MonthImportRow {
   month: number;        // 1–12
@@ -35,16 +36,19 @@ export interface AnnualImportResult {
   debugInfo?: string;
 }
 
-function parseCHFValue(val: unknown): number {
+/**
+ * Betrag über die ZENTRALE parseBetragZelle-Logik lesen (Apostroph-Tausender,
+ * Komma- ODER Punkt-Dezimal, EU/US-Formate). Leer = 0 (kein Tageswert in der
+ * Summenbildung); UNLESBARES wird gesammelt und gemeldet — nie stilles 0.
+ */
+function parseCHFValue(val: unknown, unlesbar?: string[]): number {
   if (val === null || val === undefined || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
-  const str = String(val)
-    .replace(/CHF\s*/i, '')
-    .replace(/\s/g, '')
-    .replace(/'/g, '')
-    .replace(',', '.');
-  const n = parseFloat(str);
-  return isNaN(n) ? 0 : n;
+  const z = parseBetragZelle(typeof val === 'number' ? val : String(val));
+  if (!z.ok) {
+    if (unlesbar) unlesbar.push(z.roh ?? String(val));
+    return 0;
+  }
+  return z.value ?? 0;
 }
 
 /**
@@ -237,6 +241,7 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
 
   const months: MonthImportRow[] = [];
   let yearTotal = 0;
+  const unlesbar: string[] = [];
 
   for (let m = 1; m <= 12; m++) {
     const cols = monthColumns[m] ?? [];
@@ -247,11 +252,11 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
     let discounts = 0;
 
     for (const col of cols) {
-      revenue   += parseCHFValue((gesamtRow as unknown[])[col]);
-      food      += foodRow     ? parseCHFValue((foodRow as unknown[])[col])     : 0;
-      beverage  += beverageRow ? parseCHFValue((beverageRow as unknown[])[col]) : 0;
-      takeAway  += takeAwayRow ? parseCHFValue((takeAwayRow as unknown[])[col]) : 0;
-      discounts += discountRow ? Math.abs(parseCHFValue((discountRow as unknown[])[col])) : 0;
+      revenue   += parseCHFValue((gesamtRow as unknown[])[col], unlesbar);
+      food      += foodRow     ? parseCHFValue((foodRow as unknown[])[col], unlesbar)     : 0;
+      beverage  += beverageRow ? parseCHFValue((beverageRow as unknown[])[col], unlesbar) : 0;
+      takeAway  += takeAwayRow ? parseCHFValue((takeAwayRow as unknown[])[col], unlesbar) : 0;
+      discounts += discountRow ? Math.abs(parseCHFValue((discountRow as unknown[])[col], unlesbar)) : 0;
     }
 
     months.push({
@@ -266,6 +271,14 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
   }
 
   yearTotal = Math.round(yearTotal * 100) / 100;
+
+  if (unlesbar.length > 0) {
+    const sample = unlesbar.slice(0, 3).map(s => `«${s}»`).join(', ');
+    warnings.push(
+      `${unlesbar.length} Zellwert${unlesbar.length === 1 ? '' : 'e'} unlesbar und NICHT summiert ` +
+      `(z.B. ${sample}) — bitte Datei prüfen.`
+    );
+  }
 
   // Plausibilitätscheck: Zeitraumsumme aus Spalte B (nur bei Volljahres-Import aussagekräftig)
   const declaredTotal = parseCHFValue((gesamtRow as unknown[])[1]);

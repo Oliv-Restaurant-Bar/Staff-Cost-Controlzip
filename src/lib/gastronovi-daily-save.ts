@@ -104,7 +104,12 @@ export async function commitGastronoviDays(
   let count = 0;
 
   for (const r of rows) {
-    updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
+    // Food/Beverage NUR schreiben, wenn wirklich geliefert (> 0): 0 heisst hier
+    // «Zeile fehlt/leer» — eine bestehende Aufteilung (z.B. aus dem
+    // Verkaufsdaten-Import) darf ein Import ohne F/B-Zeilen nie nullen.
+    updates[r.date] = { [field]: r.total };
+    if (r.food > 0) updates[r.date][foodKey] = r.food;
+    if (r.beverage > 0) updates[r.date][bevKey] = r.beverage;
     // Take-Away-Brutto pro Tag — Basis des präzisen Netto-MwSt-Splits (2.6 %/8.1 %).
     // Für BEIDE Ziele schreiben: auch vergangene Jahre brauchen den Split für
     // ihre Ist-Ansichten und fürs dynamische Vorjahr (Jahr + 1).

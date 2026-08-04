@@ -514,8 +514,13 @@ export const usePersonnelData = () => {
     manualRef.current = manualTimeEntries;
   }, [manualTimeEntries]);
 
+  // Generation-Guard: eine späte Antwort (z.B. nach Mandantenwechsel) darf den
+  // State des neueren Sync-Laufs / des anderen Mandanten nicht überschreiben.
+  const syncGeneration = useRef(0);
+
   // Sync data from Supabase and localStorage — tenant-aware
   const syncFromSupabase = useCallback(async () => {
+    const gen = ++syncGeneration.current;
     try {
       console.log(`[usePersonnelData] Starting sync from Supabase (tenant: ${tenantId})...`);
 
@@ -559,7 +564,12 @@ export const usePersonnelData = () => {
       try { localStorage.setItem(budgetKey, JSON.stringify(mergedBudgets)); } catch { /* ignore */ }
 
       const loadedManualEntries = loadTimeEntriesFromStorage();
-      
+
+      if (gen !== syncGeneration.current) {
+        console.log('[usePersonnelData] Stale sync verworfen (neuerer Lauf aktiv)');
+        return;
+      }
+
       // Set employees from Supabase
       setEmployees(supabaseEmployees);
       setDailyBudgets(mergedBudgets);
@@ -573,6 +583,7 @@ export const usePersonnelData = () => {
       console.log('[usePersonnelData] Sync complete!');
     } catch (err) {
       console.error('[usePersonnelData] Error syncing from Supabase:', err);
+      if (gen !== syncGeneration.current) return; // stale — nicht überschreiben
       // Fallback to localStorage (Beaulieu: empty rather than Oliv defaults)
       if (tenantId === 'beaulieu') {
         setEmployees([]);
@@ -597,10 +608,13 @@ export const usePersonnelData = () => {
     setTimeEntries(mergeTimeEntries(scheduleEntries, loadedManualEntries));
   }, [tenantId]);
 
-  // Initial load from Supabase
+  // Initial load from Supabase — isInitialized nur setzen, wenn der Lauf noch
+  // der aktuelle ist (sonst könnten Persistenz-Effekte mit altem State unter
+  // dem neuen Tenant-Key laufen).
   useEffect(() => {
+    const gen = syncGeneration.current + 1; // syncFromSupabase inkrementiert gleich
     syncFromSupabase().then(() => {
-      setIsInitialized(true);
+      if (syncGeneration.current === gen) setIsInitialized(true);
     });
   }, [syncFromSupabase]);
 
@@ -617,10 +631,12 @@ export const usePersonnelData = () => {
   // State veraltete Werte zeigen bis zur nächsten vollständigen Seiten-Reload.
   useEffect(() => {
     const budgetKey = dailyBudgetsKey(tenantId);
+    let alive = true; // Mandantenwechsel/Unmount: späte KV-Antwort verwerfen
     const reloadBudgetsFromKV = async () => {
       try {
         const { kvGet } = await import('@/lib/supabase-kv');
         const remote = await kvGet(budgetKey);
+        if (!alive) return;
         if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
           const kvBudgets = remote as Record<string, DailyBudget>;
           setDailyBudgets(prev => {
@@ -637,7 +653,10 @@ export const usePersonnelData = () => {
       } catch { /* ignore – stale state bleibt sichtbar */ }
     };
     window.addEventListener('supabase-kv-synced', reloadBudgetsFromKV);
-    return () => window.removeEventListener('supabase-kv-synced', reloadBudgetsFromKV);
+    return () => {
+      alive = false;
+      window.removeEventListener('supabase-kv-synced', reloadBudgetsFromKV);
+    };
   }, [tenantId]);
 
   // React to changes from other tabs/windows

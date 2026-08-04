@@ -334,21 +334,27 @@ export async function safeUpsertDailyBudgets(
   // 3. Merge: KV als Basis, Local-Werte > 0 gewinnen
   const base = mergeDailyBudgets(local, remote);
 
-  // 4. Updates anwenden
+  // 4. Updates anwenden — jeder geänderte Tag erhält einen updatedAt-Stempel,
+  //    damit mergeDailyBudgets künftig zeitbasiert entscheiden kann (stale
+  //    Stände dürfen echte nicht verdrängen). undefined-Werte werden
+  //    übersprungen (nie eine bestehende Aufteilung mit undefined nullen).
+  const stamp = new Date().toISOString();
   for (const [date, data] of Object.entries(updates)) {
     const existing = base[date] ?? ({} as Record<string, unknown>);
-    if (onlyIfZero) {
-      const patched: Record<string, unknown> = { ...existing };
-      for (const [field, value] of Object.entries(data)) {
+    const patched: Record<string, unknown> = { ...existing };
+    let changed = false;
+    for (const [field, value] of Object.entries(data)) {
+      if (value === undefined) continue; // Key weglassen ≠ Wert löschen
+      if (onlyIfZero) {
         const cur = existing[field];
         const curNum = typeof cur === 'number' ? cur : 0;
         if (curNum > 0) continue;
-        patched[field] = value;
       }
-      base[date] = patched;
-    } else {
-      base[date] = { ...existing, ...data };
+      patched[field] = value;
+      changed = true;
     }
+    if (changed) patched.updatedAt = stamp;
+    base[date] = patched;
   }
 
   // 5. Zurückschreiben: localStorage sofort (schnell), dann KV (persistent)
@@ -396,9 +402,21 @@ export async function safeUpsertDailyBudgets(
  * (z. B. 539) konnte einen korrekt importierten KV-Wert (23 767.30) dauerhaft
  * überschreiben, weil 539 > 0 als Bedingung erfüllt war.
  *
- * Neue Regel: KV ist der Master. local füllt nur Lücken (KV-Wert = 0 / fehlt).
- * Alle Schreibpfade gehen über safeUpsertDailyBudgets → KV wird immer zuerst
- * geschrieben, bevor local aktualisiert wird. Damit ist KV stets ≥ local.
+ * Neue Regel (zweistufig):
+ *   1. Haben BEIDE Tages-Records einen gültigen `updatedAt`-Stempel (wird von
+ *      safeUpsertDailyBudgets bei jedem Update gesetzt), gewinnt der JÜNGERE
+ *      Stand feldweise (Felder, die nur die ältere Seite kennt, bleiben
+ *      erhalten). So kann ein staler Stand einen echten nie verdrängen —
+ *      auch nicht eine echte 0.
+ *   2. Ohne Stempel (Altdaten): KV ist der Master. local füllt nur Lücken
+ *      (KV-Wert = 0 / fehlt). Alle Schreibpfade gehen über
+ *      safeUpsertDailyBudgets → KV wird immer zuerst geschrieben.
+ *
+ * BEKANNTE GRENZE: Der Stempel gilt pro TAG, nicht pro Feld. Ändern zwei
+ * Geräte verschiedene Felder desselben Tages, gewinnt der jüngere Tag als
+ * Ganzes (ältere Felder bleiben nur erhalten, wenn der jüngere sie nicht
+ * kennt). Feld-genaue Konfliktauflösung bräuchte Versionsstempel pro Feld —
+ * bewusst nicht eingeführt (Blob-Format-Verdopplung).
  */
 function mergeDailyBudgets(
   local: Record<string, Record<string, unknown>>,
@@ -409,9 +427,16 @@ function mergeDailyBudgets(
   for (const date of allDates) {
     const l = local[date] ?? {};
     const r = remote[date] ?? {};
-    // Start from local, then let remote fields win (KV is master)
+    // Stufe 1: zeitbasiert, wenn beide Seiten gestempelt sind
+    const lTs = typeof l.updatedAt === 'string' ? Date.parse(l.updatedAt) : NaN;
+    const rTs = typeof r.updatedAt === 'string' ? Date.parse(r.updatedAt) : NaN;
+    if (Number.isFinite(lTs) && Number.isFinite(rTs)) {
+      // Jüngere Seite gewinnt feldweise; ältere liefert nur fehlende Felder.
+      result[date] = lTs > rTs ? { ...r, ...l } : { ...l, ...r };
+      continue;
+    }
+    // Stufe 2 (Altdaten ohne Stempel): Start from local, remote (KV) gewinnt
     const merged: Record<string, unknown> = { ...l };
-    // Alle Felder aus remote übernehmen — remote gewinnt
     for (const field of Object.keys(r)) {
       const lv = l[field];
       const rv = r[field];

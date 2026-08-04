@@ -27,3 +27,6 @@ delete for exactly this reason).
 a `merge*Blobs` union, grep the merge function for that namespace; if it unions
 per key/id, use a tombstone + reader filters + a merge-resurrection test
 (local tombstone newer vs remote live entry must stay deleted after merge).
+
+## Adyen-Abstimmung (adyenAbstimmung_v1) folgt demselben Muster (2026-08)
+Blob-Saves auf geteilten KV-Keys brauchen merge-on-save (strict read → jüngster Stand je Key gewinnt → write; bei Read-Fehler KV-Write überspringen + Retry mit Save-Snapshot). Jeder Lösch-Pfad (Override entfernen, Kommentar leeren, Bestätigung widerrufen) schreibt einen Tombstone, ALLE Leser filtern `deleted` — auch read-only-Konsumenten wie Coverage-Berechnungen müssen lokal+remote MERGEN statt naiv zu vereinigen, sonst überstimmt ein altes Remote-`confirmed:true` einen jüngeren Widerruf.

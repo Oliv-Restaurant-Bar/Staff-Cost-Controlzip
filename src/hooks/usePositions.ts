@@ -4,7 +4,7 @@
  *
  * Tenant kommt aus dem TenantContext (tenantId = restaurant_id).
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import type { Position, PositionDraft } from '@/types/positions';
 import {
@@ -20,17 +20,24 @@ export function usePositions() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Generation-Guard: eine späte Antwort (z.B. nach Mandantenwechsel) darf den
+  // State des neueren Ladevorgangs nicht überschreiben.
+  const generation = useRef(0);
 
   const reload = useCallback(async () => {
+    const gen = ++generation.current;
     setLoading(true);
     setError(null);
     try {
-      setPositions(await loadPositions(tenantId));
+      const loaded = await loadPositions(tenantId);
+      if (gen !== generation.current) return;
+      setPositions(loaded);
     } catch (e) {
+      if (gen !== generation.current) return;
       setError(e instanceof Error ? e.message : 'Positionen konnten nicht geladen werden');
       setPositions([]);
     } finally {
-      setLoading(false);
+      if (gen === generation.current) setLoading(false);
     }
   }, [tenantId]);
 

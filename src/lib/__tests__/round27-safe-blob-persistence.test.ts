@@ -400,7 +400,10 @@ describe('F20: Die Refactorings verändern keine gespeicherten Datenformate', ()
     expect(Array.isArray(b['2025'].positions)).toBe(true);
 
     const d = state.rows[D_KEY] as Record<string, Record<string, unknown>>;
-    expect(d['2026-07-01']).toEqual({ plannedRevenue: 100, actualRevenue: 90 });
+    // Seit dem updatedAt-Merge stempelt safeUpsertDailyBudgets jeden
+    // geänderten Tag mit updatedAt (Basis des zeitbasierten Merges).
+    expect(d['2026-07-01']).toMatchObject({ plannedRevenue: 100, actualRevenue: 90 });
+    expect(typeof d['2026-07-01'].updatedAt).toBe('string');
 
     const r = state.rows[R_KEY] as Record<string, Record<string, unknown>>;
     expect(r['2025-01']).toMatchObject({ id: '2025-01', year: 2025, month: 1, revenueActual: 10 });

@@ -142,6 +142,12 @@ export interface DailyBudget {
   actualBeverage?: number;
   previousYearFood?: number;
   previousYearBeverage?: number;
+  /**
+   * ISO-Zeitstempel des letzten Updates dieses Tages — wird von
+   * safeUpsertDailyBudgets gesetzt und steuert den zeitbasierten Merge
+   * (jüngerer Stand gewinnt; stale Geräte verdrängen nichts mehr).
+   */
+  updatedAt?: string;
 }
 
 // MWST rates for revenue calculation — konfigurierbar über src/lib/mwst.ts

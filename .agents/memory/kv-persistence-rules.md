@@ -28,3 +28,8 @@ Ergänzt die Kurzregeln in `replit.md` §2 «Persistenz». Verbindliche Details:
 ## app_settings-Wrapper
 - ALLE Zugriffe auf die Tabelle `app_settings` über `appSettingsTable()` (`src/lib/app-settings-table.ts`). **Why:** die Tabelle fehlt in den auto-generierten Supabase-Typen (werden nie manuell editiert) — der technisch nötige Cast ist dort an EINER Stelle isoliert, kein `any` erreicht Aufrufer.
 - Der Wrapper ist reine Infrastruktur; Domain-Regeln (Merge, Tombstones, Tenant-Präfix, Availability) bleiben vollständig bei den Aufrufern.
+
+## dailyBudgets: Tages-updatedAt-Merge (2026-08)
+- safeUpsertDailyBudgets stempelt jeden geänderten Tag mit updatedAt (ISO) und überspringt undefined-Werte in Updates (Key weglassen ≠ löschen).
+- mergeDailyBudgets zweistufig: beide Seiten gestempelt ⇒ jüngerer Tag gewinnt feldweise ({...älter,...jünger}); sonst Legacy (remote>0 gewinnt). Bekannte Grenze: Stempel pro TAG, nicht pro Feld — Zwei-Geräte-Konflikt auf verschiedenen Feldern desselben Tages löst der jüngere Gesamttag.
+- F/B-Kategorien (food/beverage-Keys) NIE als 0 schreiben, wenn die Quelle keine Kategorie-Zeilen hat: sowohl commitGastronoviDays als auch der Bulk-Pfad in GastronoviImportSection schreiben F/B nur bei >0; manuelle Eingabe: leer = Key weglassen, explizite 0 = Wert.
