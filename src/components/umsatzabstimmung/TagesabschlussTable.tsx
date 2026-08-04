@@ -57,6 +57,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { DayConfirmationInput } from '@/lib/adyen-abstimmung';
 import {
+  canBulkCloseDay,
   canCheckAbschlussGeprueft,
   canCheckBarKontrolliert,
   canCloseDay,
@@ -296,39 +297,48 @@ function closureTitle(row: TagesabschlussRow): string | undefined {
   return `Abgeschlossen am ${formatClosedStamp(c.closedAt)} von ${c.closedBy}`;
 }
 
-function StatusBadge({ row }: { row: TagesabschlussRow }) {
+/**
+ * EIN kompaktes Status-Zeichen pro Zeile (Spec «schlichtes Design»):
+ * grün = abgeschlossen (Schloss; «mit Differenz» nur im Tooltip/Popup),
+ * amber = offen/in Bearbeitung/wieder geöffnet, neutral = kein Z-Bericht.
+ * Details und Aktionen stecken im Status-Popup (Klick auf das Zeichen).
+ */
+function statusBadgeParts(row: TagesabschlussRow): { cls: string; label: string; lock: boolean } {
   const { status } = row;
   if (status === 'abgeschlossen' || status === 'abgeschlossen_mit_differenz') {
-    const withDiff = status === 'abgeschlossen_mit_differenz';
-    return (
-      <span
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${withDiff
-          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300'
-          : 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'}`}
-        title={closureTitle(row) ?? (withDiff ? 'Abgeschlossen mit begründeter Kassendifferenz' : undefined)}
-      >
-        <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-        {withDiff ? 'Mit Differenz' : 'Abgeschlossen'}
-      </span>
-    );
+    return {
+      cls: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
+      label: status === 'abgeschlossen_mit_differenz' ? 'Grün*' : 'Grün',
+      lock: true,
+    };
   }
-  if (status === 'wieder_geoeffnet') {
-    return (
-      <span
-        className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300"
-        title={closureTitle(row)}
-      >
-        Wieder geöffnet
-      </span>
-    );
+  if (status === 'fehlt') {
+    return { cls: 'bg-muted text-muted-foreground', label: '—', lock: false };
   }
-  if (status === 'in_bearbeitung') {
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">In Bearbeitung</span>;
-  }
-  if (status === 'offen') {
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">Offen</span>;
-  }
-  return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">Kein Z-Bericht</span>;
+  // offen / in_bearbeitung / wieder_geoeffnet — alles «noch nicht grün» = amber.
+  return {
+    cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    label: 'Offen',
+    lock: false,
+  };
+}
+
+function statusTitle(row: TagesabschlussRow): string {
+  const base = closureTitle(row);
+  if (base) return base;
+  if (row.status === 'in_bearbeitung') return 'In Bearbeitung — Klick für Abschluss-Schritte';
+  if (row.status === 'offen') return 'Offen — Klick für Abschluss-Schritte';
+  return 'Kein Z-Bericht für diesen Tag';
+}
+
+function StatusBadge({ row }: { row: TagesabschlussRow }) {
+  const p = statusBadgeParts(row);
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${p.cls}`}>
+      {p.lock && <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />}
+      {p.label}
+    </span>
+  );
 }
 
 // ── Zeilen-Hintergrund (Zebra + Zustands-Tints) ──────────────────────────────
@@ -407,6 +417,39 @@ function InlineAmountInput({ value, manual, corrected = false, onCommit, testId,
   );
 }
 
+/**
+ * Admin-Wiederöffnen im Status-Popup: Grund ist PFLICHT (gleiche Semantik
+ * wie im Tagesdetail-Dialog — reopenDay wirft bei leerem Grund).
+ */
+function ReopenBlock({ date, onReopen }: { date: string; onReopen: (date: string, reason: string) => void }) {
+  const [reason, setReason] = useState('');
+  return (
+    <div className="w-full border-t border-border pt-2 mt-1 space-y-1.5">
+      <p className="text-[10px] text-muted-foreground">Wieder öffnen (Grund ist Pflicht):</p>
+      <input
+        type="text"
+        className="h-6 w-full rounded border border-input bg-background px-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+        placeholder="Grund für das Wiederöffnen"
+        value={reason}
+        onChange={e => setReason(e.target.value)}
+        data-testid={`ta-reopen-reason-${date}`}
+      />
+      <button
+        type="button"
+        className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium ${reason.trim() !== ''
+          ? 'border-amber-600/50 text-amber-700 dark:text-amber-400 cursor-pointer hover:bg-amber-50 dark:hover:bg-amber-950/30'
+          : 'border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
+        disabled={reason.trim() === ''}
+        onClick={() => { onReopen(date, reason.trim()); setReason(''); }}
+        title="Tag wieder öffnen — Werte werden wieder bearbeitbar"
+        data-testid={`ta-reopen-day-${date}`}
+      >
+        Wieder öffnen
+      </button>
+    </div>
+  );
+}
+
 interface TagesabschlussTableProps {
   rows: TagesabschlussRow[];
   totals: TagesabschlussTotals;
@@ -436,6 +479,17 @@ interface TagesabschlussTableProps {
   onReasonsClick?: (date: string) => void;
   /** „Tagesabschluss abschließen" — Button nur aktiv, wenn canCloseDay ok. */
   onCloseDay?: (date: string) => void;
+  /**
+   * Sammelaktion «Alle auf grün» (Spaltenkopf Status): schliesst alle
+   * abschliessbaren Tage des Monats (canBulkCloseDay) auf einmal — die
+   * Bestätigung («X Tage abschliessen?») stellt die Tabelle.
+   */
+  onCloseAllDays?: () => void;
+  /**
+   * Admin-Wiederöffnen eines abgeschlossenen Tages aus dem Status-Popup
+   * (Grund ist Pflicht). Ohne Callback kein Reopen-Bereich im Popup.
+   */
+  onReopenDay?: (date: string, reason: string) => void;
   /**
    * Voll-Ansicht: zeigt zusätzlich die Detail-Spalten (Einzahlung Bank,
    * Bargeld Soll (ber.), KK, V-Gutscheine). Default false = kompakte
@@ -488,12 +542,16 @@ interface TagesabschlussTableProps {
 export function TagesabschlussTable({
   rows, totals, onDayClick, readOnly = false, onSaveManual,
   onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm, onReasonsClick,
-  onCloseDay, showAllColumns = false, onOverrideClick,
+  onCloseDay, onCloseAllDays, onReopenDay, showAllColumns = false, onOverrideClick,
   onInlineCorrect, onInlineExpense, onSetSaldoAnker,
   umsatzImport, umsatzSchwelle = DEFAULT_UMSATZ_DIFF_SCHWELLE, onUmsatzDiffClick,
 }: TagesabschlussTableProps) {
   const today = todayIso();
   const showAll = showAllColumns;
+  // Sammelaktion «Alle auf grün»: Anzahl der Tage, die mit gesetzten
+  // Bestätigungen abschliessbar wären (Tage ohne Daten bleiben unangetastet).
+  const bulkCloseCount = rows.filter(r => canBulkCloseDay(r).ok).length;
+  const showBulkClose = !readOnly && !!onCloseAllDays;
 
   return (
     <div className="overflow-auto max-h-[calc(100vh-230px)] rounded-md border border-border">
@@ -508,7 +566,30 @@ export function TagesabschlussTable({
                 {...(c.tooltip ? { title: c.tooltip } : {})}
                 data-testid={`ta-col-${c.key}`}
               >
-                {c.label}
+                {c.key === 'status' && showBulkClose ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {c.label}
+                    <button
+                      type="button"
+                      className={`rounded border px-1.5 py-0.5 text-[10px] font-medium normal-case ${bulkCloseCount > 0
+                        ? 'border-green-600/50 text-green-700 dark:text-green-400 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950/30'
+                        : 'border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
+                      disabled={bulkCloseCount === 0}
+                      onClick={() => {
+                        if (bulkCloseCount === 0) return;
+                        if (window.confirm(`${bulkCloseCount} Tag${bulkCloseCount === 1 ? '' : 'e'} abschliessen?`)) {
+                          onCloseAllDays!();
+                        }
+                      }}
+                      title={bulkCloseCount > 0
+                        ? `Alle abschliessbaren Tage auf einmal abschliessen (${bulkCloseCount}). Tage ohne Daten oder mit unbegründeter Differenz bleiben unangetastet.`
+                        : 'Kein Tag abschliessbar (Daten unvollständig oder Differenzen unbegründet).'}
+                      data-testid="ta-close-all"
+                    >
+                      Alle auf grün
+                    </button>
+                  </span>
+                ) : c.label}
               </th>
             ))}
           </tr>
@@ -1041,67 +1122,94 @@ export function TagesabschlussTable({
                   <ValueCell cell={row.cells.gutscheinVerkauft} />
                 ))}
 
-                {/* ── Status ── vertikal (Spec): Badge → Checkboxen → Abschließen.
-                    Read-only-Rollen SEHEN den Zustand (disabled), nichts wird
-                    versteckt. Disabled nur fürs AKTIVIEREN — ein gesetztes
-                    Häkchen bleibt entfernbar (Audit beim Entfernen). */}
-                <td className={`px-2 py-0.5 whitespace-nowrap align-top ${SEP} pl-3`}>
-                  <div className="flex flex-col items-start gap-1" data-testid={`ta-status-stack-${row.date}`}>
-                    <StatusBadge row={row} />
-                    {row.hasZbericht && (
-                      <div className="flex flex-col gap-0.5">
-                        <label
-                          className={`flex items-center gap-1 text-[10px] ${cashCounted ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
-                          title={!cashCounted && !barGate.ok && barGate.reason ? barGate.reason : TIP_BAR_KONTROLLIERT}
-                        >
-                          <Checkbox
-                            className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
-                            checked={cashCounted}
-                            disabled={!confirmable || (!cashCounted && !barGate.ok)}
-                            onCheckedChange={v => onConfirm?.(row.date, {
-                              confirmed,
-                              cashCounted: v === true,
-                            })}
-                            data-testid={`ta-row-check-cash-${row.date}`}
-                          />
-                          Bar kontrolliert
-                        </label>
-                        <label
-                          className={`flex items-center gap-1 text-[10px] ${confirmed ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
-                          title={!confirmed && !geprueftGate.ok && geprueftGate.reason ? geprueftGate.reason : TIP_ABSCHLUSS_GEPRUEFT}
-                        >
-                          <Checkbox
-                            className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
-                            checked={confirmed}
-                            disabled={!confirmable || (!confirmed && !geprueftGate.ok)}
-                            onCheckedChange={v => onConfirm?.(row.date, {
-                              confirmed: v === true,
-                              cashCounted,
-                            })}
-                            data-testid={`ta-row-check-confirm-${row.date}`}
-                          />
-                          Abschluss geprüft
-                        </label>
-                      </div>
-                    )}
-                    {!readOnly && !!onCloseDay && closeCheck && (
+                {/* ── Status ── EIN kompaktes Status-Zeichen (Spec: niedrige
+                    Zeilen). Klick öffnet das Status-Popup mit der GESAMTEN
+                    bisherigen Abschluss-Logik: beide Bestätigungs-Checkboxen,
+                    Abschließen, Wiederöffnen (Admin). Read-only-Rollen sehen
+                    das Popup mit disabled-Elementen — nichts wird versteckt. */}
+                <td className={`px-2 py-0.5 whitespace-nowrap ${SEP} pl-3`}>
+                  <Popover>
+                    <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${closeCheck.ok
-                          ? 'border-green-600/50 text-green-700 dark:text-green-400 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950/30'
-                          : 'border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
-                        disabled={!closeCheck.ok}
-                        onClick={closeCheck.ok ? () => onCloseDay(row.date) : undefined}
-                        title={closeCheck.ok
-                          ? 'Tagesabschluss abschließen — der Tag wird gesperrt'
-                          : `Abschluss nicht möglich: ${closeCheck.blockers.join(' ')}`}
-                        data-testid={`ta-close-day-${row.date}`}
+                        className="cursor-pointer rounded hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-ring"
+                        title={statusTitle(row)}
+                        data-testid={`ta-status-badge-${row.date}`}
                       >
-                        <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-                        Abschließen
+                        <StatusBadge row={row} />
                       </button>
-                    )}
-                  </div>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-64 p-3" data-testid={`ta-status-pop-${row.date}`}>
+                      <div className="flex flex-col items-start gap-2" data-testid={`ta-status-stack-${row.date}`}>
+                        <div className="flex items-center gap-2">
+                          <StatusBadge row={row} />
+                          <span className="text-xs font-medium">{dayLabel(row.date)}</span>
+                        </div>
+                        {row.status === 'abgeschlossen_mit_differenz' && (
+                          <p className="text-[10px] text-muted-foreground">Abgeschlossen mit begründeter Kassendifferenz.</p>
+                        )}
+                        {closureTitle(row) && (
+                          <p className="text-[10px] text-muted-foreground">{closureTitle(row)}</p>
+                        )}
+                        {row.hasZbericht && (
+                          <div className="flex flex-col gap-1">
+                            <label
+                              className={`flex items-center gap-1.5 text-[11px] ${cashCounted ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
+                              title={!cashCounted && !barGate.ok && barGate.reason ? barGate.reason : TIP_BAR_KONTROLLIERT}
+                            >
+                              <Checkbox
+                                className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
+                                checked={cashCounted}
+                                disabled={!confirmable || (!cashCounted && !barGate.ok)}
+                                onCheckedChange={v => onConfirm?.(row.date, {
+                                  confirmed,
+                                  cashCounted: v === true,
+                                })}
+                                data-testid={`ta-row-check-cash-${row.date}`}
+                              />
+                              Bar kontrolliert
+                            </label>
+                            <label
+                              className={`flex items-center gap-1.5 text-[11px] ${confirmed ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
+                              title={!confirmed && !geprueftGate.ok && geprueftGate.reason ? geprueftGate.reason : TIP_ABSCHLUSS_GEPRUEFT}
+                            >
+                              <Checkbox
+                                className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
+                                checked={confirmed}
+                                disabled={!confirmable || (!confirmed && !geprueftGate.ok)}
+                                onCheckedChange={v => onConfirm?.(row.date, {
+                                  confirmed: v === true,
+                                  cashCounted,
+                                })}
+                                data-testid={`ta-row-check-confirm-${row.date}`}
+                              />
+                              Abschluss geprüft
+                            </label>
+                          </div>
+                        )}
+                        {!readOnly && !!onCloseDay && closeCheck && (
+                          <button
+                            type="button"
+                            className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium ${closeCheck.ok
+                              ? 'border-green-600/50 text-green-700 dark:text-green-400 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950/30'
+                              : 'border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
+                            disabled={!closeCheck.ok}
+                            onClick={closeCheck.ok ? () => onCloseDay(row.date) : undefined}
+                            title={closeCheck.ok
+                              ? 'Tagesabschluss abschließen — der Tag wird gesperrt'
+                              : `Abschluss nicht möglich: ${closeCheck.blockers.join(' ')}`}
+                            data-testid={`ta-close-day-${row.date}`}
+                          >
+                            <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                            Abschließen
+                          </button>
+                        )}
+                        {!readOnly && !!onReopenDay && rowLocked && (
+                          <ReopenBlock date={row.date} onReopen={onReopenDay} />
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </td>
               </tr>
             );

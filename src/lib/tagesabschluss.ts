@@ -2044,6 +2044,22 @@ export function canCloseDay(row: TagesabschlussRow): CloseDayCheck {
 }
 
 /**
+ * Sammelaktion «Alle auf grün»: wäre der Tag abschliessbar, wenn beide
+ * Bestätigungen (Bar kontrolliert + Abschluss geprüft) gesetzt WÄREN?
+ * Prüft dieselben Gates wie canCloseDay — nur die beiden Häkchen werden
+ * als gesetzt angenommen (die Sammelaktion setzt sie mit). Tage ohne
+ * Daten (kein Z-Bericht, kein BAR IST, unbekannter Saldo) oder mit
+ * unbegründeter Differenz bleiben unangetastet.
+ */
+export function canBulkCloseDay(row: TagesabschlussRow): CloseDayCheck {
+  const simulated: TagesabschlussRow = {
+    ...row,
+    confirmation: { ...(row.confirmation ?? {}), confirmed: true, cashCounted: true } as TagesabschlussRow['confirmation'],
+  };
+  return canCloseDay(simulated);
+}
+
+/**
  * Schließt einen Tag definitiv ab: Status (mit/ohne Differenz), Benutzer,
  * Zeitstempel, fixierter Kassensaldo, Historie-Eintrag. Wirft bei verletzten
  * Vorbedingungen (canCloseDay) — kein stiller Teil-Abschluss.

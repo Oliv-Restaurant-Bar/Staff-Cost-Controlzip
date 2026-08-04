@@ -138,11 +138,11 @@ describe('TagesabschlussTable', () => {
     const corrected = row2.querySelector('.bg-amber-100');
     expect(corrected?.textContent).toContain('1’050.00');
 
-    // Status-Badges: Arbeitsstand (Bestätigung ODER Korrektur) = „In Bearbeitung".
-    // 01.07. bestätigt + 02.07. korrigiert → beide in Bearbeitung, kein „Offen".
-    expect(screen.getAllByText('In Bearbeitung').length).toBe(2);
-    expect(screen.queryByText('Offen')).toBeNull();
-    expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
+    // Status-Badges (kompakt): alles Nicht-Abgeschlossene = amber «Offen» —
+    // 01.07. (bestätigt) + 02.07. (korrigiert). Tage ohne Z-Bericht = «—».
+    expect(screen.getAllByText('Offen').length).toBe(2);
+    expect(screen.queryByText('In Bearbeitung')).toBeNull();
+    expect(screen.getAllByTestId(/^ta-status-badge-/).length).toBe(31);
   });
 
   it('Bargeld Soll (ber.) / Kassensaldo Soll / Differenz: berechnete Spalten, Ampel und Totale', () => {
@@ -255,12 +255,13 @@ describe('TagesabschlussTable', () => {
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
     expect(screen.getByTestId('ta-row-2026-07-03').className).not.toContain('bg-red-50');
-    expect(screen.getByText('Offen')).toBeTruthy();
+    expect(screen.getAllByText('Offen').length).toBeGreaterThanOrEqual(1);
     cleanup();
     const closed = buildMonthWithClosedDay();
     render(<TagesabschlussTable showAllColumns rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
     expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
-    expect(screen.getByText('Abgeschlossen')).toBeTruthy();
+    // Abgeschlossen = grünes Badge «Grün» (Details im Status-Popup).
+    expect(screen.getByText('Grün')).toBeTruthy();
   });
 
   it('markiert die heutige Zeile (data-today)', () => {
@@ -379,11 +380,14 @@ describe('TagesabschlussTable', () => {
 
     it('Bestätigungs-Checkboxen: unabhängig, Aktivierungs-Gates, Entfernen immer möglich', () => {
       const { onConfirm } = renderEditable();
+      // Checkboxen leben im Status-Popup (Klick aufs Status-Badge).
       // Nur 01.07./02.07. haben Z-Bericht → nur dort Checkboxen.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-03'));
       expect(screen.queryByTestId('ta-row-check-cash-2026-07-03')).toBeNull();
 
       // 02.07.: kein BAR IST erfasst → BEIDE Checkboxen deaktiviert,
       // Sperr-Grund als Tooltip am Label.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-02'));
       const cashBox2 = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
       expect(cashBox2.disabled).toBe(true);
       expect(cashBox2.closest('label')?.getAttribute('title')).toContain('BAR IST muss zuerst erfasst werden.');
@@ -394,6 +398,7 @@ describe('TagesabschlussTable', () => {
       // 01.07.: beide gesetzt → Entfernen bleibt möglich und lässt das
       // ANDERE Häkchen unangetastet (unabhängige Checkboxen); Payload OHNE
       // Zeitstempel — Audit stempelt zentral applyDayConfirmation.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       const cashBox1 = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
       expect(cashBox1.disabled).toBe(false);
       fireEvent.click(cashBox1);
@@ -411,8 +416,9 @@ describe('TagesabschlussTable', () => {
         onCorrectRechnung={() => {}} onVoucherClick={() => {}} onExpensesClick={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-01')).toBeNull();
-      // Bestätigungs-Checkboxen bleiben SICHTBAR (Zustand ablesbar), sind
-      // aber deaktiviert — read-only versteckt nichts.
+      // Bestätigungs-Checkboxen bleiben im Status-Popup SICHTBAR (Zustand
+      // ablesbar), sind aber deaktiviert — read-only versteckt nichts.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       const roCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
       expect(roCash.disabled).toBe(true);
       const roConfirm = screen.getByTestId('ta-row-check-confirm-2026-07-01') as HTMLButtonElement;
@@ -641,13 +647,16 @@ describe('TagesabschlussTable', () => {
       render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={onCloseDay} />);
 
+      // Abschließen-Button lebt im Status-Popup (Klick aufs Badge).
       // 01.07.: bestätigt + Barbestand + Cash Ist + Diff grün → aktiv.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       const btn1 = screen.getByTestId('ta-close-day-2026-07-01') as HTMLButtonElement;
       expect(btn1.disabled).toBe(false);
       btn1.click();
       expect(onCloseDay).toHaveBeenCalledWith('2026-07-01');
 
       // 02.07.: unbestätigt → deaktiviert, Blocker im title.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-02'));
       const btn2 = screen.getByTestId('ta-close-day-2026-07-02') as HTMLButtonElement;
       expect(btn2.disabled).toBe(true);
       expect(btn2.getAttribute('title')).toContain('«Tagesabschluss geprüft» nicht bestätigt.');
@@ -655,6 +664,7 @@ describe('TagesabschlussTable', () => {
       expect(onCloseDay).toHaveBeenCalledTimes(1);
 
       // Tage ohne Z-Bericht haben gar keinen Abschluss-Button.
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-03'));
       expect(screen.queryByTestId('ta-close-day-2026-07-03')).toBeNull();
     });
 
@@ -665,16 +675,19 @@ describe('TagesabschlussTable', () => {
         onSaveManual={() => {}} onConfirm={() => {}} onCorrectRechnung={() => {}}
         onVoucherClick={() => {}} onExpensesClick={() => {}} onCloseDay={onCloseDay} />);
 
-      // Lock-Icon am Datum + grüner Badge mit Abschluss-Info im title.
+      // Lock-Icon am Datum + grünes Badge «Grün»; Abschluss-Info im title
+      // des Popup-Triggers.
       expect(screen.getByTestId('ta-lock-2026-07-01')).toBeTruthy();
-      const badge = screen.getByText('Abgeschlossen');
-      expect(badge.closest('span')?.getAttribute('title')).toContain('admin@oliv.ch');
+      expect(screen.getByText('Grün')).toBeTruthy();
+      const trigger = screen.getByTestId('ta-status-badge-2026-07-01');
+      expect(trigger.getAttribute('title')).toContain('admin@oliv.ch');
 
       // Zeile 01.07.: KEINE Inputs/Checkboxen/Buttons für Edits mehr.
       const row1 = screen.getByTestId('ta-row-2026-07-01');
       expect(row1.querySelectorAll('input').length).toBe(0);
+      fireEvent.click(trigger);
       expect(screen.queryByTestId('ta-close-day-2026-07-01')).toBeNull();
-      // Checkboxen bleiben sichtbar (Zustand ablesbar), aber gesperrt.
+      // Checkboxen bleiben im Popup sichtbar (Zustand ablesbar), aber gesperrt.
       const lockedCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
       expect(lockedCash.disabled).toBe(true);
       expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
@@ -692,11 +705,13 @@ describe('TagesabschlussTable', () => {
       render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={() => {}} />);
 
-      expect(screen.getByText('Wieder geöffnet')).toBeTruthy();
+      // Wieder geöffnet = amber «Offen» (Details im title/Popup).
+      expect(screen.getByTestId('ta-status-badge-2026-07-01').getAttribute('title')).toContain('Wieder geöffnet');
       const row1 = screen.getByTestId('ta-row-2026-07-01');
       // Schlichtes Design: kein oranger Zeilen-Tint mehr — Status via Badge.
       expect(row1.className).not.toContain('bg-orange-50');
       expect(row1.querySelectorAll('input').length).toBeGreaterThan(0);
+      fireEvent.click(screen.getByTestId('ta-status-badge-2026-07-01'));
       expect(screen.getByTestId('ta-close-day-2026-07-01')).toBeTruthy();
       expect(screen.queryByTestId('ta-lock-2026-07-01')).toBeNull();
     });

@@ -15,6 +15,7 @@ import {
   upsertInlineExpense,
   canCheckBarKontrolliert,
   canCheckAbschlussGeprueft,
+  canBulkCloseDay,
   canCloseDay,
   canCloseMonth,
   closeDay,
@@ -477,6 +478,37 @@ describe('buildTagesabschlussRows', () => {
     // Alles vorhanden → aktivierbar.
     const komplett = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
     expect(canCheckAbschlussGeprueft(komplett.rows[0])).toEqual({ ok: true });
+  });
+
+  it('canBulkCloseDay («Alle auf grün»): simuliert gesetzte Häkchen, restliche Gates bleiben', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    // Vollständige Daten, aber KEINE Bestätigungen → einzeln nicht schliessbar,
+    // per Sammelaktion schon (Häkchen werden mitgesetzt).
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW); // Diff 0
+    const ohneConf = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(canCloseDay(ohneConf.rows[0]).ok).toBe(false);
+    expect(canBulkCloseDay(ohneConf.rows[0]).ok).toBe(true);
+
+    // Tag ohne Z-Bericht → bleibt unangetastet.
+    expect(canBulkCloseDay(ohneConf.rows[1]).ok).toBe(false);
+
+    // Fehlendes BAR IST → nicht bulk-schliessbar.
+    const ohneIst = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, null, 0);
+    expect(canBulkCloseDay(ohneIst.rows[0]).ok).toBe(false);
+
+    // Unbegründete grosse Differenz → nicht bulk-schliessbar.
+    let blobDiff = emptyTagesabschlussBlob();
+    blobDiff = upsertManualDay(blobDiff, '2026-07-01', { bestandKasse: 320 }, NOW); // +20 large
+    const mitDiff = buildTagesabschlussRows(2026, 7, closings, blobDiff, {}, null, 0);
+    expect(canBulkCloseDay(mitDiff.rows[0]).ok).toBe(false);
+
+    // Bereits abgeschlossener Tag → nicht nochmal.
+    const conf = { '2026-07-01': { confirmed: true, cashCounted: true } };
+    const rowsMitConf = buildTagesabschlussRows(2026, 7, closings, blob, conf, null, 0);
+    const closedBlob = closeDay(blob, rowsMitConf.rows[0], 'admin@oliv.ch', NOW);
+    const locked = buildTagesabschlussRows(2026, 7, closings, closedBlob, conf, null, 0);
+    expect(canBulkCloseDay(locked.rows[0]).ok).toBe(false);
   });
 
   it('nicht-grüne UND unbegründete Cash-Differenz blockiert den Abschluss', () => {

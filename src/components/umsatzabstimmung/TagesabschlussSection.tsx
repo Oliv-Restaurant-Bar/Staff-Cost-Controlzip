@@ -26,6 +26,7 @@ import {
 import {
   buildTagesabschlussRows,
   canCloseMonth,
+  canBulkCloseDay,
   closeDay,
   closeMonth,
   isMonthClosed,
@@ -371,6 +372,53 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
       console.error('[Tagesabschluss] Wiederöffnen nicht möglich:', e);
     }
   }, [canReopen, blob, currentUser, persist]);
+
+  /**
+   * Sammelaktion «Alle auf grün»: schliesst alle abschliessbaren Tage des
+   * angezeigten Monats auf einmal — setzt beide Bestätigungen (ein Write in
+   * den Adyen-Store) und sperrt die Tage (ein persist auf den Blob).
+   * Nur Tage, die canBulkCloseDay besteht (Daten vollständig, Differenz grün
+   * oder begründet); alle anderen bleiben unangetastet.
+   */
+  const handleCloseAllDays = useCallback(async () => {
+    if (readOnly || !blob) return;
+    const eligible = monthData.rows.filter(r => canBulkCloseDay(r).ok);
+    if (eligible.length === 0) return;
+    const now = new Date().toISOString();
+    // 1) ALLE Abschlüsse zuerst rein in-memory berechnen — wirft ein einziger
+    //    closeDay (stale Row/Race), passiert GAR KEIN Write in KEINEM Store.
+    let b: typeof blob;
+    try {
+      b = blob;
+      for (const r of eligible) {
+        const simulated = {
+          ...r,
+          confirmation: { ...(r.confirmation ?? {}), confirmed: true, cashCounted: true },
+        } as typeof r;
+        b = closeDay(b, simulated, currentUser, now);
+      }
+    } catch (e) {
+      console.error('[Tagesabschluss] «Alle auf grün» abgebrochen (kein Tag geschrieben):', e);
+      window.alert('«Alle auf grün» abgebrochen — es wurde nichts geändert. Bitte Seite neu laden und erneut versuchen.');
+      return;
+    }
+    try {
+      // 2) Bestätigungen (gemeinsamer Adyen-Store) — frischer Stand, EIN Save.
+      let cur = loadAdyenAbstimmungLocal(tenantId);
+      for (const r of eligible) {
+        cur = applyDayConfirmation(cur, r.date, { confirmed: true, cashCounted: true }, currentUser, now);
+      }
+      setAdyenBlob(cur);
+      await saveAdyenAbstimmung(tenantId, cur);
+      // 3) Abschlüsse — EIN persist für alle Tage.
+      await persist(b);
+    } catch (e) {
+      // Bestätigungen können bereits gespeichert sein, Abschlüsse nicht —
+      // klar melden statt still loggen (Wiederholen ist gefahrlos).
+      console.error('[Tagesabschluss] «Alle auf grün» fehlgeschlagen:', e);
+      window.alert('«Alle auf grün» konnte nicht vollständig gespeichert werden. Bitte erneut versuchen — bereits gesetzte Häkchen bleiben erhalten, kein Tag wurde doppelt abgeschlossen.');
+    }
+  }, [readOnly, blob, monthData, tenantId, currentUser, persist]);
 
   const monthKey = tagesabschlussMonthKey(year, month);
   const monthClosure = blob?.monatsabschluesse[monthKey] ?? null;
@@ -720,6 +768,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onConfirm={handleConfirm}
               onReasonsClick={setReasonDate}
               onCloseDay={handleCloseDay}
+              onCloseAllDays={handleCloseAllDays}
+              onReopenDay={canReopen ? handleReopenDay : undefined}
               showAllColumns={showAllColumns}
               umsatzImport={umsatzImport}
               umsatzSchwelle={blob ? umsatzDiffSchwelle(blob) : DEFAULT_UMSATZ_DIFF_SCHWELLE}
