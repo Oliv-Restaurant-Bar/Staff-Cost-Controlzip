@@ -104,32 +104,35 @@ describe('buildTagesabschlussExcelData', () => {
 
     expect(d1[0]).toBe('2026-07-01');
     expect(d1[1]).toBe(1000);              // Umsatz (Import)
-    expect(d1[2]).toBe(300);               // Bargeld Soll = 1000−550−100−30−20
-    expect(d1[3]).toBe(600);               // Kassensaldo = 500+300−200
-    expect(d1[4]).toBeNull();              // KK Adyen — kein Adyen-Import
-    expect(d1[5]).toBeNull();              // Barausgaben — keine erfasst
+    expect(d1[2]).toBe(300);               // Bar (Z-Bericht-Barumsatz)
+    expect(d1[3]).toBe(550);               // Karten (Mastercard 400 + VISA 150)
+    expect(d1[4]).toBe(100);               // TWINT
+    expect(d1[5]).toBeNull();              // KK Adyen — kein Adyen-Import
     expect(d1[6]).toBe(30);                // Debitoren
-    expect(d1[9]).toBe(200);               // Einzahlung Bank (manuell)
-    expect(d1[10]).toBe(-120);             // Kassendifferenz = 480 − 600
-    for (const idx of [1, 2, 3, 6, 9, 10]) expect(typeof d1[idx]).toBe('number');
+    expect(d1[9]).toBe(300);               // Bargeld Soll = 1000−550−100−30−20
+    expect(d1[10]).toBeNull();             // Barausgaben — keine erfasst
+    expect(d1[11]).toBe(200);              // Einzahlung Bank (manuell)
+    expect(d1[12]).toBe(600);              // Kassensaldo = 500+300−200
+    expect(d1[13]).toBe(-120);             // Kassendifferenz = 480 − 600
+    for (const idx of [1, 2, 3, 4, 6, 9, 11, 12, 13]) expect(typeof d1[idx]).toBe('number');
 
     expect(d2[0]).toBe('2026-07-02');
     expect(d2[1]).toBe(1100);              // Umsatz-Override, NICHT der Importwert
-    expect(d2[2]).toBe(400);               // Bargeld Soll mit Effektiv-Umsatz
-    expect(d2[3]).toBe(1000);              // Kassensaldo = 600+400−0
-    expect(d2[10]).toBeNull();             // kein Cash Ist → keine Differenz
+    expect(d2[9]).toBe(400);               // Bargeld Soll mit Effektiv-Umsatz
+    expect(d2[12]).toBe(1000);             // Kassensaldo = 600+400−0
+    expect(d2[13]).toBeNull();             // kein Cash Ist → keine Differenz
   });
 
   it('Kommentar-Spalte: Bemerkung + Feld-Kommentare + Differenz-Begründung; Tombstones fehlen', () => {
     const { closings, blob } = buildFixtureMonth();
     const month = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 500);
     const data = buildTagesabschlussExcelData(month);
-    const kommentar = String(data.rows[0][11]);
+    const kommentar = String(data.rows[0][14]);
     expect(kommentar).toContain('Kasse gezählt');
     expect(kommentar).toContain('Rechnung / Debitoren: Debitor Muster');
     expect(kommentar).toContain('Kassendifferenz: Rundung Münz');
     expect(kommentar).not.toContain('wird gelöscht'); // tombstoned Kommentar
-    expect(data.rows[1][11]).toBeNull();              // Tag 2 ohne Kommentar
+    expect(data.rows[1][14]).toBeNull();              // Tag 2 ohne Kommentar
   });
 
   it('KK Adyen: Adyen-Import-Total; bei karten-Override der effektive Z-KK-Wert (karten+TWINT)', () => {
@@ -145,8 +148,8 @@ describe('buildTagesabschlussExcelData', () => {
     };
     const month = buildTagesabschlussRows(2026, 7, closings, blob, {}, adyenBlob, 500);
     const data = buildTagesabschlussExcelData(month);
-    expect(data.rows[0][4]).toBe(650);   // Adyen-Import-Total
-    expect(data.rows[1][4]).toBe(700);   // Override 600 + TWINT 100 (Doppelsemantik)
+    expect(data.rows[0][5]).toBe(650);   // Adyen-Import-Total
+    expect(data.rows[1][5]).toBe(700);   // Override 600 + TWINT 100 (Doppelsemantik)
     expect(excelKkAdyenValue(month.rows[1])).toBe(700);
   });
 
@@ -156,17 +159,20 @@ describe('buildTagesabschlussExcelData', () => {
     const { totalsRow } = buildTagesabschlussExcelData(month);
     expect(totalsRow[0]).toBe('Total');
     expect(totalsRow[1]).toBe(2100);   // Umsatz 1000 + 1100
-    expect(totalsRow[2]).toBe(700);    // Bargeld Soll 300 + 400
-    expect(totalsRow[3]).toBe(1000);   // Monatsend-Saldo, KEINE Summe
+    expect(totalsRow[2]).toBe(600);    // Bar 300 + 300
+    expect(totalsRow[3]).toBe(1100);   // Karten 550 + 550
+    expect(totalsRow[4]).toBe(200);    // TWINT 100 + 100
     expect(totalsRow[6]).toBe(60);     // Debitoren 30 + 30
-    expect(totalsRow[9]).toBe(200);    // Einzahlung Bank
-    expect(totalsRow[10]).toBe(-120);  // Kassendifferenzen
-    expect(totalsRow[11]).toBeNull();
+    expect(totalsRow[9]).toBe(700);    // Bargeld Soll 300 + 400
+    expect(totalsRow[11]).toBe(200);   // Einzahlung Bank
+    expect(totalsRow[12]).toBe(1000);  // Monatsend-Saldo, KEINE Summe
+    expect(totalsRow[13]).toBe(-120);  // Kassendifferenzen
+    expect(totalsRow[14]).toBeNull();
 
     const ohneAnker = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, null);
     const dataOhne = buildTagesabschlussExcelData(ohneAnker);
-    expect(dataOhne.totalsRow[3]).toBeNull(); // kein Anker → kein Saldo
-    expect(dataOhne.rows[0][3]).toBeNull();
+    expect(dataOhne.totalsRow[12]).toBeNull(); // kein Anker → kein Saldo
+    expect(dataOhne.rows[0][12]).toBeNull();
   });
 });
 
@@ -197,8 +203,12 @@ describe('buildTagesabschlussExcelWorkbook', () => {
     expect(b2.t).toBe('n');                             // Umsatz als echte Zahl
     expect(b2.v).toBe(1000);
     expect(b2.z).toBe('#,##0.00');
-    const l2 = ws['L2'];
-    expect(l2.t).toBe('s');                             // Kommentar als Text
+    const c2 = ws['C2'];
+    expect(c2.t).toBe('n');                             // Bar (Z-Bericht) als echte Zahl
+    expect(c2.v).toBe(300);
+    expect(c2.z).toBe('#,##0.00');
+    const o2 = ws['O2'];
+    expect(o2.t).toBe('s');                             // Kommentar als Text
 
     const a4 = ws['A4'];                                // Header + 2 Tage → Zeile 4 = Total
     expect(a4.v).toBe('Total');

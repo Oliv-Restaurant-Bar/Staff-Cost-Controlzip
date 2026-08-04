@@ -18,17 +18,28 @@ import {
   type TagesabschlussField,
 } from './tagesabschluss';
 
+/**
+ * Spalten: Datum · Umsatz · Zahlungsarten (Bar, Karten, TWINT, KK Adyen,
+ * Debitoren, Gutscheine) · Bargeld Soll · Barausgaben · Einzahlung Bank ·
+ * Kassensaldo · Differenz · Kommentar. Die Zahlungsarten kommen aus DENSELBEN
+ * Zeilen wie die Bildschirm-Tabelle (buildTagesabschlussRows auf Basis
+ * loadGnDayClosingsForMonth, pro Mandant) — Effektivwerte, null = leer,
+ * nie 0 bei fehlendem Z-Bericht.
+ */
 export const TAGESABSCHLUSS_EXCEL_HEADERS = [
   'Datum',
   'Umsatz',
-  'Bargeld Soll',
-  'Kassensaldo Soll',
+  'Bar (Z-Bericht)',
+  'Karten (Z-Bericht)',
+  'TWINT (Z-Bericht)',
   'KK Adyen',
-  'Barausgaben',
   'Debitoren',
   'Verkaufte Gutscheine',
   'Eingelöste Gutscheine',
+  'Bargeld Soll',
+  'Barausgaben',
   'Einzahlung Bank',
+  'Kassensaldo Soll',
   'Kassendifferenz',
   'Kommentar',
 ] as const;
@@ -119,31 +130,29 @@ export function buildTagesabschlussExcelData(month: TagesabschlussMonth): Tagesa
     rows.push([
       row.date,
       row.cells.umsatz.value,
-      row.bargeldSoll,
-      excelKassensaldoValue(row),
+      // Zahlungsarten — Effektivwerte derselben Zellen wie die Übersicht;
+      // fehlt der Z-Bericht, sind die Werte null (leere Zelle, nie 0).
+      row.cells.bar.value,
+      row.cells.karten.value,
+      row.cells.twint.value,
       excelKkAdyenValue(row),
-      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
       row.cells.rechnung.value,
       row.cells.gutscheinVerkauft.value,
       row.cells.gutscheinEingeloest.value,
+      row.bargeldSoll,
+      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
       row.cells.einzahlungBank.value,
+      excelKassensaldoValue(row),
       row.cashDiff,
       excelKommentar(row),
     ]);
   }
   const totalsRow: TagesabschlussExcelCell[] = [
     'Total',
-    sumColumn(rows, 1),
-    sumColumn(rows, 2),
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i => sumColumn(rows, i)),
     // Kassensaldo ist ein fortlaufender Bestand — Total = Monatsend-Saldo.
     month.endSaldo,
-    sumColumn(rows, 4),
-    sumColumn(rows, 5),
-    sumColumn(rows, 6),
-    sumColumn(rows, 7),
-    sumColumn(rows, 8),
-    sumColumn(rows, 9),
-    sumColumn(rows, 10),
+    sumColumn(rows, 13),
     null,
   ];
   return { header: [...TAGESABSCHLUSS_EXCEL_HEADERS], rows, totalsRow };
@@ -179,20 +188,21 @@ export function buildTagesabschlussExcelWorkbook(data: TagesabschlussExcelData):
     const excelRow = i + 1; // Zeile 0 = Header
     const dateCell = ws[XLSX.utils.encode_cell({ r: excelRow, c: 0 })];
     if (dateCell) dateCell.z = DATE_FORMAT;
-    for (let c = 1; c <= 10; c++) {
+    // Alle Betragsspalten (zwischen Datum und Kommentar) als Zahl formatieren.
+    for (let c = 1; c <= data.header.length - 2; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r: excelRow, c })];
       if (cell && cell.t === 'n') cell.z = NUMBER_FORMAT;
     }
   }
   const totalRowIdx = data.rows.length + 1;
-  for (let c = 1; c <= 10; c++) {
+  for (let c = 1; c <= data.header.length - 2; c++) {
     const cell = ws[XLSX.utils.encode_cell({ r: totalRowIdx, c })];
     if (cell && cell.t === 'n') cell.z = NUMBER_FORMAT;
   }
   ws['!cols'] = [
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 },
-    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-    { wch: 14 }, { wch: 50 },
+    { wch: 12 },
+    ...Array.from({ length: TAGESABSCHLUSS_EXCEL_HEADERS.length - 2 }, () => ({ wch: 14 })),
+    { wch: 50 },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Tagesabschlüsse');
