@@ -260,60 +260,126 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
       return best;
     }
 
-    // Skip weekday row immediately after header band (contains Mo, Di, Mi …)
-    // Use headerBandMaxIdx so we skip past ALL rows that were part of the header y-band
-    let dataStart = headerBandMaxIdx + 1;
-    if (dataStart < rows.length) {
-      const nextRowText = rows[dataStart].items.map(i => i.text.toLowerCase()).join(' ');
-      if (/\bmo\b|\bdi\b|\bmi\b|\bdo\b|\bfr\b|\bsa\b|\bso\b/.test(nextRowText)) {
-        dataStart++;
+    // ── Datenbereich per Y-KOORDINATEN abgrenzen (nicht per Zeilen-Index) ──
+    // Name und Schicht-Codes eines Mitarbeiters liegen im PDF oft auf leicht
+    // versetzten Grundlinien (~3px, Richtung uneinheitlich): FE-Ferienzellen
+    // auf der Namens-Grundlinie, Arbeits-Codes (A/B/E/O1/O2) daneben. Feste
+    // y-Buckets zerlegen solche Mitarbeiter in eine Namens- und eine namenlose
+    // Code-Zeile — deshalb: Namens-ANKER bestimmen und jedem Anker alle
+    // Schicht-Zellen seines Bandes zuordnen. Der Bereich wird über die
+    // Unterkante des Header-INHALTS (Tageszahlen + Wochentage) bestimmt, damit
+    // der oberste Mitarbeiter nicht vom Header-Band-Skip verschluckt wird.
+    const headerDayItemYs: number[] = [];
+    for (let j = 0; j < rows.length; j++) {
+      if (Math.abs(rows[j].y - rows[headerRowIdx].y) <= Y_BAND) {
+        for (const it of rows[j].items) if (isDayItem(it)) headerDayItemYs.push(it.y);
+      }
+    }
+    let headerBottomY = headerDayItemYs.length > 0
+      ? Math.min(...headerDayItemYs)
+      : rows[headerRowIdx].y;
+
+    // Wochentag-Zeile (Mo Di Mi …) direkt unter den Tageszahlen gehört noch
+    // zum Header — Unterkante entsprechend nachziehen.
+    for (let j = headerBandMaxIdx + 1; j < Math.min(rows.length, headerBandMaxIdx + 3); j++) {
+      const t = rows[j].items.map(i => i.text.toLowerCase()).join(' ');
+      if (/\bmo\b|\bdi\b|\bmi\b|\bdo\b|\bfr\b|\bsa\b|\bso\b/.test(t) && rows[j].y < headerBottomY) {
+        headerBottomY = rows[j].y;
         logs.push('Wochentag-Zeile übersprungen');
+        break;
       }
     }
 
-    const detectedNames: string[] = [];
-    const codesSet = new Set<string>();
-    const SKIP_NAMES = /total|summe|gesamt|stunden|legende|mitarbeiter/i;
-
-    for (let i = dataStart; i < rows.length; i++) {
-      const row = rows[i];
-
-      // ── Legenden-Block: ab «DIENSTE LEGENDE» ist Schluss ──────────────────
-      // Alles darunter (Zeit-Texte, Pausen-Angaben, Abkürzungs-Erklärungen wie
-      // «KO= Kompensation») ist nur Nachschlagetabelle und erzeugt NIE Codes.
-      const rowText = row.items.map(it => it.text).join(' ');
-      if (/LEGENDE/i.test(rowText)) {
+    // Legenden-Block: ab «DIENSTE LEGENDE» ist Schluss — alles darunter ist
+    // Nachschlagetabelle (Zeiten, «KO= Kompensation» …) und erzeugt NIE Codes.
+    let legendY = -Infinity;
+    for (const row of rows) {
+      if (row.y >= headerBottomY) continue;
+      if (/LEGENDE/i.test(row.items.map(it => it.text).join(' '))) {
+        legendY = row.y;
         logs.push(`Legenden-Block ab y=${row.y} erkannt — Raster-Parsing beendet`);
         break;
       }
+    }
 
-      if (row.items.length < 2) continue;
+    // Alle Items des Datenbereichs (PDF-y ist bottom-up: kleiner = weiter unten)
+    const regionItems: TextItem[] = allItems.filter(
+      it => it.y < headerBottomY - 2 && it.y > legendY,
+    );
 
-      const nameItems = row.items.filter(it => it.x < firstDayX - colGap * 0.3);
-      const shiftItems = row.items.filter(it => it.x >= firstDayX - colGap * 0.3);
+    const nameXLimit = firstDayX - colGap * 0.3;
+    const SKIP_NAMES = /total|summe|gesamt|stunden|legende|mitarbeiter/i;
 
-      if (nameItems.length === 0) continue;
-
-      const rawName = nameItems.map(i => i.text).join(' ').trim();
-      if (!rawName || rawName.length < 2) continue;
-      if (SKIP_NAMES.test(rawName)) continue;
-      if (/^\d+$/.test(rawName)) continue;
-
-      if (!detectedNames.includes(rawName)) {
-        detectedNames.push(rawName);
+    // ── 1) Namens-Anker: Namensspalten-Items nach y clustern (Gap ≤ 6px) ──
+    // Auch Total-/Summen-Zeilen werden als (ungültige) Anker geführt: sie
+    // absorbieren ihre Zahlen-Items, statt dass diese dem nächsten echten
+    // Mitarbeiter zugeschlagen würden.
+    const nameColItems = regionItems
+      .filter(it => it.x < nameXLimit)
+      .sort((a, b) => b.y - a.y); // oben → unten
+    type Anker = { y: number; parts: TextItem[]; rawName: string; valid: boolean };
+    const anker: Anker[] = [];
+    for (const it of nameColItems) {
+      const last = anker[anker.length - 1];
+      if (last && Math.abs(last.parts[last.parts.length - 1].y - it.y) <= 6) {
+        last.parts.push(it);
+      } else {
+        anker.push({ y: it.y, parts: [it], rawName: '', valid: false });
       }
+    }
+    for (const a of anker) {
+      a.y = a.parts.reduce((s, p) => s + p.y, 0) / a.parts.length;
+      a.rawName = a.parts.slice().sort((p, q) => p.x - q.x).map(p => p.text).join(' ').trim();
+      a.valid = a.rawName.length >= 2 && !SKIP_NAMES.test(a.rawName) && !/^\d+([.,]\d+)?$/.test(a.rawName);
+    }
 
-      for (const si of shiftItems) {
-        const day = nearestDay(si.x);
-        if (day === null) continue;
-        const date = dayToDate.get(day);
-        if (!date) continue;
-        // Normalisieren: Leerzeichen entfernen («B a»→«Ba»), trailing «=» strippen («FE=»→«FE»)
-        const code = si.text.replace(/\s+/g, '').replace(/=+$/, '');
-        if (!code) continue;
-        codesSet.add(code);
-        entries.push({ rawName, date, code });
+    const detectedNames: string[] = [];
+    for (const a of anker) {
+      if (a.valid && !detectedNames.includes(a.rawName)) detectedNames.push(a.rawName);
+    }
+
+    // ── 2) Schicht-Zellen dem NÄCHSTGELEGENEN Anker zuordnen ──────────────
+    // Band = Name-Grundlinie ± versetzte Code-Unterzeilen (typ. ±8px). Als
+    // Sicherheitsgrenze dient der halbe Zeilenabstand der Anker; Zellen
+    // ausserhalb jeder plausiblen Distanz werden NICHT still verworfen,
+    // sondern als Warnung protokolliert.
+    const pitches: number[] = [];
+    for (let k = 1; k < anker.length; k++) pitches.push(Math.abs(anker[k - 1].y - anker[k].y));
+    const medianPitch = pitches.length > 0
+      ? pitches.slice().sort((a, b) => a - b)[Math.floor(pitches.length / 2)]
+      : 16;
+    const maxDist = Math.max(10, medianPitch * 0.75);
+
+    const codesSet = new Set<string>();
+    let verwaist = 0;
+    const shiftCells = regionItems.filter(it => it.x >= nameXLimit);
+    for (const si of shiftCells) {
+      const day = nearestDay(si.x);
+      if (day === null) continue;
+      const date = dayToDate.get(day);
+      if (!date) continue;
+      // Normalisieren: Leerzeichen entfernen («B a»→«Ba»), trailing «=» strippen («FE=»→«FE»)
+      const code = si.text.replace(/\s+/g, '').replace(/=+$/, '');
+      if (!code) continue;
+
+      let best: Anker | null = null;
+      let bestDist = Infinity;
+      for (const a of anker) {
+        const d = Math.abs(si.y - a.y);
+        if (d < bestDist) { bestDist = d; best = a; }
       }
+      if (!best || bestDist > maxDist) {
+        verwaist++;
+        logs.push(`⚠️ Schicht-Zelle ohne Namens-Zuordnung: «${si.text}» (Tag ${day}, y=${si.y.toFixed(1)}, nächster Anker ${bestDist.toFixed(1)}px entfernt)`);
+        continue;
+      }
+      if (!best.valid) continue; // Total-/Summen-Zeile — bewusst kein Eintrag
+
+      codesSet.add(code);
+      entries.push({ rawName: best.rawName, date, code });
+    }
+    if (verwaist > 0) {
+      logs.push(`⚠️ ${verwaist} Schicht-Zelle(n) konnten keinem Mitarbeiter zugeordnet werden — bitte Vorschau prüfen`);
     }
 
     logs.push(`Mitarbeitende (${detectedNames.length}): ${detectedNames.join(', ')}`);
