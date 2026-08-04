@@ -29,3 +29,6 @@ Datenlage Juli 2026 nach Umstellung: 27 Tage im dailyBudgets-KV vorhanden (22.07
 ## Tagesabschluss Umsatz-Spalte (Anzeige vs. Berechnung)
 - Anzeige der Umsatz-Spalte = Tagesumsätze-Import (dailyBudgets, brutto) via `umsatzAbgleich`; NUR Anzeige + Rot-Abgleich gegen Z-Bericht (Schwelle im Blob `umsatzDiffSchwelle`, Default 10).
 - Berechnungen (Barumsatz/Bargeld Soll/Saldo-Kette) und ALLE Exporte lesen weiter `cells.umsatz` (Z-Bericht inkl. Overrides) — diese Trennung nie aufheben.
+
+## Marketing NIE MwSt-bereinigen (Aug 2026)
+Marketing/Maison (maison-daily, Nennwert = netto) zählt ÜBERALL mit vollem Wert — auch in Anzeige-Spalten (Tagesansicht/Tages-Controlling, vorher ÷1.081 bei Netto-Ansicht) und im Reporting-Export-Delta maisonMonthlyNet (vorher ÷1.081). Kontrollwert Oliv Juli 2026: POS-netto 244'788.43 + Marketing 15'386.10 = 260'174.53 (falsch mit Abzug: 259'021.64). Neue Marketing-Konsumenten: Wert 1:1, kein grossToNet/Divisor.

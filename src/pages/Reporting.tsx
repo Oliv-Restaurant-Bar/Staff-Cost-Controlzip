@@ -2230,7 +2230,8 @@ const Reporting = () => {
   const totals     = useMemo(() => calcEffectiveTotals(effectiveMonths), [effectiveMonths]);
 
   // ── Maison-Nettobetrag pro Monat (für Export-Anpassung) ──────────────────
-  // Entspricht der PLView-Logik: Tages-Bruttobeträge / 1.081 = Netto
+  // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts/PLView):
+  // voller Wert 1:1, KEIN MwSt-Abzug (/1.081 war falsch).
   const maisonMonthlyNet = useMemo<number[]>(() => {
     return Array.from({ length: 12 }, (_, idx) => {
       const m = idx + 1;
@@ -2239,8 +2240,8 @@ const Reporting = () => {
       let total = 0;
       for (let d = 1; d <= daysInMonth; d++) {
         const key = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const gross = maisonDaily[key] ?? 0;
-        if (gross > 0) total += gross / 1.081;
+        const v = Math.abs(maisonDaily[key] ?? 0);
+        if (v > 0) total += Math.round(v * 100) / 100;
       }
       return Math.round(total * 100) / 100;
     });

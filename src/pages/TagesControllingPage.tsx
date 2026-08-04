@@ -688,8 +688,10 @@ export default function TagesControllingPage() {
       // umsatz.ts-SSoT enthält Marketing bereits (gn_discounts «Marketing»);
       // maison-daily ist dieselbe (manuell erfasste) Grösse, kein additiver
       // Zusatzumsatz ausserhalb der Z-Berichte.
+      // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts):
+      // voller Wert, KEIN MwSt-Abzug — weder netto noch brutto umrechnen.
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
-      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
+      const maisonDisp  = maisonGross > 0 ? maisonGross : 0;
 
       // Warenkosten
       const wk        = warenkostenMap[d] ?? { totalNet: 0, totalGross: 0, foodNet: 0, foodGross: 0, bevNet: 0, bevGross: 0 };

@@ -275,8 +275,10 @@ export default function TagesansichtPage() {
       const hasUmsatz   = !!umsatzTag && umsatzTag.gesamtBrutto > 0;
       // Maison NUR als eigene Anzeige-Spalte (maisonNet). Fliesst NICHT mehr
       // in den IST-Umsatz ein — IST = ausschliesslich Σ nettoUmsatzTag/gesamtBrutto.
+      // maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts):
+      // voller Wert, KEIN MwSt-Abzug — weder netto noch brutto umrechnen.
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
-      const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
+      const maisonDisp  = maisonGross > 0 ? maisonGross : 0;
       // IST kommt ausschliesslich aus umsatz.ts; ohne Import bleibt IST leer («—»).
       const ist: number | null = !hasUmsatz
         ? null

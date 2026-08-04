@@ -3079,7 +3079,7 @@ const PLViewPage = () => {
     if (opts.includeMaison !== undefined && !!opts.includeMaison !== !!currentlyIncludes) {
       const delta = opts.includeMaison ? 1 : -1;
 
-      // Compute net Maison revenue for a given month from daily gross values (/1.081)
+      // Marketing-Netto pro Monat: maison-daily ist Netto-NENNWERT (voller Wert, kein MwSt-Abzug)
       const getMaisonNetForMonth = (m: number): number => {
         const mm   = String(m).padStart(2, '0');
         const days = new Date(year, m, 0).getDate();
