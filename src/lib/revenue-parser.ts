@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 
 export interface RevenueEntry {
   date: string; // yyyy-MM-dd format
@@ -36,31 +37,17 @@ export interface HourlyRevenueParseResult {
 }
 
 /**
- * Parse revenue value from string like "CHF 5016,20" or "22331,80"
+ * Parse revenue value from string like "CHF 5016,20", "1'234.50" or "22331,80".
+ * STRIKT: unlesbare Zellen liefern `unreadable: true` (amount 0 nur als
+ * neutraler Platzhalter — Aufrufer sammelt die Zelle und blockiert den Import).
  */
-const parseRevenueValue = (value: string | number): { amount: number; currency: 'CHF' | 'EUR' } => {
-  if (typeof value === 'number') {
-    return { amount: value, currency: 'CHF' };
-  }
-  
-  const str = String(value).trim();
-  if (!str) return { amount: 0, currency: 'CHF' };
-  
-  const currency: 'CHF' | 'EUR' = str.includes('EUR') || str.includes('€') ? 'EUR' : 'CHF';
-  
-  // Remove currency symbols and whitespace
-  const cleanedStr = str
-    .replace(/CHF/gi, '')
-    .replace(/EUR/gi, '')
-    .replace(/€/g, '')
-    .replace(/\s/g, '')
-    .trim();
-  
-  // Handle European number format (1.234,56 -> 1234.56)
-  const normalizedStr = cleanedStr.replace(/\./g, '').replace(',', '.');
-  
-  const amount = parseFloat(normalizedStr);
-  return { amount: isNaN(amount) ? 0 : amount, currency };
+const parseRevenueValue = (value: string | number): { amount: number; currency: 'CHF' | 'EUR'; empty: boolean; unreadable: boolean } => {
+  const currency: 'CHF' | 'EUR' =
+    typeof value === 'string' && (value.includes('EUR') || value.includes('€')) ? 'EUR' : 'CHF';
+  const r = parseBetragZelle(value);
+  if (!r.ok) return { amount: 0, currency, empty: false, unreadable: true };
+  if (r.value === null) return { amount: 0, currency, empty: true, unreadable: false };
+  return { amount: r.value, currency, empty: false, unreadable: false };
 };
 
 /**
@@ -757,6 +744,11 @@ export interface GastronoviDayResult {
 export const parseGastronoviExcel = async (
   file: File,
   year: number,
+  /**
+   * Optionaler Sammler: Zellen ohne gültigen Zahlenwert werden hier gemeldet
+   * (nie als 0/NaN verrechnet) — die Import-UI blockiert dann den Import.
+   */
+  unlesbareWerte?: UnlesbareZelle[],
 ): Promise<GastronoviDayResult[] | null> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -835,11 +827,22 @@ export const parseGastronoviExcel = async (
             || label.includes('takeaway') || label.includes('ausser haus') || label.includes('außer haus');
           if (isTakeAway) hasTakeAwayRow = true;
           const isGesamt   = !isTakeAway && (label.includes('gesamt') || label.includes('total'));
-          const isFood     = label.includes('food') || label.includes('speisen');
-          const isBeverage = label.includes('beverage') || label.includes('getränke');
+          // Neutrale Zeilen: KEINE eigene Kategorie (bereits im Gesamt enthalten
+          // bzw. kein Umsatz) — «Non-Foods», «Aufladung Kundenkarten», «Trinkgeld»,
+          // «Rundungsdifferenzen», «Rabatte».
+          const isNeutral  = label.includes('non-food') || label.includes('non food') || label.includes('nonfood')
+            || label.includes('aufladung') || label.includes('kundenkarte')
+            || label.includes('trinkgeld') || label.includes('rundungsdifferenz')
+            || label.includes('rabatt');
+          const isFood     = !isNeutral && (label.includes('food') || label.includes('speisen'));
+          const isBeverage = !isNeutral && (label.includes('beverage') || label.includes('getränke'));
 
           // Perioden-Total aus der «Zeitraum»-Spalte (Spalte 1)
-          const zeitraum = parseRevenueValue(row[1] ?? '').amount;
+          const zParsed = parseRevenueValue(row[1] ?? '');
+          if (zParsed.unreadable) {
+            unlesbareWerte?.push({ zeile: String(row[0]).trim(), spalte: 'Zeitraum', roh: String(row[1]).trim() });
+          }
+          const zeitraum = zParsed.unreadable ? 0 : zParsed.amount;
           if (zeitraum !== 0) {
             if (isGesamt)        zGesamt   += zeitraum;
             else if (isTakeAway) zTakeAway += zeitraum;
@@ -850,8 +853,18 @@ export const parseGastronoviExcel = async (
           for (const { colIdx, date } of dateColumns) {
             const cell = row[colIdx];
             if (cell === '' || cell === undefined || cell === null) continue;
-            const { amount, currency } = parseRevenueValue(cell);
-            if (amount === 0) continue;
+            const parsed = parseRevenueValue(cell);
+            if (parsed.unreadable) {
+              // Unlesbare Zelle: NIE als 0 verrechnen — melden (Import wird blockiert).
+              unlesbareWerte?.push({
+                zeile: String(row[0]).trim(),
+                spalte: `${date.slice(8, 10)}.${date.slice(5, 7)}.`,
+                roh: String(cell).trim(),
+              });
+              continue;
+            }
+            const { amount, currency } = parsed;
+            if (parsed.empty || amount === 0) continue;
 
             currencyMap[date] = currency;
 
@@ -862,6 +875,9 @@ export const parseGastronoviExcel = async (
               // Separate «Take Away»-Zeile: Teilmenge des Gesamtumsatzes,
               // NICHT zusätzlich in Food/Beverage/Other zählen.
               takeAwayMap[date] += amount;
+            } else if (isNeutral) {
+              // Neutrale Zeilen (Rabatte, Trinkgeld, …): bereits im Gesamt
+              // enthalten bzw. kein Umsatz — nirgends mitzählen.
             } else if (isFood)  foodMap[date]     += amount;
             else if (isBeverage) beverageMap[date] += amount;
             else                 otherMap[date]    += amount;

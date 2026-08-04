@@ -60,6 +60,7 @@ import {
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
 import { notifyKVBackupProblem } from '@/lib/supabase-kv';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { notifyReportingDataChanged } from '@/lib/import-events';
 import {
   buildVjTransferPlan,
@@ -82,27 +83,37 @@ interface VjPreview {
   rowsFound: string[];
   samples:   Array<{ date: string; gesamt: number; food: number | null; beverage: number | null }>;
   days:      Record<string, DayEntry>;
+  /** Monatssummen der «Gesamt»-Zeile (Brutto) — direkt gegen die Datei kontrollierbar. */
+  monthTotals: Array<{ month: string; value: number }>;
+  /** Jahressumme der «Gesamt»-Zeile (Brutto). */
+  jahrTotal: number;
+  /** Zellen ohne gültigen Zahlenwert (Zeile/Spalte/Rohwert) — BLOCKIERT den Import. */
+  unlesbareWerte: UnlesbareZelle[];
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
-function parseCHF(raw: unknown): number {
-  if (raw === null || raw === undefined || raw === '') return 0;
-  const s = String(raw);
-  const cleaned = s
-    .replace(/CHF\s*/i, '')
-    .replace(/['\u2019\u2018\s]/g, '')
-    .replace(',', '.');
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+/**
+ * CHF-Zelle STRIKT parsen (zentraler Betrags-Parser): «CHF 6679,30»,
+ * «CHF 7'118.00», Komma ODER Punkt als Dezimal, Tausender-Hochkomma,
+ * Leerzeichen, negativ. Leer/«-»/«None» ⇒ null (kein Wert — nie 0).
+ * Unlesbare Zellen werden gesammelt (nie 0/NaN) — der Import wird blockiert.
+ */
+function parseCHF(raw: unknown, zeile: string, spalte: string, unlesbar: UnlesbareZelle[]): number | null {
+  const r = parseBetragZelle(typeof raw === 'number' ? raw : String(raw ?? ''));
+  if (!r.ok) { unlesbar.push({ zeile, spalte, roh: r.roh ?? '' }); return null; }
+  return r.value === null ? null : Math.round(r.value * 100) / 100;
 }
 
 const ROW_GESAMT   = ['gesamt', 'total', 'gesamtumsatz'];
 const ROW_FOOD     = ['food', 'speisen', 'food (speisen)', 'food(speisen)'];
 const ROW_BEVERAGE = ['beverage', 'getränke', 'beverage (getränke)', 'beverage(getränke)'];
+// Neutrale Zeilen: nie als Kategorie werten (bereits im Gesamt enthalten bzw. kein Umsatz)
+const ROW_NEUTRAL  = ['non-food', 'non food', 'nonfood', 'aufladung', 'kundenkarte', 'trinkgeld', 'rundungsdifferenz', 'rabatt'];
 
 function matchRow(label: string, patterns: string[]): boolean {
   const l = label.toLowerCase().trim();
+  if (ROW_NEUTRAL.some(p => l.includes(p))) return false;
   return patterns.some(p => l.includes(p));
 }
 
@@ -237,13 +248,29 @@ async function parseVjDaily(file: File, year: number): Promise<VjPreview> {
   if (!gesamtRow) throw new Error('Zeile "Gesamt" nicht gefunden. Bitte Spaltenbeschriftung prüfen.');
 
   const days: Record<string, DayEntry> = {};
+  const unlesbareWerte: UnlesbareZelle[] = [];
   for (const [cStr, iso] of Object.entries(colToDate)) {
-    const c        = parseInt(cStr);
-    const gesamt   = parseCHF(gesamtRow[c]);
-    const food     = foodRow ? parseCHF(foodRow[c]) : null;
-    const beverage = bevRow  ? parseCHF(bevRow[c])  : null;
+    const c      = parseInt(cStr);
+    const spalte = `${iso.slice(8)}.${iso.slice(5, 7)}.`;
+    const gesamt   = parseCHF(gesamtRow[c], 'Gesamt', spalte, unlesbareWerte);
+    const food     = foodRow ? parseCHF(foodRow[c], 'Food (Speisen)', spalte, unlesbareWerte) : null;
+    const beverage = bevRow  ? parseCHF(bevRow[c],  'Beverage (Getränke)', spalte, unlesbareWerte) : null;
+    // Leere Tage (kein Gesamt-Wert, z.B. «None»/leer) = KEIN Datensatz — nie 0 speichern.
+    if (gesamt === null) continue;
     days[iso] = { gesamt, food, beverage };
   }
+
+  // Monats-/Jahressummen der «Gesamt»-Zeile (Brutto) für die Kontroll-Vorschau
+  const monthMap = new Map<string, number>();
+  let jahrTotal = 0;
+  for (const [iso, v] of Object.entries(days)) {
+    const ym = iso.slice(0, 7);
+    monthMap.set(ym, Math.round(((monthMap.get(ym) ?? 0) + v.gesamt) * 100) / 100);
+    jahrTotal = Math.round((jahrTotal + v.gesamt) * 100) / 100;
+  }
+  const monthTotals = [...monthMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, value]) => ({ month, value }));
 
   const dayCount = Object.keys(days).length;
   console.log(`[VJ-IMPORT] detected year: ${year}`);
@@ -254,7 +281,7 @@ async function parseVjDaily(file: File, year: number): Promise<VjPreview> {
     .slice(0, 3)
     .map(([date, v]) => ({ date, ...v }));
 
-  return { year, dayCount, rowsFound, samples, days };
+  return { year, dayCount, rowsFound, samples, days, monthTotals, jahrTotal, unlesbareWerte };
 }
 
 // ── Format-Hilfsfunktionen ────────────────────────────────────────────────────
@@ -329,6 +356,11 @@ export function VjDailyImportSection() {
 
   const handleSave = async () => {
     if (!preview) return;
+    // HARTER Block: unlesbare Zellwerte dürfen NIE gespeichert werden (kein 0/NaN).
+    if (preview.unlesbareWerte.length > 0) {
+      toast.error('Import blockiert: die Datei enthält nicht lesbare Zellwerte — bitte Format prüfen.');
+      return;
+    }
     const tid = tenantId ?? 'oliv';
 
     // Lock-Check: Abbruch wenn Vorjahresdaten gesperrt sind
@@ -731,6 +763,51 @@ export function VjDailyImportSection() {
             </table>
           </div>
 
+          {/* Monatstotale der «Gesamt»-Zeile (Brutto) — Kontrollwerte gegen die Datei */}
+          <div className="rounded border border-border/60 bg-background divide-y divide-border/50" data-testid="vj-month-totals">
+            <div className="flex items-center justify-between px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span>Monat</span>
+              <span>Umsatz brutto (Zeile «Gesamt»)</span>
+            </div>
+            {preview.monthTotals.map(mt => (
+              <div key={mt.month} className="flex items-center justify-between px-2.5 py-1 text-xs">
+                <span>{mt.month}</span>
+                <span className="font-medium tabular-nums">
+                  {Number.isFinite(mt.value)
+                    ? `CHF ${mt.value.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between px-2.5 py-1 text-xs font-semibold">
+              <span>Jahr {preview.year} ({preview.dayCount} Tage)</span>
+              <span className="tabular-nums">
+                {Number.isFinite(preview.jahrTotal)
+                  ? `CHF ${preview.jahrTotal.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '—'}
+              </span>
+            </div>
+          </div>
+
+          {/* HARTER Block: nicht lesbare Zellwerte — Import gesperrt */}
+          {preview.unlesbareWerte.length > 0 && (
+            <div className="rounded border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-2.5 py-2 space-y-1" data-testid="vj-unlesbar">
+              <p className="text-[11px] font-medium text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                {preview.unlesbareWerte.length} Zellwert{preview.unlesbareWerte.length === 1 ? '' : 'e'} nicht lesbar —
+                der Import ist blockiert, bis das Format geklärt ist (nie als 0 speichern).
+              </p>
+              <ul className="text-[11px] text-red-700 dark:text-red-300 tabular-nums pl-5 space-y-0.5">
+                {preview.unlesbareWerte.slice(0, 8).map((z, i) => (
+                  <li key={i}>Zeile «{z.zeile}» · Spalte {z.spalte}: «{z.roh}»</li>
+                ))}
+                {preview.unlesbareWerte.length > 8 && (
+                  <li>… und {preview.unlesbareWerte.length - 8} weitere Zellen</li>
+                )}
+              </ul>
+            </div>
+          )}
+
           {/* Supabase-Hinweis */}
           <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground bg-teal-50 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-800 rounded px-2.5 py-1.5">
             <Database className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
@@ -743,7 +820,7 @@ export function VjDailyImportSection() {
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={handleSave}
-              disabled={saving || lockState.locked}
+              disabled={saving || lockState.locked || preview.unlesbareWerte.length > 0}
             >
               {saving
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird in Supabase gespeichert…</>

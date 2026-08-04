@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { parseGastronoviExcel, GastronoviDayResult } from '@/lib/revenue-parser';
+import { unlesbareWerteMeldung, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { DailyBudget } from '@/types/personnel';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -458,8 +459,13 @@ export function GastronoviImportSection() {
     setImported(false);
     setParsing(true);
     try {
-      const parsed = await parseGastronoviExcel(file, parseInt(year, 10));
-      if (!parsed || parsed.length === 0) {
+      // Strikte Zahl-Prüfung: unlesbare Zellen NIE als 0 importieren — blockieren.
+      const unlesbareWerte: UnlesbareZelle[] = [];
+      const parsed = await parseGastronoviExcel(file, parseInt(year, 10), unlesbareWerte);
+      if (unlesbareWerte.length > 0) {
+        setError(unlesbareWerteMeldung(unlesbareWerte));
+        setFileName(null);
+      } else if (!parsed || parsed.length === 0) {
         setError('Keine Tagesdaten erkannt. Bitte prüfe das Dateiformat (Spaltenköpfe "01.01.", "02.01." usw.).');
         setFileName(null);
       } else {

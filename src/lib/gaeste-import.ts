@@ -21,6 +21,7 @@
  */
 
 import ExcelJS from 'exceljs';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 
 export interface TagesmetrikImportResult {
   /** YYYY-MM-DD → Wert (Gäste: Personen, Durchschnitt: CHF) */
@@ -39,6 +40,11 @@ export interface TagesmetrikImportResult {
   month: number; // 1-basiert, aus den Datumsspalten abgeleitet
   daysWithData: number;
   rowsFound: string[];
+  /**
+   * Zellen, die keinen gültigen Zahlenwert ergaben (nie als 0/NaN übernommen).
+   * Nicht leer ⇒ die Import-UI MUSS den Import blockieren.
+   */
+  unlesbareWerte: UnlesbareZelle[];
 }
 
 /** Zellwert robust in Text wandeln (auch RichText-/Formel-Zellen). */
@@ -53,16 +59,19 @@ function cellToString(val: ExcelJS.CellValue): string {
   return String(val);
 }
 
-/** Zahl robust parsen: «CHF 53,47», «8'584 P.», NBSP/Apostroph-tolerant. */
-function parseNumberCell(val: ExcelJS.CellValue): number {
-  if (typeof val === 'number') return val;
-  const str = cellToString(val)
-    .replace(/CHF/giu, '')
-    .replace(/P\.?\s*$/iu, '')
-    .replace(/[\s\u00A0'’]/gu, '')
-    .replace(',', '.');
-  const n = parseFloat(str);
-  return Number.isFinite(n) ? n : 0;
+/**
+ * Zahl STRIKT parsen: «CHF 53,47», «8'584 P.», NBSP/Apostroph-tolerant —
+ * unlesbare Zellen werden gesammelt (nie 0/NaN), leer/«-» ⇒ null.
+ */
+function parseNumberCell(
+  val: ExcelJS.CellValue,
+  zeile: string,
+  spalte: string,
+  unlesbar: UnlesbareZelle[],
+): number | null {
+  const r = parseBetragZelle(typeof val === 'number' ? val : cellToString(val));
+  if (!r.ok) { unlesbar.push({ zeile, spalte, roh: r.roh ?? '' }); return null; }
+  return r.value;
 }
 
 async function parseTagesmetrikXlsx(
@@ -89,6 +98,7 @@ async function parseTagesmetrikXlsx(
   const inferredMonth = dateCols[0].month;
   const daily: Record<string, number> = {};
   const rowsFound: string[] = [];
+  const unlesbareWerte: UnlesbareZelle[] = [];
   let zeitraum: number | null = null;
 
   ws.eachRow({ includeEmpty: false }, (row, rowIndex) => {
@@ -97,12 +107,13 @@ async function parseTagesmetrikXlsx(
     if (!labelMatches(label.toLowerCase())) return;
     rowsFound.push(label);
 
-    const z = parseNumberCell(row.getCell(2).value);
-    if (z !== 0) zeitraum = (zeitraum ?? 0) + z;
+    const z = parseNumberCell(row.getCell(2).value, label, 'Zeitraum', unlesbareWerte);
+    if (z !== null && z !== 0) zeitraum = (zeitraum ?? 0) + z;
 
     dateCols.forEach(({ col, day, month }) => {
-      const amount = parseNumberCell(row.getCell(col).value);
-      if (amount > 0) {
+      const spalte = `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.`;
+      const amount = parseNumberCell(row.getCell(col).value, label, spalte, unlesbareWerte);
+      if (amount !== null && amount > 0) {
         const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         daily[key] = (daily[key] ?? 0) + amount;
       }
@@ -123,6 +134,7 @@ async function parseTagesmetrikXlsx(
     month: inferredMonth,
     daysWithData: Object.keys(daily).length,
     rowsFound,
+    unlesbareWerte,
   };
 }
 

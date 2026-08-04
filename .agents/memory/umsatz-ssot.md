@@ -25,3 +25,7 @@ Entschieden/gefixt bei der App-weiten Umstellung:
 **Session-Race-Lesson (wichtig):** Läuft ein Supabase-Read-Effekt nur einmal beim Mount, kann er VOR der Session-Hydration feuern → RLS liefert still 0 Zeilen (HTTP 200, kein Fehler) → Seite bleibt dauerhaft leer. Jeder solche Lader braucht: (a) Nachladen bei 'store-synced', (b) Generationszähler statt cancelled-Flag, (c) leeres Ergebnis überschreibt nie bereits geladene Daten. (KV-Reads via kvGet sind weniger betroffen, aber gleiche Vorsicht.)
 
 Datenlage Juli 2026 nach Umstellung: 27 Tage im dailyBudgets-KV vorhanden (22.07. = 6'383.40 sichtbar), aber alte KV-Stände ohne takeawayRevenue → Netto vorerst 228'814.16; nach Re-Import des Excels (neuer Parser) und ggf. Marketing-Re-Import (KV hat 13'006.20 statt 13'193.40) → Ziel 232'269.95.
+
+## Tagesabschluss Umsatz-Spalte (Anzeige vs. Berechnung)
+- Anzeige der Umsatz-Spalte = Tagesumsätze-Import (dailyBudgets, brutto) via `umsatzAbgleich`; NUR Anzeige + Rot-Abgleich gegen Z-Bericht (Schwelle im Blob `umsatzDiffSchwelle`, Default 10).
+- Berechnungen (Barumsatz/Bargeld Soll/Saldo-Kette) und ALLE Exporte lesen weiter `cells.umsatz` (Z-Bericht inkl. Overrides) — diese Trennung nie aufheben.

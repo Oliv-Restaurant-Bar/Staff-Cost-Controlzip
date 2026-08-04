@@ -61,6 +61,8 @@ import {
   canCheckBarKontrolliert,
   canCloseDay,
   cashDiffReasonLabel,
+  DEFAULT_UMSATZ_DIFF_SCHWELLE,
+  umsatzAbgleich,
   type DayCell,
   type TagesabschlussManualPatch,
   type TagesabschlussRow,
@@ -121,14 +123,17 @@ export interface TagesabschlussColumn {
  * damit der Sticky-Header nicht durchscheint.
  */
 export const TA_HEAD_COLORS = {
+  // Schlichtes Design (Spec): ALLE Spalten neutral — keine Deko-Farben mehr.
+  // Die Schlüssel bleiben erhalten (Spalten-Spec/Tests), mappen aber alle
+  // auf denselben neutralen Header-Hintergrund (opak wegen Sticky-Header).
   neutral: 'bg-muted',
-  hellgruen: 'bg-green-100 dark:bg-green-900',
-  hellblau: 'bg-sky-100 dark:bg-sky-900',
-  hellgelb: 'bg-yellow-100 dark:bg-yellow-900',
-  lachs: 'bg-rose-100 dark:bg-rose-900',
-  violett: 'bg-violet-100 dark:bg-violet-900',
-  orange: 'bg-orange-100 dark:bg-orange-900',
-  tuerkis: 'bg-teal-100 dark:bg-teal-900',
+  hellgruen: 'bg-muted',
+  hellblau: 'bg-muted',
+  hellgelb: 'bg-muted',
+  lachs: 'bg-muted',
+  violett: 'bg-muted',
+  orange: 'bg-muted',
+  tuerkis: 'bg-muted',
 } as const;
 
 /**
@@ -139,7 +144,7 @@ export const TA_HEAD_COLORS = {
 export const TAGESABSCHLUSS_COLUMNS: TagesabschlussColumn[] = [
   { key: 'datum', label: 'Datum', align: 'left', color: 'neutral' },
   { key: 'umsatz', label: 'Umsatz', align: 'right', color: 'neutral',
-    tooltip: 'Automatisch aus dem Z-Bericht (PDF).' },
+    tooltip: 'Tagesumsatz aus dem Tagesumsätze-Import (massgeblich); im Hintergrund gegen den Z-Bericht abgeglichen — rot bei Differenz über der Schwelle.' },
   { key: 'barSoll', label: 'BAR SOLL', align: 'right', color: 'hellgruen', sep: true,
     tooltip: 'Barumsatz gemäss Z-Bericht.' },
   { key: 'barIst', label: 'BAR IST', align: 'right', color: 'hellblau',
@@ -191,7 +196,7 @@ function cellBg(cell: DayCell): string {
 function ValueCell({ cell, sep = false, title }: { cell: DayCell; sep?: boolean; title?: string }) {
   return (
     <td
-      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)} ${amountColor(cell.value, cell.source)}`}
+      className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)} ${amountColor(cell.value, cell.source)}`}
       title={title}
     >
       <span className="inline-flex items-center gap-1">
@@ -214,7 +219,7 @@ function VoucherCell({ cell, label, onClick, testId, sep = false }: {
   sep?: boolean;
 }) {
   return (
-    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)}`}>
+    <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)}`}>
       <button
         type="button"
         className={`inline-flex items-center gap-1 rounded px-1 -mx-1 cursor-pointer underline decoration-dotted underline-offset-2 decoration-muted-foreground/60 hover:bg-accent hover:text-accent-foreground ${amountColor(cell.value, cell.source)}`}
@@ -245,7 +250,7 @@ function VoucherInlineCell({ cell, label, date, onCommit, inputTestId, dialogTes
   sep?: boolean;
 }) {
   return (
-    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${EDIT_CELL_FOCUS}`}>
+    <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${EDIT_CELL_FOCUS}`}>
       <span className="inline-flex items-center gap-1">
         {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
         <InlineAmountInput
@@ -333,14 +338,10 @@ function StatusBadge({ row }: { row: TagesabschlussRow }) {
  * wieder geöffnet (orange) > rote Differenz > orange Differenz > offen (rot)
  * > Zebra. Differenzen = Adyen- ODER Cash-Differenz.
  */
-function rowTint(row: TagesabschlussRow, zebra: boolean): string {
-  if (row.status === 'abgeschlossen') return 'bg-green-50/70 dark:bg-green-950/20';
-  if (row.status === 'abgeschlossen_mit_differenz') return 'bg-yellow-50/70 dark:bg-yellow-950/20';
-  if (row.status === 'wieder_geoeffnet') return 'bg-orange-50/70 dark:bg-orange-950/20';
-  const statuses = [row.adyenDiffStatus, row.cashDiffStatus];
-  if (statuses.includes('large')) return 'bg-red-50/70 dark:bg-red-950/20';
-  if (statuses.includes('small')) return 'bg-orange-50/70 dark:bg-orange-950/20';
-  if (row.status === 'offen') return 'bg-red-50/50 dark:bg-red-950/15';
+function rowTint(_row: TagesabschlussRow, zebra: boolean): string {
+  // Schlichtes Design (Spec): keine Zustands-Tints mehr — nur ruhiges Zebra.
+  // Status bleibt über die Badges sichtbar; einzige funktionale Farbe ist
+  // die ROTE Umsatz-Zelle bei Abweichung Import↔Z-Bericht über der Schwelle.
   return zebra ? 'bg-muted/20' : '';
 }
 
@@ -349,7 +350,7 @@ function rowTint(row: TagesabschlussRow, zebra: boolean): string {
 // Gespeichert wird NUR bei echter Änderung (Vergleich gegen den Zellenwert).
 
 const INLINE_INPUT_BASE =
-  'h-6 w-20 rounded border border-input bg-background px-1 text-right text-xs tabular-nums ' +
+  'h-5 w-20 rounded border border-input bg-background px-1 text-right text-xs tabular-nums ' +
   'focus:outline-none focus:ring-1 focus:ring-ring';
 
 function InlineAmountInput({ value, manual, corrected = false, onCommit, testId, ariaLabel }: {
@@ -471,6 +472,17 @@ interface TagesabschlussTableProps {
    * Saldo-Kette ab diesem Tag; null = Anker entfernen).
    */
   onSetSaldoAnker?: (date: string, value: number | null) => void;
+  /**
+   * Tagesumsatz aus dem Tagesumsätze-Import je Datum (Brutto) — MASSGEBLICHE
+   * Anzeige der Umsatz-Spalte; der Z-Bericht-Wert dient dem Hintergrund-
+   * Abgleich (rot bei |Import − Z| > umsatzSchwelle). Ohne Map: bisheriges
+   * Verhalten (Z-Bericht-Anzeige, kein Abgleich).
+   */
+  umsatzImport?: Record<string, number>;
+  /** Schwelle des Umsatz-Abgleichs in CHF (Default DEFAULT_UMSATZ_DIFF_SCHWELLE). */
+  umsatzSchwelle?: number;
+  /** Klick auf die (rote) Umsatz-Zelle — öffnet das Differenz-Popup. */
+  onUmsatzDiffClick?: (date: string) => void;
 }
 
 export function TagesabschlussTable({
@@ -478,6 +490,7 @@ export function TagesabschlussTable({
   onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm, onReasonsClick,
   onCloseDay, showAllColumns = false, onOverrideClick,
   onInlineCorrect, onInlineExpense, onSetSaldoAnker,
+  umsatzImport, umsatzSchwelle = DEFAULT_UMSATZ_DIFF_SCHWELLE, onUmsatzDiffClick,
 }: TagesabschlussTableProps) {
   const today = todayIso();
   const showAll = showAllColumns;
@@ -491,7 +504,7 @@ export function TagesabschlussTable({
             {visibleTagesabschlussColumns(showAll).map(c => (
               <th
                 key={c.key}
-                className={`sticky top-0 z-10 px-2 py-1.5 font-semibold whitespace-nowrap text-foreground/80 ${TA_HEAD_COLORS[c.color]} ${c.align === 'left' ? 'text-left' : 'text-right'} ${c.sep ? `${SEP} pl-3` : ''}`}
+                className={`sticky top-0 z-10 px-2 py-1 font-semibold whitespace-nowrap text-foreground/80 ${TA_HEAD_COLORS[c.color]} ${c.align === 'left' ? 'text-left' : 'text-right'} ${c.sep ? `${SEP} pl-3` : ''}`}
                 {...(c.tooltip ? { title: c.tooltip } : {})}
                 data-testid={`ta-col-${c.key}`}
               >
@@ -542,7 +555,7 @@ export function TagesabschlussTable({
                 {...(isToday ? { 'data-today': 'true' } : {})}
               >
                 {/* ── 1. Datum (Link zum Tagesdetail) + 2. Umsatz ── */}
-                <td className={`px-2 py-1 whitespace-nowrap font-medium ${isToday ? 'border-l-2 border-l-primary' : ''}`}>
+                <td className={`px-2 py-0.5 whitespace-nowrap font-medium ${isToday ? 'border-l-2 border-l-primary' : ''}`}>
                   <span className="inline-flex items-center gap-1">
                     <button
                       type="button"
@@ -565,12 +578,37 @@ export function TagesabschlussTable({
                     )}
                   </span>
                 </td>
-                {/* Umsatz — Override via Popup („Umsatz Ist"), gelb bei Korrektur. */}
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellBg(row.cells.umsatz)} ${amountColor(row.cells.umsatz.value, row.cells.umsatz.source)}`}
+                {/* Umsatz — Anzeige = Tagesumsätze-Import (massgeblich), Abgleich
+                    gegen den Z-Bericht im Hintergrund: ROT + klickbar (Popup),
+                    wenn |Import − Z| > Schwelle. Fehlt eine Quelle: nur den
+                    vorhandenen Wert zeigen, nie rot. Override-Stift („Umsatz
+                    Ist") korrigiert weiterhin den Z-Wert der Berechnungen. */}
+                {(() => {
+                  const abgleich = umsatzAbgleich(
+                    umsatzImport?.[row.date] ?? null, row.cells.umsatz.value, umsatzSchwelle);
+                  const rot = abgleich.rot;
+                  const klickbar = rot && !!onUmsatzDiffClick;
+                  return (
+                <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${rot
+                      ? 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400 font-medium'
+                      : `${cellBg(row.cells.umsatz)} ${amountColor(row.cells.umsatz.value, row.cells.umsatz.source)}`}`}
+                    {...(rot ? { title: `Abweichung zum Z-Bericht: ${fmtDiffChf(abgleich.diff!)} — anklicken für Details` } : {})}
                     data-testid={`ta-umsatz-${row.date}`}>
                   <span className="inline-flex items-center gap-1">
                     {row.cells.umsatz.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
-                    {row.cells.umsatz.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(row.cells.umsatz.value)}
+                    {klickbar ? (
+                      <button
+                        type="button"
+                        className="cursor-pointer underline decoration-dotted underline-offset-2 rounded px-1 -mx-1 hover:bg-red-200/60 dark:hover:bg-red-900/40"
+                        onClick={() => onUmsatzDiffClick!(row.date)}
+                        title="Differenz Tagesumsatz-Import ↔ Z-Bericht anzeigen"
+                        data-testid={`ta-umsatz-diff-${row.date}`}
+                      >
+                        {fmtChf(abgleich.anzeige!)}
+                      </button>
+                    ) : (
+                      abgleich.anzeige === null ? <span className="text-muted-foreground">—</span> : fmtChf(abgleich.anzeige)
+                    )}
                     {overrideEditable && (
                       <button
                         type="button"
@@ -584,11 +622,13 @@ export function TagesabschlussTable({
                     )}
                   </span>
                 </td>
+                  );
+                })()}
 
                 {/* ── 3. BAR SOLL — Barumsatz laut Z-Bericht (Auto-Feld `bar`,
                     read-only; NICHT berechnet) ── */}
                 <td
-                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${cellBg(row.cells.bar)} ${amountColor(row.cells.bar.value, row.cells.bar.source)}`}
+                  className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${cellBg(row.cells.bar)} ${amountColor(row.cells.bar.value, row.cells.bar.source)}`}
                   title="Barumsatz gemäss Z-Bericht."
                   data-testid={`ta-bar-soll-${row.date}`}
                 >
@@ -598,7 +638,7 @@ export function TagesabschlussTable({
                   </span>
                 </td>
                 {/* ── 4. BAR IST — manuell gezählter Kassenbestand (inline, blau) ── */}
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
+                <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
                     title="BAR IST = physisch gezählter Bargeldbestand"
                     data-testid={`ta-bestand-${row.date}`}>
                   {editable ? (
@@ -635,7 +675,7 @@ export function TagesabschlussTable({
                         : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium bg-yellow-50/80 dark:bg-yellow-950/30 ${saldoEditable ? EDIT_CELL_FOCUS : ''}`}
+                      className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap font-medium ${saldoEditable ? EDIT_CELL_FOCUS : ''}`}
                       title={saldoTitle}
                       data-testid={`ta-saldo-${row.date}`}
                     >
@@ -669,7 +709,7 @@ export function TagesabschlussTable({
                     Nicht-grüne Differenzen: Begründet-Badge (Tooltip = Gründe)
                     bzw. „Begründen"-Button (Dialog). ── */}
                 <td
-                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
+                  className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
                   title={row.cashDiff !== null
                     ? `Differenz = BAR IST − Kassensaldo Soll: ${fmtDiffChf(row.cashDiff)}`
                     : 'Differenz erst nach Erfassung von BAR IST (und bekanntem Kassensaldo)'}
@@ -721,7 +761,7 @@ export function TagesabschlussTable({
                     : Math.round(((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0)) * 100) / 100;
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineCorrectable ? EDIT_CELL_FOCUS : ''} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
+                      className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineCorrectable ? EDIT_CELL_FOCUS : ''} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
                       title={kOv
                         ? `Korrigierter KK-Wert (inkl. TWINT); KK laut Adyen: ${row.adyenTotal === null ? '—' : fmtChf(row.adyenTotal)}`
                         : adyenTitle}
@@ -806,7 +846,7 @@ export function TagesabschlussTable({
 
                 {/* ── 8. Debitoren — inline (Korrektur des Z-Bericht-Werts) ── */}
                 {correctable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS}`}
+                  <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS}`}
                       data-testid={`ta-rechnung-${row.date}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.rechnung.comment && (
@@ -832,7 +872,7 @@ export function TagesabschlussTable({
                 )}
                 {/* ── 9. Barausgaben (nur Tages-Total; Klick öffnet
                     AUSSCHLIESSLICH den Barausgaben-Dialog) ── */}
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineExpenseEditable ? EDIT_CELL_FOCUS : ''}`}>
+                <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineExpenseEditable ? EDIT_CELL_FOCUS : ''}`}>
                   {inlineExpenseEditable ? (
                     /* Total inline erfassen (generische Inline-Ausgabe) —
                        Plus öffnet weiter den Dialog für itemisierte Erfassung. */
@@ -907,7 +947,7 @@ export function TagesabschlussTable({
                 {/* ── Detail-Spalten (nur Voll-Ansicht): Einzahlung Bank,
                     Bargeld Soll (berechnet), KK, V-Gutscheine ── */}
                 {showAll && (editable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
+                  <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.einzahlungBank.comment && (
                         <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
@@ -925,7 +965,7 @@ export function TagesabschlussTable({
                   <ValueCell cell={row.cells.einzahlungBank} sep />
                 ))}
                 {showAll && (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.bargeldSoll !== null && row.bargeldSoll < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
+                  <td className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${row.bargeldSoll !== null && row.bargeldSoll < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
                       title={`Bargeld Soll (berechnet) = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine${row.cells.bar.value !== null ? ` · Bar laut Z-Bericht: ${fmtChf(row.cells.bar.value)}` : ''}`}
                       data-testid={`ta-bargeld-soll-${row.date}`}>
                     {row.bargeldSoll === null
@@ -942,7 +982,7 @@ export function TagesabschlussTable({
                   const corrected = k.source === 'corrected' || t.source === 'corrected';
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
+                      className={`px-2 py-0.5 text-right tabular-nums whitespace-nowrap ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
                       title="KK = Karten inkl. TWINT laut Z-Bericht"
                       data-testid={`ta-kk-${row.date}`}
                     >
@@ -1005,7 +1045,7 @@ export function TagesabschlussTable({
                     Read-only-Rollen SEHEN den Zustand (disabled), nichts wird
                     versteckt. Disabled nur fürs AKTIVIEREN — ein gesetztes
                     Häkchen bleibt entfernbar (Audit beim Entfernen). */}
-                <td className={`px-2 py-1 whitespace-nowrap align-top ${SEP} pl-3`}>
+                <td className={`px-2 py-0.5 whitespace-nowrap align-top ${SEP} pl-3`}>
                   <div className="flex flex-col items-start gap-1" data-testid={`ta-status-stack-${row.date}`}>
                     <StatusBadge row={row} />
                     {row.hasZbericht && (

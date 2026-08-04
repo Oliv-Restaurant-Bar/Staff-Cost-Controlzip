@@ -21,3 +21,13 @@ description: Ein Upload mit Auto-Typerkennung (Gäste/Durchschnitt/Umsatz/Market
 - **Why:** `upsertVjDailyBatch` ersetzt den GANZEN Record pro Tag → vj_daily-Bestand des Jahres MUSS vor dem ersten Write strikt gelesen (`loadVjDailyYearStrict`, Fehler = Abbruch ohne Writes) und feldweise gemerged werden, sonst löscht ein Import ohne Kategorienzeilen bestehende Food/Bev/TA-Werte.
 - Monatsreport-Overlay `istAlsVjRecord` merged feldweise mit dem vj_daily-Record des Tages (Monat + Woche) — Ist-Überlagerung darf vorhandene Kategorien nie verdecken.
 - Jahres-Lock blockiert ALLE Ziele (auch actual) — Test, der das Gegenteil erwartet, ist veraltet.
+
+## Striktes Zahl-Parsing (nie NaN/stilles 0)
+Alle Tagesdaten-Parser (Gäste/Durchschnitt/Marketing/Umsatz) parsen Zellen strikt über den zentralen Betrags-Parser: unlesbare Zellen werden NIE als 0/NaN gespeichert, sondern als «unlesbare Werte» (Zeile/Spalte/Rohwert) gesammelt — die Import-UI blockiert den Import hart (Button + Guard im Save-Pfad), bis das Format geklärt ist. Leer/«-» ⇒ null (leer statt 0), nie 0. «1.234» wird bewusst als deutsche Tausendergruppe (=1234) gelesen.
+**Why:** parseFloat-Präfix-Parsing («123abc»⇒123) und isNaN⇒0-Fallbacks haben falsche Tageswerte erzeugt; Vorschau zeigte «CHF NaN».
+**How to apply:** Jeder neue/geänderte Tagesdaten-Parse-Pfad (auch Legacy-Karten wie die Gastronovi-Import-Karte!) muss den Sammler durchreichen und bei nicht-leerem Sammler blockieren — nie einen Aufrufer ohne Block lassen.
+
+## Umsatz-Vorschau & Label-Matching
+- Monatstotale der Umsatz-Vorschau = BRUTTO-Summe der «Gesamt»-Zeile (gegen die Quelldatei kontrollierbar); nie via UmsatzTag/summiereUmsatz aus Import-Rohzeilen bauen — UmsatzTag verlangt ALLE Felder als Zahl, ein undefined takeAway ergibt NaN («CHF NaN»).
+- Zeilen-Labels flexibel, aber mit Neutral-Guard: Non-Foods/Aufladung Kundenkarten/Trinkgeld/Rundungsdifferenzen/Rabatte sind NIE eigene Kategorien («Non-Foods» matcht sonst includes('food') als Food). Gilt für revenue-parser UND den separaten VJ-Import (VjDailyImportSection hat einen EIGENEN Parser — bei Parser-Härtungen immer beide Pfade prüfen).
+- «None»/«null»-Platzhalter aus Exporten = leer (kein Wert), nicht unlesbar.

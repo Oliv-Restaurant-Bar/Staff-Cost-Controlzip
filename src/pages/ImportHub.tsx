@@ -99,10 +99,11 @@ import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDailyReplaceYears, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
 import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, type GaesteDiff } from '@/lib/gaeste-store';
-import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
+import { ladeUmsatzTage } from '@/lib/umsatz';
 import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
 import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
+import { type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
 import { IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { CockpitReadinessCard, MonthlyBlockCard, RareBlockCard } from '@/components/import-center/RhythmOverview';
@@ -2715,6 +2716,8 @@ interface TagesdatenPreview {
   datenDiff?: { neu: number; aktualisiert: number; unveraendert: number };
   /** Tage, deren Wert sich beim Speichern ÄNDERT (Überschreiben sichtbar machen). */
   geaendert?: Array<{ date: string; alt: number; neu: number }>;
+  /** Zellen ohne gültigen Zahlenwert (Zeile/Spalte/Rohwert) — BLOCKIERT den Import. */
+  unlesbareWerte?: UnlesbareZelle[];
 }
 
 /** Datums-Diff gegen den Bestand: neu / aktualisiert (Wert ändert sich) / unverändert. */
@@ -2762,10 +2765,12 @@ function TagesdatenImportSection() {
   for (let y = currentYear; y >= 2023; y--) yearOptions.push(y);
 
   const isCHF = (t: TagesdatenTyp) => t === 'umsatz' || t === 'marketing' || t === 'durchschnitt';
+  // Nie «CHF NaN» rendern: nicht-endliche Werte immer als «—» (leer statt 0).
   const fmtValueByTyp = (t: TagesdatenTyp, n: number) =>
-    t === 'gaeste'
-      ? `${n.toLocaleString('de-CH')} P.`
-      : `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    !Number.isFinite(n) ? '—'
+      : t === 'gaeste'
+        ? `${n.toLocaleString('de-CH')} P.`
+        : `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const reset = () => {
     setFile(null);
@@ -2846,22 +2851,28 @@ function TagesdatenImportSection() {
       let umsatzRows: GastronoviDayResult[] | undefined;
       let zeitraum: number | null | undefined;
       let tagessumme: number | undefined;
+      // Unlesbare Zellen (kein gültiger Zahlenwert): NIE als 0/NaN übernehmen —
+      // sammeln, in der Vorschau nennen und den Import hart blockieren.
+      let unlesbareWerte: UnlesbareZelle[] = [];
 
       if (typ === 'gaeste') {
         const r = await parseGaesteXlsx(file, year);
         daily = r.daily; zeitraum = r.zeitraum; tagessumme = r.tagessumme;
+        unlesbareWerte = r.unlesbareWerte;
         if (r.zeitraum != null && r.zeitraum !== r.tagessumme) {
           setWarn(`Zeitraum-Spalte der Datei: ${r.zeitraum.toLocaleString('de-CH')} P. — abweichend, Tageswerte sind massgeblich.`);
         }
       } else if (typ === 'durchschnitt') {
         const r = await parseDurchschnittXlsx(file, year);
         daily = r.daily; zeitraum = r.zeitraum;
+        unlesbareWerte = r.unlesbareWerte;
       } else if (typ === 'marketing') {
         const r = await parseMaisonXlsx(file, year);
         daily = r.daily;
+        unlesbareWerte = r.unlesbareWerte;
       } else {
         // umsatz
-        const rows = await parseGastronoviExcel(file, year);
+        const rows = await parseGastronoviExcel(file, year, unlesbareWerte);
         if (!rows || rows.length === 0) {
           setError('Keine Umsatz-Tagesdaten erkannt. Bitte prüfe das Dateiformat (Spaltenköpfe «01.01.», «02.01.» usw.).');
           setStatus('error');
@@ -2898,22 +2909,13 @@ function TagesdatenImportSection() {
       // Monatstotale je betroffenem Monat
       const monthMap = new Map<string, number>();
       if (typ === 'umsatz' && umsatzRows) {
-        // Netto gesamt pro Monat (kanonische Umsatzformel)
-        const byMonth = new Map<string, UmsatzTag[]>();
+        // BRUTTO gesamt pro Monat = Summe der Tageswerte der «Gesamt»-Zeile.
+        // (So direkt gegen die Quelldatei kontrollierbar; Netto entsteht erst
+        // beim Speichern/Weiterrechnen. r.takeAway kann fehlen — nie mitrechnen.)
         for (const r of umsatzRows) {
           const ym = r.date.slice(0, 7);
-          const tag: UmsatzTag = {
-            datum: r.date,
-            gesamtBrutto: r.total,
-            takeAwayBrutto: r.takeAway,
-            foodBrutto: r.food,
-            beverageBrutto: r.beverage,
-            marketingNetto: 0,
-          };
-          if (!byMonth.has(ym)) byMonth.set(ym, []);
-          byMonth.get(ym)!.push(tag);
+          monthMap.set(ym, Math.round(((monthMap.get(ym) ?? 0) + r.total) * 100) / 100);
         }
-        for (const [ym, tage] of byMonth) monthMap.set(ym, summiereUmsatz(tage).netto);
       } else if (typ === 'durchschnitt') {
         // Ø je Monat (Mittelwert der Tageswerte)
         const acc = new Map<string, { sum: number; n: number }>();
@@ -3012,6 +3014,7 @@ function TagesdatenImportSection() {
         monthTotals, zeitraum, tagessumme,
         invalidDates: invalidDates.length > 0 ? invalidDates : undefined,
         mismatch,
+        unlesbareWerte: unlesbareWerte.length > 0 ? unlesbareWerte : undefined,
       });
       setStatus('preview');
     } catch (e) {
@@ -3022,6 +3025,11 @@ function TagesdatenImportSection() {
 
   const handleConfirm = async () => {
     if (!preview) return;
+    // HARTER Block: unlesbare Zellwerte dürfen NIE gespeichert werden (kein 0/NaN).
+    if (preview.unlesbareWerte && preview.unlesbareWerte.length > 0) {
+      toast.error('Import blockiert: die Datei enthält nicht lesbare Zellwerte — bitte Format prüfen.');
+      return;
+    }
     if (preview.mismatch && !mismatchOk) {
       toast.error('Werte passen nicht zum gewählten Typ — bitte zuerst die Warnung bestätigen.');
       return;
@@ -3205,7 +3213,7 @@ function TagesdatenImportSection() {
   };
 
   const monthTotalHeading = preview
-    ? preview.typ === 'umsatz' ? 'Netto gesamt'
+    ? preview.typ === 'umsatz' ? 'Umsatz brutto (Zeile «Gesamt»)'
       : preview.typ === 'gaeste' ? 'Personen'
       : preview.typ === 'durchschnitt' ? 'Ø Verkauf'
       : 'Marketing (CHF)'
@@ -3389,9 +3397,10 @@ function TagesdatenImportSection() {
                   <div key={mt.month} className="flex items-center justify-between px-2.5 py-1 text-xs">
                     <span>{monthLabel(mt.month)}</span>
                     <span className="font-medium tabular-nums">
-                      {preview.typ === 'gaeste'
-                        ? `${Math.round(mt.value).toLocaleString('de-CH')} P.`
-                        : `CHF ${mt.value.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      {!Number.isFinite(mt.value) ? '—'
+                        : preview.typ === 'gaeste'
+                          ? `${Math.round(mt.value).toLocaleString('de-CH')} P.`
+                          : `CHF ${mt.value.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     </span>
                   </div>
                 ))}
@@ -3430,6 +3439,30 @@ function TagesdatenImportSection() {
                 </p>
               )}
 
+              {/* HARTER Block: nicht lesbare Zellwerte — Import gesperrt, bis das
+                  Format geklärt ist (nie als 0/NaN speichern). */}
+              {preview.unlesbareWerte && preview.unlesbareWerte.length > 0 && (
+                <div
+                  className="rounded border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-2.5 py-2 space-y-1"
+                  data-testid="tagesdaten-unlesbar"
+                >
+                  <p className="text-[11px] font-medium text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {preview.unlesbareWerte.length} Zellwert{preview.unlesbareWerte.length === 1 ? '' : 'e'} nicht lesbar —
+                    der Import ist blockiert, bis das Format geklärt ist. Die betroffenen Tage würden sonst falsch
+                    (als 0) gespeichert.
+                  </p>
+                  <ul className="text-[11px] text-red-700 dark:text-red-300 tabular-nums pl-5 space-y-0.5" data-testid="tagesdaten-unlesbar-liste">
+                    {preview.unlesbareWerte.slice(0, 8).map((z, i) => (
+                      <li key={i}>Zeile «{z.zeile}» · Spalte {z.spalte}: «{z.roh}»</li>
+                    ))}
+                    {preview.unlesbareWerte.length > 8 && (
+                      <li>… und {preview.unlesbareWerte.length - 8} weitere Zellen</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
               {/* Plausibilitäts-Riegel: Widerspruch Wertemuster ↔ gewählter Typ */}
               {preview.mismatch && (
                 <div
@@ -3460,7 +3493,8 @@ function TagesdatenImportSection() {
                 size="sm"
                 className="h-8 text-xs flex-1 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white"
                 onClick={handleConfirm}
-                disabled={status === 'saving' || (!!preview.mismatch && !mismatchOk)}
+                disabled={status === 'saving' || (!!preview.mismatch && !mismatchOk)
+                  || (preview.unlesbareWerte?.length ?? 0) > 0}
               >
                 {status === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                 {status === 'saving' ? 'Wird gespeichert…' : 'Importieren'}

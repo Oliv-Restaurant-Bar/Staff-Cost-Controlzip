@@ -247,19 +247,20 @@ describe('TagesabschlussTable', () => {
     expect(screen.queryByText(/GS-4712/)).toBeNull();
   });
 
-  it('färbt Zeilen nach Zustand: abgeschlossen grün, offen rot — bestätigt allein ist NICHT grün', () => {
+  it('schlichtes Design: KEINE Zustands-Tints auf Zeilen — Status nur via Badge', () => {
     const base = buildMonth();
-    // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (rot).
+    // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (Badge, kein Zeilen-Tint).
     const closings = { ...base.closings, '2026-07-03': closing('2026-07-03') };
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, base.blob, base.confirmations, null, 0);
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
-    // 01.07. nur bestätigt (in Bearbeitung) → KEIN grüner Tint mehr.
     expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
-    expect(screen.getByTestId('ta-row-2026-07-03').className).toContain('bg-red-50');
+    expect(screen.getByTestId('ta-row-2026-07-03').className).not.toContain('bg-red-50');
+    expect(screen.getByText('Offen')).toBeTruthy();
     cleanup();
     const closed = buildMonthWithClosedDay();
     render(<TagesabschlussTable showAllColumns rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
-    expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
+    expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
+    expect(screen.getByText('Abgeschlossen')).toBeTruthy();
   });
 
   it('markiert die heutige Zeile (data-today)', () => {
@@ -289,6 +290,36 @@ describe('TagesabschlussTable', () => {
     dateBtn.click();
     expect(onDayClick).toHaveBeenCalledTimes(1);
     expect(onDayClick).toHaveBeenCalledWith('2026-07-02');
+  });
+
+  describe('Umsatz-Spalte: Import massgeblich, Abgleich gegen Z-Bericht', () => {
+    it('zeigt den Import-Wert; rot + klickbar nur bei |Import − Z| > Schwelle', () => {
+      const base = buildMonth(); // Z-Bericht 01.07. = 1000
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, base.closings, base.blob, base.confirmations, null, 0);
+      const onDiff = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        umsatzImport={{ '2026-07-01': 1025.5 }} umsatzSchwelle={10} onUmsatzDiffClick={onDiff} />);
+      // Anzeige = Import (1025.50), NICHT der Z-Wert (1000):
+      const cell = screen.getByTestId('ta-umsatz-2026-07-01');
+      expect(cell.textContent).toContain('1’025.50');
+      expect(cell.className).toContain('bg-red-100');
+      fireEvent.click(screen.getByTestId('ta-umsatz-diff-2026-07-01'));
+      expect(onDiff).toHaveBeenCalledWith('2026-07-01');
+    });
+
+    it('innerhalb der Schwelle: Import-Anzeige ohne rot; fehlende Quelle: nur vorhandener Wert, nie rot', () => {
+      const base = buildMonth();
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, base.closings, base.blob, base.confirmations, null, 0);
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        umsatzImport={{ '2026-07-01': 1004 }} umsatzSchwelle={10} onUmsatzDiffClick={() => {}} />);
+      const cell = screen.getByTestId('ta-umsatz-2026-07-01');
+      expect(cell.textContent).toContain('1’004.00');
+      expect(cell.className).not.toContain('bg-red-100');
+      expect(screen.queryByTestId('ta-umsatz-diff-2026-07-01')).toBeNull();
+      // 02.07.: Z-Bericht vorhanden, KEIN Import → Z-Wert anzeigen, nie rot.
+      const cell2 = screen.getByTestId('ta-umsatz-2026-07-02');
+      expect(cell2.className).not.toContain('bg-red-100');
+    });
   });
 
   describe('Inline-Bearbeitung', () => {
@@ -495,7 +526,8 @@ describe('TagesabschlussTable', () => {
     expect(badCell.textContent).toContain('690.00');
     expect(badCell.textContent).toContain('10.00');
     expect(badCell.className).toContain('text-red-600');
-    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-red-50');
+    // Schlichtes Design: kein roter Zeilen-Tint mehr (nur die Zellen-Werte).
+    expect(screen.getByTestId('ta-row-2026-07-02').className).not.toContain('bg-red-50');
 
     // Tag ohne Adyen-Import: Zelle leer ("—").
     expect(screen.getByTestId('ta-adyen-2026-07-03').textContent).toContain('—');
@@ -662,7 +694,8 @@ describe('TagesabschlussTable', () => {
 
       expect(screen.getByText('Wieder geöffnet')).toBeTruthy();
       const row1 = screen.getByTestId('ta-row-2026-07-01');
-      expect(row1.className).toContain('bg-orange-50');
+      // Schlichtes Design: kein oranger Zeilen-Tint mehr — Status via Badge.
+      expect(row1.className).not.toContain('bg-orange-50');
       expect(row1.querySelectorAll('input').length).toBeGreaterThan(0);
       expect(screen.getByTestId('ta-close-day-2026-07-01')).toBeTruthy();
       expect(screen.queryByTestId('ta-lock-2026-07-01')).toBeNull();

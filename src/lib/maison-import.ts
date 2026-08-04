@@ -14,6 +14,7 @@
  */
 
 import ExcelJS from 'exceljs';
+import { parseBetragZelle, type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 
 export interface MaisonImportResult {
   daily: Record<string, number>;
@@ -22,6 +23,11 @@ export interface MaisonImportResult {
   totalGross: number;
   rowsFound: string[];
   daysWithData: number;
+  /**
+   * Zellen, die keinen gültigen Zahlenwert ergaben (nie als 0/NaN übernommen).
+   * Nicht leer ⇒ die Import-UI MUSS den Import blockieren.
+   */
+  unlesbareWerte: UnlesbareZelle[];
 }
 
 /**
@@ -46,10 +52,16 @@ function cellToString(val: ExcelJS.CellValue): string {
   return String(val);
 }
 
-function parseCHFCell(val: ExcelJS.CellValue): number {
-  if (typeof val === 'number') return val;
-  const str = cellToString(val).replace(/CHF\s*/iu, '').replace(/[\s\u00A0']/gu, '').replace(',', '.');
-  return parseFloat(str) || 0;
+/** CHF-Zelle STRIKT parsen — unlesbar wird gesammelt (nie 0/NaN), leer ⇒ null. */
+function parseCHFCell(
+  val: ExcelJS.CellValue,
+  zeile: string,
+  spalte: string,
+  unlesbar: UnlesbareZelle[],
+): number | null {
+  const r = parseBetragZelle(typeof val === 'number' ? val : cellToString(val));
+  if (!r.ok) { unlesbar.push({ zeile, spalte, roh: r.roh ?? '' }); return null; }
+  return r.value;
 }
 
 export async function parseMaisonXlsx(
@@ -77,6 +89,7 @@ export async function parseMaisonXlsx(
   const inferredMonth = dateCols[0].month;
   const daily: Record<string, number> = {};
   const rowsFound: string[] = [];
+  const unlesbareWerte: UnlesbareZelle[] = [];
   let totalGross = 0;
 
   ws.eachRow({ includeEmpty: false }, (row, rowIndex) => {
@@ -89,8 +102,9 @@ export async function parseMaisonXlsx(
 
     rowsFound.push(label);
     dateCols.forEach(({ col, day, month }) => {
-      const amount = parseCHFCell(row.getCell(col).value);
-      if (amount > 0) {
+      const spalte = `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.`;
+      const amount = parseCHFCell(row.getCell(col).value, label, spalte, unlesbareWerte);
+      if (amount !== null && amount > 0) {
         const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         daily[key] = (daily[key] ?? 0) + amount;
         totalGross += amount;
@@ -105,5 +119,6 @@ export async function parseMaisonXlsx(
     totalGross,
     rowsFound,
     daysWithData: Object.keys(daily).length,
+    unlesbareWerte,
   };
 }

@@ -56,6 +56,12 @@ import {
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
+import { ladeUmsatzTage } from '@/lib/umsatz';
+import {
+  DEFAULT_UMSATZ_DIFF_SCHWELLE, setUmsatzDiffSchwelle,
+  umsatzAbgleich, umsatzDiffSchwelle,
+} from '@/lib/tagesabschluss';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
 import { exportTagesabschlussExcel } from '@/lib/tagesabschluss-excel-export';
 import { BuchhaltungsExportSection } from './BuchhaltungsExportSection';
@@ -103,6 +109,12 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [blob, setBlob] = useState<TagesabschlussBlob | null>(null);
   const [adyenBlob, setAdyenBlob] = useState<AdyenAbstimmungBlob | null>(null);
   const [closings, setClosings] = useState<Record<string, GnDayClosing>>({});
+  /** Tagesumsatz (Brutto) aus dem Tagesumsätze-Import, Key = yyyy-MM-dd. */
+  const [umsatzImport, setUmsatzImport] = useState<Record<string, number>>({});
+  /** Offenes Umsatz-Differenz-Popup (Datum) — Klick auf die rote Umsatz-Zelle. */
+  const [umsatzDiffDate, setUmsatzDiffDate] = useState<string | null>(null);
+  /** Entwurfstext der konfigurierbaren Abgleich-Schwelle im Popup. */
+  const [schwelleText, setSchwelleText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [openDate, setOpenDate] = useState<string | null>(null);
   const [openExpensesDate, setOpenExpensesDate] = useState<string | null>(null);
@@ -150,6 +162,18 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
       if (!alive) return;
       setClosings(data);
       setLoading(false);
+    });
+    // Tagesumsätze-Import (massgebliche Umsatz-Anzeige) parallel laden —
+    // Tage ohne Import fehlen in der Map (leer statt 0, kein Abgleich).
+    setUmsatzImport({});
+    const p = (n: number) => String(n).padStart(2, '0');
+    const from = `${year}-${p(month)}-01`;
+    const to = `${year}-${p(month)}-31`;
+    ladeUmsatzTage(tenantId, from, to).then(map => {
+      if (!alive) return;
+      const rec: Record<string, number> = {};
+      for (const [datum, tag] of map) rec[datum] = tag.gesamtBrutto;
+      setUmsatzImport(rec);
     });
     return () => { alive = false; };
   }, [tenantId, year, month]);
@@ -697,6 +721,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onReasonsClick={setReasonDate}
               onCloseDay={handleCloseDay}
               showAllColumns={showAllColumns}
+              umsatzImport={umsatzImport}
+              umsatzSchwelle={blob ? umsatzDiffSchwelle(blob) : DEFAULT_UMSATZ_DIFF_SCHWELLE}
+              onUmsatzDiffClick={setUmsatzDiffDate}
             />
             <details className="mt-2 text-[10px] text-muted-foreground">
               <summary className="cursor-pointer select-none font-medium hover:text-foreground" data-testid="ta-legend-toggle">
@@ -706,15 +733,13 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
-              <span>normale Werte = automatisch aus dem Z-Bericht</span>
+              <span>Umsatz = Tagesumsätze-Import (massgeblich); übrige Werte automatisch aus dem Z-Bericht</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-100 border border-red-300 align-middle mr-1" />Umsatz weicht mehr als die Schwelle vom Z-Bericht ab (Zelle anklicken für Details)</span>
               <span>Adyen- und Bar-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
               <span>Bargeld Soll (ber.) = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
               <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Differenz = BAR IST − Kassensaldo Soll</span>
               <span>Kassensaldo Soll inline überschreiben = manueller Tages-Anker (gelb; Leereingabe entfernt ihn)</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag abgeschlossen (gesperrt)</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-50 border border-yellow-300 align-middle mr-1" />abgeschlossen mit Differenz</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-orange-50 border border-orange-300 align-middle mr-1" />wieder geöffnet</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />offen / Differenz</span>
+              <span>Tages-Status (abgeschlossen / offen / wieder geöffnet) steht im Status-Badge der Zeile</span>
             </div>
             </details>
 
@@ -842,6 +867,81 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         onClose={() => setOverrideCtx(null)}
         onSave={handleOverrideSave}
       />
+
+      {/* ── Umsatz-Differenz-Popup (Tagesumsätze-Import ↔ Z-Bericht) ── */}
+      <Dialog open={umsatzDiffDate !== null} onOpenChange={o => { if (!o) { setUmsatzDiffDate(null); setSchwelleText(null); } }}>
+        <DialogContent className="max-w-sm" data-testid="ta-umsatz-diff-dialog">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Umsatz-Abweichung {umsatzDiffDate ?? ''}</DialogTitle>
+          </DialogHeader>
+          {(() => {
+            if (!umsatzDiffDate) return null;
+            const schwelle = blob ? umsatzDiffSchwelle(blob) : DEFAULT_UMSATZ_DIFF_SCHWELLE;
+            const zWert = monthData.rows.find(r => r.date === umsatzDiffDate)?.cells.umsatz.value ?? null;
+            const a = umsatzAbgleich(umsatzImport[umsatzDiffDate] ?? null, zWert, schwelle);
+            return (
+              <div className="space-y-3 text-xs">
+                <div className="rounded-md border border-border divide-y divide-border">
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span>Tagesumsatz (Import)</span>
+                    <span className="font-semibold tabular-nums" data-testid="ta-diff-import">
+                      {a.importWert === null ? '—' : `CHF ${fmtChf(a.importWert)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span>Z-Bericht</span>
+                    <span className="font-semibold tabular-nums" data-testid="ta-diff-z">
+                      {a.zWert === null ? '—' : `CHF ${fmtChf(a.zWert)}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-1.5">
+                    <span className="font-medium">Differenz (Import − Z-Bericht)</span>
+                    <span className={`font-semibold tabular-nums ${a.rot ? 'text-red-700 dark:text-red-400' : ''}`} data-testid="ta-diff-wert">
+                      {a.diff === null ? '—' : `CHF ${fmtDiffChf(a.diff)}`}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  «Tagesumsatz (Import)» stammt aus dem manuellen Tagesumsätze-Import (Speisekarte-Excel)
+                  und ist die massgebliche, angezeigte Kennzahl. «Z-Bericht» ist der Brutto-Tagesumsatz
+                  aus dem Kassen-Z-Bericht (gleiche Basis) — er dient als Kontrolle und für die
+                  Bargeld-/Kassensaldo-Berechnungen.
+                </p>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="ta-schwelle" className="text-[11px] text-muted-foreground">
+                    Rot ab Abweichung über
+                  </label>
+                  <input
+                    id="ta-schwelle"
+                    type="text"
+                    inputMode="decimal"
+                    className="h-6 w-20 rounded border border-input bg-background px-1.5 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={schwelleText ?? schwelle.toFixed(2)}
+                    onChange={e => setSchwelleText(e.target.value)}
+                    disabled={readOnly}
+                    data-testid="ta-schwelle-input"
+                  />
+                  <span className="text-[11px] text-muted-foreground">CHF</span>
+                  {!readOnly && schwelleText !== null && (
+                    <Button size="sm" className="h-6 text-xs"
+                      disabled={(() => { const v = parseAmountInput(schwelleText); return v === null || v < 0; })()}
+                      onClick={() => {
+                        if (!blob) return;
+                        const v = parseAmountInput(schwelleText);
+                        if (v === null || v < 0) return;
+                        void persist(setUmsatzDiffSchwelle(blob, v, new Date().toISOString()));
+                        setSchwelleText(null);
+                      }}
+                      data-testid="ta-schwelle-save">
+                      Speichern
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       <TagesabschlussReasonDialog
         row={reasonDate ? monthData.rows.find(r => r.date === reasonDate) ?? null : null}
