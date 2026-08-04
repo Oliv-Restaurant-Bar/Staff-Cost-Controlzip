@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseTransgourmetCsv, kontoFuerPosition, kontoSplitsFuerRechnung,
   kontoSplitsAusPositionen, positionenAusRechnung, offeneWarengruppen, uebernehmeManuelleKontierung,
-  artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie,
+  artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie, istGebuehrenPosition,
   normalizePreisHistorie, normalizePreisSchwelle, normalizeWarengruppenMapping,
   DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, normalizeMarktLieferantenMapping,
@@ -181,6 +181,45 @@ describe('berechnePreisAenderungen', () => {
     // normalize wirft 0-Preise raus — aber direkter Aufruf darf nicht crashen:
     const aen = berechnePreisAenderungen(rechnung('R9', '2026-07-31', 5), 'TG', h);
     expect(aen[0]?.diffPct ?? null).toBeNull();
+  });
+});
+
+describe('istGebuehrenPosition — Gebühren-/Abschlag-Zeilen von der Preisüberwachung ausnehmen', () => {
+  const p = (bezeichnung: string, mwstCode = 1, warengruppe = 'Food') => ({ bezeichnung, warengruppe, mwstCode });
+
+  it('VEG, Recycling, Logistikpauschale, Zu-/Abschläge, Pfand (C0) = Gebühr', () => {
+    expect(istGebuehrenPosition(p('VEG'))).toBe(true);
+    expect(istGebuehrenPosition(p('VEG EW Glas'))).toBe(true);
+    expect(istGebuehrenPosition(p('Vorgezogene Entsorgungsgebühr'))).toBe(true);
+    expect(istGebuehrenPosition(p('Recycl.-Geb.'))).toBe(true);
+    expect(istGebuehrenPosition(p('Recyclinggebühr'))).toBe(true);
+    expect(istGebuehrenPosition(p('Logistikpauschale'))).toBe(true);
+    expect(istGebuehrenPosition(p('Zu-/Abschläge'))).toBe(true);
+    expect(istGebuehrenPosition(p('Teuerungszuschlag'))).toBe(true);
+    expect(istGebuehrenPosition(p('Harass Depot', 0))).toBe(true);          // Pfand via MwSt-Code 0
+    expect(istGebuehrenPosition(p('Rabatt Kondition', 1, 'Zu-/Abschläge'))).toBe(true); // via Warengruppe
+  });
+
+  it('echte Warenpositionen bleiben überwacht (kein Fehlgriff auf «veg…» im Wort)', () => {
+    expect(istGebuehrenPosition(p('Entrecote Rind'))).toBe(false);
+    expect(istGebuehrenPosition(p('Vegi-Burger'))).toBe(false);
+    expect(istGebuehrenPosition(p('Gemüse vegetarisch Mix'))).toBe(false);
+  });
+
+  it('erzeugt weder Preis-Hinweis noch Preisverlauf', () => {
+    const csv = [HEADER,
+      zeile('R1', '2026-07-31', 'Food', '', 'VEG EW Glas', 0.9, 0.9, 0.02, 1),
+      zeile('R1', '2026-07-31', 'Food', '888', 'Recyclinggebühr', 1.5, 1.5, 0.04, 1),
+      zeile('R1', '2026-07-31', 'Food', '777', 'Logistikpauschale', 12, 12, 0.3, 1),
+    ].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const hist: PreisHistorie = {
+      'tg|name:veg ew glas': { preis: 0.4, datum: '2026-06-01', name: 'VEG EW Glas', rechnungsNr: 'ALT' },
+      'tg|nr:888': { preis: 0.5, datum: '2026-06-01', name: 'Recyclinggebühr', rechnungsNr: 'ALT' },
+    };
+    expect(berechnePreisAenderungen(r, 'TG', hist)).toHaveLength(0);
+    const h = aktualisierePreisHistorie({}, [r], 'TG');
+    expect(Object.keys(h)).toHaveLength(0);
   });
 });
 

@@ -382,6 +382,29 @@ export interface PreisAenderung {
  * - Rundungs-Schutz: |Δ CHF| < minChf → kein Hinweis.
  * - Pro Artikel nur EIN Hinweis (erste abweichende Position zählt).
  */
+/**
+ * Nicht-Produkt-Zeilen von der PREISÜBERWACHUNG ausschliessen (wie Pfand):
+ * - Pfand/Gebinde (MwSt-Code 0 / «C0»)
+ * - VEG / «VEG EW Glas» (vorgezogene Entsorgungsgebühr)
+ * - Recycl.-Geb. / Recyclinggebühr
+ * - Logistikpauschale
+ * - Zu-/Abschläge (auch als Warengruppe, z. B. Feldschlösschen-Konditionen)
+ * Diese Zeilen erzeugen keine Preis-Hinweise und keinen Artikel-Preisverlauf —
+ * nur echte Warenpositionen werden überwacht. (Buchhaltung bleibt unberührt.)
+ */
+export function istGebuehrenPosition(
+  p: Pick<WarenPosition, 'bezeichnung' | 'warengruppe' | 'mwstCode'>,
+): boolean {
+  if (p.mwstCode === 0) return true; // Pfand/Gebinde (C0)
+  if ((p.warengruppe ?? '').trim().toLowerCase() === 'zu-/abschläge') return true;
+  const b = (p.bezeichnung ?? '').toLowerCase();
+  return /(^|[^a-zäöü])veg([^a-zäöü]|$)/.test(b)          // VEG, VEG EW Glas
+    || b.includes('vorgezogene entsorgung')
+    || b.includes('recycl')                                 // Recycl.-Geb., Recyclinggebühr
+    || b.includes('logistikpauschale')
+    || /zu-?\s*\/\s*abschl|zuschlag|abschlag/.test(b);
+}
+
 export function berechnePreisAenderungen(
   rechnung: ParsedCsvRechnung,
   lieferant: string,
@@ -391,7 +414,7 @@ export function berechnePreisAenderungen(
   const out: PreisAenderung[] = [];
   const gesehen = new Set<string>();
   for (const p of rechnung.positionen) {
-    if (p.mwstCode === 0) continue;             // Pfand/Gebinde
+    if (istGebuehrenPosition(p)) continue;      // Pfand/Gebinde + Gebühren-/Abschlag-Zeilen
     if (!(p.preis > 0)) continue;               // Gutschriften/0-Preise nicht bewerten
     const key = artikelKey(lieferant, p);
     if (!key || gesehen.has(key)) continue;
@@ -430,7 +453,7 @@ export function aktualisierePreisHistorie(
   const next: PreisHistorie = { ...historie };
   for (const r of rechnungen) {
     for (const p of r.positionen) {
-      if (p.mwstCode === 0 || !(p.preis > 0)) continue;
+      if (istGebuehrenPosition(p) || !(p.preis > 0)) continue;
       const key = artikelKey(lieferant, p);
       if (!key) continue;
       const alt = next[key];
