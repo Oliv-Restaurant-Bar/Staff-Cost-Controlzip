@@ -502,12 +502,23 @@ export default function WarenrechnungenPage() {
     });
   }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey]);
 
+  /**
+   * Resolver für Drilldown-/Rechnungs-Filter im Abgleich: MUSS aus den
+   * EFFEKTIVEN Gruppen des Abgleichs gebaut werden (inkl. abgeleiteter
+   * Barausgaben-Standard-Aliasse), sonst sieht die Zeile «Barausgaben Migros»
+   * ihre erfasste Rechnung «Migros» nicht (leeres Match-Drilldown).
+   */
+  const abgleichResolver = useMemo(
+    () => buildAliasResolver(abgleich?.effektiveAliasGruppen ?? aliasGruppen),
+    [abgleich, aliasGruppen],
+  );
+
   // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
   // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
   // gematchte Buchungen. Erst nach dem Match-Load rechnen (sonst Flackern).
   const uebernahmeKandidaten = useMemo(
-    () => (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState) : []),
-    [abgleich, fibuState, fibuGeladen],
+    () => (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : []),
+    [abgleich, fibuState, fibuGeladen, entries],
   );
   const uebernahmeSumme = useMemo(
     () => uebernahmeKandidaten.reduce((s, k) => s + k.betrag, 0),
@@ -3625,7 +3636,7 @@ export default function WarenrechnungenPage() {
                                       )}
                                       <FibuMatchBereich
                                         lieferant={z.lieferant}
-                                        invoices={entries.filter(e => aliasResolver(e.supplierName) === z.lieferant)}
+                                        invoices={entries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
                                         buchungen={z.buchungen}
                                         state={fibuState}
                                         stateGeladen={fibuGeladen}

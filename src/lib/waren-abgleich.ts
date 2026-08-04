@@ -55,6 +55,13 @@ export interface WarenAbgleich {
   /** Buchungen auf Warenkonten ohne Lieferanten-Zuordnung (nur mode=lieferanten). */
   nichtZugeordnet: SageJournalEntry[];
   nichtZugeordnetSumme: number;
+  /**
+   * Tatsächlich verwendete Alias-Gruppen: abgeleitete Barausgaben-Standard-
+   * Aliasse + Nutzer-Gruppen (Nutzer gewinnt). Die UI MUSS für Drilldown-/
+   * Rechnungs-Filter einen Resolver aus DIESEN Gruppen bauen, sonst sehen
+   * Barausgaben-Zeilen ihre erfassten Rechnungen («Migros») nicht.
+   */
+  effektiveAliasGruppen: AliasGruppe[];
 }
 
 /** Betrag einer Buchungszeile: Aufwandskonto → Soll − Haben. */
@@ -73,6 +80,45 @@ function buchungsBetrag(e: SageJournalEntry): number {
  */
 export function journalVerfuegbarFuerTenant(tenantId: string): boolean {
   return tenantId === 'oliv' || tenantId === 'beaulieu';
+}
+
+// ─── Barausgaben (Bar-/Kasseneinkäufe auf Warenkonten) ──────────────────────
+
+/**
+ * Kanonischer Barausgaben-Lieferant aus einem Buchungstext: Texte, die
+ * (case-insensitive) mit «Barausgabe»/«Barausgaben» beginnen, werden als
+ * eigener Lieferant «Barausgaben <Laden>» geführt (Laden = Rest des Textes,
+ * z.B. «Barausgabe Migros» → «Barausgaben Migros»). Ladenunabhängig — nur
+ * das Präfix zählt; ohne Laden-Rest bleibt es beim generischen «Barausgaben».
+ */
+export function barausgabenLieferant(text: string | null | undefined): string | null {
+  const t = (text ?? '').trim();
+  const m = /^barausgaben?\b[\s:,\-–]*/i.exec(t);
+  if (!m) return null;
+  const laden = t.slice(m[0].length).trim().replace(/\s+/g, ' ');
+  return laden ? `Barausgaben ${laden}` : 'Barausgaben';
+}
+
+/**
+ * Implizite Standard-Alias-Gruppen für die im Journal gefundenen Barausgaben-
+ * Läden, damit bereits ERFASSTE Schreibweisen («Migros», «Barausgabe Migros»)
+ * mit der Buchhaltungs-Zeile «Barausgaben Migros» matchen und nicht fälschlich
+ * als «fehlt» erscheinen. Die Gruppen werden VOR den mandanten-editierbaren
+ * Alias-Gruppen einsortiert — beim Resolver gewinnt der letzte Eintrag,
+ * d.h. eine vom Nutzer gespeicherte Gruppe überstimmt die Standard-Aliasse.
+ */
+export function barausgabenAliasGruppen(journal: SageJournalEntry[]): AliasGruppe[] {
+  const laeden = new Map<string, string>(); // kanonisch → Laden
+  for (const e of journal) {
+    const canon = barausgabenLieferant(e.text);
+    if (!canon || canon === 'Barausgaben') continue;
+    laeden.set(canon, canon.slice('Barausgaben '.length));
+  }
+  return [...laeden.entries()].map(([canon, laden]) => ({
+    id: `grp-barausgaben-${laden.toLowerCase().replace(/\s+/g, '-')}`,
+    name: canon,
+    aliases: [laden, `Barausgabe ${laden}`],
+  }));
 }
 
 export interface AbgleichInput {
@@ -97,9 +143,20 @@ export interface AbgleichInput {
 
 export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const schwelle = input.schwelleChf ?? 50;
+  // ── Journal auf Warenkonten filtern (früh — Barausgaben-Aliasse hängen dran) ──
+  const kontoSet = new Set(input.warenkontoNummern);
+  const warenBuchungen = (input.journal ?? []).filter(e =>
+    kontoSet.has(String(e.accountNumber).replace(/^0+/, '')) || kontoSet.has(String(e.accountNumber)));
+
   // Alias-Gruppen: Namen beider Quellen auf den kanonischen Gruppennamen
   // abbilden; Original-Namen je Zeile für die Transparenz mitführen.
-  const resolve = buildAliasResolver(input.aliasGruppen ?? []);
+  // Barausgaben-Standard-Aliasse ZUERST — Nutzer-Gruppen (später gesetzt)
+  // gewinnen im Resolver (letzter set() pro Schlüssel).
+  const effektiveGruppen = [
+    ...barausgabenAliasGruppen(warenBuchungen),
+    ...(input.aliasGruppen ?? []),
+  ];
+  const resolve = buildAliasResolver(effektiveGruppen);
   const originaleErfasst = new Map<string, Map<string, number>>(); // kanonisch → Original → Summe
   const originaleGebucht = new Map<string, Map<string, number>>();
   const addOriginal = (m: Map<string, Map<string, number>>, canon: string, orig: string, betrag: number) => {
@@ -120,11 +177,6 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   }
   const erfasstTotal = [...erfasstMap.values()].reduce((a, v) => a + v.sum, 0);
 
-  // ── Journal auf Warenkonten filtern ──
-  const kontoSet = new Set(input.warenkontoNummern);
-  const warenBuchungen = (input.journal ?? []).filter(e =>
-    kontoSet.has(String(e.accountNumber).replace(/^0+/, '')) || kontoSet.has(String(e.accountNumber)));
-
   // ── DEGRADATION: keine Buchungszeilen → nur Total-Vergleich ──
   if (warenBuchungen.length === 0) {
     const gebuchtTotal = input.buchhaltungTotal;
@@ -140,6 +192,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
       gebuchtTotal,
       diffTotal: gebuchtTotal !== null ? gebuchtTotal - erfasstTotal : null,
       nichtZugeordnet: [], nichtZugeordnetSumme: 0,
+      effektiveAliasGruppen: effektiveGruppen,
     };
   }
 
@@ -151,7 +204,9 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
   const matchNamen = [...new Set([...input.supplierNames, ...gruppenAliasNamen])];
   for (const e of warenBuchungen) {
-    const hit = findSupplierInText(e.text ?? '', matchNamen, input.aliases);
+    // Barausgaben («Barausgabe(n) <Laden>») haben Vorrang vor dem Volltext-
+    // Matching: sie werden IMMER als eigener Lieferant pro Laden geführt.
+    const hit = barausgabenLieferant(e.text) ?? findSupplierInText(e.text ?? '', matchNamen, input.aliases);
     if (hit) {
       const canon = resolve(hit);
       const cur = gebuchtMap.get(canon) ?? { sum: 0, entries: [] };
@@ -212,6 +267,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     mode: 'lieferanten', zeilen, erfasstTotal, gebuchtTotal,
     diffTotal: gebuchtTotal - erfasstTotal,
     nichtZugeordnet, nichtZugeordnetSumme,
+    effektiveAliasGruppen: effektiveGruppen,
   };
 }
 

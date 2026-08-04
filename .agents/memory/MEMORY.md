@@ -86,4 +86,5 @@
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang Pfand>Artikel>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
 - [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE; Gast, Stundenbestätigung, Onboarding- UND Personaleintritt-per-Link entfernt; 0 öffentliche Routen (auch App.tsx-Early-Returns geprüft).
+- [PDF-Zeilen-Clustering](pdf-zeilen-clustering.md) — Tabellen-PDFs nie mit festen y-Buckets zeilen; Namens-Anker + nächster-|Δy|-Zuordnung, Fixture-Tests via extract-pdf-items.
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.

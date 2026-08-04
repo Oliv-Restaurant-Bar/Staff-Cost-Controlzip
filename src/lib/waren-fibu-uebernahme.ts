@@ -17,6 +17,7 @@ import type { WarenAbgleich } from '@/lib/waren-abgleich';
 import type { FibuMatchState } from '@/lib/waren-fibu-matches';
 import { buchungKey, buchungKeysMitIndex, buchungBetrag } from '@/lib/waren-fibu-matches';
 import type { InvoiceEntry } from '@/lib/waren-db';
+import { buildAliasResolver } from '@/lib/waren-alias-gruppen';
 import { kategorieFromKonto, type WarenKategorie } from '@/lib/warenkosten-quote';
 
 export interface UebernahmeKandidat {
@@ -68,10 +69,18 @@ export function vatRateForKonto(accountNumber: string): number {
  * Drilldown — ein Match auf EINE von zwei identischen Buchungen entfernt
  * nur genau diese aus den Kandidaten. Alt-/Fremd-Einträge mit unindizierten
  * Schlüsseln werden defensiv als `#0` interpretiert.
+ *
+ * BARAUSGABEN-Zeilen («Barausgaben <Laden>») werden zusätzlich AUF
+ * BUCHUNGS-EBENE geprüft: hat ein Laden sowohl erfasste als auch nicht
+ * erfasste Bareinkäufe (Zeile 'ok'/'abweichung'), bleiben die einzelnen
+ * Buchungen ohne Datum+Betrag-Gegenstück (±5 Rp.) in den erfassten
+ * Rechnungen übernehmbar — dafür MUSS `invoices` (Monatsliste) übergeben
+ * werden; jede Rechnung deckt höchstens EINE Buchung.
  */
 export function buildUebernahmeKandidaten(
   abgleich: WarenAbgleich | null,
   matchState: FibuMatchState,
+  invoices?: InvoiceEntry[],
 ): UebernahmeKandidat[] {
   if (!abgleich || abgleich.mode !== 'lieferanten') return [];
   const gematcht = new Set<string>();
@@ -81,11 +90,12 @@ export function buildUebernahmeKandidaten(
     }
   }
   const out: UebernahmeKandidat[] = [];
-  const pushListe = (buchungen: SageJournalEntry[], lieferant: string | null) => {
+  const pushListe = (buchungen: SageJournalEntry[], lieferant: string | null, skipKeys?: Set<string>) => {
     const keys = buchungKeysMitIndex(buchungen);
     buchungen.forEach((e, i) => {
       const key = keys[i];
       if (gematcht.has(key)) return;
+      if (skipKeys?.has(key)) return;
       out.push({
         key,
         datum: e.date,
@@ -99,9 +109,49 @@ export function buildUebernahmeKandidaten(
       });
     });
   };
+  // Rechnungen je kanonischem Lieferanten (für den Buchungs-Ebenen-Check der
+  // Barausgaben-Zeilen) — Resolver aus den EFFEKTIVEN Gruppen des Abgleichs,
+  // damit «Migros» der Zeile «Barausgaben Migros» zugeordnet wird.
+  const resolve = buildAliasResolver(abgleich.effektiveAliasGruppen ?? []);
+  // Rechnungen, die bereits in einer FIBU-Match-Gruppe stecken, sind durch
+  // ihre gematchte Buchung «verbraucht» — sie dürfen im Datum+Betrag-Check
+  // keine ZWEITE (ungematchte) Buchung decken, sonst verschwindet deren
+  // Übernahme-Kandidat (Fall: identische Doppel-Buchung, eine manuell
+  // gematcht). gesperrt.invoiceIds bleiben drin: sie sind erfasst, nur vom
+  // Auto-Match ausgenommen.
+  const verbrauchteInvoiceIds = new Set(matchState.gruppen.flatMap(g => g.invoiceIds));
+  const invByCanon = new Map<string, InvoiceEntry[]>();
+  for (const inv of invoices ?? []) {
+    if (verbrauchteInvoiceIds.has(inv.id)) continue;
+    const canon = resolve(inv.supplierName);
+    const list = invByCanon.get(canon) ?? [];
+    list.push(inv);
+    invByCanon.set(canon, list);
+  }
+  const istBarausgabenZeile = (name: string) => /^barausgaben(\s|$)/i.test(name.trim());
   for (const z of abgleich.zeilen) {
-    if (z.status !== 'nur-gebucht') continue;
-    pushListe(z.buchungen, z.lieferant);
+    if (z.status === 'nur-gebucht') {
+      pushListe(z.buchungen, z.lieferant);
+      continue;
+    }
+    if ((z.status === 'ok' || z.status === 'abweichung') && istBarausgabenZeile(z.lieferant) && invoices) {
+      // Buchungs-Ebene: Buchungen mit erfasstem Datum+Betrag-Gegenstück
+      // (±5 Rp., jede Rechnung deckt genau eine Buchung) überspringen.
+      const keys = buchungKeysMitIndex(z.buchungen);
+      const frei = [...(invByCanon.get(z.lieferant) ?? [])];
+      const gedeckt = new Set<string>();
+      z.buchungen.forEach((e, i) => {
+        const iso = parseFibuDatum(e.date);
+        const betrag = buchungBetrag(e);
+        const idx = frei.findIndex(inv =>
+          inv.date === iso && Math.abs(inv.amountNet - betrag) <= DUBLETTE_TOLERANZ_CHF);
+        if (idx >= 0) {
+          frei.splice(idx, 1);
+          gedeckt.add(keys[i]);
+        }
+      });
+      pushListe(z.buchungen, z.lieferant, gedeckt);
+    }
   }
   pushListe(abgleich.nichtZugeordnet, null);
   // Chronologisch (ISO sortierbar; unparsebare Daten ans Ende)
@@ -121,6 +171,8 @@ export interface UebernahmeDraft {
 }
 
 export function kandidatToDraft(k: UebernahmeKandidat): UebernahmeDraft {
+  // Barausgaben (Bar-/Kasseneinkäufe) bekommen eine sprechende Bemerkung.
+  const istBarausgabe = /^barausgaben?\b/i.test((k.lieferant ?? '').trim());
   return {
     kandidat: k,
     date: k.datumIso ?? '',
@@ -129,7 +181,9 @@ export function kandidatToDraft(k: UebernahmeKandidat): UebernahmeDraft {
     kategorie: kategorieFromKonto(k.accountNumber),
     warenkonto: k.accountNumber,
     reference: k.belegNr ?? '',
-    note: `aus FIBU-Abgleich übernommen · ${k.accountName}`.trim(),
+    note: istBarausgabe
+      ? 'Barausgabe aus FIBU übernommen'
+      : `aus FIBU-Abgleich übernommen · ${k.accountName}`.trim(),
   };
 }
 
