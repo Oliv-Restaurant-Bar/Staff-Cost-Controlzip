@@ -116,7 +116,14 @@ export interface MirusReconcilePlan {
   silentRounds: MirusCellPlan[];
   /** Verwendete Rundungsschwelle in Stunden. */
   roundingThreshold: number;
+  /** Tageswerte > Plausibilitätsgrenze (16 h) — abgelehnt, NIE geschrieben. */
+  rejectedImplausible: Array<{ employeeName: string; date: string; hours: number }>;
+  /** Letzter im Export befüllte Tag (>0 h) — spätere Tage werden NICHT angefasst. */
+  lastFilledDate: string | null;
 }
+
+/** Plausibilitätsgrenze: mehr Ist-Stunden pro Tag sind ein Parser-/Datenfehler. */
+export const MIRUS_MAX_DAY_HOURS = 16;
 
 /** Zellen nach Muster 1–5 gruppiert (Vorschau-Gruppen). */
 export function groupPlanCells(plan: MirusReconcilePlan): Record<1 | 2 | 3 | 4 | 5, MirusCellPlan[]> {
@@ -308,6 +315,31 @@ export function buildMirusReconcilePlan(params: {
     rec.days.set(e.date, r2((rec.days.get(e.date) ?? 0) + e.hours));
   }
 
+  // Plausibilitätsgrenze: Tageswerte > 16 h sind Phantom-/Parserfehler —
+  // ablehnen (Report), NIE schreiben; der Tag zählt für den MA als «nicht in
+  // der Datei» (bestehende Werte bleiben unangetastet, kein conflict_zero).
+  const rejectedImplausible: MirusReconcilePlan['rejectedImplausible'] = [];
+  const implausibleCells = new Set<string>(); // `${empId}-${date}`
+  for (const [empId, rec] of byEmp) {
+    for (const [date, h] of rec.days) {
+      if (h > MIRUS_MAX_DAY_HOURS) {
+        rejectedImplausible.push({ employeeName: rec.name, date, hours: h });
+        implausibleCells.add(`${empId}-${date}`);
+        rec.days.delete(date);
+      }
+    }
+  }
+
+  // Nur Tage bis und mit dem letzten im Export befüllten Tag (>0 h) anfassen:
+  // spätere Tage bleiben komplett stehen (Plan-Stunden, künftige Einträge).
+  let lastFilledDate: string | null = null;
+  for (const rec of byEmp.values()) {
+    for (const [date, h] of rec.days) {
+      if (h > 0 && (!lastFilledDate || date > lastFilledDate)) lastFilledDate = date;
+    }
+  }
+  const effDates = lastFilledDate ? dates.filter(d => d <= lastFilledDate!) : dates;
+
   const employees: MirusEmployeePlan[] = [];
   const skippedManual: MirusReconcilePlan['skippedManual'] = [];
   const silentRounds: MirusCellPlan[] = [];
@@ -320,7 +352,10 @@ export function buildMirusReconcilePlan(params: {
     }
     const cells: MirusCellPlan[] = [];
     let beforeTotal = 0;
-    for (const date of dates) {
+    for (const date of effDates) {
+      // Abgelehnter Phantom-Tag: Zelle komplett auslassen — bestehender
+      // Ist-Wert bleibt unangetastet (nie 0 hineinschreiben).
+      if (implausibleCells.has(`${empId}-${date}`)) continue;
       const fileHours = rec.days.get(date) ?? 0;
       const before = existing[`${empId}-${date}`] ?? null;
       const plan = planned[`${empId}-${date}`] ?? NO_PLAN;
@@ -338,7 +373,10 @@ export function buildMirusReconcilePlan(params: {
   }
 
   employees.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de'));
-  return { month, dates, employees, skippedManual, skippedOutOfScope, silentRounds, roundingThreshold: threshold };
+  return {
+    month, dates: effDates, employees, skippedManual, skippedOutOfScope, silentRounds,
+    roundingThreshold: threshold, rejectedImplausible, lastFilledDate,
+  };
 }
 
 // ─── Schreib-Operationen aus dem bestätigten Plan ────────────────────────────

@@ -62,7 +62,7 @@ import {
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import {
   buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
-  computeIstCoverage, formatDayRanges,
+  computeIstCoverage, formatDayRanges, daysInMonthOf,
   groupPlanCells, patternOf, canonicalAbsence, MIRUS_ROUNDING_THRESHOLD_H,
   MirusReconcilePlan, MirusResolvedEntry, MirusCellPlan, MirusPlanInfo,
 } from '@/lib/mirus-import-engine';
@@ -853,6 +853,26 @@ export function MirusReconcileImportButton({
                 {plan.silentRounds.length > 0 && <Badge variant="outline" className="text-muted-foreground">{plan.silentRounds.length} still gerundet</Badge>}
                 {plan.skippedManual.length > 0 && <Badge variant="outline" className="text-muted-foreground">{plan.skippedManual.length} MANUELL übersprungen</Badge>}
               </div>
+
+              {plan.rejectedImplausible.length > 0 && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-implausible">
+                    <strong>Abgelehnt (&gt; 16 h/Tag, Phantom-Verdacht — wird NICHT geschrieben):</strong>{' '}
+                    {plan.rejectedImplausible.map(r => `${r.employeeName} ${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}
+                    {' '}— bestehende Werte dieser Tage bleiben unangetastet.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {plan.lastFilledDate && plan.lastFilledDate < (plan.month + '-' + String(daysInMonthOf(plan.month)).padStart(2, '0')) && (
+                <Alert>
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-last-filled">
+                    Import nur bis zum letzten befüllten Tag im Export ({plan.lastFilledDate.slice(8)}.{plan.lastFilledDate.slice(5, 7)}.) — spätere Tage (inkl. Plan-Stunden) werden nicht angefasst.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {plan.skippedManual.length > 0 && (
                 <Alert>

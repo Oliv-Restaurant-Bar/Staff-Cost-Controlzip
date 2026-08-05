@@ -100,7 +100,8 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     const cells = plan.employees[0].cells;
     expect(cells[0].decision).toBe('auto_take');
     expect(cells[0].resolution).toBe('mirus');
-    expect(cells[1].decision).toBe('unchanged_free');
+    // 02.07. (0 h) liegt NACH dem letzten befüllten Tag → wird nicht angefasst
+    expect(cells).toHaveLength(1);
     expect(groupPlanCells(plan)[1]).toHaveLength(1);
   });
 
@@ -311,5 +312,47 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     expect(g[4].map(c => c.employeeId)).toEqual(['m4']);
     expect(g[5].map(c => c.employeeId)).toEqual(['m5']);
     expect(plan.silentRounds.map(c => c.employeeId)).toEqual(['r']);
+  });
+});
+
+describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
+  it('>16 h/Tag → abgelehnt (rejectedImplausible), Zelle ausgelassen, bestehender Ist bleibt', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 44.4), entry('a', '2026-07-02', 8)],
+      existing: { 'a-2026-07-01': { hours: 7.5 } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    expect(plan.rejectedImplausible).toEqual([{ employeeName: 'A', date: '2026-07-01', hours: 44.4 }]);
+    // Zelle 01.07. existiert nicht im Plan → kein Write, 7.5 h bleiben stehen
+    expect(plan.employees[0].cells.find(c => c.date === '2026-07-01')).toBeUndefined();
+    const writes = resolvePlanToWrites(plan);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].date).toBe('2026-07-02');
+    // fileTotal ohne den abgelehnten Phantom-Wert
+    expect(plan.employees[0].fileTotal).toBe(8);
+  });
+
+  it('exakt 16 h ist noch zulässig', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 16)],
+      existing: {}, erfassungsart: { a: 'MIRUS' }, month, dates,
+    });
+    expect(plan.rejectedImplausible).toHaveLength(0);
+    expect(resolvePlanToWrites(plan)).toHaveLength(1);
+  });
+
+  it('Tage nach dem letzten befüllten Tag werden NICHT angefasst (kein conflict_zero auf Zukunft)', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8)],
+      existing: { 'a-2026-07-03': { hours: 6 } },   // späterer Tag mit bestehendem Wert
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    expect(plan.lastFilledDate).toBe('2026-07-01');
+    expect(plan.dates).toEqual(['2026-07-01']);
+    // 03.07. taucht in keiner Zelle auf → 6 h bleiben stehen
+    const writes = resolvePlanToWrites(plan);
+    expect(writes.every(w => w.date === '2026-07-01')).toBe(true);
   });
 });
