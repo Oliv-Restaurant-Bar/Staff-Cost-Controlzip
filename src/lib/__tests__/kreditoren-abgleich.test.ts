@@ -15,7 +15,7 @@ vi.mock('@/lib/waren-db', async (orig) => {
   };
 });
 
-import { abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry, zuordnungKey, normRef } from '@/lib/kreditoren-abgleich';
+import { abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry, zuordnungKey, normRef, ignoriertKey } from '@/lib/kreditoren-abgleich';
 import { analysiereKreditor } from '@/lib/kreditoren-parser';
 
 const inv = (p: Partial<InvoiceEntry>): InvoiceEntry => ({
@@ -220,5 +220,48 @@ describe('buildUebernahmeEntry', () => {
     expect(e.final).toBe(false);
     expect(e.warenkonto).toBe('4020');
     expect(e.reference).toBe('12345');
+  });
+});
+
+describe('Ignorierte Buchungen (kein Wareneinkauf)', () => {
+  it('ignorierte Buchung zählt nicht als fehlend, nicht in der Differenz und verbraucht keine Rechnung', async () => {
+    invoicesByMonth['2026-02'] = [
+      inv({ supplierName: 'Transgourmet', date: '2026-02-05', amountGross: 500, reference: '111' }),
+    ];
+    const bonus = buchung('2026-02-17', 9249.45);
+    const a = analyse('Transgourmet Schweiz AG', [
+      { ...buchung('2026-02-06', 500), referenz: '111' },
+      bonus,
+    ]);
+    const zu = { [zuordnungKey('Transgourmet Schweiz AG')]: { waren: true, konto: '4060', modell: 'einzelrechnungen' as const, bestaetigt: 'x' } };
+    const ign = {
+      [ignoriertKey('Transgourmet Schweiz AG', bonus)]: {
+        kreditorName: 'Transgourmet Schweiz AG', datum: bonus.datum, betrag: bonus.betrag,
+        notiz: 'Bonus', markiert: 'x',
+      },
+    };
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-02-01', '2026-02-28', ign);
+    const z = erg.zeilen[0];
+    expect(z.anzahlFehlt).toBe(0);
+    expect(z.anzahlIgnoriert).toBe(1);
+    expect(z.summeIgnoriert).toBe(9249.45);
+    expect(z.anzahlKreditor).toBe(1);       // ohne ignorierte
+    expect(z.differenz).toBe(0);            // 500 - 500, Bonus ausgeklammert
+    expect(z.ampel).toBe('gruen');
+    const ignMatch = z.matches.find(m => m.status === 'ignoriert');
+    expect(ignMatch?.notiz).toBe('Bonus');
+  });
+
+  it('ohne Ignoriert-Eintrag bleibt dieselbe Buchung fehlend (Kontrolle) — und Schlüssel ist datums-/betragsstabil', async () => {
+    invoicesByMonth['2026-02'] = [];
+    const bonus = buchung('2026-02-17', 9249.45);
+    const a = analyse('Transgourmet Schweiz AG', [bonus]);
+    const zu = { [zuordnungKey('Transgourmet Schweiz AG')]: { waren: true, konto: '4060', modell: 'einzelrechnungen' as const, bestaetigt: 'x' } };
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-02-01', '2026-02-28', {});
+    expect(erg.zeilen[0].anzahlFehlt).toBe(1);
+    // Schlüssel ohne Referenz = Kreditor|Datum|Betrag (überlebt erneuten Import)
+    expect(ignoriertKey('Transgourmet Schweiz AG', bonus)).toBe('transgourmet schweiz ag|2026-02-17|9249.45');
+    // Mit Referenz gewinnt die Belegnummer
+    expect(ignoriertKey('Transgourmet Schweiz AG', { ...bonus, referenz: '063908169' })).toBe('transgourmet schweiz ag|ref:63908169');
   });
 });

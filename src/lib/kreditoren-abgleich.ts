@@ -63,6 +63,47 @@ export async function saveKreditorZuordnung(tenantId: TenantId, map: KreditorZuo
   await kvSet(tenantKey(tenantId, ZUORDNUNG_KEY), map);
 }
 
+// ─── Ignorierte Buchungen («kein Wareneinkauf») ──────────────────────────────
+// Einzelne Kreditor-Buchungen (Boni, Korrekturen, Pfand-Sammelbuchungen) sind
+// keine Warenrechnungen. Sie werden pro Mandant dauerhaft gemerkt und beim
+// Abgleich als 'ignoriert' geführt: nie übernommen, nie als fehlend gezählt,
+// aus der Differenz ausgeklammert. Schlüssel: Kreditor + Belegnummer, bzw.
+// ohne Beleg Kreditor + Datum + Betrag — überlebt erneute Auszug-Importe.
+
+export interface KreditorIgnoriert {
+  kreditorName: string;
+  datum: string;   // YYYY-MM-DD (Buchungsdatum)
+  betrag: number;  // brutto
+  referenz?: string;
+  notiz?: string;
+  markiert: string; // ISO
+}
+
+export type KreditorIgnoriertMap = Record<string, KreditorIgnoriert>;
+
+const IGNORIERT_KEY = 'waren_kreditoren_ignoriert_v1';
+
+export function ignoriertKey(kreditorName: string, b: KreditorBuchung): string {
+  const ref = normRef(b.referenz);
+  return ref
+    ? `${zuordnungKey(kreditorName)}|ref:${ref}`
+    : `${zuordnungKey(kreditorName)}|${b.datum}|${b.betrag.toFixed(2)}`;
+}
+
+export async function loadKreditorIgnoriert(tenantId: TenantId): Promise<KreditorIgnoriertMap> {
+  try {
+    const raw = await kvGet(tenantKey(tenantId, IGNORIERT_KEY));
+    return (raw && typeof raw === 'object') ? raw as KreditorIgnoriertMap : {};
+  } catch (e) {
+    console.warn('[KREDITOREN] Ignoriert-Liste laden fehlgeschlagen:', e);
+    return {};
+  }
+}
+
+export async function saveKreditorIgnoriert(tenantId: TenantId, map: KreditorIgnoriertMap): Promise<void> {
+  await kvSet(tenantKey(tenantId, IGNORIERT_KEY), map);
+}
+
 // ─── Lieferanten-Namens-Matching (Kreditor-Name ↔ erfasster supplierName) ───
 
 function normName(s: string): string {
@@ -105,7 +146,7 @@ export function supplierMatchesKreditor(
 
 // ─── Abgleich ────────────────────────────────────────────────────────────────
 
-export type BuchungStatus = 'erfasst' | 'provisorisch' | 'fehlt' | 'gesperrt_dublette';
+export type BuchungStatus = 'erfasst' | 'provisorisch' | 'fehlt' | 'gesperrt_dublette' | 'ignoriert';
 
 export interface BuchungMatch {
   buchung: KreditorBuchung;
@@ -113,6 +154,8 @@ export interface BuchungMatch {
   /** Gematchte erfasste Rechnung (bei 'erfasst') */
   invoice?: InvoiceEntry;
   monat: string; // YYYY-MM
+  /** Notiz bei status 'ignoriert' («kein Wareneinkauf») */
+  notiz?: string;
 }
 
 export interface CockpitZeile {
@@ -123,6 +166,9 @@ export interface CockpitZeile {
   anzahlErfasst: number;
   anzahlProvisorisch: number;
   anzahlFehlt: number;
+  anzahlIgnoriert: number;
+  /** brutto-Summe der ignorierten Buchungen (zählt NICHT in Differenz) */
+  summeIgnoriert: number;
   summeKreditor: number;   // brutto
   summeErfasst: number;    // brutto (gematchte Rechnungen)
   /** null wenn keine Buchungen (nie durch 0 teilen / leer statt 0) */
@@ -177,10 +223,12 @@ export async function abgleichKreditoren(
   zuordnung: KreditorZuordnungMap,
   vonDatum: string,
   bisDatum: string,
+  ignoriert?: KreditorIgnoriertMap,
 ): Promise<AbgleichErgebnis> {
   const monate = monthsBetween(vonDatum, bisDatum);
   const toleranz = await loadFibuMatchToleranz(tenantId);
   const aliases = await loadSupplierAliases(tenantId);
+  const ign = ignoriert ?? await loadKreditorIgnoriert(tenantId);
 
   const invoicesByMonth: Record<string, InvoiceEntry[]> = {};
   for (const m of monate) invoicesByMonth[m] = await loadMonthInvoices(tenantId, m);
@@ -207,6 +255,15 @@ export async function abgleichKreditoren(
     const verwendet = new Set<string>();
     const matches: BuchungMatch[] = [];
 
+    // Ignorierte Buchungen («kein Wareneinkauf») VOR dem Matching aussortieren:
+    // sie dürfen keine erfasste Rechnung verbrauchen und zählen nirgends mit.
+    const aktiv: KreditorBuchung[] = [];
+    for (const b of a.rechnungen) {
+      const ie = ign[ignoriertKey(a.kreditor.name, b)];
+      if (ie) matches.push({ buchung: b, status: 'ignoriert', monat: b.datum.slice(0, 7), notiz: ie.notiz });
+      else aktiv.push(b);
+    }
+
     // 1) PRIMÄR: Belegnummer (Kreditor-Referenz ↔ Rechnungs-Referenz).
     //    Das Kreditor-Buchungsdatum weicht systematisch vom Lieferdatum ab —
     //    Datum ist hier KEIN Kriterium. Betrag nur als Zusatz-Check: bei
@@ -222,7 +279,7 @@ export async function abgleichKreditoren(
     }
     const refAssign = new Map<KreditorBuchung, InvoiceEntry>();
     for (const [r, invs] of refInvoices) {
-      const books = a.rechnungen.filter(b => normRef(b.referenz) === r);
+      const books = aktiv.filter(b => normRef(b.referenz) === r);
       const pairs = books
         .flatMap(b => invs.map(inv => ({ b, inv, delta: Math.abs(inv.amountGross - b.betrag) })))
         .sort((x, y) => x.delta - y.delta);
@@ -246,7 +303,7 @@ export async function abgleichKreditoren(
     // später in der Schleife drankommt).
     const refReserviert = new Set<string>([...refAssign.values()].map(inv => inv.id));
 
-    for (const b of a.rechnungen) {
+    for (const b of aktiv) {
       const monat = b.datum.slice(0, 7);
       const bRef = normRef(b.referenz);
       let best: InvoiceEntry | undefined = refAssign.get(b);
@@ -294,16 +351,20 @@ export async function abgleichKreditoren(
     const anzahlErfasst = matches.filter(m => m.status === 'erfasst').length;
     const anzahlProvisorisch = matches.filter(m => m.status === 'provisorisch').length;
     const anzahlFehlt = matches.filter(m => m.status === 'fehlt').length;
-    const summeKreditor = Math.round(a.rechnungen.reduce((s, b) => s + b.betrag, 0) * 100) / 100;
+    const ignorierte = matches.filter(m => m.status === 'ignoriert');
+    const summeIgnoriert = Math.round(ignorierte.reduce((s, m) => s + m.buchung.betrag, 0) * 100) / 100;
+    // Kreditor-Summe/Differenz OHNE ignorierte Buchungen (kein Wareneinkauf)
+    const summeKreditor = Math.round(aktiv.reduce((s, b) => s + b.betrag, 0) * 100) / 100;
     const summeErfasst = Math.round(matches.reduce((s, m) => s + (m.invoice?.amountGross ?? 0), 0) * 100) / 100;
-    const differenz = a.rechnungen.length === 0 ? null : Math.round((summeKreditor - summeErfasst) * 100) / 100;
+    const differenz = aktiv.length === 0 ? null : Math.round((summeKreditor - summeErfasst) * 100) / 100;
 
     zeilen.push({
       kreditorName: a.kreditor.name,
       zuordnung: z,
       matches,
-      anzahlKreditor: a.rechnungen.length,
+      anzahlKreditor: aktiv.length,
       anzahlErfasst, anzahlProvisorisch, anzahlFehlt,
+      anzahlIgnoriert: ignorierte.length, summeIgnoriert,
       summeKreditor, summeErfasst, differenz,
       ampel: anzahlFehlt === 0 && anzahlErfasst > 0 ? 'gruen'
         : anzahlFehlt === 0 ? 'gelb'

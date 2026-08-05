@@ -23,8 +23,8 @@ import {
 } from '@/lib/kreditoren-parser';
 import {
   loadKreditorZuordnung, saveKreditorZuordnung, zuordnungKey, abgleichKreditoren,
-  buildUebernahmeEntry,
-  type KreditorZuordnungMap, type AbgleichErgebnis, type BuchungMatch,
+  buildUebernahmeEntry, loadKreditorIgnoriert, saveKreditorIgnoriert, ignoriertKey,
+  type KreditorZuordnungMap, type KreditorIgnoriertMap, type AbgleichErgebnis, type BuchungMatch,
 } from '@/lib/kreditoren-abgleich';
 import {
   loadMonthInvoices, saveMonthInvoices, loadWarenkonten,
@@ -59,6 +59,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
   const [ergebnis, setErgebnis] = useState<AbgleichErgebnis | null>(null);
   const [warenkonten, setWarenkonten] = useState<Warenkonto[]>([]);
   const [undoRec, setUndoRec] = useState<WarenImportUndoRecord | null>(null);
+  const [ignoriert, setIgnoriert] = useState<KreditorIgnoriertMap>({});
   // Übernahme-Vorschau: pro Buchung-Key { konto, vatRate, checked }
   const [uebernahme, setUebernahme] = useState<Record<string, { konto: string; vatRate: number; checked: boolean }> | null>(null);
 
@@ -93,6 +94,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
       setErgebnis(null);
       setUebernahme(null);
       setUndoRec(await loadWarenImportUndo(tenantId, 'kreditoren'));
+      setIgnoriert(await loadKreditorIgnoriert(tenantId));
       // Review-Zeilen: gemerkte Zuordnung vorbelegen, sonst Auto-Vorschlag
       setReview(an
         .filter(a => a.rechnungen.length > 0)
@@ -130,7 +132,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
         };
       }
       await saveKreditorZuordnung(tenantId, zu);
-      const erg = await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!);
+      const erg = await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!, ignoriert);
       setErgebnis(erg);
       toast.success(`Zuordnung gespeichert — ${erg.zeilen.length} Waren-Lieferanten abgeglichen.`);
     } catch (e) {
@@ -187,7 +189,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
       setUebernahme(null);
       // Abgleich neu rechnen
       const zu = await loadKreditorZuordnung(tenantId);
-      setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug!.vonDatum!, auszug!.bisDatum!));
+      setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug!.vonDatum!, auszug!.bisDatum!, ignoriert));
       toast.success(`${auswahl.length} provisorische Rechnung(en) übernommen.`);
     } catch (e) {
       console.error('[KREDITOREN] Übernahme:', e);
@@ -203,13 +205,67 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
       setUndoRec(null);
       if (auszug && ergebnis) {
         const zu = await loadKreditorZuordnung(tenantId);
-        setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!));
+        setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!, ignoriert));
       }
       toast.success('Kreditoren-Übernahme rückgängig gemacht.');
     } catch (e) {
       toast.error(String(e instanceof Error ? e.message : e));
     } finally { setBusy(false); }
   };
+
+  // ── Ignorieren («kein Wareneinkauf») ──────────────────────────────────────
+  const markiereIgnoriert = async (zeileName: string, match: BuchungMatch) => {
+    if (!canCreate) { toast.error('Keine Berechtigung.'); return; }
+    const notiz = window.prompt('Als «kein Wareneinkauf» ignorieren — Notiz (optional, z.B. «Bonus»):', '');
+    if (notiz === null) return; // abgebrochen
+    setBusy(true);
+    try {
+      const map = { ...(await loadKreditorIgnoriert(tenantId)) };
+      map[ignoriertKey(zeileName, match.buchung)] = {
+        kreditorName: zeileName,
+        datum: match.buchung.datum,
+        betrag: match.buchung.betrag,
+        referenz: match.buchung.referenz ?? undefined,
+        notiz: notiz.trim() || undefined,
+        markiert: new Date().toISOString(),
+      };
+      await saveKreditorIgnoriert(tenantId, map);
+      setIgnoriert(map);
+      // Vorschau schliessen (Keys/Indices ändern sich) + Abgleich neu rechnen
+      setUebernahme(null);
+      if (auszug) {
+        const zu = await loadKreditorZuordnung(tenantId);
+        setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!, map));
+      }
+      toast.success(`Buchung ${match.buchung.datum} / ${chf(match.buchung.betrag)} wird dauerhaft ignoriert (kein Wareneinkauf).`);
+    } catch (e) {
+      toast.error(`Ignorieren fehlgeschlagen: ${String(e)}`);
+    } finally { setBusy(false); }
+  };
+
+  const zuruecknehmen = async (zeileName: string, match: BuchungMatch) => {
+    if (!canCreate) { toast.error('Keine Berechtigung.'); return; }
+    setBusy(true);
+    try {
+      const map = { ...(await loadKreditorIgnoriert(tenantId)) };
+      delete map[ignoriertKey(zeileName, match.buchung)];
+      await saveKreditorIgnoriert(tenantId, map);
+      setIgnoriert(map);
+      if (auszug) {
+        const zu = await loadKreditorZuordnung(tenantId);
+        setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug.vonDatum!, auszug.bisDatum!, map));
+      }
+      toast.success('Ignorieren zurückgenommen — Buchung zählt wieder im Abgleich.');
+    } catch (e) {
+      toast.error(`Zurücknehmen fehlgeschlagen: ${String(e)}`);
+    } finally { setBusy(false); }
+  };
+
+  const ignorierteMatches = useMemo(() => {
+    if (!ergebnis) return [] as { zeileName: string; match: BuchungMatch }[];
+    return ergebnis.zeilen.flatMap(z =>
+      z.matches.filter(m => m.status === 'ignoriert').map(m => ({ zeileName: z.kreditorName, match: m })));
+  }, [ergebnis]);
 
   const kontoOptions = warenkonten.length > 0 ? warenkonten : [];
 
@@ -358,6 +414,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
                     <td className="py-1.5 pr-2 text-right font-mono">
                       {z.anzahlKreditor} ↔ {z.anzahlErfasst}
                       {z.anzahlProvisorisch > 0 && <span className="text-amber-600"> (+{z.anzahlProvisorisch} prov.)</span>}
+                      {z.anzahlIgnoriert > 0 && <span className="text-muted-foreground"> ({z.anzahlIgnoriert} ign.)</span>}
                     </td>
                     <td className="py-1.5 pr-2 text-right font-mono">{chf(z.summeKreditor)}</td>
                     <td className="py-1.5 pr-2 text-right font-mono">{z.summeErfasst > 0 ? chf(z.summeErfasst) : '—'}</td>
@@ -381,6 +438,47 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
           {ergebnis.zeilen.length === 0 && (
             <p className="text-sm text-muted-foreground">Keine Waren-Lieferanten in der Zuordnung — Zuordnung anpassen.</p>
           )}
+
+          {/* ── Ignorierte Buchungen (kein Wareneinkauf) ── */}
+          {ignorierteMatches.length > 0 && (
+            <details className="border border-border rounded-lg" data-testid="details-kreditoren-ignoriert">
+              <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-muted-foreground">
+                Ignoriert – kein Wareneinkauf ({ignorierteMatches.length})
+              </summary>
+              <div className="px-4 pb-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                      <th className="py-1.5 pr-2">Lieferant</th>
+                      <th className="py-1.5 pr-2">Datum</th>
+                      <th className="py-1.5 pr-2">Referenz</th>
+                      <th className="py-1.5 pr-2 text-right">Betrag</th>
+                      <th className="py-1.5 pr-2">Notiz</th>
+                      <th className="py-1.5" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ignorierteMatches.map(({ zeileName, match }, i) => (
+                      <tr key={`ign${i}`} className="border-b border-border/50">
+                        <td className="py-1.5 pr-2">{zeileName}</td>
+                        <td className="py-1.5 pr-2 font-mono text-xs">{match.buchung.datum}</td>
+                        <td className="py-1.5 pr-2 font-mono text-xs">{match.buchung.referenz ?? '—'}</td>
+                        <td className="py-1.5 pr-2 text-right font-mono">{chf(match.buchung.betrag)}</td>
+                        <td className="py-1.5 pr-2 text-xs text-muted-foreground">{match.notiz ?? '—'}</td>
+                        <td className="py-1.5 text-right">
+                          <Button variant="ghost" size="sm" className="h-6 text-xs" disabled={busy}
+                            onClick={() => void zuruecknehmen(zeileName, match)}
+                            data-testid={`button-ignoriert-zurueck-${i}`}>
+                            Zurücknehmen
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </div>
       )}
 
@@ -403,6 +501,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
                   <th className="py-1.5 pr-2" /><th className="py-1.5 pr-2">Lieferant</th><th className="py-1.5 pr-2">Datum</th>
                   <th className="py-1.5 pr-2">Referenz</th><th className="py-1.5 pr-2">Konto</th><th className="py-1.5 pr-2">MwSt %</th>
                   <th className="py-1.5 text-right">Betrag inkl. MwSt</th>
+                  <th className="py-1.5" />
                 </tr>
               </thead>
               <tbody>
@@ -432,6 +531,14 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
                         </select>
                       </td>
                       <td className="py-1.5 text-right font-mono">{chf(f.match.buchung.betrag)}</td>
+                      <td className="py-1.5 pl-2 text-right">
+                        <Button variant="ghost" size="sm" className="h-6 text-xs text-muted-foreground" disabled={busy}
+                          title="Als «kein Wareneinkauf» markieren (Bonus, Korrektur, Pfand …) — wird dauerhaft ignoriert"
+                          onClick={() => void markiereIgnoriert(f.zeileName, f.match)}
+                          data-testid={`button-ignorieren-${f.key}`}>
+                          Kein Wareneinkauf
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
