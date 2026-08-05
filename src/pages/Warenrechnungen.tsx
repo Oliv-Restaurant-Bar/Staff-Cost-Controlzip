@@ -53,6 +53,7 @@ import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
+import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
@@ -121,7 +122,7 @@ import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
   Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown,
-  ScanSearch, Loader2, Scale, ChevronRight as ChevronRightSmall, AlertTriangle,
+  ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -167,7 +168,7 @@ const VAT_RATES = ['8.1', '2.6', '3.8', '0'];
 const MONTHS     = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 const MONTHS_LONG = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 
-type Tab         = 'erfassung' | 'analyse' | 'abgleich';
+type Tab         = 'erfassung' | 'analyse' | 'abgleich' | 'cockpit';
 
 /** Status der PDF-Erkennung für die Bestätigungs-Vorschau im Formular. */
 interface PdfErkennungState {
@@ -1707,6 +1708,7 @@ export default function WarenrechnungenPage() {
             { id: 'erfassung', label: 'Erfassung',  Icon: ClipboardList },
             { id: 'analyse',   label: 'Analyse',    Icon: BarChart3     },
             { id: 'abgleich',  label: 'FIBU-Abgleich', Icon: Scale      },
+            { id: 'cockpit',   label: 'Lieferanten-Cockpit', Icon: FileSearch },
           ] as { id: Tab; label: string; Icon: React.FC<{ className?: string }> }[]).map(t => (
             <button
               key={t.id}
@@ -3498,6 +3500,22 @@ export default function WarenrechnungenPage() {
                     )}
                   </>
                 )}
+              </div>
+            )}
+
+            {/* ── Tab: Lieferanten-Cockpit (Kreditoren-Abgleich) ───────────── */}
+            {tab === 'cockpit' && (
+              <div className="space-y-5">
+                <section className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <FileSearch className="h-4 w-4" style={{ color: tenant.color }} />
+                    <h2 className="text-sm font-semibold">Lieferanten-Cockpit · Kreditoren-Abgleich</h2>
+                    <InfoTip text={<span>Der Infoniqa <b>Kreditoren-Personenkonto-Auszug</b> dient als Kontrollebene über alle Lieferanten: Vollständigkeit und Abrechnungsmodell je Waren-Lieferant, fehlende Rechnungen als opt-in-Übernahme (provisorisch). Bestehende Warenrechnungen werden <b>nie</b> verändert — auch Dual-Lieferscheine und finalisierte Monatsrechnungen bleiben unangetastet.</span>} />
+                  </div>
+                  <div className="p-5">
+                    <KreditorenCockpit tenantId={tenantId} canCreate={canCreate} />
+                  </div>
+                </section>
               </div>
             )}
 

@@ -88,9 +88,12 @@ export interface InvoiceEntry {
    * 'fibu_uebernahme': provisorisch aus dem Warenkosten-/FIBU-Abgleich
    * übernommene Buchung (keine erfasste Rechnung vorhanden) — eine spätere
    * Monatsrechnung/Lieferschein darf die Werte noch finalisieren/ergänzen.
+   * 'kreditoren_uebernahme': provisorisch aus dem Kreditoren-Abgleich
+   * übernommene Buchung — eine spätere Original-Rechnung (CSV/PDF/
+   * Monatsrechnung) darf sie gemäss Dual-Modell finalisieren/ersetzen.
    * Fehlt das Feld = regulär/Lieferschein erfasst (provisorisch im Dual-Modell).
    */
-  quelle?: 'monatsrechnung' | 'auftragsbestaetigung' | 'fibu_uebernahme';
+  quelle?: 'monatsrechnung' | 'auftragsbestaetigung' | 'fibu_uebernahme' | 'kreditoren_uebernahme';
   /** true = durch die massgebliche Monatsrechnung finalisiert; spätere
    *  Lieferschein-/AB-Uploads dürfen diese Werte NICHT mehr verschlechtern. */
   final?: boolean;
@@ -888,7 +891,7 @@ export async function saveMarktLieferantenMapping(tenantId: TenantId, mapping: i
 // Undo verweigert sauber, wenn der aktuelle Stand nicht mehr «nachher»
 // entspricht (zwischenzeitliche manuelle Edits werden nie überschrieben).
 
-export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie' | 'pdf_profil';
+export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie' | 'pdf_profil' | 'kreditoren';
 
 export interface WarenImportSnapshot {
   /** supplier_invoices_YYYY-MM pro betroffenem Monat */

@@ -59,6 +59,8 @@ export async function kernImportiereFsRechnungen(
      *  Buchungen); 'auftragsbestaetigung' = provisorisch (AB gilt als
      *  Lieferschein, z.B. Terravigna). */
     quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+    /** Hinweis: bestehende provisorische 'kreditoren_uebernahme'-Buchungen
+     *  (Kreditoren-Abgleich) dürfen von Lieferschein/MR ersetzt werden. */
     /** Datums-Fenster (Tage) für Matches ohne Referenz-Treffer.
      *  Lieferschein→provisorisch: Default 7. Monatsrechnung→Bestand:
      *  Default 0 (exaktes Datum); Terravigna Rechnung↔AB: 3. */
@@ -196,7 +198,7 @@ export async function kernImportiereFsRechnungen(
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
             const kandidat = nb.find(e => !vergeben.has(e.id)
-              && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung')
+              && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung' || e.quelle === 'kreditoren_uebernahme')
               && e.supplierName.trim().toLowerCase() === lief
               && (pass === 'ref'
                 ? r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
