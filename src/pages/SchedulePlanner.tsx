@@ -789,42 +789,33 @@ const SchedulePlanner = () => {
       })();
 
       if (supabaseActual !== null) {
-        // Smart merge: start from localStorage (preserves absenceType metadata),
-        // then let Supabase win only when it has real hours (>0).
-        // FE/K/F absences have hours=0 and are localStorage-only (Supabase has no absenceType column),
-        // so we must NOT let a Supabase hours=0 overwrite a local absenceType entry.
-        const merged: Record<string, ActualHoursEntry> = { ...localStored };
+        // ── SSoT-Merge: Supabase actual_hours ist die einzige Quelle der Wahrheit. ──
+        // actual_hours trägt heute auch absence_type; localStorage ist reiner Cache.
+        //  - Basis = Supabase (vollständig).
+        //  - localStorage-only-Einträge überleben NUR, wenn sie eine Absenz-Marke
+        //    tragen (offline gesetzte FE/K/F, deren Supabase-Write fehlschlug).
+        //    Veraltete reine Stunden-Einträge ohne Supabase-Zeile werden verworfen.
+        //  - Supabase-Stunden > 0 gewinnen IMMER gegen KV-/localStorage-Absenzen
+        //    (importierte Ist-Stunden überschreiben F/FE/K — z.B. Mirus-Import).
+        const merged: Record<string, ActualHoursEntry> = {};
         for (const [key, supaVal] of Object.entries(supabaseActual as Record<string, ActualHoursEntry>)) {
           const localVal = (localStored as Record<string, ActualHoursEntry>)[key];
-          if (supaVal.hours > 0) {
-            // KV store has explicit user-set absence for this key → absence wins over import hours.
-            // FE/K/F is the admin's authoritative override (e.g. Ferien the whole week but Mirus
-            // still shows hours due to stale/wrong data). The KV absence is only present when the
-            // user deliberately set FE/K/F on this IST cell.
-            const kvAbsType = kvAbsences[key];
-            if (kvAbsType) {
-              // K/U sind bezahlte Abwesenheiten → Supabase-Stunden behalten + absenceType anfügen
-              // FE/FT/F → immer hours=0 (keine Arbeitsstunden)
-              const keepHours = (kvAbsType === 'K' || kvAbsType === 'U') && supaVal.hours > 0;
-              merged[key] = keepHours
-                ? { ...supaVal, absenceType: kvAbsType as ActualHoursEntry['absenceType'] }
-                : { hours: 0, absenceType: kvAbsType as ActualHoursEntry['absenceType'] };
-              console.log(`[FE-STABLE] KV absence overrides Supabase hours: ${key} type=${kvAbsType} keepHours=${keepHours} (supabase had ${supaVal.hours}h)`);
-            } else if (localVal?.absenceType) {
-              // localStorage also has an explicit absence — keep it
-              console.log(`[FE-STABLE] localStorage absence overrides Supabase hours: ${key} type=${localVal.absenceType} (supabase had ${supaVal.hours}h)`);
-              // merged[key] already = localVal via spread — no action needed
-            } else {
-              // No absence override → Supabase real hours win, preserve localStorage-only flags
-              merged[key] = localVal?.isAdditionalCost
-                ? { ...supaVal, isAdditionalCost: true }
-                : supaVal;
-            }
-          } else if (!localVal?.absenceType) {
-            // Supabase 0-hours only wins if localStorage has no absenceType (FE/K/F)
-            merged[key] = supaVal;
+          merged[key] = localVal?.isAdditionalCost && !supaVal.isAdditionalCost
+            ? { ...supaVal, isAdditionalCost: true }
+            : supaVal;
+        }
+        let droppedStale = 0;
+        for (const [key, localVal] of Object.entries(localStored as Record<string, ActualHoursEntry>)) {
+          if (merged[key]) continue;
+          if (localVal?.absenceType) {
+            // Offline gesetzte Absenz ohne Supabase-Zeile → behalten
+            merged[key] = localVal;
+          } else {
+            droppedStale++;
           }
-          // else: keep localStorage entry which has absenceType (FE/K/F)
+        }
+        if (droppedStale > 0) {
+          console.log(`[IST-SSOT] ${droppedStale} veraltete localStorage-Einträge ohne Supabase-Zeile verworfen`);
         }
 
         // ── KV store restoration ─────────────────────────────────────────────
@@ -852,11 +843,10 @@ const SchedulePlanner = () => {
             kvRestored++;
             console.log(`[FE-STABLE] K/U absence merged with hours: ${key} type=${absType} hours=${existing.hours}`);
           } else {
-            // existing has real hours but no absence; KV absence is the authoritative admin
-            // override (e.g. Ferien entered after a wrong Mirus import). FE wins.
-            console.log(`[FE-STABLE] KV absence overrides working hours: ${key} type=${absType} hours=${existing.hours}`);
-            merged[key] = { hours: 0, absenceType: absType as ActualHoursEntry['absenceType'] };
-            kvRestored++;
+            // Supabase hat echte Ist-Stunden (>0) für diese Zelle → Stunden gewinnen.
+            // KV-Absenz ist hier veraltet (z.B. «F» vor dem Mirus-Import gesetzt);
+            // importierte/gespeicherte Arbeitsstunden überschreiben F/FE-Marken.
+            console.log(`[IST-SSOT] Supabase-Stunden gewinnen gegen KV-Absenz: ${key} kv=${absType} hours=${existing.hours}`);
           }
         }
         if (kvRestored > 0) {
@@ -878,8 +868,11 @@ const SchedulePlanner = () => {
           const result = { ...merged };
           for (const [key, val] of Object.entries(prev)) {
             if (val.absenceType && !result[key]?.absenceType) {
-              // Keep FE/K/F from prev — absence always wins, even over Supabase hours.
-              // Admin FE override is authoritative over Mirus import data.
+              // In-flight-Absenzen retten: eine Absenz im aktuellen State stammt
+              // (seit der SSoT-Ladelogik) entweder aus einem legitimen Load oder
+              // aus einer User-Aktion dieser Session, deren Supabase-Write evtl.
+              // noch nicht im Fetch sichtbar war → behalten. Veraltete KV-/local-
+              // Absenzen gelangen gar nicht mehr in den State (siehe Merge oben).
               result[key] = val;
               console.log(`[FERIEN-IST] race-condition guard: kept prev absenceType entry ${key} type=${val.absenceType}`);
             }
@@ -895,15 +888,14 @@ const SchedulePlanner = () => {
         const freshLocal: Record<string, ActualHoursEntry> = (() => {
           try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${monthKey}`)) || '{}'); } catch { return {}; }
         })();
-        const finalForStorage: Record<string, ActualHoursEntry> = { ...freshLocal };
-        for (const [key, val] of Object.entries(merged)) {
-          // Never overwrite a localStorage entry that has absenceType (FE/K/F) with
-          // a non-absence value — admin FE override is authoritative over Mirus data.
-          if (freshLocal[key]?.absenceType && !val.absenceType) continue;
-          if (val.hours > 0 || !freshLocal[key]?.absenceType) {
-            finalForStorage[key] = freshLocal[key]?.isAdditionalCost
-              ? { ...val, isAdditionalCost: true }
-              : val;
+        // Voll-Ersatz durch den SSoT-Merge; nur In-flight-Absenzen (Key fehlt im
+        // Merge, seit Fetch-Start lokal geschrieben) bleiben zusätzlich erhalten.
+        const finalForStorage: Record<string, ActualHoursEntry> = { ...merged };
+        for (const [key, val] of Object.entries(freshLocal)) {
+          if (!finalForStorage[key] && val?.absenceType) {
+            finalForStorage[key] = val;
+          } else if (val?.isAdditionalCost && finalForStorage[key] && !finalForStorage[key].isAdditionalCost) {
+            finalForStorage[key] = { ...finalForStorage[key], isAdditionalCost: true };
           }
         }
         localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(finalForStorage));

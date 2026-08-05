@@ -57,6 +57,7 @@ import {
   discardParkedByRun,
 } from '@/lib/mirus-open-hours-store';
 import { recordImportRun, markMirusRunUndoneByBackup } from '@/lib/import-undo-store';
+import { loadMonthAbsences, saveMonthAbsences } from '@/lib/supabase-kv';
 import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
@@ -582,9 +583,13 @@ export function MirusReconcileImportButton({
       const failed: string[] = [];
       let written = 0;
       for (const op of writes) {
+        // isAdditionalCost vom bestehenden Ist-Eintrag erhalten — der Import
+        // aktualisiert nur Stunden/Absenz, nie das Zusatzkosten-Flag.
+        const beforeFlag = actualHoursData[`${op.employeeId}-${op.date}`]?.isAdditionalCost;
         const entry: ActualHoursEntry | null = op.entry ? {
           hours: op.entry.hours,
           ...(op.entry.absenceType ? { absenceType: op.entry.absenceType as ActualHoursEntry['absenceType'] } : {}),
+          ...(beforeFlag ? { isAdditionalCost: true } : {}),
           source: 'import',
         } : null;
         const res = await saveActualHourEntry(op.employeeId, op.date, entry);
@@ -600,6 +605,28 @@ export function MirusReconcileImportButton({
         setPlanOpen(false);
         setPlan(null);
         return;
+      }
+
+      // 2b) KV-Absenz-Marken (absence-ist-*) für Zellen mit importierten
+      // Arbeitsstunden entfernen — sonst überstimmt eine alte F/FE/K-Marke die
+      // frisch geschriebenen Ist-Stunden beim nächsten Laden (SSoT = actual_hours).
+      try {
+        const hourKeys = new Set(
+          writes.filter(op => op.entry && op.entry.hours > 0 && !op.entry.absenceType)
+            .map(op => `${op.employeeId}-${op.date}`),
+        );
+        if (hourKeys.size > 0) {
+          const kvAbs = await loadMonthAbsences(plan.month, tenantId);
+          const conflicting = Object.keys(kvAbs).filter(k => hourKeys.has(k));
+          if (conflicting.length > 0) {
+            const next = { ...kvAbs };
+            for (const k of conflicting) delete next[k];
+            await saveMonthAbsences(plan.month, next, tenantId);
+            console.log(`[MIRUS] ${conflicting.length} KV-Absenz-Marke(n) durch Import-Stunden ersetzt:`, conflicting);
+          }
+        }
+      } catch (e) {
+        console.warn('[MIRUS] KV-Absenz-Bereinigung fehlgeschlagen (nicht kritisch):', e);
       }
 
       // 3) Erfassungsart-Defaults persistieren (nur wo noch NULL)

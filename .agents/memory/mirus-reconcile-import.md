@@ -44,6 +44,12 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Erfolgsmeldung via buildMirusSuccessMessage (pure): zugeordnet/geparkt/übersprungen getrennt, «Summe im Importumfang (Monat)» ohne out-of-scope; out-of-scope-Stunden separat ausweisen.
 - Altlast bereinigt: Legacy-Pfad hatte Juli-2026-Beaulieu-Stunden unter UUID-employee_ids ohne employees-Datensatz in actual_hours hinterlassen (unauffindbar); solche Ghost-Stunden gehören nach mirus_open_hours:<tenant> (Tageswerte!) und die actual_hours-Zeilen gelöscht. Service-Role hat KEINEN Zugriff auf employees/app_settings (REVOKE) — Diagnose/Fix via Management-API-SQL.
 
+## Ist-Layer SSoT (Aug 2026)
+- Supabase `actual_hours` (hat absence_type-Spalte!) ist die EINZIGE Quelle des Dienstplan-Ist. Loader-Merge in SchedulePlanner: Basis = Supabase; localStorage-only-Einträge überleben NUR mit absenceType; reine Stunden-Altlasten werden verworfen; Supabase-Stunden>0 gewinnen IMMER gegen KV-Absenz `absence-ist-*` (F/FE → Stunden; K/U → Marke anhängen, Stunden behalten). Nie zur alten «KV-Absenz überstimmt Stunden»-Logik zurückkehren.
+- MIRUS-Import löscht nach erfolgreichen Stunden-Writes die konfliktierenden KV-Absenz-Marken (batch, best-effort, nur hours>0 ohne absenceType) und erhält `isAdditionalCost` vom Vorher-Eintrag.
+- Bekannte Grenze: KV-Absenz-Cleanup ist load-modify-save (nicht atomar) — paralleler Auto-Save kann Marken zurückschreiben; harmlos, weil der Loader sie gegen Stunden unterdrückt.
+- Altlast: `actual_hours` enthielt Geisterzeilen mit Zukunftsdaten (source mirus_import, z.B. 8.42 h am 3./4. von Folgemonaten — Datumsverschiebung eines Legacy-Imports). Aug-2026-Bereinigung (Miroslav 03/04.08, Mejdi ab 05.08 inkl. Sep–Dez-Duplikate) im Backup 0b89c4c7. Rest-Ghosts Sep–Dez 2026: 79 Zeilen/633 h (Stand 05.08.2026) — bei Bedarf gleich prüfen/bereinigen.
+
 ## Plausibilität & Kappung (Aug 2026)
 - Tageswerte > `MIRUS_MAX_DAY_HOURS` (16 h) ⇒ `rejectedImplausible` (rote Vorschau-Warnung), Zelle wird AUSGELASSEN — bestehender Ist bleibt; die gehaltenen Stunden zählen via `rejectedKeptHours` in beforeTotal UND expectedAfterTotals (sonst falsche Totale — Review-Fund), aber nie in fileTotal.
 - Import nur bis `lastFilledDate` (letzter Tag mit >0 h in der Datei): `plan.dates` = gekappte Liste; spätere Tage (inkl. Plan-Stunden/0-Zeilen) werden NIE angefasst — auch kein conflict_zero auf Zukunftstagen.
