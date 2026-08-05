@@ -326,7 +326,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       }
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
 
-      let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0, ueberschrieben = 0, bereitsFinal = 0;
+      let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0, ueberschrieben = 0, bereitsFinal = 0, kredFinal = 0;
       const lieferanten: string[] = [];
       for (const { profil, rechnungen, quelle } of proProfil.values()) {
         if (rechnungen.length === 0) continue;
@@ -341,6 +341,8 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         neu += erg.neu; ersetzt += erg.ersetzt; aenderungen += erg.preisAenderungen;
         provErsetzt += erg.provisorischErsetzt;
         ueberschrieben += erg.ueberschrieben; bereitsFinal += erg.bereitsFinal;
+        kredFinal += erg.kreditorenFinalisiert;
+        for (const h of erg.hinweise) toast.warning(h, { duration: 12000 });
         if (!lieferanten.includes(profil.name)) lieferanten.push(profil.name);
       }
       await syncSuppliers([...proProfil.values()].map(x => x.profil));
@@ -355,7 +357,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       });
       setUndoRefresh(k => k + 1);
       setZeilen(z => z.filter(row => !bereit.includes(row)));
-      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final überschrieben)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
+      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final überschrieben)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${kredFinal > 0 ? ` · ${kredFinal} Kreditoren-Übernahme${kredFinal === 1 ? '' : 'n'} finalisiert` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
       onImported();
     } catch (e) {
       console.error('[BEAULIEU-PDF] Import fehlgeschlagen:', e);

@@ -270,7 +270,9 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       })), 'Feldschlösschen-Lieferscheine');
       toast.success(`${res.neu} Lieferung${res.neu === 1 ? '' : 'en'} importiert${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`
         + `${res.preisAenderungen > 0 ? ` · ${res.preisAenderungen} Preisänderungen` : ''}`
+        + `${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}`
         + `${res.offen > 0 ? ` · ${res.offen} Positionen «Konto offen»` : ''}`);
+      for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
       setLieferscheine(null);
       onImported();
     } catch (e) {
@@ -311,7 +313,8 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         'Monatsrechnung: fehlende Lieferungen ergänzt',
         { quelle: 'monatsrechnung' },
       );
-      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferung(en) aus der Monatsrechnung ergänzt (final — massgebliche Monatsrechnung)${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
+      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferung(en) aus der Monatsrechnung ergänzt (final — massgebliche Monatsrechnung)${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
+      for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
       setUebernommen(prev => new Set([...prev, fakturaNr]));
       // Abgleich mit frischem Bestand aktualisieren
       const monate = [...new Set(sammel.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];

@@ -15,7 +15,7 @@ vi.mock('@/lib/waren-db', async (orig) => {
   };
 });
 
-import { abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry, zuordnungKey } from '@/lib/kreditoren-abgleich';
+import { abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry, zuordnungKey, normRef } from '@/lib/kreditoren-abgleich';
 import { analysiereKreditor } from '@/lib/kreditoren-parser';
 
 const inv = (p: Partial<InvoiceEntry>): InvoiceEntry => ({
@@ -43,6 +43,116 @@ describe('supplierMatchesKreditor', () => {
   });
   it('nutzt Aliases', () => {
     expect(supplierMatchesKreditor('TG', 'Transgourmet Schweiz AG', { TG: 'Transgourmet' })).toBe(true);
+  });
+  it('Konzern-Gruppe: Prodega gehört zum Transgourmet-Kreditor', () => {
+    expect(supplierMatchesKreditor('Prodega', 'Transgourmet Schweiz AG', {})).toBe(true);
+    expect(supplierMatchesKreditor('Prodega', 'Metzgerei Spahni AG', {})).toBe(false);
+  });
+});
+
+describe('Belegnummern-Match (primär, Datum egal)', () => {
+  it('matcht über Referenz trotz abweichendem Buchungsdatum; Prodega zählt zum TG-Kreditor', async () => {
+    invoicesByMonth['2026-05'] = [
+      inv({ supplierName: 'Transgourmet', date: '2026-05-02', amountGross: 2500, reference: '64055752' }),
+      inv({ supplierName: 'Prodega', date: '2026-05-07', amountGross: 812.4, reference: '246' }),
+    ];
+    invoicesByMonth['2026-06'] = [];
+    const a = analyse('Transgourmet Schweiz AG', [
+      { ...buchung('2026-06-15', 2500, '4060'), referenz: '64055752' }, // Buchung 6 Wochen nach Lieferung
+      { ...buchung('2026-06-20', 812.4, '4060'), referenz: '246' },
+    ]);
+    const zu = { [zuordnungKey('Transgourmet Schweiz AG')]: { waren: true, konto: '4060', modell: 'einzelrechnungen' as const, bestaetigt: 'x' } };
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-05-01', '2026-06-30');
+    const z = erg.zeilen[0];
+    expect(z.anzahlErfasst).toBe(2);
+    expect(z.anzahlFehlt).toBe(0);
+    expect(z.differenz).toBeCloseTo(0, 2);
+    expect(z.ampel).toBe('gruen');
+  });
+
+  it('zwei unterschiedliche Refs matchen NIE per Datum (kein Diebstahl); Ref-Dublette wird nie als fehlend angeboten', async () => {
+    invoicesByMonth['2026-05'] = [
+      inv({ supplierName: 'Transgourmet', date: '2026-05-02', amountGross: 1000, reference: '111' }),
+    ];
+    const a = analyse('Transgourmet Schweiz AG', [
+      { ...buchung('2026-05-03', 1000, '4060'), referenz: '222' }, // gleicher Betrag/nahe — aber fremde Ref
+      { ...buchung('2026-06-20', 1050, '4060'), referenz: '111' }, // Ref-Dublette mit grösserer Abweichung
+      { ...buchung('2026-06-25', 1000, '4060'), referenz: '111' }, // exakter Betrag → gewinnt den Ref-Topf
+    ]);
+    const zu = { [zuordnungKey('Transgourmet Schweiz AG')]: { waren: true, konto: '4060', modell: 'einzelrechnungen' as const, bestaetigt: 'x' } };
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-05-01', '2026-06-30');
+    const z = erg.zeilen[0];
+    expect(z.matches[0].status).toBe('gesperrt_dublette'); // fremde Ref, aber Datum/Betrag-Dublettenwache greift
+    expect(z.matches[0].invoice).toBeUndefined();
+    // Batch-Zuordnung: der Ref-Topf geht an die Buchung mit MINIMALER
+    // Betragsabweichung (1000), die zweite gleiche Ref ist Dublette.
+    expect(z.matches[2].status).toBe('erfasst');
+    expect(z.matches[1].status).toBe('gesperrt_dublette'); // gleiche Ref schon erfasst → NIE als fehlend anbieten
+    expect(z.anzahlFehlt).toBe(0);
+  });
+});
+
+describe('normRef', () => {
+  it('trim/lowercase/führende Nullen', () => {
+    expect(normRef(' 0064055752 ')).toBe('64055752');
+    expect(normRef('63908169, Transgourmet 04.20')).toBe('63908169');
+    expect(normRef('64055752)')).toBe('64055752');
+    expect(normRef('64055752-')).toBe('64055752');
+    expect(normRef('')).toBeNull();
+    expect(normRef(undefined)).toBeNull();
+  });
+});
+
+describe('Ref-Dubletten & Batch-Zuordnung (Review-Regressionsfälle)', () => {
+  const zu = { [zuordnungKey('Transgourmet Schweiz AG')]: { waren: true, konto: '4060', modell: 'einzelrechnungen' as const, bestaetigt: 'x' } };
+
+  it('zweite Buchung mit gleicher Ref wird DUBLETTE — stiehlt nie eine ref-lose Rechnung per Datum', async () => {
+    invoicesByMonth['2026-05'] = [
+      inv({ supplierName: 'Transgourmet', date: '2026-05-02', amountGross: 1000, reference: '777' }),
+      inv({ supplierName: 'Transgourmet', date: '2026-05-04', amountGross: 1000 }), // ohne Ref, Betrag/Datum passend
+    ];
+    const a = analyse('Transgourmet Schweiz AG', [
+      { ...buchung('2026-05-03', 1000, '4060'), referenz: '777' },
+      { ...buchung('2026-05-05', 1000, '4060'), referenz: '777' }, // Dublette
+    ]);
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-05-01', '2026-05-31');
+    const z = erg.zeilen[0];
+    expect(z.matches[0].status).toBe('erfasst');
+    expect(z.matches[1].status).toBe('gesperrt_dublette');
+    expect(z.matches[1].invoice).toBeUndefined(); // ref-lose Rechnung NICHT gestohlen
+  });
+
+  it('mehrfach vergebene Ref: Batch-Zuordnung mit minimaler Betragsabweichung, unabhängig von Buchungs-Reihenfolge', async () => {
+    invoicesByMonth['2026-05'] = [
+      inv({ id: 'klein', supplierName: 'Prodega', date: '2026-05-02', amountGross: 100, reference: '246' }),
+      inv({ id: 'gross', supplierName: 'Prodega', date: '2026-05-09', amountGross: 900, reference: '246' }),
+    ];
+    // Reihenfolge absichtlich «falsch»: 900er-Buchung zuerst
+    const a = analyse('Transgourmet Schweiz AG', [
+      { ...buchung('2026-05-20', 900, '4060'), referenz: '246' },
+      { ...buchung('2026-05-21', 100, '4060'), referenz: '246' },
+    ]);
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-05-01', '2026-05-31');
+    const z = erg.zeilen[0];
+    expect(z.matches[0].invoice?.id).toBe('gross');
+    expect(z.matches[1].invoice?.id).toBe('klein');
+    expect(z.anzahlErfasst).toBe(2);
+  });
+
+  it('ref-lose Buchung stiehlt keine Rechnung, die für einen späteren Ref-Match reserviert ist', async () => {
+    invoicesByMonth['2026-05'] = [
+      inv({ supplierName: 'Transgourmet', date: '2026-05-02', amountGross: 500, reference: '888' }),
+    ];
+    const a = analyse('Transgourmet Schweiz AG', [
+      buchung('2026-05-03', 500, '4060'),                       // ohne Ref — Betrag/Datum würde passen
+      { ...buchung('2026-06-20', 500, '4060'), referenz: '888' }, // Ref-Match, Datum weit weg
+    ]);
+    const erg = await abgleichKreditoren('oliv', [a], zu, '2026-05-01', '2026-06-30');
+    const z = erg.zeilen[0];
+    expect(z.matches.find(m => m.buchung.referenz === '888')?.status).toBe('erfasst');
+    // die ref-lose Buchung darf die 888er-Rechnung nicht wegnehmen; sie ist
+    // aber eine Betrag/Datum-Dublette → gesperrt (nie als fehlend anbieten)
+    expect(z.matches.find(m => !m.buchung.referenz)?.status).toBe('gesperrt_dublette');
   });
 });
 

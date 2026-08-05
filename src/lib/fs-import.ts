@@ -27,6 +27,8 @@ import {
   type ParsedCsvRechnung, type PreisAenderung,
 } from '@/lib/waren-positionen';
 import { mitFsDefaults } from '@/lib/feldschloesschen';
+import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
+import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat } from '@/lib/waren-db';
 import type { TenantId } from '@/contexts/TenantContext';
 
 export interface FsImportRechnung {
@@ -48,6 +50,12 @@ export interface FsImportErgebnis {
   /** Nur quelle='monatsrechnung': bestehende provisorische Buchungen, die mit
    *  den finalen Rechnungswerten überschrieben wurden. */
   ueberschrieben: number;
+  /** Provisorische Kreditoren-Übernahmen, die dieser Detail-Import über die
+   *  BELEGNUMMER finalisiert/ersetzt hat (echtes Lieferdatum + Positionen). */
+  kreditorenFinalisiert: number;
+  /** Nutzer-Hinweise (Betragsabweichung > Toleranz, mehrdeutige Fallbacks) —
+   *  Aufrufer MUSS sie anzeigen, nie still verschlucken. */
+  hinweise: string[];
 }
 
 export async function kernImportiereFsRechnungen(
@@ -75,16 +83,19 @@ export async function kernImportiereFsRechnungen(
     defaultKonto?: string;
   },
 ): Promise<FsImportErgebnis> {
-  const [mappingRoh, historie, schwelle, artikelKonten] = await Promise.all([
+  const [mappingRoh, historie, schwelle, artikelKonten, matchToleranz] = await Promise.all([
     loadWarengruppenMapping(tenantId), loadPreisHistorie(tenantId),
     loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
     loadArtikelKonten(tenantId),
+    loadFibuMatchToleranz(tenantId).catch(() => 1),
   ]);
   // extraMapping (Profil-Kategorie→Konto) hat Vorrang — daher VORNE einfügen.
   const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
   const mapping = [...extraRegeln, ...mitFsDefaults(mappingRoh)];
   let hist = historie;
   let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, bereitsFinal = 0, ueberschrieben = 0;
+  let kreditorenFinalisiert = 0;
+  const hinweise: string[] = [];
   // Jede bestehende Buchung deckt höchstens EINE Lieferung dieses Laufs.
   const vergeben = new Set<string>();
   const alleAenderungen: PreisAenderung[] = [];
@@ -122,6 +133,23 @@ export async function kernImportiereFsRechnungen(
     // final-Flag; final = massgebliche Monatsrechnungs-Buchung.
     const istProv = (e: InvoiceEntry) => !e.final;
     const istMr = opts?.quelle === 'monatsrechnung';
+    const bruttoDetail = bruttoOffiziell ?? r.bruttoTotal;
+    // KREDITOREN-ÜBERNAHME finalisieren: provisorische Übernahme mit gleicher
+    // BELEGNUMMER (+ Lieferant lose, Konzern-Gruppen) wird vom Detail-Import
+    // ersetzt — echtes Lieferdatum + Positionen statt Monatsend-Platzhalter.
+    // AB bleibt aussen vor (provisorisch ersetzt nicht provisorisch fremder Art).
+    if (!vorhanden && opts?.quelle !== 'auftragsbestaetigung') {
+      let mehrdeutigF = false;
+      for (const nm of nachbarMonate(r.datum)) {
+        const nb = (await holeMonat(nm)).bestand.filter(e => !vergeben.has(e.id));
+        const res = findeKreditorenUebernahme(nb, r.rechnungsNr, lieferant, bruttoDetail);
+        if (res.entry) { vorhanden = res.entry; vorhandenMonat = nm; break; }
+        if (res.mehrdeutig) mehrdeutigF = true;
+      }
+      if (!vorhanden && mehrdeutigF) {
+        hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: mehrere Kreditoren-Übernahmen ohne Belegnummer passen zum Betrag — bitte manuell prüfen (nichts automatisch ersetzt).`);
+      }
+    }
     if (istMr) {
       // MASSGEBLICH: ohne exakten Treffer matcht die Lieferung JEDE bestehende
       // Buchung des Lieferanten — exakte Referenz (Monate ±1), sonst Datum im
@@ -220,6 +248,17 @@ export async function kernImportiereFsRechnungen(
         }
       }
     }
+    // Klassifizieren NACH allen Match-Pfaden (auch strikter Gleich-Datum- oder
+    // Datum+Betrag-Treffer kann einen Kreditoren-Platzhalter erwischen):
+    // Finalisierung wird separat gezählt (nicht als «ersetzt») und prüft die
+    // Betragsabweichung gegen die FIBU-Toleranz.
+    const warKredUebernahme = !!vorhanden && vorhanden.quelle === 'kreditoren_uebernahme' && !vorhanden.final;
+    if (warKredUebernahme) {
+      kreditorenFinalisiert++;
+      if (Math.abs(vorhanden!.amountGross - bruttoDetail) > matchToleranz) {
+        hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Betrag weicht ab — Kreditor ${vorhanden!.amountGross.toFixed(2)} ↔ Detail ${bruttoDetail.toFixed(2)}; Detail-Betrag übernommen.`);
+      }
+    }
     if (vorhanden) vergeben.add(vorhanden.id);
     const positionen = uebernehmeManuelleKontierung(
       positionenAusRechnung(r, mapping, { lieferant, konten: artikelKonten }),
@@ -278,14 +317,18 @@ export async function kernImportiereFsRechnungen(
     const hin = hinweisCache.get(month)!;
     if (aenderungen.length > 0) hin[id] = aenderungen; else delete hin[id];
     geaendert.add(month);
-    if (vorhanden) ersetzt++; else neu++;
+    if (vorhanden) { if (!warKredUebernahme) ersetzt++; } else neu++;
   }
   // Ein Schreibvorgang pro Monat.
   for (const m of geaendert) {
     await saveMonthInvoices(tenantId, m, bestandCache.get(m)!);
     await saveRechnungsPositionen(tenantId, m, posCache.get(m)!);
     await savePreisHinweise(tenantId, m, hinweisCache.get(m)!);
+    // FIBU-Match-Zuordnungen des Monats mitbereinigen: cross-Monat verschobene
+    // IDs (z.B. finalisierte Kreditoren-Platzhalter) dürfen im alten Monat
+    // keine «gematcht»-Leichen hinterlassen (best-effort, wirft nie).
+    await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set(bestandCache.get(m)!.map(e => e.id)));
   }
   await savePreisHistorie(tenantId, hist);
-  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben };
+  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben, kreditorenFinalisiert, hinweise };
 }

@@ -261,3 +261,88 @@ describe('AB→Rechnung ohne gemeinsame Referenz (Terravigna)', () => {
     expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(3);
   });
 });
+
+describe('Kreditoren-Übernahme finalisieren (Belegnummer-Match)', () => {
+  const uebernahme = (over: Partial<InvoiceEntry> = {}): InvoiceEntry => ({
+    id: 'kred_1', date: '2026-07-31', supplierName: 'Ambro Food AG',
+    amountGross: 324.3, amountNet: 300, vatIncluded: true, vatRate: 8.1,
+    reference: 'X-100', warenkonto: '4030', note: 'Kreditoren-Übernahme (provisorisch)',
+    quelle: 'kreditoren_uebernahme', final: false,
+    createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    ...over,
+  } as InvoiceEntry);
+
+  it('Ambro-Szenario: Detail (gleiche Belegnr, echtes Lieferdatum) ERSETZT die Übernahme — EINE Rechnung, kein Duplikat', async () => {
+    kv.set('supplier_invoices_2026-07', [uebernahme()]);
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('X-100', '2026-07-20', 30) }]);
+    expect(res.kreditorenFinalisiert).toBe(1);
+    expect(res.neu).toBe(0);
+    expect(res.hinweise).toHaveLength(0); // Betrag identisch → kein Hinweis
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].id).toBe('kred_1');           // gleiche Rechnung, finalisiert
+    expect(monat[0].date).toBe('2026-07-20');     // echtes Lieferdatum übernommen
+    expect(monat[0].quelle).not.toBe('kreditoren_uebernahme');
+  });
+
+  it('Monatsrechnung finalisiert die Übernahme (final=true) — auch über die Monatsgrenze; Betragsabweichung > Toleranz gibt Hinweis', async () => {
+    kv.set('supplier_invoices_2026-08', [uebernahme({ id: 'kred_2', date: '2026-08-31', amountGross: 999 })]);
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('X-100', '2026-07-20', 30) }], { quelle: 'monatsrechnung' });
+    expect(res.kreditorenFinalisiert).toBe(1);
+    expect(res.hinweise).toHaveLength(1); // 999 vs 324.30
+    expect(kv.get('supplier_invoices_2026-08') as InvoiceEntry[]).toHaveLength(0); // Platzhalter weg
+    const juli = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(juli).toHaveLength(1);
+    expect(juli[0].final).toBe(true);
+    expect(juli[0].amountGross).toBeCloseTo(324.3, 1); // Detail-Betrag massgeblich
+  });
+
+  it('Übernahme ohne Belegnummer: eindeutiger Betrag matcht, mehrdeutig wird NIE ersetzt (Hinweis)', async () => {
+    kv.set('supplier_invoices_2026-07', [
+      uebernahme({ id: 'kred_a', reference: undefined }),
+      uebernahme({ id: 'kred_b', reference: undefined }),
+    ]);
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('NEU-1', '2026-07-20', 30) }]);
+    expect(res.kreditorenFinalisiert).toBe(0);
+    expect(res.neu).toBe(1); // Neu-Buchung, Übernahmen bleiben zur Prüfung
+    expect(res.hinweise.some(h => h.includes('manuell prüfen'))).toBe(true);
+    expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(3);
+  });
+
+  it('cross-Monat: FIBU-Match des Platzhalter-Monats wird mitbereinigt (keine «gematcht»-Leiche)', async () => {
+    kv.set('supplier_invoices_2026-08', [uebernahme({ id: 'kred_3', date: '2026-08-31' })]);
+    kv.set('waren_fibu_matches_2026-08_v1', {
+      gruppen: [{ invoiceIds: ['kred_3'], buchungKeys: ['b1'] }],
+      gesperrt: { invoiceIds: ['kred_3'], buchungKeys: [] },
+    });
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('X-100', '2026-07-20', 30) }]);
+    expect(res.kreditorenFinalisiert).toBe(1);
+    const fibu = kv.get('waren_fibu_matches_2026-08_v1') as { gruppen: unknown[]; gesperrt: { invoiceIds: string[] } };
+    expect(fibu.gruppen).toHaveLength(0);
+    expect(fibu.gesperrt.invoiceIds).toHaveLength(0);
+  });
+
+  it('GLEICHES Datum: strikter Treffer auf den Platzhalter zählt als Finalisierung (nicht «ersetzt») und prüft den Betrag', async () => {
+    kv.set('supplier_invoices_2026-07', [uebernahme({ id: 'kred_4', date: '2026-07-20', reference: 'X-100', amountGross: 999 })]);
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('X-100', '2026-07-20', 30) }]);
+    expect(res.kreditorenFinalisiert).toBe(1);
+    expect(res.ersetzt).toBe(0);
+    expect(res.neu).toBe(0);
+    expect(res.hinweise).toHaveLength(1); // 999 vs 324.30
+    expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(1);
+  });
+
+  it('Lieferschein eines Dual-Lieferanten mit EIGENER Nr. bleibt daneben stehen (keine Kaperung der Übernahme)', async () => {
+    kv.set('supplier_invoices_2026-07', [uebernahme({ amountGross: 5000 })]);
+    const res = await kernImportiereFsRechnungen(TENANT, 'Ambro Food AG',
+      [{ r: rechnung('LS-77', '2026-07-20', 30) }]); // andere Ref, anderer Betrag
+    expect(res.kreditorenFinalisiert).toBe(0);
+    expect(res.neu).toBe(1);
+    expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(2);
+  });
+});

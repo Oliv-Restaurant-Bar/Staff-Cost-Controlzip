@@ -33,11 +33,12 @@ import {
   loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
   loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
-  loadMarktLieferantenMapping, saveMarktLieferantenMapping,
+  loadMarktLieferantenMapping, saveMarktLieferantenMapping, deleteInvoiceEntry, loadFibuMatchToleranz,
   erstelleWarenImportSnapshot, saveWarenImportUndo, loadWarenImportUndo, undoWarenImport,
   kategorieFromKonto, type InvoiceEntry, type Supplier, type WarenImportTyp,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
+import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
 import type { TenantId } from '@/contexts/TenantContext';
 
 const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -367,10 +368,19 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         await saveArtikelKonten(tenantId, kontoOverrides);
         setArtikelKonten(effektiv); setKontoOverrides({});
       }
-      // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate + Preis-Historie.
-      const monate = [...new Set(zuImportieren.map(r => r.datum.slice(0, 7)))];
+      // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate ±1 (eine
+      // Kreditoren-Übernahme kann im Nachbarmonat liegen und wird beim
+      // Finalisieren dort gelöscht) + Preis-Historie.
+      const nachbarMonate = (datum: string) => {
+        const d = new Date(`${datum}T00:00:00Z`);
+        const m = (off: number) => { const x = new Date(d); x.setUTCMonth(x.getUTCMonth() + off); return x.toISOString().slice(0, 7); };
+        return [m(0), m(-1), m(1)];
+      };
+      const monate = [...new Set(zuImportieren.flatMap(r => nachbarMonate(r.datum)))];
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
-      let ersetzt = 0, neu = 0;
+      const matchToleranz = await loadFibuMatchToleranz(tenantId).catch(() => 1);
+      let ersetzt = 0, neu = 0, finalisiert = 0;
+      const warnungen: string[] = [];
       const hinweiseProMonat = new Map<string, Record<string, PreisAenderung[]>>();
       const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
       for (const r of zuImportieren) {
@@ -380,7 +390,38 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         // Dedup-Schlüssel inkl. MARKT (SSOT: findeCsvBestandsTreffer) — zwei
         // Prodega-Märkte mit gleicher Nr. am selben Tag überschreiben sich nie.
         const marktNorm = (r.markt ?? '').trim().toLowerCase();
-        const vorhanden = findeCsvBestandsTreffer(bestand, r, lieferant);
+        let vorhanden = findeCsvBestandsTreffer(bestand, r, lieferant);
+        // FINALISIERUNG einer Kreditoren-Übernahme: gleiche BELEGNUMMER
+        // (+ Lieferant lose, Prodega→Transgourmet) — das Detail (echtes
+        // Lieferdatum + Positionen) ersetzt den Monatsend-Platzhalter.
+        if (!vorhanden) {
+          for (const nm of nachbarMonate(r.datum)) {
+            const nb = nm === month ? bestand : await loadMonthInvoices(tenantId, nm);
+            const res = findeKreditorenUebernahme(nb, r.rechnungsNr, lieferant, r.bruttoTotal);
+            if (res.entry) {
+              vorhanden = res.entry; finalisiert++;
+              if (Math.abs(res.entry.amountGross - r.bruttoTotal) > matchToleranz) {
+                warnungen.push(`${lieferant} ${r.rechnungsNr}: Betrag weicht ab — Kreditor ${res.entry.amountGross.toFixed(2)} ↔ Detail ${r.bruttoTotal.toFixed(2)}; Detail-Betrag übernommen.`);
+              }
+              // Platzhalter im Nachbarmonat entfernen (inkl. FIBU-Matches via
+              // deleteInvoiceEntry) — die Detail-Rechnung wird gleich mit
+              // derselben ID im Lieferdatum-Monat gebucht. Sidecars (Positionen/
+              // Preis-Hinweise) des alten Monats unter dieser ID mitbereinigen.
+              if (nm !== month) {
+                await deleteInvoiceEntry(tenantId, res.entry.id, res.entry.date);
+                const altPos = { ...(await loadRechnungsPositionen(tenantId, nm)) };
+                if (res.entry.id in altPos) { delete altPos[res.entry.id]; await saveRechnungsPositionen(tenantId, nm, altPos); }
+                const altHin = { ...(await loadPreisHinweise(tenantId, nm)) };
+                if (res.entry.id in altHin) { delete altHin[res.entry.id]; await savePreisHinweise(tenantId, nm, altHin); }
+              }
+              break;
+            }
+            if (res.mehrdeutig) {
+              warnungen.push(`${lieferant} ${r.rechnungsNr || r.datum}: mehrere Kreditoren-Übernahmen ohne Belegnummer passen zum Betrag — bitte manuell prüfen (nichts ersetzt).`);
+              break;
+            }
+          }
+        }
         // Positionen kontieren — bei Re-Import manuelle Overrides des Altbestands übernehmen.
         let bestehendePos = positionenProMonat.get(month);
         if (!bestehendePos) {
@@ -416,7 +457,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
           updatedAt: jetzt,
         };
         await saveInvoiceEntry(tenantId, entry);
-        if (vorhanden) ersetzt++; else neu++;
+        if (vorhanden && vorhanden.quelle !== 'kreditoren_uebernahme') ersetzt++; else if (!vorhanden) neu++;
         const aen = vorschau.proRechnung.get(r.docKey) ?? [];
         const monat = hinweiseProMonat.get(month) ?? {};
         if (aen.length > 0) monat[id] = aen; else delete monat[id];
@@ -445,7 +486,8 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         vorher, nachher,
       });
       setUndoRefresh(x => x + 1);
-      toast.success(`${neu} Rechnung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''} · ${vorschau.alle.length} Preisänderung${vorschau.alle.length === 1 ? '' : 'en'}.`);
+      toast.success(`${neu} Rechnung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${finalisiert > 0 ? ` · ${finalisiert} Kreditoren-Übernahme${finalisiert === 1 ? '' : 'n'} finalisiert` : ''} · ${vorschau.alle.length} Preisänderung${vorschau.alle.length === 1 ? '' : 'en'}.`);
+      for (const w of warnungen) toast.warning(w, { duration: 12000 });
       setErgebnis(null);
       onImported();
     } catch (e) {
