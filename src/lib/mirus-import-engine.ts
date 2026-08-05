@@ -102,6 +102,12 @@ export interface MirusEmployeePlan {
   fileTotal: number;
   beforeTotal: number;
   cells: MirusCellPlan[];
+  /**
+   * Bestehende Ist-Stunden auf abgelehnten Phantom-Tagen (>16 h in Datei):
+   * bleiben unangetastet, sind in beforeTotal UND expectedAfterTotals enthalten,
+   * aber NICHT in fileTotal (Datei-Wert wurde ja verworfen).
+   */
+  rejectedKeptHours: number;
 }
 
 export interface MirusReconcilePlan {
@@ -352,10 +358,17 @@ export function buildMirusReconcilePlan(params: {
     }
     const cells: MirusCellPlan[] = [];
     let beforeTotal = 0;
+    let rejectedKeptHours = 0;
     for (const date of effDates) {
       // Abgelehnter Phantom-Tag: Zelle komplett auslassen — bestehender
-      // Ist-Wert bleibt unangetastet (nie 0 hineinschreiben).
-      if (implausibleCells.has(`${empId}-${date}`)) continue;
+      // Ist-Wert bleibt unangetastet (nie 0 hineinschreiben), zählt aber
+      // weiterhin zu Vorher-/Nachher-Total (Review-Fix: Totals nicht verfälschen).
+      if (implausibleCells.has(`${empId}-${date}`)) {
+        const kept = existing[`${empId}-${date}`]?.hours ?? 0;
+        beforeTotal += kept;
+        rejectedKeptHours += kept;
+        continue;
+      }
       const fileHours = rec.days.get(date) ?? 0;
       const before = existing[`${empId}-${date}`] ?? null;
       const plan = planned[`${empId}-${date}`] ?? NO_PLAN;
@@ -369,7 +382,10 @@ export function buildMirusReconcilePlan(params: {
       cells.push(cell);
       if (decision === 'silent_round') silentRounds.push(cell);
     }
-    employees.push({ employeeId: empId, employeeName: rec.name, fileTotal, beforeTotal: r2(beforeTotal), cells });
+    employees.push({
+      employeeId: empId, employeeName: rec.name, fileTotal,
+      beforeTotal: r2(beforeTotal), cells, rejectedKeptHours: r2(rejectedKeptHours),
+    });
   }
 
   employees.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de'));
@@ -431,7 +447,8 @@ export function resolvePlanToWrites(plan: MirusReconcilePlan): MirusWriteOp[] {
 export function expectedAfterTotals(plan: MirusReconcilePlan): Record<string, number> {
   const out: Record<string, number> = {};
   for (const emp of plan.employees) {
-    let total = 0;
+    // Unangetastete Ist-Werte abgelehnter Phantom-Tage bleiben gespeichert.
+    let total = emp.rejectedKeptHours;
     for (const cell of emp.cells) {
       const take = cell.resolution === 'mirus';
       switch (cell.decision) {

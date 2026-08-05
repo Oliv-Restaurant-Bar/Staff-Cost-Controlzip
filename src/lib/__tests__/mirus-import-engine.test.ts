@@ -331,6 +331,10 @@ describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
     expect(writes[0].date).toBe('2026-07-02');
     // fileTotal ohne den abgelehnten Phantom-Wert
     expect(plan.employees[0].fileTotal).toBe(8);
+    // Vorher-/Nachher-Totale enthalten den unangetasteten Ist-Wert (Review-Fix)
+    expect(plan.employees[0].rejectedKeptHours).toBe(7.5);
+    expect(plan.employees[0].beforeTotal).toBe(7.5);
+    expect(expectedAfterTotals(plan)['a']).toBe(15.5); // 7.5 bleibt + 8 neu
   });
 
   it('exakt 16 h ist noch zulässig', () => {
@@ -356,3 +360,17 @@ describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
     expect(writes.every(w => w.date === '2026-07-01')).toBe(true);
   });
 });
+
+  it('alle Tage >16h → keine Writes, bestehende Ist-Werte voll in den Totalen', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 20), entry('a', '2026-07-02', 25)],
+      existing: { 'a-2026-07-01': { hours: 8 } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    expect(plan.rejectedImplausible).toHaveLength(2);
+    expect(plan.lastFilledDate).toBeNull();
+    expect(resolvePlanToWrites(plan)).toHaveLength(0);
+    expect(plan.employees[0].beforeTotal).toBe(8);
+    expect(expectedAfterTotals(plan)['a']).toBe(8);
+  });

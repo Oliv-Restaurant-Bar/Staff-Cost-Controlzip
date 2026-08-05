@@ -43,3 +43,9 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Sentinel-Werte 'park'/'create' dürfen NIE als Mitarbeiter-ID interpretiert oder als Alias/Name-Mapping gespeichert werden — alle Filter (saveNameMappingsBatch, manualAliases, nameToEmp, Dialog-handleConfirm) müssen sie ausschliessen.
 - Erfolgsmeldung via buildMirusSuccessMessage (pure): zugeordnet/geparkt/übersprungen getrennt, «Summe im Importumfang (Monat)» ohne out-of-scope; out-of-scope-Stunden separat ausweisen.
 - Altlast bereinigt: Legacy-Pfad hatte Juli-2026-Beaulieu-Stunden unter UUID-employee_ids ohne employees-Datensatz in actual_hours hinterlassen (unauffindbar); solche Ghost-Stunden gehören nach mirus_open_hours:<tenant> (Tageswerte!) und die actual_hours-Zeilen gelöscht. Service-Role hat KEINEN Zugriff auf employees/app_settings (REVOKE) — Diagnose/Fix via Management-API-SQL.
+
+## Plausibilität & Kappung (Aug 2026)
+- Tageswerte > `MIRUS_MAX_DAY_HOURS` (16 h) ⇒ `rejectedImplausible` (rote Vorschau-Warnung), Zelle wird AUSGELASSEN — bestehender Ist bleibt; die gehaltenen Stunden zählen via `rejectedKeptHours` in beforeTotal UND expectedAfterTotals (sonst falsche Totale — Review-Fund), aber nie in fileTotal.
+- Import nur bis `lastFilledDate` (letzter Tag mit >0 h in der Datei): `plan.dates` = gekappte Liste; spätere Tage (inkl. Plan-Stunden/0-Zeilen) werden NIE angefasst — auch kein conflict_zero auf Zukunftstagen.
+- Oliv-Aliasse fest in `mirus_name_aliases:oliv` (goi isabelle→10, de jong micky→18, kolev miroslav nikolaev→15, ramadani mejdi→14); Keys gefaltet lowercase.
+- Agent-seitige Vorschau ohne App möglich: esbuild-Bundle (platform=node, alias @=src, localStorage-Shim, Fake-File mit arrayBuffer) über parseMirusDailyExcel + matchEmployeeByName + buildMirusReconcilePlan; Ist/Mitarbeiter via Management-API. Direkte DB-Schreibungen brauchen vorher einen `dienstplan_ist_backup`-Eintrag (scope ist JSONB {dates, employeeIds}).
