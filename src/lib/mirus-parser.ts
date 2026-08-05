@@ -252,7 +252,7 @@ function isSummaryRow(rowText: string, row: unknown[]): boolean {
 
 const BLOCK_HEADER_RE = /^\d+\s+[\p{L}]/u;
 
-function detectDepartment(row: unknown[]): DetectedDept | null {
+function detectDepartment(row: unknown[]): { dept: DetectedDept; label: string } | null {
   for (const cell of row.slice(0, 8)) {
     const t = String(cell || '').trim();
     if (!t) continue;
@@ -261,13 +261,15 @@ function detectDepartment(row: unknown[]): DetectedDept | null {
     if (/\btotal\b/i.test(t)) return null;
     // Datumsartige Zellen («1.7.2026») ausschliessen
     if (/^\d+\s*[.\-/]/.test(t)) continue;
+    // Label ohne führende Blocknummer («3 Hilfsarbeiter» → «Hilfsarbeiter»)
+    const label = t.replace(/^\d+\s+/, '').trim();
     const lo = t.toLowerCase();
-    if (lo.includes('küch') || lo.includes('kuche')) return 'küche';
-    if (lo.includes('service')) return 'service';
+    if (lo.includes('küch') || lo.includes('kuche')) return { dept: 'küche', label };
+    if (lo.includes('service')) return { dept: 'service', label };
     // Unbekanntes Block-Label (Hilfsarbeiter, Geschäftsleitung, …) → Block
     // trotzdem lesen; Abteilung neutral als 'admin' signalisieren (Aufrufer
     // behält die bisherige Abteilung bei, überspringt aber NICHT mehr).
-    return 'admin';
+    return { dept: 'admin', label };
   }
   return null;
 }
@@ -486,6 +488,7 @@ function parseEmployeeRows(
 ): MirusDailyImportEntry[] {
   const entries: MirusDailyImportEntry[] = [];
   let currentDept: 'küche' | 'service' = 'service';
+  let currentSection = 'Service';
 
   for (let ri = headerRowIdx + 1; ri < rows.length; ri++) {
     const row = rows[ri];
@@ -496,10 +499,11 @@ function parseEmployeeRows(
     // Department block header — ALLE Blöcke werden gelesen (Spec Punkt 2).
     // 'admin' = unbekanntes Label (Hilfsarbeiter, Geschäftsleitung, …):
     // Abteilungszuordnung bleibt die zuletzt bekannte, Zeilen zählen mit.
-    const dept = detectDepartment(row);
-    if (dept !== null) {
-      if (dept !== 'admin') currentDept = dept;
-      console.log(`[MIRUS] detected department block: ${dept}${dept === 'admin' ? ` (generic, reading rows as ${currentDept})` : ''}`);
+    const det = detectDepartment(row);
+    if (det !== null) {
+      if (det.dept !== 'admin') currentDept = det.dept;
+      currentSection = det.label;
+      console.log(`[MIRUS] detected department block: ${det.dept} («${det.label}»)${det.dept === 'admin' ? ` (generic, reading rows as ${currentDept})` : ''}`);
       continue;
     }
 
@@ -521,7 +525,7 @@ function parseEmployeeRows(
       if (index >= row.length) continue;
       const hours = cellToHours(row[index]);
       if (hours === null) continue;
-      entries.push({ name, department: currentDept, date, hours });
+      entries.push({ name, department: currentDept, date, hours, sections: [currentSection] });
       console.log(`[MIRUS] parsed entry: ${name} / ${date} / ${hours}h`);
       added++;
     }
@@ -533,16 +537,27 @@ function parseEmployeeRows(
   // ── Über Blöcke aggregieren (Spec Punkt 3) ────────────────────────────────
   // Derselbe Mitarbeiter kann in mehreren Blöcken vorkommen (z.B. Küche +
   // Hilfsarbeiter): Stunden pro (Name, Tag) SUMMIEREN, nie überschreiben.
+  // Namens-Key REIHENFOLGE-tolerant: «Ramadani Naip» und «Naip Ramadani» sind
+  // dieselbe Person (Nachname/Vorname vertauscht zwischen Kostenstellen).
+  // Tokens lowercased + sortiert; erster gesehener Name bleibt der Anzeigename.
+  const nameKey = (n: string) =>
+    n.toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
   const byKey = new Map<string, MirusDailyImportEntry>();
+  const canonicalName = new Map<string, string>(); // nameKey → erster Anzeigename
   let mergedRows = 0;
   for (const e of entries) {
-    const key = `${e.name.toLowerCase()}|${e.date}`;
+    const nk = nameKey(e.name);
+    if (!canonicalName.has(nk)) canonicalName.set(nk, e.name);
+    const key = `${nk}|${e.date}`;
     const prev = byKey.get(key);
     if (prev) {
       prev.hours = Math.round((prev.hours + e.hours) * 100) / 100;
+      // Sektions-Herkunft sammeln → Vorschau «zusammengeführt aus X + Y»
+      const secs = new Set([...(prev.sections ?? []), ...(e.sections ?? [])]);
+      prev.sections = [...secs];
       mergedRows++;
     } else {
-      byKey.set(key, { ...e });
+      byKey.set(key, { ...e, name: canonicalName.get(nk)!, sections: [...(e.sections ?? [])] });
     }
   }
   const aggregated = [...byKey.values()];

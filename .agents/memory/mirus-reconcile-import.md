@@ -44,6 +44,11 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Erfolgsmeldung via buildMirusSuccessMessage (pure): zugeordnet/geparkt/übersprungen getrennt, «Summe im Importumfang (Monat)» ohne out-of-scope; out-of-scope-Stunden separat ausweisen.
 - Altlast bereinigt: Legacy-Pfad hatte Juli-2026-Beaulieu-Stunden unter UUID-employee_ids ohne employees-Datensatz in actual_hours hinterlassen (unauffindbar); solche Ghost-Stunden gehören nach mirus_open_hours:<tenant> (Tageswerte!) und die actual_hours-Zeilen gelöscht. Service-Role hat KEINEN Zugriff auf employees/app_settings (REVOKE) — Diagnose/Fix via Management-API-SQL.
 
+## Multi-Sektions-Merge (Aug 2026)
+- Derselbe Name in mehreren Kostenstellen-Blöcken = EINE Person: Parser aggregiert pro (Name, Tag) mit REIHENFOLGE-tolerantem Token-sort-Key (Nachname/Vorname vertauschbar; erster Anzeigename gewinnt) und summiert Stunden. 16h-Sperre greift NACH der Aggregation auf die Tagessumme.
+- `MirusDailyImportEntry.sections` führt die Sektions-Herkunft mit; Vorschau zeigt «zusammengeführt aus X + Y» pro MA (mergedSections-State, Reset bei Cancel). Sections werden NICHT in die Engine gereicht — rein präsentational.
+- Bekannte Grenze: zwei echte Personen mit identischen (permutierten) Namens-Tokens würden gemergt — akzeptiert.
+
 ## Ist-Layer SSoT (Aug 2026)
 - Supabase `actual_hours` (hat absence_type-Spalte!) ist die EINZIGE Quelle des Dienstplan-Ist. Loader-Merge in SchedulePlanner: Basis = Supabase; localStorage-only-Einträge überleben NUR mit absenceType; reine Stunden-Altlasten werden verworfen; Supabase-Stunden>0 gewinnen IMMER gegen KV-Absenz `absence-ist-*` (F/FE → Stunden; K/U → Marke anhängen, Stunden behalten). Nie zur alten «KV-Absenz überstimmt Stunden»-Logik zurückkehren.
 - MIRUS-Import löscht nach erfolgreichen Stunden-Writes die konfliktierenden KV-Absenz-Marken (batch, best-effort, nur hours>0 ohne absenceType) und erhält `isAdditionalCost` vom Vorher-Eintrag.

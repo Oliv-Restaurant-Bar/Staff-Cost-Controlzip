@@ -282,6 +282,32 @@ describe('Generische Blöcke + Aggregation über Blöcke (Beaulieu-Layout)', () 
     expect(total).toBeCloseTo(31 * 4.5, 2);
   });
 
+  it('führt Sektions-Herkunft mit («Küche» + «Hilfsarbeiter») für die Vorschau', () => {
+    const r = parseMirusRows(rows, 'beaulieu.xls');
+    const naip = r.entries.filter(e => e.name === 'Ramadani Naip');
+    expect(naip.every(e => new Set(e.sections).size === 2)).toBe(true);
+    expect(new Set(naip[0].sections)).toEqual(new Set(['Küche', 'Hilfsarbeiter']));
+    // Einzel-Sektion bleibt Einzel-Sektion
+    const marion = r.entries.filter(e => e.name === 'Krauss Marion');
+    expect(marion[0].sections).toEqual(['Service']);
+  });
+
+  it('merged auch bei vertauschter Namensreihenfolge («Naip Ramadani» = «Ramadani Naip»)', () => {
+    const swapped = rows.map(row =>
+      row[0] === 'Ramadani Naip' && rows.indexOf(row) > 9 ? ['Naip Ramadani', ...row.slice(1)] : row);
+    // Hilfsarbeiter-Block trägt den Namen in umgekehrter Reihenfolge
+    const idx = swapped.findIndex((row, i) => i > 9 && row[0] === 'Ramadani Naip');
+    if (idx >= 0) swapped[idx] = ['Naip Ramadani', ...swapped[idx].slice(1)];
+    const r = parseMirusRows(swapped, 'beaulieu.xls');
+    const names = new Set(r.entries.map(e => e.name));
+    // EIN Mitarbeiter, kein Duplikat; erster gesehener Name gewinnt
+    expect(names.has('Ramadani Naip')).toBe(true);
+    expect(names.has('Naip Ramadani')).toBe(false);
+    const naip = r.entries.filter(e => e.name === 'Ramadani Naip');
+    expect(naip).toHaveLength(31);
+    expect(naip.every(e => e.hours === 4.5)).toBe(true);
+  });
+
   it('erkennt den Kostenträger 3012 → beaulieu', () => {
     const r = parseMirusRows(rows, 'beaulieu.xls');
     expect(r.costCenter).not.toBeNull();

@@ -224,6 +224,9 @@ export interface MirusDailyImportEntry {
   department: Department;
   date: string;
   hours: number;
+  /** Kostenstellen-Sektionen der Datei, aus denen dieser Tageswert stammt
+   *  (>1 Eintrag = Stunden über Sektionen hinweg SUMMIERT, z.B. Küche + Hilfsarbeiter). */
+  sections?: string[];
 }
 
 /**

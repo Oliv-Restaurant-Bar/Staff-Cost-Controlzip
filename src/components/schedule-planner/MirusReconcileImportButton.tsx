@@ -247,6 +247,9 @@ export function MirusReconcileImportButton({
   const [skippedHours, setSkippedHours] = useState(0);
   /** Zugeordnete Datei-Namen → Mitarbeiter + Tageswerte (für Auto-Auflösung geparkter Einträge mit Abdeckungs-Check). */
   const [matchedPairs, setMatchedPairs] = useState<Array<{ importedName: string; employeeId: string; days: Record<string, number> }>>([]);
+  // Mitarbeiter, deren Datei-Stunden aus MEHREREN Kostenstellen-Sektionen
+  // summiert wurden (z.B. Küche + Hilfsarbeiter) — für die Vorschau-Zeile.
+  const [mergedSections, setMergedSections] = useState<Record<string, string[]>>({});
   /** Offene geparkte Einträge des Monats (Sichtbarkeit in der Abdeckung). */
   const [openParkedCount, setOpenParkedCount] = useState(0);
 
@@ -476,11 +479,18 @@ export function MirusReconcileImportButton({
     }
 
     const resolved: MirusResolvedEntry[] = [];
+    const mergedSecs: Record<string, string[]> = {};
     for (const e of entries) {
       const emp = nameToEmp.get(e.name);
       if (!emp) continue;
       resolved.push({ employeeId: emp.id, employeeName: emp.name, date: e.date, hours: e.hours });
+      // Sektions-Herkunft: >1 Sektion an mindestens einem Tag ⇒ zusammengeführt
+      if ((e.sections?.length ?? 0) > 1) {
+        const secs = new Set([...(mergedSecs[emp.id] ?? []), ...e.sections!]);
+        mergedSecs[emp.id] = [...secs];
+      }
     }
+    setMergedSections(mergedSecs);
 
     // Effektive Erfassungsart: expliziter Wert gewinnt; Default: in Datei = MIRUS.
     const erfassungsart: Record<string, 'MIRUS' | 'MANUELL'> = {};
@@ -852,7 +862,7 @@ export function MirusReconcileImportButton({
         nameMatches={nameMatches}
         existingEmployees={employees}
         onConfirm={(ov) => buildPlanFromMatches(ov, parsedEntries, scopeMonth, scopeDates)}
-        onCancel={() => { setMatchDialogOpen(false); setParsedEntries([]); }}
+        onCancel={() => { setMatchDialogOpen(false); setParsedEntries([]); setMergedSections({}); }}
         allowPark
       />
 
@@ -1050,7 +1060,14 @@ export function MirusReconcileImportButton({
                         || (patternOf(c.decision) != null && c.resolution === 'mirus')).length;
                       return (
                         <TableRow key={e.employeeId}>
-                          <TableCell className="py-1.5 font-medium">{e.employeeName}</TableCell>
+                          <TableCell className="py-1.5 font-medium">
+                            {e.employeeName}
+                            {mergedSections[e.employeeId] && (
+                              <div className="text-xs font-normal text-muted-foreground" data-testid={`text-merged-sections-${e.employeeId}`}>
+                                zusammengeführt aus {mergedSections[e.employeeId].join(' + ')} (Tagessumme)
+                              </div>
+                            )}
+                          </TableCell>
                           <TableCell className="py-1.5 text-right">{e.fileTotal.toFixed(2)}</TableCell>
                           <TableCell className="py-1.5 text-right">{e.beforeTotal.toFixed(2)}</TableCell>
                           <TableCell className="py-1.5 text-right">{changes > 0 ? `${changes} Zellen` : '—'}</TableCell>
