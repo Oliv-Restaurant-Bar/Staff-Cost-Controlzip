@@ -21,7 +21,11 @@ import {
   weekdayLabel,
   shiftsForScope,
   defaultShiftDraft,
+  defaultSplitShiftDrafts,
   validateShiftDraft,
+  groupShiftUnits,
+  formatShiftTimes,
+  splitGroupOfMeta,
   type ShiftDraft,
 } from '@/lib/staffing-requirements-utils';
 import { DEPT_LABEL } from '@/lib/station-config';
@@ -74,16 +78,30 @@ function partNettoHours(cell: WeekCell | undefined, part: 'mittag' | 'abend'): n
  */
 function dayCellTitle(cell: WeekCell | undefined): string {
   if (!cell || cell.shifts.length === 0) return '';
-  const m = cell.shifts.filter((s) => !isEveningShift(s.shiftStart));
-  const a = cell.shifts.filter((s) => isEveningShift(s.shiftStart));
+  // Teildienste (splitGroup-Paare) als EINE Einheit ausweisen.
+  const units = groupShiftUnits(cell.shifts);
+  const splitLines: string[] = [];
+  const rest: typeof cell.shifts = [];
+  for (const u of units) {
+    if (u.split) {
+      const blocks = u.indices.map((i) => cell.shifts[i]);
+      splitLines.push(`Teildienst: ${formatShiftTimes(blocks.map((b) => ({ start: b.shiftStart, end: b.shiftEnd })))} × ${blocks[0].requiredCount}`);
+    } else {
+      rest.push(cell.shifts[u.indices[0]]);
+    }
+  }
+  const m = rest.filter((s) => !isEveningShift(s.shiftStart));
+  const a = rest.filter((s) => isEveningShift(s.shiftStart));
   const fmt = (list: typeof m) => list.map((s) => `${s.shiftStart}–${s.shiftEnd} × ${s.requiredCount}`).join(', ');
-  const parts: string[] = [];
+  const parts: string[] = [...splitLines];
   if (m.length > 0) parts.push(`Mittag: ${fmt(m)}`);
   if (a.length > 0) parts.push(`Abend: ${fmt(a)}`);
-  const kind = m.length > 0 && a.length > 0
+  const kind = (m.length > 0 && a.length > 0)
     ? (cell.headcountExplicit ? 'Mittag + Abend (getrennte Personen möglich)' : 'durchgehend / beide Hälften')
-    : m.length > 0 ? 'nur Mittag' : 'nur Abend';
-  return `${kind}\n${parts.join('\n')}\nKopfzahl: ${cell.headcount}${cell.headcountExplicit ? ' (explizit)' : ''}`;
+    : splitLines.length > 0
+      ? 'Teildienst (Mittag + Abend, 1 Kopf)'
+      : m.length > 0 ? 'nur Mittag' : 'nur Abend';
+  return `${kind}\n${parts.join('\n')}\nKopfzahl: ${cell.headcount}${cell.headcountExplicit ? ' (explizit)' : ''} — Teildienste zählen 1×`;
 }
 
 function CellValue({ cell, mode }: {
@@ -123,10 +141,14 @@ function CellEditPanel({
   onClose: () => void;
 }) {
   // GANZER Tag: alle Blöcke der Position (Mittag + Abend), chronologisch.
+  // splitGroup (Teildienst-Paar) aus meta übernehmen — Paare bleiben eine Einheit.
   const [drafts, setDrafts] = useState<ShiftDraft[]>(() =>
     [...rawShifts]
       .sort((x, y) => x.shiftStart.localeCompare(y.shiftStart))
-      .map((s) => ({ id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: s.requiredCount })));
+      .map((s) => ({
+        id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
+        requiredCount: s.requiredCount, splitGroup: splitGroupOfMeta(s.meta),
+      })));
   // Explizite KOPFZAHL des Tages (leer = Automatik max(Mittag, Abend)).
   const [headInput, setHeadInput] = useState<string>(() => {
     const v = explicitDayHeadcount(rawShifts);
@@ -137,6 +159,23 @@ function CellEditPanel({
 
   const update = (i: number, patch: Partial<ShiftDraft>) =>
     setDrafts((d) => d.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+
+  /** Anzahl einer Teildienst-Einheit: beide Blöcke synchron halten (1 Kopf). */
+  const updateUnitCount = (indices: number[], count: number) =>
+    setDrafts((d) => d.map((s, idx) => (indices.includes(idx) ? { ...s, requiredCount: count } : s)));
+
+  const removeIndices = (indices: number[]) =>
+    setDrafts((d) => d.filter((_, idx) => !indices.includes(idx)));
+
+  // Anzeige-Einheiten: Teildienst-Paare (splitGroup) als EINE Karte.
+  const units = groupShiftUnits(drafts);
+  // Live-Zusammenfassung: Kopfzahl-Automatik max(Mittag, Abend) — Teildienste 1×.
+  const liveMittag = drafts.reduce((a, s) => a + (!isEveningShift(s.shiftStart) && Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0);
+  const liveAbend = drafts.reduce((a, s) => a + (isEveningShift(s.shiftStart) && Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0);
+  const headTrimLive = headInput.trim();
+  const liveHead = headTrimLive !== '' && Number.isFinite(Number(headTrimLive))
+    ? Number(headTrimLive)
+    : Math.max(liveMittag, liveAbend);
 
   const handleSave = async () => {
     for (const d of drafts) {
@@ -175,42 +214,105 @@ function CellEditPanel({
       {drafts.length === 0 && (
         <p className="text-[11px] text-muted-foreground italic">Keine Soll-Schicht hinterlegt.</p>
       )}
-      {drafts.map((s, i) => (
-        <div key={s.id ?? `neu-${i}`} className="flex items-end gap-1.5">
-          <div className="flex flex-col gap-0.5">
-            <Label className="text-[10px] text-muted-foreground">Von</Label>
-            <Input type="time" className="h-7 w-[6.2rem] text-xs" value={s.shiftStart}
-              onChange={(e) => update(i, { shiftStart: e.target.value })}
-              data-testid={`cell-edit-start-${i}`} />
+      {units.map((u, uIdx) => {
+        if (u.split) {
+          const [iM, iA] = u.indices;
+          const blocks = u.indices.map((idx) => drafts[idx]);
+          const count = blocks[0].requiredCount;
+          return (
+            <div key={drafts[iM].splitGroup ?? `split-${uIdx}`}
+              className="space-y-1.5 rounded-md border border-[#6d5cf0]/30 dark:border-[#6d5cf0]/40 bg-[#6d5cf0]/[0.05] dark:bg-[#6d5cf0]/[0.12] p-2"
+              data-testid={`cell-edit-split-${uIdx}`}>
+              <div className="flex items-center gap-1.5">
+                <Badge variant="outline" className="h-4 border-[#6d5cf0]/50 px-1 text-[9px] text-[#6d5cf0]">
+                  Teildienst
+                </Badge>
+                <span className="text-[10px] text-muted-foreground">Mittag + Abend · zählt 1 Kopf</span>
+              </div>
+              {([['Mittag', iM], ['Abend', iA]] as const).map(([lbl, idx]) => (
+                <div key={lbl} className="flex items-end gap-1.5 pl-1">
+                  <span className="w-10 pb-1.5 text-[10px] text-muted-foreground">{lbl}</span>
+                  <div className="flex flex-col gap-0.5">
+                    <Label className="text-[10px] text-muted-foreground">Von</Label>
+                    <Input type="time" className="h-7 w-[6.2rem] text-xs" value={drafts[idx].shiftStart}
+                      onChange={(e) => update(idx, { shiftStart: e.target.value })}
+                      data-testid={`cell-edit-start-${idx}`} />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <Label className="text-[10px] text-muted-foreground">Bis</Label>
+                    <Input type="time" className="h-7 w-[6.2rem] text-xs" value={drafts[idx].shiftEnd}
+                      onChange={(e) => update(idx, { shiftEnd: e.target.value })}
+                      data-testid={`cell-edit-end-${idx}`} />
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-end justify-between gap-1.5 pl-1">
+                <div className="flex flex-col gap-0.5">
+                  <Label className="text-[10px] text-muted-foreground">Anzahl Personen</Label>
+                  <Input type="number" min={0} className="h-7 w-14 text-xs"
+                    value={Number.isFinite(count) ? count : ''}
+                    onChange={(e) => updateUnitCount(u.indices, e.target.value === '' ? NaN : Number(e.target.value))}
+                    data-testid={`cell-edit-split-count-${uIdx}`} />
+                </div>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0"
+                  onClick={() => removeIndices(u.indices)}
+                  title="Teildienst entfernen (beide Blöcke)">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          );
+        }
+        const i = u.indices[0];
+        const s = drafts[i];
+        return (
+          <div key={s.id ?? `neu-${i}`} className="flex items-end gap-1.5">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Von</Label>
+              <Input type="time" className="h-7 w-[6.2rem] text-xs" value={s.shiftStart}
+                onChange={(e) => update(i, { shiftStart: e.target.value })}
+                data-testid={`cell-edit-start-${i}`} />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Bis</Label>
+              <Input type="time" className="h-7 w-[6.2rem] text-xs" value={s.shiftEnd}
+                onChange={(e) => update(i, { shiftEnd: e.target.value })}
+                data-testid={`cell-edit-end-${i}`} />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Anzahl</Label>
+              <Input type="number" min={0} className="h-7 w-14 text-xs" value={Number.isFinite(s.requiredCount) ? s.requiredCount : ''}
+                onChange={(e) => update(i, { requiredCount: e.target.value === '' ? NaN : Number(e.target.value) })}
+                data-testid={`cell-edit-count-${i}`} />
+            </div>
+            <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0"
+              onClick={() => setDrafts((d) => d.filter((_, idx) => idx !== i))}
+              title="Schicht entfernen">
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <Label className="text-[10px] text-muted-foreground">Bis</Label>
-            <Input type="time" className="h-7 w-[6.2rem] text-xs" value={s.shiftEnd}
-              onChange={(e) => update(i, { shiftEnd: e.target.value })}
-              data-testid={`cell-edit-end-${i}`} />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <Label className="text-[10px] text-muted-foreground">Anzahl</Label>
-            <Input type="number" min={0} className="h-7 w-14 text-xs" value={Number.isFinite(s.requiredCount) ? s.requiredCount : ''}
-              onChange={(e) => update(i, { requiredCount: e.target.value === '' ? NaN : Number(e.target.value) })}
-              data-testid={`cell-edit-count-${i}`} />
-          </div>
-          <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0"
-            onClick={() => setDrafts((d) => d.filter((_, idx) => idx !== i))}
-            title="Schicht entfernen">
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      ))}
-      <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs"
-        onClick={() => setDrafts((d) => [...d, {
-          ...defaultShiftDraft(),
-          // Zweiter Block eines Tages ist typischerweise der Abend.
-          ...(d.some((s) => !isEveningShift(s.shiftStart)) ? { shiftStart: '17:00', shiftEnd: '23:00' } : {}),
-        }])}
-        data-testid="cell-edit-add">
-        <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
-      </Button>
+        );
+      })}
+      <div className="flex flex-wrap gap-1">
+        <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs"
+          onClick={() => setDrafts((d) => [...d, {
+            ...defaultShiftDraft(),
+            // Zweiter Block eines Tages ist typischerweise der Abend.
+            ...(d.some((s) => !isEveningShift(s.shiftStart)) ? { shiftStart: '17:00', shiftEnd: '23:00' } : {}),
+          }])}
+          data-testid="cell-edit-add">
+          <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-[#6d5cf0]"
+          onClick={() => setDrafts((d) => [...d, ...defaultSplitShiftDrafts()])}
+          title="Teildienst: EINE Person mit Mittag- und Abend-Block (zählt 1 Kopf)"
+          data-testid="cell-edit-add-split">
+          <Plus className="h-3.5 w-3.5" /> Teildienst hinzufügen
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground" data-testid="cell-edit-live-summary">
+        = {liveHead} K{liveHead === 1 ? 'opf' : 'öpfe'} (Teildienste 1×) · Mittag {liveMittag} · Abend {liveAbend}
+      </p>
       <div className="flex items-end gap-2 border-t pt-2">
         <div className="flex flex-col gap-0.5">
           <Label className="text-[10px] text-muted-foreground">Personen am Tag (Kopfzahl)</Label>

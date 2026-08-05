@@ -9,7 +9,7 @@
  * gleiche Berechnung (calculateDayNetHours).
  */
 
-import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours, slotGrossHours } from '@/hooks/useShiftConfig';
 
 /** Zellschlüssel-Format: `${empId}-YYYY-MM-DD` → empId = alles außer den letzten 11 Zeichen. */
 function splitCellKey(cellKey: string): { empId: string; date: string } {
@@ -46,6 +46,59 @@ export function aggregatePlanHours(
     if (net > 0) out[empId] = (out[empId] ?? 0) + Math.round(net * 100) / 100;
   }
   return out;
+}
+
+/** Diagnose-Detail je Mitarbeiter (für Debug-Log + Invariante). */
+export interface PlanHoursDebugRow {
+  empId: string;
+  /** Gezählte Arbeits-Einträge (netto > 0) im Monat. */
+  entries: number;
+  /** Brutto-Summe (Zeitspannen ohne Pausenabzug) der gezählten Einträge. */
+  grossHours: number;
+  /** Netto-Summe (= Wert der «Plan Std»-Spalte). */
+  netHours: number;
+  /** Monats-Präfixe ALLER Blob-Einträge dieses Mitarbeiters (auch übersprungene). */
+  monthPrefixes: string[];
+  /** Übersprungene Fremdmonats-Einträge (würden ohne Filter mitzählen). */
+  skippedForeignMonth: number;
+}
+
+/**
+ * Diagnose zur «Plan Std»-Aggregation: pro Mitarbeiter gezählte Einträge,
+ * Brutto/Netto und alle im Blob gesehenen Monats-Präfixe. INVARIANTE:
+ * netHours ≤ grossHours (Netto kann nie über der Summe der Zeitspannen
+ * des Monats liegen). Verletzungen deuten auf Fremdmonats-Reste oder
+ * Doppelzählung hin und werden vom Aufrufer geloggt.
+ */
+export function debugPlanHours(
+  data: Record<string, unknown>,
+  year: number,
+  month: number,
+): PlanHoursDebugRow[] {
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  const byEmp = new Map<string, PlanHoursDebugRow>();
+  for (const [cellKey, ds] of Object.entries(data)) {
+    const { empId, date } = splitCellKey(cellKey);
+    if (!empId) continue;
+    let row = byEmp.get(empId);
+    if (!row) {
+      row = { empId, entries: 0, grossHours: 0, netHours: 0, monthPrefixes: [], skippedForeignMonth: 0 };
+      byEmp.set(empId, row);
+    }
+    const mp = date.slice(0, 7);
+    if (!row.monthPrefixes.includes(mp)) row.monthPrefixes.push(mp);
+    if (!date.startsWith(prefix)) { row.skippedForeignMonth++; continue; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = ds as any;
+    if (entry?.frühAbsence === 'FE' || entry?.spätAbsence === 'FE') continue;
+    const net = calculateDayNetHours(entry);
+    if (net > 0) {
+      row.entries++;
+      row.netHours = Math.round((row.netHours + net) * 100) / 100;
+      row.grossHours = Math.round((row.grossHours + slotGrossHours(entry?.früh) + slotGrossHours(entry?.spät)) * 100) / 100;
+    }
+  }
+  return [...byEmp.values()];
 }
 
 /**

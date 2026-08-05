@@ -1,0 +1,11 @@
+Personalkosten „Plan Std" ist trotz plan-stunden-sync.ts + grüner Tests im LAUFENDEN Betrieb weiterhin falsch. Beweis: Pizza 2 Aushilfe zeigt „Plan Std" 186.5 h für August 2026, aber der gesamte August-Dienstplan dieser Person summiert sich auf nur 173.5 h brutto (Netto noch weniger). Eine Netto-Plan-Std kann NIE grösser sein als die Summe aller Zeitspannen des Monats → es werden weiterhin Fremdmonats-Reste mitgezählt.
+
+Das bedeutet: die neue Sync-Logik ist nicht mit der tatsächlichen „Plan Std"-Spalte der FLEX-Tabelle verdrahtet, oder der localStorage-Cache wird im echten Ablauf nicht ersetzt/gefiltert.
+
+Aufgaben:
+1. INVARIANTE einführen und testen: Für jeden Mitarbeiter und Monat gilt Plan-Std (Personalkosten) ≤ Summe der Brutto-Zeitspannen des Dienstplans für DIESEN Monat. Pizza 2 Aushilfe August verletzt das aktuell (186.5 > 173.5). Diese Invariante als Assertion/Test mit echten Supabase-Daten prüfen, nicht nur mit Fixtures.
+2. Den TATSÄCHLICHEN Datenpfad tracen, der die Zahl in der Spalte „Plan Std" (FLEX KOSTEN PRO MITARBEITER) erzeugt — von der Anzeige rückwärts bis zur Quelle. Sicherstellen, dass GENAU dieser Pfad (a) den frisch aus Supabase gespiegelten schedule-v2-Cache nutzt und (b) strikt nur Tage des angezeigten Monats zählt (Datum-Präfix YYYY-MM), FE ausgenommen, Netto via calculateDayNetHours.
+3. Debug-Log ergänzen (temporär): pro Mitarbeiter beim Rendern der „Plan Std" die Anzahl gezählter Einträge + deren Monats-Präfixe ausgeben, damit sichtbar wird, ob Fremdmonats-Einträge einfliessen. An Pizza 2 Aushilfe verifizieren, dass nach dem Fix nur 2026-08-Einträge zählen und die Summe ≤ 173.5 h ist.
+4. Prüfen, ob es MEHRERE Code-Pfade für „Plan Std" gibt (Haupttabelle vs. Popups vs. Export) und ob plan-stunden-sync.ts wirklich von der Haupttabelle verwendet wird — nicht nur importiert, sondern aktiv genutzt.
+
+Kontrolle nach dem Fix (live, nicht nur Test): Pizza 2 Aushilfe „Plan Std" ≤ 173.5 h und = den Netto-Stunden, die der Dienstplan für August zeigt. Danach Aushilfe 2 Küche A, Party, Momand Sajed gegen den Dienstplan gegenprüfen. Mandantengetrennt.

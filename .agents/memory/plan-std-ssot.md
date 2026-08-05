@@ -13,3 +13,5 @@ description: Personalkosten «Plan Std» muss den schedule-v2-Cache voll durch S
 - Async-Loads in solchen Effekten brauchen einen Stale-Guard (Cleanup setzt `stale=true`), sonst überschreibt ein out-of-order Response den frischeren Spiegel.
 - FE-Plan-Absenzen und isAdditionalCostPlan kommen aus Supabase-Spalten — Vollersatz verliert nichts.
 - «Ist Std» (actual-hours) ist bewusst KEIN Vollersatz: localStorage-only absenceType (FE/K/U) muss den Merge überleben.
+- **Invariante & Diagnose:** Für jeden Mitarbeiter/Monat gilt Netto-Plan-Std ≤ Brutto-Summe der Monats-Zeitspannen. `debugPlanHours()` (DEV-gated Log `[PLAN-STD]` beim Spiegeln) zeigt pro Mitarbeiter Einträge/Brutto/Netto/Monats-Präfixe/übersprungene Fremdmonate.
+- **Bei erneuten «Zahl ist falsch»-Meldungen zuerst die DB prüfen:** Live-SQL gegen `schedule_entries` (Brutto via Zeitspannen-Summe, Netto = −0.5 h an Tagen > 9 h brutto bzw. manuelle Einsatz-Pausen) statt der Nutzer-Handsumme trauen. Aug 2026 «186.5 > 173.5»: DB hatte real 195.5 brutto/186.5 netto — Spalte war korrekt; Einträge waren kurz zuvor frisch geschrieben worden (Handzählung veraltet).

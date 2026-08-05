@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { addProposal, type SchedulePlanProposal } from '@/lib/schedule-proposal-store';
 import { employeeCanCover } from '@/lib/position-utils';
 import { nettoMinutesForSlots } from '@/lib/staffing-check-utils';
+import { formatShiftTimes } from '@/lib/staffing-requirements-utils';
 import type { AssignedPersonDetail, DayPositionHint } from '@/lib/staffing-day-hints';
 import type { PlannedSlot } from '@/lib/staffing-comparison-utils';
 import type { Employee } from '@/types/personnel';
@@ -148,40 +149,63 @@ export function WeekCompareCellDialog({
     });
   };
 
-  const dayLabel = format(parseISO(dateStr), 'EEEE dd.MM.yyyy', { locale: de });
+  // Datum ausgeschrieben («Montag, 3. August 2026»).
+  const dayLabel = format(parseISO(dateStr), 'EEEE, d. MMMM yyyy', { locale: de });
   const diff = hint.diff;
+  // Abgestimmtes Farbschema: Bernstein = über Bedarf, Rot = unter, Grün = im Bedarf.
   const diffTone = diff === 0
-    ? 'text-emerald-600 dark:text-emerald-400'
+    ? 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'
     : diff > 0
-      ? 'text-red-600 dark:text-red-400'
-      : 'text-amber-600 dark:text-amber-400';
-  const diffLabel = diff === 0 ? '±0' : diff > 0 ? `+${diff}` : `${diff}`;
+      ? 'text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30'
+      : 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30';
+  const diffBadgeText = diff === 0
+    ? 'im Bedarf'
+    : diff > 0
+      ? `▲ ${diff} Person${diff === 1 ? '' : 'en'} über Bedarf`
+      : `▼ ${Math.abs(diff)} Person${Math.abs(diff) === 1 ? '' : 'en'} unter Bedarf`;
 
-  const rows = hint.assigned.map((a) => ({
-    ...a,
-    name: nameById.get(a.id) ?? a.id,
-    nettoMin: nettoMinutesForSlots(a.slots),
-  }));
+  const rows = hint.assigned.map((a) => {
+    const slots = [...a.slots].sort((x, y) => timeToMin(x.start) - timeToMin(y.start));
+    return {
+      ...a,
+      slots,
+      name: nameById.get(a.id) ?? a.id,
+      nettoMin: nettoMinutesForSlots(slots),
+      // Aufschlüsselung je Einsatz (Pause pro Einsatz bereits abgezogen).
+      slotNetto: slots.map((s) => nettoMinutesForSlots([s])),
+    };
+  });
   // Total aus Roh-Minuten, EINMAL gerundet (keine Zeile/Footer-Rundungsdrift).
   const totalNetto = r1(rows.reduce((s, x) => s + x.nettoMin, 0) / 60);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" data-testid="week-compare-cell-dialog">
-        <DialogHeader>
-          <DialogTitle>{hint.positionName} — {dayLabel}</DialogTitle>
+      <DialogContent className="sm:max-w-lg" data-testid="week-compare-cell-dialog">
+        <DialogHeader className="space-y-0.5">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Personalbedarf · {hint.positionName}
+          </p>
+          <DialogTitle className="text-base">
+            {hint.positionName}
+            <span className="ml-2 font-normal text-muted-foreground">{dayLabel}</span>
+          </DialogTitle>
           <DialogDescription className="sr-only">
             Dienstplan-Detail dieser Position an diesem Tag (nur Anzeige).
           </DialogDescription>
         </DialogHeader>
 
-        {/* Kopfzeile Bedarf vs. Plan mit Ampelfarbe */}
-        <div className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm" data-testid="cell-dialog-summary">
-          <span>Bedarf <b className="tabular-nums">{hint.soll}</b></span>
-          <span className="text-muted-foreground">·</span>
-          <span>Plan <b className="tabular-nums">{hint.planned}</b></span>
-          <Badge variant="outline" className={cn('ml-auto tabular-nums', diffTone)}>
-            {diffLabel}
+        {/* Statusleiste: Bedarf/Plan-Pills + Abweichungs-Badge */}
+        <div className="flex flex-wrap items-center gap-2" data-testid="cell-dialog-summary">
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+            Bedarf <b className="tabular-nums">{hint.soll}</b>
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#0ea5e9]" />
+            Plan <b className="tabular-nums">{hint.planned}</b>
+          </span>
+          <Badge variant="outline" className={cn('ml-auto tabular-nums text-[11px]', diffTone)}>
+            {diffBadgeText}
           </Badge>
         </div>
 
@@ -199,29 +223,85 @@ export function WeekCompareCellDialog({
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-[11px] uppercase tracking-wide text-muted-foreground text-left">
-                <th className="py-1 pr-2 font-medium">Mitarbeiter</th>
-                <th className="py-1 pr-2 font-medium">Zeit</th>
-                <th className="py-1 pr-2 font-medium">Schicht</th>
-                <th className="py-1 text-right font-medium">Netto h</th>
+              <tr className="text-[10px] uppercase tracking-wide text-muted-foreground text-left">
+                <th className="py-1.5 pl-1.5 pr-3 font-medium">Mitarbeiter</th>
+                <th className="py-1.5 pr-3 font-medium">Zeit</th>
+                <th className="py-1.5 pr-3 font-medium">Schicht</th>
+                <th className="py-1.5 text-right font-medium">Netto</th>
+                {actionsEnabled && diff > 0 && <th className="py-1.5 pl-1.5" aria-label="Aktionen" />}
               </tr>
             </thead>
             <tbody>
-              {rows.map((p) => (
-                <tr key={p.id} className="border-t border-border/50" data-testid={`cell-dialog-emp-${p.id}`}>
-                  <td className="py-1 pr-2">
+              {rows.map((p) => {
+                const isSplit = p.slots.length > 1;
+                const label = shiftLabelForSlots(p.slots);
+                // Pause (nur Einzeleinsatz): Brutto − Netto des Einsatzes.
+                const pauseH = !isSplit && p.slots.length === 1
+                  ? Math.max(0, (timeToMin(p.slots[0].end) - timeToMin(p.slots[0].start)) - p.nettoMin) / 60
+                  : 0;
+                return (
+                <tr
+                  key={p.id}
+                  className={cn(
+                    'border-t border-border/50',
+                    isSplit && 'bg-gradient-to-r from-[#6d5cf0]/[0.07] to-transparent dark:from-[#6d5cf0]/[0.14]',
+                  )}
+                  style={isSplit ? { boxShadow: 'inset 3px 0 0 #6d5cf0' } : undefined}
+                  data-testid={`cell-dialog-emp-${p.id}`}
+                >
+                  <td className="py-2 pl-1.5 pr-3 align-top">
                     <span className="font-medium">{p.name}</span>
                     {VIA_LABEL[p.via] && (
-                      <Badge variant="secondary" className="ml-1.5 text-[10px] align-middle">
-                        {VIA_LABEL[p.via]}
-                      </Badge>
+                      <span className="block text-[10px] text-muted-foreground">{VIA_LABEL[p.via]}</span>
                     )}
                   </td>
-                  <td className="py-1 pr-2 tabular-nums whitespace-nowrap">
-                    {p.slots.map((s) => `${s.start}–${s.end}`).join(', ')}
+                  <td className="py-2 pr-3 align-top whitespace-nowrap">
+                    {isSplit ? (
+                      <span className="inline-flex items-center gap-1">
+                        {p.slots.map((s, si) => (
+                          <span key={si} className="inline-flex items-center gap-1">
+                            {si > 0 && <span className="text-[#6d5cf0] font-semibold">+</span>}
+                            <span className="flex flex-col rounded border border-[#6d5cf0]/30 bg-[#6d5cf0]/[0.06] dark:bg-[#6d5cf0]/[0.15] px-1.5 py-0.5">
+                              <span className="text-[8px] font-semibold uppercase tracking-wider text-[#6d5cf0]">
+                                {si === 0 ? 'Mittag' : 'Abend'}
+                              </span>
+                              <span className="font-mono text-[12px] tabular-nums leading-tight">{s.start}–{s.end}</span>
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[13px] tabular-nums">{formatShiftTimes(p.slots)}</span>
+                    )}
                   </td>
-                  <td className="py-1 pr-2">{shiftLabelForSlots(p.slots)}</td>
-                  <td className="py-1 text-right tabular-nums">{r1(p.nettoMin / 60).toFixed(1)}</td>
+                  <td className="py-2 pr-3 align-top whitespace-nowrap">
+                    {isSplit ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-[#6d5cf0]/40 bg-[#6d5cf0]/[0.08] dark:bg-[#6d5cf0]/[0.18] px-2 py-0.5 text-[10px] font-medium text-[#6d5cf0]">
+                        ◧ Teildienst
+                      </span>
+                    ) : label === 'durchgehend' ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-[#0ea5e9]/40 bg-[#0ea5e9]/[0.08] dark:bg-[#0ea5e9]/[0.18] px-2 py-0.5 text-[10px] font-medium text-[#0284c7] dark:text-[#38bdf8]">
+                        ▬ Durchgehend
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {label}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right align-top tabular-nums whitespace-nowrap">
+                    <span className="font-semibold">{r1(p.nettoMin / 60).toFixed(1)}</span>
+                    {isSplit && (
+                      <span className="block text-[10px] text-muted-foreground">
+                        {p.slotNetto.map((m) => (m / 60).toFixed(2)).join(' + ')}
+                      </span>
+                    )}
+                    {!isSplit && pauseH > 0 && (
+                      <span className="block text-[10px] text-muted-foreground">
+                        Pause {pauseH.toLocaleString('de-CH', { maximumFractionDigits: 1 })}
+                      </span>
+                    )}
+                  </td>
                   {actionsEnabled && diff > 0 && (
                     <td className="py-1 pl-1.5 text-right">
                       <Button
@@ -237,25 +317,27 @@ export function WeekCompareCellDialog({
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 font-medium" data-testid="cell-dialog-total">
-                <td className="py-1 pr-2">{rows.length} Person{rows.length === 1 ? '' : 'en'} (Kopfzahl)</td>
-                <td />
-                <td className="py-1 pr-2 text-right text-xs text-muted-foreground">Total</td>
-                <td className="py-1 text-right tabular-nums">{totalNetto.toFixed(1)}</td>
+              <tr className="border-t-2" data-testid="cell-dialog-total">
+                <td colSpan={2} className="py-2 pl-1.5 pr-3 align-top">
+                  <span className="font-semibold">{rows.length} Person{rows.length === 1 ? '' : 'en'} (Kopfzahl)</span>
+                  <span className="block text-[10px] font-normal text-muted-foreground">
+                    Teildienste zählen 1× · Mittag + Abend = eine Person
+                  </span>
+                </td>
+                <td className="py-2 pr-3 text-right align-top text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Netto-<br />Stunden
+                </td>
+                <td className="py-2 text-right align-top text-base font-semibold tabular-nums">
+                  {totalNetto.toFixed(1)}
+                </td>
+                {actionsEnabled && diff > 0 && <td />}
               </tr>
             </tfoot>
           </table>
-        )}
-
-        {diff !== 0 && (
-          <p className={cn('text-xs font-medium', diffTone)} data-testid="cell-dialog-diff-hint">
-            {diff < 0
-              ? `${Math.abs(diff)} Person${Math.abs(diff) === 1 ? '' : 'en'} unter Bedarf`
-              : `${diff} Person${diff === 1 ? '' : 'en'} über Bedarf`}
-          </p>
         )}
 
         {/* ── Offene Vorschläge dieser Zelle (noch nicht geplant) ─────────── */}

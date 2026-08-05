@@ -22,3 +22,8 @@ description: Führende Kennzahl im Personalbedarf ist die KOPFZAHL (Personen/Tag
 - Plan-/Ist-Stunden sind `null`, nie 0, wenn nichts geplant/importiert ist.
 - Farbkonvention Kopfzahl-Matrix: grün = passt, ROT = über Bedarf, GELB = unter (abweichend von der 2-Farben-Logik des Einzeltag-Abgleichs).
 - Mitarbeiter-Zweitpositionen heißen `secondaryStations` (nicht trainedStations).
+
+## Teildienst (geteilte Schicht) — rein präsentational
+- Teildienst = ZWEI requirement-Zeilen, verknüpft via `meta.splitGroup`; Zähllogik unverändert (beide Hälften gleiche Anzahl ⇒ max(M,A) = 1 Kopf).
+- **Why:** Stunden-Analytik bleibt block-basiert korrekt; keine Änderung an computeWeekCell nötig.
+- **How to apply:** splitGroup NIE in Zähl-/Stundenlogik auswerten. Gültigkeit wird in JEDEM Save-Pfad via `normalizeSplitGroups` erzwungen (genau 2 Blöcke, 1×Mittag+1×Abend, gleiche Anzahl — sonst Gruppe lösen); `groupShiftUnits` gruppiert nur exakt-2er-Gruppen. Notation überall «10:00–14:00 / 17:00–22:30» (formatShiftTimes).

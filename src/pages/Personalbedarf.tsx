@@ -41,7 +41,7 @@ import {
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
-import { buildCellSaveDrafts, buildWeekOverview, isEveningShift, explicitDayHeadcount } from '@/lib/staffing-week-utils';
+import { buildCellSaveDrafts, buildWeekOverview, isEveningShift, explicitDayHeadcount, normalizeSplitGroups } from '@/lib/staffing-week-utils';
 import { StaffingWeekSummary } from '@/components/schedule-planner/StaffingWeekSummary';
 import { WeekCompareTiles, WeekCompareMatrix, WeekHoursTable } from '@/components/schedule-planner/StaffingWeekCompare';
 import { buildWeekCompare } from '@/lib/staffing-week-compare';
@@ -72,10 +72,13 @@ import {
   seasonLabel,
   weekdayLabel,
   defaultShiftDraft,
+  defaultSplitShiftDrafts,
   validateShiftDraft,
   shiftsForScope,
   totalRequired,
   buildRequirementMatrix,
+  groupShiftUnits,
+  splitGroupOfMeta,
   type ShiftDraft,
 } from '@/lib/staffing-requirements-utils';
 
@@ -107,7 +110,7 @@ type EditsMap = Record<string, ShiftDraft[]>;
 function serializeEdits(edits: EditsMap): string {
   const keys = Object.keys(edits).sort();
   return JSON.stringify(
-    keys.map((k) => [k, edits[k].map((s) => [s.shiftStart, s.shiftEnd, s.requiredCount])]),
+    keys.map((k) => [k, edits[k].map((s) => [s.shiftStart, s.shiftEnd, s.requiredCount, s.splitGroup ?? null])]),
   );
 }
 
@@ -417,6 +420,7 @@ export default function Personalbedarf() {
             shiftStart: s.shiftStart,
             shiftEnd: s.shiftEnd,
             requiredCount: s.requiredCount,
+            splitGroup: splitGroupOfMeta(s.meta),
           }));
         }
       }
@@ -457,7 +461,8 @@ export default function Personalbedarf() {
       for (const area of dep.areas) {
         for (const pr of area.positions) {
           next[pr.position.key] = pr.shifts.map((s) => ({
-            id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: s.requiredCount,
+            id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd,
+            requiredCount: s.requiredCount, splitGroup: splitGroupOfMeta(s.meta),
           }));
         }
       }
@@ -503,10 +508,18 @@ export default function Personalbedarf() {
     const scope: StaffingScope = { scopeType: SCOPE_WEEKLY, season, weekday, scopeRef: null };
 
     // 2) Drafts aus den sichtbaren Positionen + erhaltene Orphan-Schichten.
+    //    Bestehendes meta (z. B. dayHeadcount) per id ERHALTEN — nie leeren;
+    //    splitGroup (Teildienst) folgt dem aktuellen Draft-Zustand.
+    const metaById = new Map<string, Record<string, unknown>>();
+    for (const r of shiftsForScope(requirements, matrixSeason, weekday)) {
+      if (r.id) metaById.set(r.id, r.meta ?? {});
+    }
     const drafts: (StaffingRequirementDraft & { id?: string })[] = [];
     for (const [key, shifts] of Object.entries(edits)) {
+      const rows: (StaffingRequirementDraft & { id?: string })[] = [];
       shifts.forEach((s, index) => {
-        drafts.push({
+        const { splitGroup: _sg, ...restMeta } = (s.id ? metaById.get(s.id) : undefined) ?? {};
+        rows.push({
           id: s.id,
           scopeType: SCOPE_WEEKLY,
           season,
@@ -517,9 +530,11 @@ export default function Personalbedarf() {
           shiftEnd: s.shiftEnd,
           requiredCount: s.requiredCount,
           sortOrder: index,
-          meta: {},
+          meta: s.splitGroup ? { ...restMeta, splitGroup: s.splitGroup } : restMeta,
         });
       });
+      // Teildienst-Integrität: verwaiste/ungültige splitGroups vor dem Speichern lösen.
+      drafts.push(...normalizeSplitGroups(rows));
     }
     for (const o of orphanShifts) {
       drafts.push({
@@ -1067,18 +1082,111 @@ export default function Personalbedarf() {
                         >
                           {p.name}
                         </button>
-                        {shifts.length > 0 && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            {shifts.length} {shifts.length === 1 ? 'Schicht' : 'Schichten'} · {shifts.reduce((a, s) => a + (Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0)} MA
-                          </Badge>
-                        )}
+                        {shifts.length > 0 && (() => {
+                          // Kopfzahl-Automatik: max(Mittag, Abend) — Teildienste zählen 1×.
+                          let mittag = 0; let abend = 0;
+                          for (const s of shifts) {
+                            const c = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
+                            if (isEveningShift(s.shiftStart)) abend += c; else mittag += c;
+                          }
+                          const heads = Math.max(mittag, abend);
+                          const unitCount = groupShiftUnits(shifts).length;
+                          return (
+                            <Badge variant="secondary" className="text-[10px] tabular-nums">
+                              {unitCount} {unitCount === 1 ? 'Schicht' : 'Schichten'} · {heads} {heads === 1 ? 'Kopf' : 'Köpfe'}
+                            </Badge>
+                          );
+                        })()}
                       </div>
 
                       {shifts.length === 0 ? (
                         <p className="text-xs text-muted-foreground italic pl-1">Keine Schicht definiert.</p>
                       ) : (
                         <div className="space-y-2">
-                          {shifts.map((s, idx) => (
+                          {groupShiftUnits(shifts).map((u, uIdx) => {
+                            if (u.split) {
+                              const blocks = u.indices.map((idx) => shifts[idx]);
+                              const count = Number.isFinite(blocks[0].requiredCount) ? blocks[0].requiredCount : 0;
+                              const nettoSum = blocks.reduce((a, b) => a + Math.max(0, nettoSegmentMinutes(b.shiftStart, b.shiftEnd)), 0);
+                              return (
+                                <div
+                                  key={blocks[0].splitGroup ?? `split-${uIdx}`}
+                                  className="space-y-2 rounded-md border border-[#6d5cf0]/30 dark:border-[#6d5cf0]/40 bg-[#6d5cf0]/[0.05] dark:bg-[#6d5cf0]/[0.12] p-2.5"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="h-5 border-[#6d5cf0]/50 px-1.5 text-[10px] text-[#6d5cf0]">
+                                      Teildienst
+                                    </Badge>
+                                    <span className="text-[11px] text-muted-foreground">Mittag + Abend · zählt 1 Kopf</span>
+                                  </div>
+                                  {u.indices.map((idx, blockNo) => (
+                                    <div key={idx} className="flex flex-wrap items-end gap-2 pl-1">
+                                      <span className="w-12 pb-2 text-[11px] text-muted-foreground">{blockNo === 0 ? 'Mittag' : 'Abend'}</span>
+                                      <div className="flex flex-col gap-0.5">
+                                        <Label className="text-[10px] text-muted-foreground">Beginn</Label>
+                                        <Input
+                                          type="time"
+                                          value={shifts[idx].shiftStart}
+                                          disabled={readOnly}
+                                          onChange={(e) => updateShift(p.key, idx, { shiftStart: e.target.value })}
+                                          className="h-8 w-[7.5rem] text-sm"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-0.5">
+                                        <Label className="text-[10px] text-muted-foreground">Ende</Label>
+                                        <Input
+                                          type="time"
+                                          value={shifts[idx].shiftEnd}
+                                          disabled={readOnly}
+                                          onChange={(e) => updateShift(p.key, idx, { shiftEnd: e.target.value })}
+                                          className="h-8 w-[7.5rem] text-sm"
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <div className="flex flex-wrap items-end gap-2 pl-1">
+                                    <div className="flex flex-col gap-0.5">
+                                      <Label className="text-[10px] text-muted-foreground">Anzahl Personen</Label>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={count}
+                                        disabled={readOnly}
+                                        onChange={(e) => {
+                                          const v = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                                          for (const idx of u.indices) updateShift(p.key, idx, { requiredCount: v });
+                                        }}
+                                        className="h-8 w-[5rem] text-sm"
+                                      />
+                                    </div>
+                                    {nettoSum > 0 && (
+                                      <span className="text-[11px] text-muted-foreground pb-2 tabular-nums whitespace-nowrap">
+                                        netto {(nettoSum / 60).toLocaleString('de-CH', { maximumFractionDigits: 1 })} h (beide Blöcke)
+                                        {count > 1 && ` · Soll ${((nettoSum * count) / 60).toLocaleString('de-CH', { maximumFractionDigits: 1 })} h`}
+                                      </span>
+                                    )}
+                                    {!readOnly && (
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="ml-auto h-8 w-8 text-red-600 hover:text-red-700"
+                                        onClick={() => {
+                                          // Beide Blöcke des Teildiensts entfernen (absteigend, Indizes stabil).
+                                          for (const idx of [...u.indices].sort((a, b) => b - a)) removeShift(p.key, idx);
+                                        }}
+                                        title="Teildienst entfernen (beide Blöcke)"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            const idx = u.indices[0];
+                            const s = shifts[idx];
+                            return (
                             <div key={idx} className="flex flex-wrap items-end gap-2">
                               <div className="flex flex-col gap-0.5">
                                 <Label className="text-[10px] text-muted-foreground">Beginn</Label>
@@ -1136,14 +1244,25 @@ export default function Personalbedarf() {
                                 </Button>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
 
                       {!readOnly && (
-                        <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => addShift(p.key)}>
-                          <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
-                        </Button>
+                        <div className="flex flex-wrap gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => addShift(p.key)}>
+                            <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
+                          </Button>
+                          <Button
+                            size="sm" variant="ghost"
+                            className="h-7 gap-1 text-xs text-[#6d5cf0]"
+                            onClick={() => setEdits((e) => ({ ...e, [p.key]: [...(e[p.key] ?? []), ...defaultSplitShiftDrafts()] }))}
+                            title="Teildienst: EINE Person mit Mittag- und Abend-Block (zählt 1 Kopf)"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> Teildienst hinzufügen
+                          </Button>
+                        </div>
                       )}
                     </div>
                   );

@@ -64,7 +64,7 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
-import { aggregatePlanHours, mirrorPlanMonthToLocalStorage } from '@/lib/plan-stunden-sync';
+import { aggregatePlanHours, mirrorPlanMonthToLocalStorage, debugPlanHours } from '@/lib/plan-stunden-sync';
 import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
@@ -2409,6 +2409,20 @@ export default function PersonalFixPage() {
       // alte lokale Flags/Geister-Einträge werden bewusst NICHT übernommen.
       const written = mirrorPlanMonthToLocalStorage(supabaseSchedule, scheduleKey);
       if (!written) console.warn('[PLAN] personal-fix: localStorage-Spiegel fehlgeschlagen (Quota?) – verwende Supabase-Daten direkt');
+      // Debug + INVARIANTE: pro Mitarbeiter gezählte Einträge, Monats-Präfixe,
+      // Brutto/Netto. Netto («Plan Std») darf NIE über der Brutto-Summe der
+      // Monats-Zeitspannen liegen; Fremdmonats-Einträge dürfen nicht zählen.
+      if (import.meta.env.DEV) {
+      const debugSource = written
+        ? (() => { try { return JSON.parse(localStorage.getItem(scheduleKey) || '{}') as Record<string, unknown>; } catch { return supabaseSchedule as Record<string, unknown>; } })()
+        : supabaseSchedule as Record<string, unknown>;
+      for (const d of debugPlanHours(debugSource, selectedYear, selectedMonth)) {
+        console.log(`[PLAN-STD] ${d.empId}: ${d.entries} Einträge, brutto ${d.grossHours.toFixed(1)} h, netto ${d.netHours.toFixed(2)} h, Monats-Präfixe [${d.monthPrefixes.join(', ')}]${d.skippedForeignMonth > 0 ? ` — ${d.skippedForeignMonth} Fremdmonats-Einträge übersprungen` : ''}`);
+        if (d.netHours > d.grossHours + 0.01) {
+          console.error(`[PLAN-STD] INVARIANTE VERLETZT für ${d.empId}: netto ${d.netHours} > brutto ${d.grossHours} — Fremdmonats-/Doppelzählung prüfen!`);
+        }
+      }
+      }
       // Re-read plan hours and ferien plan — bei Schreibfehler direkt aus Supabase-Daten
       setPlanHours(written
         ? loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey)

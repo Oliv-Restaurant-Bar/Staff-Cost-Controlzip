@@ -14,7 +14,39 @@ import type { Position } from '@/types/positions';
 import type { Department } from '@/types/personnel';
 import type { StaffingRequirement, StaffingRequirementDraft, StaffingSeason } from '@/types/staffing';
 import type { PositionArea } from '@/lib/position-utils';
-import { timeToMinutes, buildRequirementMatrix } from '@/lib/staffing-requirements-utils';
+import { timeToMinutes, buildRequirementMatrix, splitGroupOfMeta } from '@/lib/staffing-requirements-utils';
+
+/**
+ * Normalisiert Teildienst-Gruppen einer Zeilenmenge: `meta.splitGroup` ist nur
+ * gültig, wenn die Gruppe aus GENAU zwei Blöcken besteht (einer Mittag, einer
+ * Abend) mit gleicher Anzahl. Alle anderen Fälle (verwaiste Hälfte nach
+ * Teil-Edit, 3+-Mitglieder, beide Blöcke in derselben Tageshälfte, ungleiche
+ * Anzahl) verlieren die Gruppierung und werden als Einzelblöcke gespeichert —
+ * so bleibt die Kopfzahl-Logik max(Mittag, Abend) konsistent zur Darstellung.
+ */
+export function normalizeSplitGroups<T extends { shiftStart: string; requiredCount: number; meta?: Record<string, unknown> | null }>(
+  rows: T[],
+): T[] {
+  const byGroup = new Map<string, T[]>();
+  for (const r of rows) {
+    const g = splitGroupOfMeta(r.meta ?? undefined);
+    if (g) byGroup.set(g, [...(byGroup.get(g) ?? []), r]);
+  }
+  const valid = new Set<string>();
+  for (const [g, members] of byGroup) {
+    if (members.length !== 2) continue;
+    const [a, b] = members;
+    if (isEveningShift(a.shiftStart) === isEveningShift(b.shiftStart)) continue;
+    if (a.requiredCount !== b.requiredCount) continue;
+    valid.add(g);
+  }
+  return rows.map((r) => {
+    const g = splitGroupOfMeta(r.meta ?? undefined);
+    if (!g || valid.has(g)) return r;
+    const { splitGroup: _sg, ...rest } = r.meta ?? {};
+    return { ...r, meta: rest };
+  });
+}
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import {
   buildEffectiveRequirements,
@@ -44,8 +76,8 @@ export interface WeekCell {
   headcount: number;
   /** true = Kopfzahl kommt aus dem expliziten Feld (meta.dayHeadcount). */
   headcountExplicit: boolean;
-  /** Blöcke für Tooltip/Detail (Zeit + Anzahl). */
-  shifts: { shiftStart: string; shiftEnd: string; requiredCount: number }[];
+  /** Blöcke für Tooltip/Detail (Zeit + Anzahl; splitGroup = Teildienst-Paar). */
+  shifts: { shiftStart: string; shiftEnd: string; requiredCount: number; splitGroup?: string | null }[];
 }
 
 /** Explizite Kopfzahl aus den meta-Feldern der Blöcke (erste gültige Zahl). */
@@ -74,7 +106,10 @@ export function computeWeekCell(
     const count = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
     if (isEveningShift(s.shiftStart)) cell.abend += count;
     else cell.mittag += count;
-    cell.shifts.push({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: count });
+    cell.shifts.push({
+      shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: count,
+      splitGroup: splitGroupOfMeta(s.meta ?? undefined),
+    });
   }
   const explicit = explicitDayHeadcount(shifts.map((s) => ({ meta: s.meta ?? undefined })));
   const ugExtra = shifts.reduce((a, s) => {
@@ -177,7 +212,7 @@ export function buildCellSaveDrafts(args: {
   /** 'day' ersetzt ALLE Blöcke der Position an diesem Tag. */
   part: 'mittag' | 'abend' | 'day';
   /** Neue Blöcke der bearbeiteten Tageshälfte (bzw. des ganzen Tages). */
-  partDrafts: { id?: string; shiftStart: string; shiftEnd: string; requiredCount: number }[];
+  partDrafts: { id?: string; shiftStart: string; shiftEnd: string; requiredCount: number; splitGroup?: string | null }[];
   /**
    * Explizite KOPFZAHL des Tages (meta.dayHeadcount auf allen Blöcken der
    * Position): number = setzen, null = löschen (Automatik max(M, A)),
@@ -208,6 +243,11 @@ export function buildCellSaveDrafts(args: {
   const metaById = new Map(existing.filter((r) => r.positionKey === positionKey).map((r) => [r.id, r.meta]));
   const baseSort = existing.filter((r) => r.positionKey === positionKey && !isPart(r.shiftStart)).length;
   partDrafts.forEach((s, index) => {
+    // Teildienst-Gruppierung (meta.splitGroup) aus dem Draft übernehmen:
+    // gesetzt → schreiben, nicht gesetzt → aus bestehendem meta entfernen.
+    const baseMeta = (s.id ? metaById.get(s.id) : undefined) ?? {};
+    const { splitGroup: _sg, ...restMeta } = baseMeta;
+    const meta = s.splitGroup ? { ...restMeta, splitGroup: s.splitGroup } : restMeta;
     out.push({
       id: s.id,
       scopeType: 'weekly',
@@ -219,10 +259,15 @@ export function buildCellSaveDrafts(args: {
       shiftEnd: s.shiftEnd,
       requiredCount: s.requiredCount,
       sortOrder: baseSort + index,
-      meta: applyHead((s.id ? metaById.get(s.id) : undefined) ?? {}),
+      meta: applyHead(meta),
     });
   });
-  return out;
+  // Teildienst-Integrität der BEARBEITETEN Position sichern: verwaiste
+  // Hälften (z. B. nach Teil-Edit einer Tageshälfte) und ungültige Gruppen
+  // verlieren die splitGroup; andere Positionen/Orphans bleiben verbatim.
+  const mine = normalizeSplitGroups(out.filter((r) => r.positionKey === positionKey));
+  let i = 0;
+  return out.map((r) => (r.positionKey === positionKey ? mine[i++] : r));
 }
 
 /**

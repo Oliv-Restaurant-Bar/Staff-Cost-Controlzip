@@ -129,10 +129,98 @@ export interface ShiftDraft {
   shiftStart: string;
   shiftEnd: string;
   requiredCount: number;
+  /**
+   * Teildienst-Gruppierung: Blöcke mit derselben splitGroup gehören zu EINER
+   * Person/Schicht (Mittag + Abend, z. B. 10:00–14:00 / 17:00–22:30) und
+   * werden überall als EINE Einheit dargestellt. Rein darstellend — die
+   * Kopfzahl-Logik (max(Mittag, Abend)) bleibt unverändert: ein Teildienst
+   * zählt 1 Kopf, weil er in beiden Tageshälften mit derselben Anzahl steht.
+   * Persistiert als `meta.splitGroup` auf beiden staffing_requirements-Zeilen.
+   */
+  splitGroup?: string | null;
 }
 
 export function defaultShiftDraft(): ShiftDraft {
   return { shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 };
+}
+
+// ─── Teildienst (geteilte Schicht: Mittag + Abend = 1 Kopf) ───────────────────
+
+/** Liest die Teildienst-Gruppe aus einer meta-Struktur (null = kein Teildienst). */
+export function splitGroupOfMeta(meta: Record<string, unknown> | null | undefined): string | null {
+  const v = meta?.splitGroup;
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/** Neue eindeutige Teildienst-Gruppen-ID. */
+export function newSplitGroupId(): string {
+  return `td-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Zwei zusammengehörige Blöcke eines neuen Teildiensts (Mittag + Abend). */
+export function defaultSplitShiftDrafts(): [ShiftDraft, ShiftDraft] {
+  const g = newSplitGroupId();
+  return [
+    { shiftStart: '10:00', shiftEnd: '14:00', requiredCount: 1, splitGroup: g },
+    { shiftStart: '17:00', shiftEnd: '22:30', requiredCount: 1, splitGroup: g },
+  ];
+}
+
+/**
+ * Eine Anzeige-/Editier-Einheit: entweder ein Einzelblock oder ein Teildienst
+ * (zwei Blöcke mit derselben splitGroup). `indices` zeigen in die Original-
+ * Draft-Liste (chronologisch sortiert innerhalb der Einheit).
+ */
+export interface ShiftUnit {
+  split: boolean;
+  /** Indizes in der übergebenen Draft-Liste (bei split: [Mittag, Abend]). */
+  indices: number[];
+}
+
+/**
+ * Gruppiert Drafts in Anzeige-Einheiten: Blöcke mit gemeinsamer splitGroup
+ * werden zu EINER Teildienst-Einheit (in Startzeit-Reihenfolge); eine
+ * splitGroup mit nur EINEM Block zählt als normaler Einzelblock (defensiv,
+ * z. B. wenn die zweite Zeile gelöscht wurde). Reihenfolge folgt dem ersten
+ * Auftreten in der Liste.
+ */
+export function groupShiftUnits(drafts: readonly Pick<ShiftDraft, 'shiftStart' | 'splitGroup'>[]): ShiftUnit[] {
+  const byGroup = new Map<string, number[]>();
+  drafts.forEach((d, i) => {
+    const g = d.splitGroup ?? null;
+    if (!g) return;
+    byGroup.set(g, [...(byGroup.get(g) ?? []), i]);
+  });
+  const units: ShiftUnit[] = [];
+  const consumed = new Set<number>();
+  drafts.forEach((d, i) => {
+    if (consumed.has(i)) return;
+    const g = d.splitGroup ?? null;
+    const members = g ? (byGroup.get(g) ?? [i]) : [i];
+    // Nur GENAU 2 Blöcke bilden eine Teildienst-Einheit; 3+ (fehlerhafte
+    // Daten) werden als Einzelblöcke gezeigt — nichts bleibt versteckt.
+    if (g && members.length === 2) {
+      const sorted = [...members].sort((a, b) => {
+        const ma = timeToMinutes(drafts[a].shiftStart);
+        const mb = timeToMinutes(drafts[b].shiftStart);
+        return (Number.isNaN(ma) ? Infinity : ma) - (Number.isNaN(mb) ? Infinity : mb);
+      });
+      units.push({ split: true, indices: sorted });
+      sorted.forEach((idx) => consumed.add(idx));
+    } else {
+      units.push({ split: false, indices: [i] });
+      consumed.add(i);
+    }
+  });
+  return units;
+}
+
+/**
+ * Einheitliche Notation der Blockzeiten einer Einheit:
+ * «10:00–14:00 / 17:00–22:30» (Trenner « / » signalisiert Zusammengehörigkeit).
+ */
+export function formatShiftTimes(blocks: readonly { start: string; end: string }[]): string {
+  return blocks.map((b) => `${b.start}–${b.end}`).join(' / ');
 }
 
 /**

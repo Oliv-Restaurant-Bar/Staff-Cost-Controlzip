@@ -1,0 +1,22 @@
+Personalbedarf — Teildienste als eine Schicht/Person darstellen + Tages-Popup und Soll-Matrix-Editor im neuen Layout umbauen.
+
+Ziel: Eine Person mit geteilter Schicht (z. B. 10:00–14:00 UND 17:30–23:00) = ein Teildienst (Mittag + Abend) = 1 Kopf, überall als EINE zusammengehörige Einheit dargestellt. Die bestehende Kopfzahl-/Bedarfs-Logik (auto = max(Mittag, Abend), geteilte Person zählt 1×) bleibt unverändert — nur Modell für Teildienst-Gruppierung und Optik.
+
+DESIGN (verbindlich, so abgestimmt):
+
+Tages-Popup (z. B. „Kochen (heiss) — Montag, 3. August 2026"):
+- Kopf: kleiner Kicker „Personalbedarf · <Position>", darunter Positionsname (fett) + Datum ausgeschrieben. Schließen-X oben rechts.
+- Statusleiste: zwei Pills „Bedarf N" (grauer Punkt) und „Plan N" (blauer Punkt); rechts ein Badge „▲ X Personen über Bedarf" in Bernstein (bzw. „▼ unter Bedarf" in Rot, „im Bedarf" in Grün).
+- Tabelle mit Spalten: Mitarbeiter · Zeit · Schicht · Netto (rechtsbündig).
+- TEILDIENST-Zeile: eine Zeile pro Person mit violettem Balken links (inset box-shadow) und zartem violettem Verlauf-Hintergrund. In „Zeit" zwei Chips nebeneinander — Chip 1 mit Mini-Label „MITTAG" + Zeit „10:00–14:00", ein violettes „+“ dazwischen, Chip 2 „ABEND" + „17:30–23:00". In „Schicht" ein violettes Pill „◧ Teildienst". In „Netto" die Gesamt-Netto-Stunden fett + darunter klein die Aufschlüsselung „4.00 + 5.25". Optionaler „Zweitposition"-Subtag unter dem Namen.
+- DURCHGEHEND-Zeile: einzelne Zeit („11:30–21:30") schlicht, Schicht-Pill „▬ Durchgehend" in Blau, Netto fett + klein „Pause 1.0".
+- Dieselbe Person taucht nie doppelt auf. Netto Teildienst = Summe beider Blöcke (Pause je Einsatz abgezogen).
+- Fuß: links „N Personen (Kopfzahl)" fett + Hinweis „Teildienste zählen 1× · Mittag + Abend = eine Person"; rechts „Netto-Stunden" gross als Summe.
+- Farbschema: Teildienst = Violett (#6d5cf0), Durchgehend = Blau (#0ea5e9); dezent, tabellarische Ziffern (tabular-nums), gute Ausrichtung, funktioniert auch im Dark Mode.
+
+Soll-Matrix-/Bedarf-Editor:
+- Eine Schicht ist „Durchgehend" (ein Block Von–Bis) ODER „Teildienst" (zwei Blöcke: Mittag Von–Bis + Abend Von–Bis), zusammen erfasst und als EINE gruppierte Karte dargestellt (nicht zwei lose Von/Bis-Zeilen) — mit „Teildienst"-Badge und Mittag/Abend-Beschriftung, gleiche Optik/Farbe wie im Popup.
+- Knöpfe „+ Schicht hinzufügen" und „+ Teildienst hinzufügen". Ein Teildienst zählt als 1 Kopf.
+- Live-Zusammenfassung unten: „= X Köpfe (Teildienste 1×)". Von/Bis/Anzahl klar beschriftet, mehr Zeilenabstand, nicht gedrängt.
+
+Randbedingungen: keine Änderung an Bedarf/Plan/Kopfzahl-Berechnung — nur Teildienst-Gruppierung + Darstellung. Mandantengetrennt (oliv/beaulieu). Vorschau/Speichern/Verwerfen wie bisher.
