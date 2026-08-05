@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import { toast } from 'sonner';
 
 export type AbsenceCode = 'FE' | 'FT' | 'K' | 'U' | 'F';
 export const ABSENCE_CODES: ReadonlySet<AbsenceCode> = new Set(['FE', 'FT', 'K', 'U', 'F']);
@@ -125,6 +126,11 @@ const ActualHoursCell = ({
   const hoursFromChf = (chfInput && effectiveRate > 0) ? (parseFloat(chfInput.replace(',', '.')) / effectiveRate) : 0;
 
   const handleCellClick = () => {
+    // ── Austritts-Sperre: nach dem Austrittsdatum keine Ist-Erfassung mehr ──
+    if (employee.employmentEndDate && format(day, 'yyyy-MM-dd') > employee.employmentEndDate) {
+      toast.warning(`${getEmployeeDisplayName(employee)} ist seit ${format(new Date(employee.employmentEndDate + 'T00:00:00'), 'dd.MM.yyyy')} ausgetreten — keine Ist-Erfassung nach dem Austritt möglich.`);
+      return;
+    }
     // ── Schnellerfassung-Modus: kein Dialog, direkte Zuweisung ──
     if (quickEntry) {
       if (entry?.absenceType === quickEntry) {

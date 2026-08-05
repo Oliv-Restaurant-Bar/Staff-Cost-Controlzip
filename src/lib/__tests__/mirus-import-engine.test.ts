@@ -337,6 +337,34 @@ describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
     expect(expectedAfterTotals(plan)['a']).toBe(15.5); // 7.5 bleibt + 8 neu
   });
 
+  it('Austritts-Sperre: Zeilen NACH dem Austritt → rejectedExited, nie geschrieben; Austrittstag selbst zulässig', () => {
+    const plan = buildMirusReconcilePlan({
+      // MA b hält den Zeitraum bis 02.07. offen (lastFilledDate)
+      entries: [entry('a', '2026-07-01', 8), entry('a', '2026-07-02', 6.6), entry('b', '2026-07-02', 5)],
+      existing: { 'a-2026-07-02': { hours: 3 } },
+      erfassungsart: { a: 'MIRUS', b: 'MIRUS' },
+      month, dates,
+      exitDates: { a: '2026-07-01' },
+    });
+    expect(plan.rejectedExited).toEqual([{ employeeName: 'A', date: '2026-07-02', hours: 6.6, exitDate: '2026-07-01' }]);
+    // 01.07. (= Austrittstag) wird normal geschrieben, 02.07. für a nie angefasst
+    const writes = resolvePlanToWrites(plan);
+    const aWrites = writes.filter(w => w.employeeId === 'a');
+    expect(aWrites.map(w => w.date)).toEqual(['2026-07-01']);
+    const aPlan = plan.employees.find(e => e.employeeId === 'a')!;
+    expect(aPlan.cells.find(c => c.date === '2026-07-02')).toBeUndefined();
+    expect(aPlan.rejectedKeptHours).toBe(3); // bestehender Wert bleibt unangetastet
+    expect(aPlan.fileTotal).toBe(8);
+  });
+
+  it('ohne exitDates keine Austritts-Ablehnungen (Rückwärtskompatibilität)', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8)],
+      existing: {}, erfassungsart: { a: 'MIRUS' }, month, dates,
+    });
+    expect(plan.rejectedExited).toEqual([]);
+  });
+
   it('exakt 16 h ist noch zulässig', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 16)],

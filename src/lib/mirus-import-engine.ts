@@ -124,6 +124,8 @@ export interface MirusReconcilePlan {
   roundingThreshold: number;
   /** Tageswerte > Plausibilitätsgrenze (16 h) — abgelehnt, NIE geschrieben. */
   rejectedImplausible: Array<{ employeeName: string; date: string; hours: number }>;
+  /** Zeilen NACH dem Austrittsdatum des MA — abgelehnt, NIE geschrieben. */
+  rejectedExited: Array<{ employeeName: string; date: string; hours: number; exitDate: string }>;
   /** Letzter im Export befüllte Tag (>0 h) — spätere Tage werden NICHT angefasst. */
   lastFilledDate: string | null;
 }
@@ -301,8 +303,11 @@ export function buildMirusReconcilePlan(params: {
   month: string;
   dates: string[];
   roundingThreshold?: number;
+  /** employeeId → Austrittsdatum (ISO). Zeilen mit date > Austritt werden abgelehnt. */
+  exitDates?: Record<string, string>;
 }): MirusReconcilePlan {
   const { entries, existing, erfassungsart, month, dates } = params;
+  const exitDates = params.exitDates ?? {};
   const planned = params.planned ?? {};
   const threshold = params.roundingThreshold ?? MIRUS_ROUNDING_THRESHOLD_H;
   const dateSet = new Set(dates);
@@ -335,6 +340,23 @@ export function buildMirusReconcilePlan(params: {
       }
     }
   }
+
+  // Austritts-Sperre: ausgetretene MA (Austrittsdatum < Arbeitsdatum) bekommen
+  // KEINE Ist-Stunden — ablehnen (Report), NIE schreiben; Zelle wird wie ein
+  // Phantom-Tag komplett ausgelassen (bestehende Werte bleiben unangetastet).
+  const rejectedExited: MirusReconcilePlan['rejectedExited'] = [];
+  for (const [empId, rec] of byEmp) {
+    const exit = exitDates[empId];
+    if (!exit) continue;
+    for (const [date, h] of rec.days) {
+      if (date > exit) {
+        rejectedExited.push({ employeeName: rec.name, date, hours: h, exitDate: exit });
+        implausibleCells.add(`${empId}-${date}`);
+        rec.days.delete(date);
+      }
+    }
+  }
+  rejectedExited.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de') || a.date.localeCompare(b.date));
 
   // Nur Tage bis und mit dem letzten im Export befüllten Tag (>0 h) anfassen:
   // spätere Tage bleiben komplett stehen (Plan-Stunden, künftige Einträge).
@@ -391,7 +413,7 @@ export function buildMirusReconcilePlan(params: {
   employees.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de'));
   return {
     month, dates: effDates, employees, skippedManual, skippedOutOfScope, silentRounds,
-    roundingThreshold: threshold, rejectedImplausible, lastFilledDate,
+    roundingThreshold: threshold, rejectedImplausible, rejectedExited, lastFilledDate,
   };
 }
 

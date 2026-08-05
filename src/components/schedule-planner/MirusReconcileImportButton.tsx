@@ -523,9 +523,15 @@ export function MirusReconcileImportButton({
       return;
     }
 
+    // Austritts-Sperre: Austrittsdaten aller MA an die Engine geben —
+    // Zeilen nach dem Austritt werden abgelehnt (rote Liste in der Vorschau).
+    const exitDates: Record<string, string> = {};
+    for (const emp of employees) {
+      if (emp.employmentEndDate) exitDates[emp.id] = emp.employmentEndDate;
+    }
     const p = buildMirusReconcilePlan({
       entries: resolved, existing: actualHoursData, planned, erfassungsart, month, dates,
-      roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H,
+      roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H, exitDates,
     });
     setPlan(p);
     // Rückfrage-Gruppen (2,4,5) standardmässig offen, Sammelgruppen 1+3 zu.
@@ -898,6 +904,17 @@ export function MirusReconcileImportButton({
                     <strong>Abgelehnt (&gt; 16 h/Tag, Phantom-Verdacht — wird NICHT geschrieben):</strong>{' '}
                     {plan.rejectedImplausible.map(r => `${r.employeeName} ${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}
                     {' '}— bestehende Werte dieser Tage bleiben unangetastet.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {plan.rejectedExited.length > 0 && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-exited">
+                    <strong>Ausgetreten — nicht importiert:</strong>{' '}
+                    {plan.rejectedExited.map(r => `${r.employeeName} ${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h; Austritt ${r.exitDate.slice(8)}.${r.exitDate.slice(5, 7)}.${r.exitDate.slice(0, 4)})`).join(', ')}
+                    {' '}— ausgetretene Mitarbeiter erhalten keine Ist-Stunden nach dem Austrittsdatum.
                   </AlertDescription>
                 </Alert>
               )}

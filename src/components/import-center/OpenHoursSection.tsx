@@ -152,6 +152,8 @@ export function OpenHoursSection() {
         month: entry.month,
         dates,
         roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H,
+        // Austritts-Sperre: keine Ist-Stunden nach dem Austrittsdatum
+        ...(employee.employmentEndDate ? { exitDates: { [employee.id]: employee.employmentEndDate } } : {}),
       });
       setAssign({ entry, employee, plan });
     } catch (e) {
@@ -419,6 +421,17 @@ export function OpenHoursSection() {
                 <Badge variant="outline" className={questionCount ? 'text-orange-700 border-orange-300' : ''}>{questionCount} Rückfragen</Badge>
                 {assign.plan.silentRounds.length > 0 && <Badge variant="outline" className="text-muted-foreground">{assign.plan.silentRounds.length} still gerundet</Badge>}
               </div>
+
+              {assign.plan.rejectedExited.length > 0 && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-assign-exited">
+                    <strong>Ausgetreten — nicht übernommen:</strong>{' '}
+                    {assign.plan.rejectedExited.map(r => `${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}
+                    {' '}— {assign.employee.name} ist seit {assign.plan.rejectedExited[0].exitDate.slice(8)}.{assign.plan.rejectedExited[0].exitDate.slice(5, 7)}.{assign.plan.rejectedExited[0].exitDate.slice(0, 4)} ausgetreten; nach dem Austritt werden keine Ist-Stunden geschrieben.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {assign.employee.erfassungsart === 'MANUELL' && (
                 <Alert>

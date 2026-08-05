@@ -3,6 +3,7 @@ import { format, isWeekend, isSunday } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
+import { toast } from 'sonner';
 import { DaySchedule } from './ScheduleGrid';
 import { cn } from '@/lib/utils';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
@@ -476,7 +477,15 @@ function EmployeeRow({
         {(scheduleMode === 'ist' || scheduleMode === 'compare') && (
           <div
             className="shrink-0 min-w-[70px] text-right border-l pl-2"
-            onClick={e => { e.stopPropagation(); setIstEditOpen(true); }}
+            onClick={e => {
+              e.stopPropagation();
+              // Austritts-Sperre: nach dem Austrittsdatum keine Ist-Erfassung mehr
+              if (employee.employmentEndDate && date > employee.employmentEndDate) {
+                toast.warning(`${getEmployeeDisplayName(employee)} ist seit ${format(new Date(employee.employmentEndDate + 'T00:00:00'), 'dd.MM.yyyy')} ausgetreten — keine Ist-Erfassung nach dem Austritt möglich.`);
+                return;
+              }
+              setIstEditOpen(true);
+            }}
           >
             <IstBadge entry={istEntry} />
           </div>
