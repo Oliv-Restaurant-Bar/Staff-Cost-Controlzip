@@ -371,6 +371,14 @@ describe('findeCsvBestandsTreffer (Markt im Dedup-Schlüssel)', () => {
     expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-16', markt: 'Bern' }, 'Prodega')).toBeUndefined();
     expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-15', markt: 'BGH' }, 'Transgourmet')).toBeUndefined();
   });
+  it('JAHRESÜBERGREIFENDE Nummern-Wiederverwendung (Echt-Fälle Bern 102/253): 2025-Rechnung wird von 2026-Import NIE getroffen', () => {
+    const r102alt = { id: 'x', reference: '102', date: '2025-07-17', supplierName: 'Prodega', markt: 'Bern' };
+    const r253alt = { id: 'y', reference: '253', date: '2025-07-01', supplierName: 'Prodega', markt: 'Bern' };
+    expect(findeCsvBestandsTreffer([r102alt], { rechnungsNr: '102', datum: '2026-06-17', markt: 'Bern' }, 'Prodega')).toBeUndefined();
+    expect(findeCsvBestandsTreffer([r253alt], { rechnungsNr: '253', datum: '2026-03-25', markt: 'Bern' }, 'Prodega')).toBeUndefined();
+    // Re-Import derselben Rechnung (volle Identität) trifft weiterhin:
+    expect(findeCsvBestandsTreffer([r102alt], { rechnungsNr: '102', datum: '2025-07-17', markt: 'Bern' }, 'Prodega')?.id).toBe('x');
+  });
 });
 
 describe('robustes Zahlen-Parsing + MwSt-Code (D1)', () => {
