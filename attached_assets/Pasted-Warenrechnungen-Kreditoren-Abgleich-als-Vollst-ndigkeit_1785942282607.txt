@@ -1,0 +1,38 @@
+Warenrechnungen — Kreditoren-Abgleich als Vollständigkeits- und Kontrollebene (Lieferanten-Cockpit).
+
+Ziel: Ein Kreditoren-Personenkonto-Auszug (Infoniqa-PDF, z.B. 01.01.–05.08.2026) wird importiert und dient als KONTROLLEBENE über ALLE Lieferanten. Er gleicht gegen die erfassten Warenrechnungen ab, zeigt Vollständigkeit und Abrechnungsmodell je Lieferant, und schlägt fehlende Rechnungen zur Übernahme vor. Er ändert oder überschreibt NIEMALS bestehende Warenrechnungen. Mandantengetrennt (oliv/beaulieu), dublettensicher, mit Vorschau und Rückgängig.
+
+A) IMPORT / PARSER:
+- Kreditoren-PDF einlesen: pro Kreditor (Nr + Name) die Buchungen mit Datum, Beleg, Text, Gegenkonto (G-Konto), Soll, Haben.
+- Nur HABEN-Buchungen = Rechnungen/Gutschriften sind relevant. SOLL-Buchungen mit Gegenkonto 1021 bzw. Text „Zahlungslauf" = Zahlungen → ignorieren.
+- Beträge sind INKL. MwSt (brutto).
+
+B) WAREN-LIEFERANTEN-ERKENNUNG + ZUORDNUNG (einmalig, gemerkt):
+- Auto-Vorschlag: jeder Kreditor mit mindestens einer Haben-Buchung auf ein Warenkonto 4000–4070 oder 4090 wird als „Waren-Lieferant" vorgeschlagen (Konto aus dem Gegenkonto übernommen).
+- „div"-Buchungen (Mehrkonto-Verteilung) allein sind NICHT automatisch Waren (z.B. Energie Wasser bucht div = Strom). Reine-div-Lieferanten zur manuellen Prüfung anzeigen (Tag Waren ja/nein).
+- Für getaggte Waren-Lieferanten zählen ALLE Haben-Buchungen (40xx UND div) — sonst gehen die div-Rechnungen von Transgourmet/Feldschlösschen verloren.
+- Die Zuordnung (Waren ja/nein + Standard-Konto) wird pro Mandant in den Lieferanten-Stammdaten gemerkt — einmal bestätigen, danach automatisch.
+
+C) ABRECHNUNGSMODELL AUTO-ERKENNEN (Vorschlag, bestätigbar, nutzt bestehende Dual-Profile):
+- Aus dem Buchungsmuster pro Lieferant/Monat: 1 Rechnung am Monatsende → „Monatsrechnung (Dual: Lieferscheine + Monatsrechnung)"; 2 Rechnungen (Monatsmitte + -ende) → „Dual halbmonatlich" (z.B. Metzgerei Spahni); mehrere über den Monat verteilt → „Einzelrechnungen".
+- Vorschlag anzeigen, Nutzer bestätigt/überschreibt einmal; verknüpft mit den bestehenden Dual-Modell-Profilen (Feldschlösschen, Terravigna, Spahni …).
+
+D) LIEFERANTEN-COCKPIT / VOLLSTÄNDIGKEITS-CHECKLISTE:
+- Pro Waren-Lieferant eine Zeile: Abrechnungsmodell · Standard-Konto · Anzahl Rechnungen im Kreditor ↔ Anzahl erfasst in Warenrechnungen · Betrag inkl. MwSt (Kreditor) ↔ erfasst (brutto) · Differenz · Status-Ampel (vollständig / teilweise / fehlt).
+- Lieferanten, die im Kreditor Waren buchen, aber in den Warenrechnungen NICHT (oder unvollständig) erfasst sind → rot markiert mit direkter Aktion.
+
+E) ABGLEICH-REGELN (WICHTIG — kein Überschreiben):
+- Der Kreditoren-Auszug ändert NIE bestehende Warenrechnungen. Auch nicht das Dual-Modell: bereits erfasste Lieferscheine bzw. die finalisierende Monatsrechnung bleiben unangetastet.
+- Matching: erfasste Warenrechnungen werden dem Kreditor über Lieferant + Zeitraum + Betrag inkl. MwSt (mit Toleranz) zugeordnet → grün „erfasst". Für Dual-Lieferanten wird die im Kreditor gebuchte Monatsrechnung gegen die in der App finalisierte Monatsrechnung gematcht (nicht gegen die provisorischen Lieferscheine).
+- Bereits per CSV (Transgourmet) oder PDF (Feldschlösschen) importierte Rechnungen werden als erfasst erkannt und NICHT doppelt angelegt (dublettensicher über Lieferant + Belegnr/Datum + Betrag).
+- Nur wo eine Rechnung im Kreditor existiert, aber in den Warenrechnungen FEHLT, erscheint ein Übernahme-Vorschlag (opt-in).
+
+F) ÜBERNAHME FEHLENDER RECHNUNGEN (nur auf Bestätigung):
+- „Übernehmen…" pro fehlender Zeile und „Alle fehlenden übernehmen…" öffnen eine Vorschau: Lieferant, Datum, Konto (aus Gegenkonto abgeleitet, editierbar), MwSt, Betrag (inkl. MwSt, aus Kreditor, unveränderbar), Referenz/Beleg.
+- Angelegt wird eine provisorische Warenrechnung (Herkunft „Kreditoren-Übernahme", nicht final) — so kann eine später hochgeladene Original-Rechnung (Transgourmet-CSV, Feldschlösschen-PDF, Monatsrechnung) sie gemäss Dual-Modell noch finalisieren/ersetzen, ohne Dublette.
+- Dublettenwache: existiert bereits eine Rechnung mit gleichem Lieferant + Datum + Betrag (±Toleranz), Übernahme sperren und als „bereits erfasst" markieren.
+
+G) RANDBEDINGUNGEN:
+- Mandantengetrennt (oliv/beaulieu). Vorschau vor jedem Schreiben, Rückgängig wie beim bestehenden FIBU-Abgleich.
+- „leer statt 0", „nie durch 0 teilen" beibehalten.
+- Kontrolle mit Kreditoren 01.01.–05.08.2026 (Oliv): 16 Waren-Lieferanten erkannt (u.a. Transgourmet 4060+div, Feldschlösschen 4040+div, Metzgerei Spahni 4060, Terravigna 4020, Caporaso 4060+div, Obrist 4020, Paul Ullrich 4020/4040, Ambro Food 4060+div, La Marra 4060, Blaser Café 4070, Bäckerei Bohnenblust 4060, Chocolats Camille Bloch 4090, Hiestand 4060, Länggass-Tee 4070, Siebe Dupf 4020, The Asia Company 4060). Reine-div (Strom/IT) wie Energie Wasser, Jäggi.digital, Macauda → NICHT als Waren vorschlagen.
