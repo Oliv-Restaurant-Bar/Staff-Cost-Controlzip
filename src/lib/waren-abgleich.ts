@@ -179,7 +179,9 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
 
   // ── DEGRADATION: keine Buchungszeilen → nur Total-Vergleich ──
   if (warenBuchungen.length === 0) {
-    const gebuchtTotal = input.buchhaltungTotal;
+    // Defensive Wache: fehlender/kaputter Buchhaltungswert (null/NaN/Infinity)
+    // ⇒ null — Anzeige «—», nie 0 und nie «CHF NaN» rechnen.
+    const gebuchtTotal = Number.isFinite(input.buchhaltungTotal) ? input.buchhaltungTotal : null;
     const zeilen: AbgleichZeile[] = [...erfasstMap.entries()]
       .map(([lieferant, v]) => ({
         lieferant, erfasst: v.sum, gebucht: null, diff: null,

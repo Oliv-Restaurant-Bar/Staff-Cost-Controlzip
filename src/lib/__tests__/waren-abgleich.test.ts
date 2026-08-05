@@ -130,3 +130,13 @@ describe('findeDublette', () => {
     expect(findeDublette(bestand, { supplierName: 'Prodega', date: '2026-07-10', amountGross: 1000 }, 'a')).toBeNull();
   });
 });
+
+describe('NaN-Absicherung (degradierter Modus)', () => {
+  it('NaN-Buchhaltungstotal ⇒ gebuchtTotal/diffTotal null (nie «CHF NaN»)', () => {
+    const r = buildWarenAbgleich({ ...BASE, journal: null, invoices: [], buchhaltungTotal: NaN });
+    expect(r.mode).toBe('nur-total');
+    expect(r.gebuchtTotal).toBeNull();
+    expect(r.diffTotal).toBeNull();
+    expect(Number.isFinite(r.erfasstTotal)).toBe(true);
+  });
+});

@@ -490,7 +490,9 @@ export default function WarenrechnungenPage() {
       const record = loadMonth(year, month, tenantKey(REPORTING_STORAGE_KEY));
       const pl = computePLForMonth(record);
       const row = pl.rows.find(r => r.def.id === 'total_cogs');
-      buchhaltungTotal = row && row.values.actual !== null ? Math.abs(row.values.actual) : null;
+      // Nur endliche Zahlen übernehmen — NaN/Infinity (unvollständiger ER-
+      // Import) darf NIE als «CHF NaN» in Total/Differenz durchschlagen.
+      buchhaltungTotal = row && Number.isFinite(row.values.actual) ? Math.abs(row.values.actual as number) : null;
     } catch { buchhaltungTotal = null; }
     return buildWarenAbgleich({
       invoices: entries,
