@@ -60,3 +60,9 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Import nur bis `lastFilledDate` (letzter Tag mit >0 h in der Datei): `plan.dates` = gekappte Liste; spätere Tage (inkl. Plan-Stunden/0-Zeilen) werden NIE angefasst — auch kein conflict_zero auf Zukunftstagen.
 - Oliv-Aliasse fest in `mirus_name_aliases:oliv` (goi isabelle→10, de jong micky→18, kolev miroslav nikolaev→15, ramadani mejdi→14); Keys gefaltet lowercase.
 - Agent-seitige Vorschau ohne App möglich: esbuild-Bundle (platform=node, alias @=src, localStorage-Shim, Fake-File mit arrayBuffer) über parseMirusDailyExcel + matchEmployeeByName + buildMirusReconcilePlan; Ist/Mitarbeiter via Management-API. Direkte DB-Schreibungen brauchen vorher einen `dienstplan_ist_backup`-Eintrag (scope ist JSONB {dates, employeeIds}).
+
+## Austritts-Gate
+- Engine `buildMirusReconcilePlan` nimmt optional `exitDates` (employeeId→ISO); Zeilen mit `date > exit` → `rejectedExited` (nie geschrieben, Zelle wie Phantom-Tag), Austrittstag selbst erlaubt. Exit-Filter läuft VOR lastFilledDate-Kappung.
+- ALLE Aufrufer müssen exitDates übergeben: MirusReconcileImportButton UND OpenHoursSection (geparkte Stunden) — neuer Konsument = neue Lücke.
+- Manuelle Erfassung gesperrt in ActualHoursCell.handleCellClick (Desktop inkl. Quick-Entry) und MobileDayView (Ist-Badge-Klick); ISO-String-Vergleich `date > employmentEndDate`.
+- Alt-Bestand bereinigt 05.08.2026: 17 Oliv-Zeilen/138.09 h nach Austritt gelöscht, Backup dienstplan_ist_backup 62972876.
