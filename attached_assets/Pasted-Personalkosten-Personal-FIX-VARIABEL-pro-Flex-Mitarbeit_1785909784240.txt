@@ -1,0 +1,13 @@
+Personalkosten (Personal FIX + VARIABEL) — pro Flex-Mitarbeiter AG-Sozialkosten ein-/ausschaltbar machen.
+
+Ziel: Für einzelne Flex-Mitarbeiter soll wählbar sein, ob die Arbeitgeber-Sozialkosten in den CHF-Werten enthalten sind. Häkchen „AG-Sozialkosten einrechnen" pro Mitarbeiter (Default: AN). Ist es AUS, werden die CHF-Beträge dieses Mitarbeiters ohne AG-Sozialkosten gerechnet (nur auszahlbarer Bruttolohn). Die Stunden (Plan Std / Ist Std) bleiben immer unverändert.
+
+1. Rechenquelle: getEmployerCostRate liefert bereits grossHourly (Bruttolohn, OHNE AG) und totalHourly (MIT AG). Der Toggle wählt den Satz: AN → totalHourly (wie bisher), AUS → grossHourly.
+2. Betroffene Werte, wenn AUS: Plan CHF, Ist CHF, Flex Plan, Flex Ist und Diff dieses Mitarbeiters — in der Haupttabelle UND im Detail-Popup (Plan CHF / Ist CHF / Diff CHF / Kum. Diff). Die Total-Zeile summiert jeden Mitarbeiter mit SEINEM Satz (gemischt möglich).
+3. Bedienung: Häkchen direkt in der Mitarbeiter-Zeile der FLEX-Tabelle UND im Detail-Popup gut sichtbar neben Plan CHF / Ist CHF. Umschalten aktualisiert sofort Werte + Total.
+4. Kennzeichnung: Mitarbeiter mit „ohne AG" bekommen ein deutliches Badge „ohne AG-Kosten" in Tabelle und Popup, damit die Summe nicht falsch gelesen wird. Die Spalte „Total AG/h" zeigt bei „ohne AG" den Bruttosatz (statt des vollen AG-Satzes) an, mit Tooltip „Bruttolohn ohne AG-Sozialkosten".
+5. Persistenz: pro Mandant + Mitarbeiter (boolean, Default true = mit AG). Mandantengetrennt (oliv/beaulieu).
+6. Headline-Kennzahlen (PKQ / Hochrechnung / Total FIX+VARIABEL oben) bleiben standardmäßig auf VOLLEN AG-Kosten (echte Arbeitgeberkosten). Wenn mindestens ein Flex-MA auf „ohne AG" steht, oben einen dezenten Hinweis zeigen: „X Mitarbeiter ohne AG-Sozialkosten in der Flex-Übersicht". So bleibt die echte Kostenquote unverfälscht, während die Flex-Übersicht flexibel ist.
+7. Export übernimmt den Modus je Mitarbeiter und markiert „ohne AG"-Zeilen. „leer statt 0" und „nie durch 0 teilen" beibehalten.
+
+Kontrollwert (Aushilfe 2 Küche A): mit AG Total AG/h 32.66 → Plan CHF 5'537 (169.5 h). Ohne AG ≈ 28.23/h (Brutto) → Plan CHF ≈ 4'785. Nach Umschalten muss die Zeile diesen Wert und das Badge „ohne AG-Kosten" zeigen; Total entsprechend niedriger.

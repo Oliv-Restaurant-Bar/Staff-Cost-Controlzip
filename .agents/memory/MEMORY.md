@@ -88,4 +88,5 @@
 - [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE; Gast, Stundenbestätigung, Onboarding- UND Personaleintritt-per-Link entfernt; 0 öffentliche Routen (auch App.tsx-Early-Returns geprüft).
 - [PDF-Zeilen-Clustering](pdf-zeilen-clustering.md) — Tabellen-PDFs nie mit festen y-Buckets zeilen; Namens-Anker + nächster-|Δy|-Zuordnung, Fixture-Tests via extract-pdf-items.
 - [Plan-Std SSoT Personalkosten↔Dienstplan](plan-std-ssot.md) — schedule-v2-Cache voll durch Supabase ersetzen (kein Merge/Tick-Guard); Aggregation braucht Monatsfilter; async Spiegel braucht Stale-Guard.
+- [AG-Soz-Flag pro Flex-MA](ag-soz-flag.md) — «ohne AG» zentral in employee-rate.ts aufgelöst (totalHourly=gross); nur Flex-Pfade, Fix bleibt gross×agFactor; Memos brauchen agSozOff-Dep.
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.

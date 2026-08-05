@@ -12,6 +12,7 @@
 import type { Employee } from '@/types/personnel';
 import { calcML, calcSL, LGAV } from '@/lib/salaryCalc';
 import { socialCostFactorFromRates, type SocialCostRates } from '@/lib/social-costs';
+import { isAgSozOff } from '@/lib/ag-soz-flags';
 
 export interface EmployerRateBreakdown {
   /** Brutto-Stundenlohn (auszahlbar, inkl. Zuschlägen bzw. 13.) */
@@ -22,6 +23,18 @@ export interface EmployerRateBreakdown {
   totalHourly: number;
   /** Lohnbasis: Stundenlohn (sl) oder Monatslohn (ml) */
   source: 'sl' | 'ml';
+  /** true = per-MA-Flag «ohne AG-Sozialkosten»: totalHourly = grossHourly */
+  agOff?: boolean;
+}
+
+/**
+ * Per-Mitarbeiter-Flag «AG-Sozialkosten AUS» zentral anwenden:
+ * totalHourly wird auf den Bruttolohn reduziert, socialHourly auf 0.
+ * Die Stunden-Logik der Aufrufer bleibt unberührt — nur der Satz ändert.
+ */
+function applyAgSozFlag(empId: string, b: EmployerRateBreakdown): EmployerRateBreakdown {
+  if (!isAgSozOff(empId)) return b;
+  return { ...b, socialHourly: 0, totalHourly: b.grossHourly, agOff: true };
 }
 
 /**
@@ -32,12 +45,12 @@ export function getEmployerCostRate(emp: Employee, rates: SocialCostRates): Empl
   const factor = socialCostFactorFromRates(rates);
   if (emp.hourlyWage && emp.hourlyWage > 0) {
     const sl = calcSL(emp.hourlyWage, emp.has13thSalary ?? false, factor);
-    return {
+    return applyAgSozFlag(emp.id, {
       grossHourly: sl.totalPayableHourly,
       socialHourly: sl.socialCostPerHour,
       totalHourly: sl.internalHourlyCost,
       source: 'sl',
-    };
+    });
   }
   const base = emp.monthlySalary || 0;
   if (base > 0) {
@@ -47,12 +60,12 @@ export function getEmployerCostRate(emp: Employee, rates: SocialCostRates): Empl
       emp.weeklyHours ?? LGAV.WEEKLY_HOURS_FULLTIME,
       factor,
     );
-    return {
+    return applyAgSozFlag(emp.id, {
       grossHourly: ml.effectiveMonthlyGross / LGAV.MONTHLY_HOURS,
       socialHourly: ml.socialCostMonthly / LGAV.MONTHLY_HOURS,
       totalHourly: ml.internalHourlyCost,
       source: 'ml',
-    };
+    });
   }
   return null;
 }

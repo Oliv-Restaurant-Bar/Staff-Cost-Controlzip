@@ -28,6 +28,8 @@ import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract
 import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
+import { getEmployerCostRate } from '@/lib/employee-rate';
+import { loadAgSozOffMap, setAgSozOffFlag } from '@/lib/ag-soz-flags';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { socialCostFactorFromRates, EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT, EMPLOYER_COST_INFO } from '@/lib/social-costs';
 import {
@@ -1141,6 +1143,8 @@ interface BreakdownTarget {
   month:       number;
   cutoffDay:   number | null;
   factor:      number;
+  /** true = CHF-Werte OHNE AG-Sozialkosten (nur Bruttolohn) */
+  agOff?:      boolean;
 }
 
 interface DayEntry  { date: string; hours: number; cost: number; }
@@ -1766,14 +1770,15 @@ function WeekDetailPopup({ data, onClose }: { data: WeekDetailData | null; onClo
 
 // ── FlexBreakdownModal ─────────────────────────────────────────────────────────
 
-function FlexBreakdownModal({ target, onClose }: {
+function FlexBreakdownModal({ target, onClose, onToggleAgSoz }: {
   target: BreakdownTarget | null;
   onClose: () => void;
+  onToggleAgSoz?: (empId: string) => void;
 }) {
   const { tenantKey } = useTenant();
   if (!target) return null;
 
-  const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor } = target;
+  const { empId, empName, field, hourlyWage, weeklyHours, year, month, cutoffDay, factor, agOff } = target;
   const dailyH      = weeklyHours ? weeklyHours / 5 : 8.4;
   const monthLabel  = new Date(year, month - 1, 1).toLocaleString('de-CH', { month: 'long', year: 'numeric' });
   const cutoffLabel = cutoffDay !== null
@@ -1893,9 +1898,32 @@ function FlexBreakdownModal({ target, onClose }: {
                   </span>
                 )}
                 {hourlyWage > 0 && (
-                  <span className="rounded-full bg-muted border border-border px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
-                    {fmtCHFDec(hourlyWage)}/h (Total AG)
+                  <span
+                    className="rounded-full bg-muted border border-border px-2 py-0.5 text-[11px] font-mono text-muted-foreground"
+                    title={agOff ? 'Bruttolohn ohne AG-Sozialkosten' : undefined}
+                  >
+                    {fmtCHFDec(hourlyWage)}/h {agOff ? '(Brutto, ohne AG)' : '(Total AG)'}
                   </span>
+                )}
+                {agOff && (
+                  <span className="rounded-full bg-slate-200 dark:bg-slate-700/60 text-slate-700 dark:text-slate-200 text-[10px] font-semibold px-2 py-0.5">
+                    ohne AG-Kosten
+                  </span>
+                )}
+                {onToggleAgSoz && (
+                  <label
+                    className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none border border-border rounded-full px-2 py-0.5"
+                    title="AG-Sozialkosten in den CHF-Werten einrechnen (Stunden bleiben unverändert)"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3 accent-primary cursor-pointer"
+                      checked={!agOff}
+                      onChange={() => onToggleAgSoz(empId)}
+                      data-testid="checkbox-ag-soz-popup"
+                    />
+                    AG-Sozialkosten einrechnen
+                  </label>
                 )}
                 <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
                   ← {fieldLabels[field]}
@@ -2219,6 +2247,8 @@ export default function PersonalFixPage() {
 
   // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
+  // ── AG-Sozialkosten pro Flex-MA aus (true = ohne AG) — per Mandant persistiert ──
+  const [agSozOff, setAgSozOff] = useState<Record<string, boolean>>({});
   // Personalcontrolling-Drilldown (Ursachenanalyse) — null = geschlossen
   const [drilldownFocus, setDrilldownFocus] = useState<DrilldownFocus | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('week');
@@ -2385,6 +2415,7 @@ export default function PersonalFixPage() {
     setKuIstDetail(loadKUDetailFromIstStorage(selectedYear, selectedMonth, tenantKey));
     setKrankInBudget(loadKrankInBudget(tenantId, selectedYear, selectedMonth));
     setUnfallInBudget(loadUnfallInBudget(tenantId, selectedYear, selectedMonth));
+    setAgSozOff(loadAgSozOffMap(tenantId));
     setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
 
@@ -2512,7 +2543,7 @@ export default function PersonalFixPage() {
       .catch(err => { if (alive) { setPkDaten(null); console.error('[PK-SSOT] Laden fehlgeschlagen:', err); } });
     return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick, socialCostRates]);
+  }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick, socialCostRates, agSozOff]);
 
   // Kanonische Kennzahlen (Hochrechnung/Ist/PKQ/Umsatz/Stichtag) aus der SSOT.
   const pkZentral = useMemo(() => {
@@ -2863,7 +2894,7 @@ export default function PersonalFixPage() {
         ? Math.round(dr.daysPerWeek! * WEEKS_PER_MONTH * 10) / 10
         : 0;
     return days * dr.ratePerDay;
-  }, [varView, varPricingMode, varDayRate, variableEmployees, getVarHoursFor, socialCostRates]);
+  }, [varView, varPricingMode, varDayRate, variableEmployees, getVarHoursFor, socialCostRates, agSozOff]);
 
   // ── Fix-Kosten mit Pro-rata je ausgewähltem Monat ─────────────────────────
   // Kosten = Total Arbeitgeberkosten: Bruttolohn (inkl. 13.) × AG-Sozialkosten-Faktor.
@@ -2974,14 +3005,14 @@ export default function PersonalFixPage() {
       const base = splitBaseId(e.id);
       return s + (planHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
     }, 0),
-    [variableEmployees, planHours, socialCostRates, wageSplits],
+    [variableEmployees, planHours, socialCostRates, wageSplits, agSozOff],
   );
   const varIstTotalCHF = useMemo(() =>
     variableEmployees.reduce((s, e) => {
       const base = splitBaseId(e.id);
       return s + (istHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
     }, 0),
-    [variableEmployees, istHours, socialCostRates, wageSplits],
+    [variableEmployees, istHours, socialCostRates, wageSplits, agSozOff],
   );
 
   // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
@@ -3009,7 +3040,7 @@ export default function PersonalFixPage() {
       total += cost;
     }
     return total;
-  }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours, socialCostRates]);
+  }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours, socialCostRates, agSozOff]);
 
   // ── Überstunden-Auswertung (nur Festangestellte) ───────────────────────────
   // Baut Ist-Stunden-Einträge des gewählten Monats aus den Supabase-Ist-Daten und
@@ -3080,7 +3111,7 @@ export default function PersonalFixPage() {
       disabledEmployeeIds: overtimeDisabledIds,
     });
     return { overtimeAnalysis: monthly, weeklyOvertimeAnalysis: weekly, dayDetailEntries: detail };
-  }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds, socialCostRates]);
+  }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds, socialCostRates, agSozOff]);
 
   // Persistierte „Überstunden deaktiviert"-Liste pro Mandant laden
   useEffect(() => {
@@ -3157,7 +3188,7 @@ export default function PersonalFixPage() {
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0);
-  }, [ferienIstDays, socialCostRates]);
+  }, [ferienIstDays, socialCostRates, agSozOff]);
 
   // PLAN-Ferienabbau pro Mitarbeiter
   const getEmpFerienPlanCHF = useCallback((emp: Employee): number => {
@@ -3165,7 +3196,7 @@ export default function PersonalFixPage() {
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0);
-  }, [ferienPlanDays, socialCostRates]);
+  }, [ferienPlanDays, socialCostRates, agSozOff]);
 
   // ── K/U 80%-Kosten (info-only, immer anzeigen wenn K/U-Tage vorhanden) ───────
   // K/U-Tage × (weeklyHours/5 oder 8.4h) × Total Arbeitgeberkosten/h × 80 %
@@ -3177,7 +3208,7 @@ export default function PersonalFixPage() {
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
-  }, [kuPlanDays, kuIstDays, socialCostRates]);
+  }, [kuPlanDays, kuIstDays, socialCostRates, agSozOff]);
 
   const getEmpKrankCHF = useCallback((emp: Employee): number => {
     const planK = kuPlanBreakdown[emp.id]?.krank ?? 0;
@@ -3186,7 +3217,7 @@ export default function PersonalFixPage() {
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
-  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates]);
+  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates, agSozOff]);
 
   const getEmpUnfallCHF = useCallback((emp: Employee): number => {
     const planU = kuPlanBreakdown[emp.id]?.unfall ?? 0;
@@ -3195,7 +3226,7 @@ export default function PersonalFixPage() {
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
-  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates]);
+  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates, agSozOff]);
 
   // Alle Mitarbeitenden (Fix + Variable) für K/U-Kosten
   const allKUEmployees = useMemo(() =>
@@ -3410,7 +3441,7 @@ export default function PersonalFixPage() {
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
       totalFixCost, proRataDay, proRataFactor, tenantKey, scheduleRefreshTick,
-      supabaseActualHours, socialCostRates]);
+      supabaseActualHours, socialCostRates, agSozOff]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
   // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.
@@ -3741,7 +3772,7 @@ export default function PersonalFixPage() {
       return { weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: e.planFlex, istFlex: e.istFlex, dateRange, dates, daysInWeek: e.days };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey, socialCostRates]);
+  }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey, socialCostRates, agSozOff]);
 
   // ── Fix-Kosten pro Woche (pro-rata nach Tagen) ────────────────────────────
   const fixByWeek = useMemo(() =>
@@ -3897,7 +3928,7 @@ export default function PersonalFixPage() {
     console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
     return remaining;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, forecastIstDay, pfix.active.istWork, socialCostRates]);
+  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, forecastIstDay, pfix.active.istWork, socialCostRates, agSozOff]);
 
   // Forecast Monatsende derived values
   // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
@@ -3937,7 +3968,11 @@ export default function PersonalFixPage() {
     const factor   = proRataDay !== null ? proRataFactor : 1;
 
     const rows = variableEmployees.map(emp => {
-      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
+      // AG-Sozialkosten pro MA abschaltbar — zentral in getEmployerCostRate
+      // aufgelöst (totalHourly = grossHourly bei «ohne AG»). Stunden unverändert.
+      const br    = getEmployerCostRate(emp, socialCostRates);
+      const agOff = br?.agOff === true;
+      const wage  = br?.totalHourly ?? 0;
       // Split-Pseudo-Zeilen: Stunden über Basis-id, skaliert mit Stundenlohn-Anteil
       const baseId = splitBaseId(emp.id);
       const splitF = wageSplits[baseId]?.hourlyFraction ?? 1;
@@ -3959,7 +3994,8 @@ export default function PersonalFixPage() {
         istWork  = istH  * wage;
       }
 
-      // Holiday: proportional scaling in both modes (calendar-uniform)
+      // Holiday: proportional scaling in both modes (calendar-uniform).
+      // getEmpFerien*CHF nutzt getEffectiveHourlyRate → Flag bereits eingerechnet.
       const planHoliday  = getEmpFerienPlanCHF(emp) * factor;
       const istHoliday   = getEmpFerienCHF(emp)     * factor;
       const planTotalVar = planWork + planHoliday;
@@ -3989,6 +4025,7 @@ export default function PersonalFixPage() {
         diffWork:     istWork     - planWork,
         diffHoliday:  istHoliday  - planHoliday,
         diffTotalVar: istTotalVar - planTotalVar,
+        agOff,
       };
     });
 
@@ -4035,6 +4072,7 @@ export default function PersonalFixPage() {
         diffWork:     istWork - planWork,
         diffHoliday:  0,
         diffTotalVar: istWork - planWork,
+        agOff: false,
         isFixedAdditional: true,
       });
     }
@@ -4061,6 +4099,11 @@ export default function PersonalFixPage() {
     console.log(`[FLEX-SYNC] table sum planVar:  ${sumPlanVar.toFixed(2)} | pfix: ${ref.planTotalVar.toFixed(2)}`);
     console.log(`[FLEX-SYNC] table sum istVar:   ${sumIstVar.toFixed(2)} | pfix: ${ref.istTotalVar.toFixed(2)}`);
 
+    // «ohne AG»-Flags gelten GLOBAL (auch pfix-Master/Headline) → Summen müssen
+    // weiterhin übereinstimmen.
+    const agOffCount = rows.filter(r => r.agOff).length;
+    if (agOffCount > 0)
+      console.log(`[FLEX-SYNC] ${agOffCount} MA ohne AG-Sozialkosten gerechnet (global)`);
     if (Math.abs(sumPlanWork - ref.planWork) > 0.10)
       console.error(`[FLEX-SYNC] MISMATCH planWork: table=${sumPlanWork.toFixed(2)} vs pfix=${ref.planWork.toFixed(2)} diff=${(sumPlanWork - ref.planWork).toFixed(2)}`);
     if (Math.abs(sumIstWork - ref.istWork) > 0.10)
@@ -4069,7 +4112,28 @@ export default function PersonalFixPage() {
     return rows;
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth, planHours, istHours,
       getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey,
-      scheduleRefreshTick, supabaseActualHours, socialCostRates]);
+      scheduleRefreshTick, supabaseActualHours, socialCostRates, agSozOff]);
+
+  // ── AG-Sozialkosten-Toggle pro Flex-MA (global wirksam) ────────────────────
+  const toggleAgSoz = useCallback((empId: string) => {
+    const baseId = splitBaseId(empId);
+    const nextOff = !agSozOff[baseId];
+    // 1) Zentral persistieren — getEmployerCostRate liest ab sofort den neuen Satz
+    setAgSozOffFlag(tenantId, baseId, nextOff);
+    // 2) Lokaler State für Re-Render/Memos
+    setAgSozOff(loadAgSozOffMap(tenantId));
+    // 3) Offenes Breakdown-Popup sofort auf den neuen Satz umstellen
+    setBreakdown(b => {
+      if (!b || splitBaseId(b.empId) !== baseId) return b;
+      const emp = variableEmployees.find(e => splitBaseId(e.id) === baseId);
+      const br  = emp ? getEmployerCostRate(emp, socialCostRates) : null;
+      return { ...b, agOff: nextOff, hourlyWage: br?.totalHourly ?? b.hourlyWage };
+    });
+  }, [tenantId, agSozOff, variableEmployees, socialCostRates, agSozOff]);
+  const agOffFlexCount = useMemo(
+    () => variableEmployees.filter(e => agSozOff[splitBaseId(e.id)]).length,
+    [variableEmployees, agSozOff],
+  );
 
   // ── Flex-Ist-Overrides: wirksame Werte für Tabelle + Export ────────────────
   const flexAgFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
@@ -4103,6 +4167,7 @@ export default function PersonalFixPage() {
     const dayMap = new Map<string, { pw: number; iw: number }>();
 
     for (const emp of variableEmployees) {
+      // Flag wird zentral in getEffectiveHourlyRate aufgelöst
       const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       if (!wage) continue;
 
@@ -4171,7 +4236,7 @@ export default function PersonalFixPage() {
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff };
-  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode, socialCostRates]);
+  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus
@@ -4225,7 +4290,7 @@ export default function PersonalFixPage() {
       .filter(r => r > 0);
     if (!ratesPerEmp.length) return 0;
     return ratesPerEmp.reduce((s, r) => s + r, 0) / ratesPerEmp.length;
-  }, [variableEmployees, socialCostRates]);
+  }, [variableEmployees, socialCostRates, agSozOff]);
 
   // Maximal mögliche Stunden mit verfügbarem Variabel-Budget
   const maxVarHours = availableVarBudget > 0 && avgHourlyWage > 0
@@ -4466,7 +4531,8 @@ export default function PersonalFixPage() {
         }];
 
     const empRows = pfixPerEmp.map(r => ({
-      name:        r.name,
+      // «ohne AG»-Zeilen im Export markieren (CHF-Werte sind bereits ohne AG gerechnet)
+      name:        (r as any).agOff === true ? `${r.name} (ohne AG-Kosten)` : r.name,
       dept:        r.dept,
       planWork:    r.planWork,
       istWork:     r.istWork,
@@ -4614,6 +4680,11 @@ export default function PersonalFixPage() {
           ) : (
             <p className="text-sm text-muted-foreground py-4">Lade Personalkosten …</p>
           )}
+          {agOffFlexCount > 0 && (
+            <p className="text-[11px] text-muted-foreground" data-testid="text-ag-soz-hint">
+              {agOffFlexCount} Mitarbeiter ohne AG-Sozialkosten gerechnet
+            </p>
+          )}
 
 
 
@@ -4753,6 +4824,11 @@ export default function PersonalFixPage() {
                       Flex Kosten pro Mitarbeiter
                       {proRataDay !== null && ` — bis ${proRataDay}.`}
                     </span>
+                    {agOffFlexCount > 0 && (
+                      <span className="text-[11px] text-muted-foreground ml-2">
+                        {agOffFlexCount} Mitarbeiter ohne AG-Sozialkosten gerechnet
+                      </span>
+                    )}
                     <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
                   </div>
                   <div className="overflow-x-auto">
@@ -4789,6 +4865,7 @@ export default function PersonalFixPage() {
                             month:       selectedMonth,
                             cutoffDay:   proRataDay,
                             factor:      proRataDay !== null ? proRataFactor : 1,
+                            agOff:       (row as any).agOff === true,
                           });
                           const clickCell = (field: BreakdownField, amount: number, colorClass: string) => (
                             <td className="px-3 py-1.5 text-right">
@@ -4826,10 +4903,37 @@ export default function PersonalFixPage() {
                                       Lohn fehlt
                                     </span>
                                   )}
+                                  {!isZusatz && (row as any).agOff === true && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200 whitespace-nowrap">
+                                      ohne AG-Kosten
+                                    </span>
+                                  )}
+                                  {!isZusatz && (
+                                    <label
+                                      className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground whitespace-nowrap cursor-pointer select-none"
+                                      title="AG-Sozialkosten in den CHF-Werten dieses Mitarbeiters einrechnen (Stunden bleiben unverändert)"
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        className="h-3 w-3 accent-primary cursor-pointer"
+                                        checked={(row as any).agOff !== true}
+                                        onChange={() => toggleAgSoz(row.id)}
+                                        data-testid={`checkbox-ag-soz-${row.id}`}
+                                      />
+                                      AG-Soz.
+                                    </label>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
-                              <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}</td>
+                              <td
+                                className="px-3 py-1.5 text-right font-mono text-muted-foreground"
+                                title={(row as any).agOff === true ? 'Bruttolohn ohne AG-Sozialkosten' : undefined}
+                              >
+                                {row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}
+                                {(row as any).agOff === true && row.hourlyWage > 0 && <span className="ml-0.5 text-[9px] align-super">*</span>}
+                              </td>
                               <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
                               <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istH > 0 ? `${row.istH.toFixed(1)} h` : '–'}</td>
                               {clickCell('planWork', row.planWork, 'text-blue-700 dark:text-blue-400')}
@@ -5151,7 +5255,7 @@ export default function PersonalFixPage() {
         employees={variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: getEffectiveHourlyRate(e, socialCostRates) ?? 0, weeklyHours: e.weeklyHours ?? 42 }))}
         onClose={() => setFlexPeriodPopup(null)}
       />
-      <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
+      <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} onToggleAgSoz={toggleAgSoz} />
 
       {/* ── Personalcontrolling-Drilldown (Ursachenanalyse) ───────────────── */}
       {drilldownFocus && drilldownInput && (

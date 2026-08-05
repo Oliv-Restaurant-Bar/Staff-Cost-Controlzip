@@ -1,0 +1,15 @@
+Personalkosten — pro Flex-Mitarbeiter AG-Sozialkosten ein-/ausschaltbar, mit globaler Wirkung.
+
+Ziel: Häkchen „AG-Sozialkosten einrechnen" pro Mitarbeiter (Default: AN). Ist es AUS, wird dieser Mitarbeiter ÜBERALL in der App ohne AG-Sozialkosten gerechnet (nur auszahlbarer Bruttolohn) — nicht nur in der Flex-Übersicht, sondern in allen Kennzahlen und Summen. Die Stunden (Plan/Ist) bleiben immer unverändert.
+
+1. Zentrale Quelle der Wahrheit: getEmployerCostRate/getEffectiveHourlyRate respektiert das per-Mitarbeiter-Flag. AN → totalHourly (mit AG, wie bisher), AUS → grossHourly (Bruttolohn ohne AG). Das Flag an EINER Stelle auflösen, damit ALLE Aufrufer denselben Satz bekommen (kein zweiter Rechenpfad).
+
+2. Wirkt konsistent überall, wo die Kosten dieses Mitarbeiters einfließen: Flex-Übersicht (Plan CHF, Ist CHF, Flex Plan, Flex Ist, Diff), Total-Zeile, „Total FIX + VARIABEL", PKQ / Personalkostenquote, Hochrechnung, Tages-/Monats-Kennzahlen, Dashboards und alle Exporte. Jeder Mitarbeiter wird mit SEINEM Satz gerechnet (mit/ohne AG gemischt möglich).
+
+3. Bedienung: Häkchen direkt in der Mitarbeiter-Zeile der FLEX-Tabelle UND im Detail-Popup (neben Plan CHF / Ist CHF). Umschalten aktualisiert sofort alle betroffenen Werte und Summen.
+
+4. Kennzeichnung/Transparenz: Mitarbeiter mit „ohne AG" bekommen überall ein deutliches Badge „ohne AG-Kosten" (Tabelle, Popup, Export). Die Spalte „Total AG/h" zeigt bei „ohne AG" den Bruttosatz mit Tooltip „Bruttolohn ohne AG-Sozialkosten". Wo AG-Kosten in eine Gesamt-Kennzahl (PKQ/Total) einfließen und mindestens ein MA „ohne AG" steht, ein dezenter Hinweis „X Mitarbeiter ohne AG-Sozialkosten gerechnet", damit die niedrigere Zahl nachvollziehbar ist.
+
+5. Persistenz: pro Mandant + Mitarbeiter (boolean, Default true = mit AG), mandantengetrennt (oliv/beaulieu). „leer statt 0" und „nie durch 0 teilen" beibehalten.
+
+Kontrollwert (Aushilfe 2 Küche A, August): mit AG 32.66/h → Plan CHF 5'537 (169.5 h). Nach Häkchen AUS ≈ 28.23/h (Brutto) → Plan CHF ≈ 4'785; die Reduktion (~752 CHF) muss sich auch in Total, PKQ und Hochrechnung niederschlagen, und die Zeile trägt überall das Badge „ohne AG-Kosten".
