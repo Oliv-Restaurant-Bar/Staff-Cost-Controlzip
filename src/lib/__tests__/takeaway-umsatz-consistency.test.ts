@@ -131,3 +131,24 @@ describe('foodBeverageSplit — taVollFood (Oliv: TA 100% Food)', () => {
     expect(s.beverage).toBeCloseTo(rest / 2, 6);
   });
 });
+
+describe('foodBeverageSplit — restHaelftig (Beaulieu: Rest 50/50)', () => {
+  const base: UmsatzTag = {
+    datum: '2026-07-01', gesamtBrutto: 10000, takeAwayBrutto: 0,
+    foodBrutto: 5000, beverageBrutto: 2500, marketingNetto: 100,
+  };
+
+  it('Rest wird hälftig verteilt, direkte Kategorien bleiben direkt, Invariante hält', () => {
+    const s = foodBeverageSplit({ ...base, restHaelftig: true });
+    const fd = base.foodBrutto / 1.081, bd = base.beverageBrutto / 1.081;
+    const rest = nettoUmsatzTag(base) - fd - bd;
+    expect(s.food).toBeCloseTo(fd + rest / 2, 6);
+    expect(s.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(base), 10);
+  });
+
+  it('ohne Flag unverändert anteilig (Regression)', () => {
+    const s = foodBeverageSplit(base);
+    expect(s.food / (s.food + s.beverage)).toBeCloseTo(2 / 3, 3);
+  });
+});

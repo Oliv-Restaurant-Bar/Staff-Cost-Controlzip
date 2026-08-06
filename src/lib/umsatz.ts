@@ -34,7 +34,10 @@
  *   (basis = 0 → hälftig; food + beverage ergibt exakt nettoUmsatz.)
  *   Mandanten-Regel Oliv (taVollFood, seit 08/2026): Take-Away-Netto zählt
  *   100% zu FOOD (kein Beverage über Take Away); nur der übrige Rest wird
- *   anteilig verteilt. Beaulieu unverändert.
+ *   anteilig verteilt.
+ *   Mandanten-Regel Beaulieu (restHaelftig, seit 08/2026): der nicht
+ *   kategorisierte Rest (Non-Foods, Kundenkarten, Trinkgeld, Rundungen,
+ *   Rabatte, Marketing) wird HÄLFTIG (50/50) verteilt statt anteilig.
  *
  * VERIFIKATION Juli 2026 (manueller 27-Tage-Import, gegengerechnet):
  *   Gesamt 235'219.00 · TakeAway 29'898.50 · Marketing 13'193.40
@@ -74,6 +77,13 @@ export interface UmsatzTag {
    * Übrige Positionen (Keine Gruppierung, Rabatte, Marketing) bleiben anteilig.
    */
   taVollFood?: boolean;
+  /**
+   * Mandanten-Regel: nicht kategorisierter Rest (Non-Foods, Aufladung
+   * Kundenkarten, Trinkgeld, Rundungen, Rabatte, Marketing) wird HÄLFTIG
+   * (50/50) auf Food/Beverage verteilt statt anteilig.
+   * Wird vom Lader gesetzt (Beaulieu: true).
+   */
+  restHaelftig?: boolean;
 }
 
 /**
@@ -105,7 +115,9 @@ export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const foodDirekt = tag.foodBrutto / mwstDivisorStandard();
   const bevDirekt = tag.beverageBrutto / mwstDivisorStandard();
   const basis = foodDirekt + bevDirekt;
-  const foodAnteil = basis > 0 ? foodDirekt / basis : 0.5;
+  // Rest-Verteilung: anteilig nach Direktverhältnis — oder hälftig (50/50),
+  // wenn die Mandanten-Regel restHaelftig gesetzt ist (z.B. Beaulieu).
+  const foodAnteil = tag.restHaelftig ? 0.5 : (basis > 0 ? foodDirekt / basis : 0.5);
   // Mandanten-Regel (z.B. Oliv): Take-Away-Netto zählt 100% zu Food; nur der
   // ÜBRIGE Rest (Keine Gruppierung, Rabatte, Marketing) wird anteilig verteilt.
   const taNetto = tag.taVollFood ? tag.takeAwayBrutto / mwstDivisorTakeaway() : 0;
@@ -186,6 +198,8 @@ export async function ladeUmsatzTage(
         marketingNetto: r2(Math.abs(Number(marketing[datum] ?? 0))),
         // Oliv verkauft keine Getränke über Take Away → TA zählt 100% zu Food.
         taVollFood: tenantId === 'oliv',
+        // Beaulieu: Rest & Rabatte hälftig (50/50) auf Food/Beverage.
+        restHaelftig: tenantId === 'beaulieu',
       });
     }
     return result;
