@@ -7,6 +7,8 @@ description: Warenkosten (4000–Grenze) vs. Betriebskosten Klassifikation, nurW
 
 **Regel:** Klasse ergibt sich NUR aus der Kontonummer: 4000–Grenze (Default 4090, KV `waren_grenze_v1`, tenantKey-präfixiert) = Warenkosten (zählen in WKQ); alles andere (>Grenze UND <4000, z.B. 4701 Betriebsmaterial, 6040) = Betriebskosten, NIE in der WKQ. Default gilt für beide Mandanten identisch; je Mandant in den Stammdaten änderbar.
 
+**ER-Zuordnung ≠ WKQ (08/2026, explizit befohlen):** In der ER/P&L zählen 4701–4703 UND 4800–4900 zum Material-/Warenaufwand (Bruttogewinn 1, formelle OR-ER) — Defaults 4701/4800 = `cogs_other`. Die operative WKQ-Klasse (4000–Grenze) bleibt davon UNBERÜHRT — die zwei Zuordnungen bewusst nie «konsistent machen». Budget-Migration hängt pli_betriebsmat/pli_gebinde_akt von pl_other_op zurück nach pl_goods_cost. Im klassischen BPL-Split bleibt 4900 eigene Zeile NACH den Zwischentotalen (nie in «Übriger Warenaufwand»-Subtotal).
+
 **4900 Veränderung Warenvorrat (Lagerveränderung):** eigene P&L-Kategorie/Zeile `cogs_lager` — NICHT «übriger Warenaufwand» (Range-Obergrenze übrig = 4899). P&L: `total_cogs_einkauf` = direkt+übrig (ohne 4900), `total_cogs` = Einkauf+Lager (Wareneinsatz, id unverändert für alle Konsumenten). Einkaufs-WKQ (`cogs_ratio`, auch bpl-aggregate) rechnet auf `total_cogs_einkauf`; Detailzerlegungen (Bank/Investor, PDF-Export) müssen `cogs_lager` mitführen, sonst summieren sichtbare Komponenten nicht aufs Total.
 **Legacy-Regel:** Rechnung/Zeile OHNE Konto oder mit nicht-numerischem Konto = Warenkosten — Altbestand darf die WKQ nicht verlassen.
 

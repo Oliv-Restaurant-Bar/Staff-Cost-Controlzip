@@ -668,7 +668,7 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
  */
 /**
  * Klassifikations-Korrektur (Kontenzuordnungs-Defaults):
- *   4701/4800 = Betriebskosten (nicht Wareneinsatz), 6611 = Personalaufwand
+ *   4701/4800 = Material-/Warenaufwand (OR-ER), 6611 = Personalaufwand
  *   (nicht Werbung/Marketing). Bestehende Budgets, deren Default-Positionen
  *   noch in der ALTEN Kategorie stehen, werden beim Laden umgehängt —
  *   Budgetwerte bleiben unverändert, nur die Kategorie wechselt.
@@ -676,8 +676,10 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
  *   manuell in eine andere Kategorie verschoben, bleibt das erhalten.
  */
 const PL_ITEM_CATEGORY_FIXES: Array<{ id: string; from: string; to: string; label?: string }> = [
-  { id: 'pli_betriebsmat', from: 'pl_goods_cost', to: 'pl_other_op' },
-  { id: 'pli_gebinde_akt', from: 'pl_goods_cost', to: 'pl_other_op' },
+  // OR-ER-Zuordnung: 4701/4800 gehören zum Material-/Warenaufwand (Bruttogewinn 1).
+  // Kehrt die frühere Umbuchung nach pl_other_op wieder um.
+  { id: 'pli_betriebsmat', from: 'pl_other_op', to: 'pl_goods_cost' },
+  { id: 'pli_gebinde_akt', from: 'pl_other_op', to: 'pl_goods_cost' },
   { id: 'pli_kost_logis',  from: 'pl_marketing',  to: 'pl_personnel_other', label: 'Kost & Logis Personal' },
 ];
 

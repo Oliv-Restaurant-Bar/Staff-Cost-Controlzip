@@ -716,7 +716,7 @@ export interface BPLRowWithValues extends BPLRow {
 // Kontoplan Oliv Gastro AG 2026 – Kategoriegrenzen für Ist-Zuweisung
 const BPL_CAT_RANGES: Record<string, [number, number]> = {
   pl_revenue:         [3000, 3999],  // 3000-3990: Betriebsertrag
-  pl_goods_cost:      [4000, 4899],  // 4020-4801: Warenaufwand
+  pl_goods_cost:      [4000, 4900],  // 4000-4900: Material-/Warenaufwand inkl. 4701-4703, 4800-4900 (OR-ER)
   pl_wages:           [5000, 5019],  // 5000-5010: Löhne inkl. Zulagen
   pl_social:          [5700, 5799],  // 5700-5740: AHV/BVG/UVG/KVG
   pl_personnel_other: [5800, 5899],  // 5810-5890: Übriger Personalaufwand
@@ -745,8 +745,8 @@ function normalizeAccountNum(categoryId: string): number {
 /**
  * Effektive BPL-Kategorie eines Kontos: Ein EXAKTES Konto-Mapping
  * (Stammdaten/Kontenzuordnung, custom oder default) überschreibt die reine
- * Bereichszuordnung — z.B. 4701/4800 → Betriebskosten statt Wareneinsatz,
- * 6611 Kost & Logis → Personalaufwand statt Werbung/Marketing.
+ * Bereichszuordnung — z.B. 6611 Kost & Logis → Personalaufwand statt
+ * Werbung/Marketing. 4701-4703/4800-4900 zählen zum Warenaufwand (OR-ER).
  * Bereichs-Treffer (matchType 'range') behalten die bisherige BPL-Bereichslogik.
  */
 function bplCatForAccount(categoryId: string): string | undefined {
@@ -838,6 +838,7 @@ const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
   cogs_food:         'pl_goods_cost',
   cogs_beverage:     'pl_goods_cost',
   cogs_other:        'pl_goods_cost',
+  cogs_lager:        'pl_goods_cost', // 4900 Lagerveränderung — Teil des Warenaufwands (OR-ER)
   // Personal
   personnel_kitchen: 'pl_wages',
   personnel_service: 'pl_wages',
@@ -1014,9 +1015,14 @@ export function computeBPLRows(
         const grouped = gruppiereWarenaufwandKonten(memberRows, r => r.itemAccountNumber);
         const direct = [...grouped.direct];
         const uebrig = [...grouped.uebrig];
+        // 4900 Lagerveränderung (cogs_lager): Teil des Warenaufwand-TOTALS
+        // (OR-ER/Bruttogewinn 1), aber NICHT der Einkaufs-Zwischentotale —
+        // eigene Zeile nach den Gruppen (operativer Split bleibt unverändert).
+        const lager: BPLRowWithValues[] = [];
         for (const r of grouped.unzugeordnet) {
           const plCat = r.itemAccountNumber ? lookupAccount(r.itemAccountNumber).mapping?.plCategory : undefined;
-          if (plCat === 'cogs_food' || plCat === 'cogs_beverage') direct.push(r);
+          if (plCat === 'cogs_lager') lager.push(r);
+          else if (plCat === 'cogs_food' || plCat === 'cogs_beverage') direct.push(r);
           else uebrig.push(r);
         }
         const pushGroup = (groupRows: BPLRowWithValues[], gruppe: WarenaufwandGruppe) => {
@@ -1040,6 +1046,7 @@ export function computeBPLRows(
         };
         pushGroup(direct, 'direct');
         pushGroup(uebrig, 'uebrig');
+        rows.push(...lager);
       } else {
         rows.push(...memberRows);
       }

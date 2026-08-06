@@ -104,7 +104,7 @@ export const SEED_2026_LINE_ITEMS: BudgetPLLineItem[] = [
   },
   {
     id: 'pli_betriebsmat',
-    categoryId: 'pl_other_op',
+    categoryId: 'pl_goods_cost',
     accountNumber: '4701',
     label: 'Betriebsmaterial Restaurant',
     valueType: 'chf',

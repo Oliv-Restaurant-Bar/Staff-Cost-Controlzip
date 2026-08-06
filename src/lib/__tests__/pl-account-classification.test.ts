@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
  * P&L-Klassifikations-Defaults (Spec «Kosten-Import — P&L-Klassifikation korrigieren»):
- *  - 4701 Betriebsmaterial + 4800 Gebinde-Verrechnung = Betriebskosten (nicht Wareneinsatz/WKQ)
+ *  - 4701-4703 + 4800-4900 = Material-/Warenaufwand (formelle OR-ER, Bruttogewinn 1);
+ *    operativ zählen 4701/4800 weiterhin NICHT zur WKQ (Warenkosten = 4000–Grenze)
  *  - 6611 Kost & Logis = Personalaufwand (nicht Werbung/Marketing)
  *  - 4900 Veränderung Warenvorrat = cogs_lager (WES, nicht Einkaufs-WKQ)
  *  - Custom-Mapping (Stammdaten) überschreibt die Defaults
@@ -25,16 +26,21 @@ import { kontoKlasse } from '../waren-klassen';
 beforeEach(() => { for (const k of Object.keys(localStorageStore)) delete localStorageStore[k]; });
 
 describe('Konto-Klassifikations-Defaults', () => {
-  it('4701 → Betriebskosten (other_operating), nicht Wareneinsatz', () => {
-    const r = lookupAccount('4701');
-    expect(r.matchType).toBe('exact');
-    expect(r.mapping?.plCategory).toBe('other_operating');
-    expect(r.mapping?.plSection).toBe('operating_expenses');
+  it('4701-4703 → Material-/Warenaufwand (cogs, OR-ER)', () => {
+    for (const n of ['4701', '4702', '4703']) {
+      const r = lookupAccount(n);
+      expect(r.matchType).toBe('exact');
+      expect(r.mapping?.plSection).toBe('cogs');
+      expect(r.mapping?.plCategory).toBe('cogs_other');
+    }
   });
-  it('4800 → Betriebskosten (Verrechnungskonto), nicht Wareneinsatz', () => {
-    const r = lookupAccount('4800');
-    expect(r.matchType).toBe('exact');
-    expect(r.mapping?.plCategory).toBe('other_operating');
+  it('4800/4801 → Material-/Warenaufwand (cogs, OR-ER)', () => {
+    for (const n of ['4800', '4801']) {
+      const r = lookupAccount(n);
+      expect(r.matchType).toBe('exact');
+      expect(r.mapping?.plSection).toBe('cogs');
+      expect(r.mapping?.plCategory).toBe('cogs_other');
+    }
   });
   it('6611 → Personalaufwand (personnel_other), nicht Marketing', () => {
     const r = lookupAccount('6611');
@@ -50,23 +56,23 @@ describe('Konto-Klassifikations-Defaults', () => {
       expect(lookupAccount(n).mapping?.plSection).toBe('cogs');
     }
   });
-  it('WKQ-Kontoklasse: 4701/4800 = Betriebskosten, 4060 = Warenkosten', () => {
+  it('WKQ-Kontoklasse (operativ, unverändert): 4701/4800 = Betriebskosten, 4060 = Warenkosten', () => {
     expect(kontoKlasse('4701', 4090)).toBe('betriebskosten');
     expect(kontoKlasse('4800', 4090)).toBe('betriebskosten');
     expect(kontoKlasse('4060', 4090)).toBe('warenkosten');
   });
   it('Custom-Mapping überschreibt Default (konfigurierbar je Konto)', () => {
     const def = DEFAULT_ACCOUNTS.find(a => a.accountNumber === '4701')!;
-    saveMappingCustom({ ...def, plCategory: 'cogs_other', plSection: 'cogs', source: 'custom' });
-    expect(lookupAccount('4701').mapping?.plCategory).toBe('cogs_other');
+    saveMappingCustom({ ...def, plCategory: 'other_operating', plSection: 'operating_expenses', source: 'custom' });
+    expect(lookupAccount('4701').mapping?.plCategory).toBe('other_operating');
   });
 });
 
 describe('Budget-Default-Positionen folgen der Klassifikation', () => {
-  it('pli_betriebsmat/pli_gebinde_akt in pl_other_op, pli_kost_logis in pl_personnel_other', () => {
+  it('pli_betriebsmat/pli_gebinde_akt in pl_goods_cost (OR-ER), pli_kost_logis in pl_personnel_other', () => {
     const byId = new Map(DEFAULT_PL_LINE_ITEMS.map(i => [i.id, i]));
-    expect(byId.get('pli_betriebsmat')?.categoryId).toBe('pl_other_op');
-    expect(byId.get('pli_gebinde_akt')?.categoryId).toBe('pl_other_op');
+    expect(byId.get('pli_betriebsmat')?.categoryId).toBe('pl_goods_cost');
+    expect(byId.get('pli_gebinde_akt')?.categoryId).toBe('pl_goods_cost');
     expect(byId.get('pli_kost_logis')?.categoryId).toBe('pl_personnel_other');
   });
 });
