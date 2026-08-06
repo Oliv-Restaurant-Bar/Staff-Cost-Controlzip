@@ -34,6 +34,7 @@
 - [Employee skill columns persistence](employee-skill-columns-persistence.md) — station keys written separately from employeeToDb w/ presence guard (`'field' in emp`), never `?? null` (clobber class).
 - [replit.md editing pitfalls](replit-md-editing.md) — never inline German bullets in bash-heredoc Python (quote mixups kill the string); write temp file via write tool, then splice.
 - [Vitest full-run OOM & singleFork pollution](vitest-oom-chunking.md) — full `vitest run` OOM-killed silently beside dev server; chunk it; singleFork kills isolation → false failures, re-verify isolated.
+- [E2E-Konten-Hygiene](e2e-account-hygiene.md) — Tester dürfen NIE echte Konten ändern (Admin-Passwort-Vorfall 08/2026); e2e-*-Konten nach Läufen per Admin-API löschen.
 - [E2E-Verifikation hinter Supabase-Login](e2e-auth-verification.md) — Self-Signup + user_profiles-Self-Upsert = Test-Admin möglich; Gast-Token rein client-seitig, sieht aber keine Admin-Flächen.
 - [ER-Abgleich Personalaufwand SSOT](er-abgleich-personalaufwand-ssot.md) — FIBU-Ist im ER-Abgleich = personnel_wages+personnel_social aus computePLForMonth, EXKL. personnel_other; nie separate 5xxx-Aggregation.
 - [Warenkosten↔FIBU Abgleich](warenkosten-er-abgleich.md) — operative-vs-FIBU cost compare must gate to whole elapsed months (FIBU sums full months) or partial periods fake a red diff.
