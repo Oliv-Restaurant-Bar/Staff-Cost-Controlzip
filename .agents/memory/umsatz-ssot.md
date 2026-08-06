@@ -32,3 +32,8 @@ Datenlage Juli 2026 nach Umstellung: 27 Tage im dailyBudgets-KV vorhanden (22.07
 
 ## Marketing NIE MwSt-bereinigen (Aug 2026)
 Marketing/Maison (maison-daily, Nennwert = netto) zählt ÜBERALL mit vollem Wert — auch in Anzeige-Spalten (Tagesansicht/Tages-Controlling, vorher ÷1.081 bei Netto-Ansicht) und im Reporting-Export-Delta maisonMonthlyNet (vorher ÷1.081). Kontrollwert Oliv Juli 2026: POS-netto 244'788.43 + Marketing 15'386.10 = 260'174.53 (falsch mit Abzug: 259'021.64). Neue Marketing-Konsumenten: Wert 1:1, kein grossToNet/Divisor.
+
+## Oliv-Regel: Take Away 100% Food (seit 08/2026)
+- `UmsatzTag.taVollFood` (nur vom Lader gesetzt, tenantId==='oliv'): foodBeverageSplit schlägt TA-Netto (÷ mwstDivisorTakeaway) vollständig Food zu; nur der übrige Rest wird anteilig verteilt. Invariante food+bev=netto bleibt exakt.
+- Beaulieu/andere Tenants: Flag fehlt → Verhalten unverändert. UmsatzTag entsteht NUR in ladeUmsatzTage — neuer Konstruktor müsste das Flag selbst setzen.
+- Monatsreport-VJ-Spalten (vj_daily.foodRevenue/beverageRevenue ÷ VAT_STD) sind bewusst NUR direkte Kategorien — enthalten keinen TA-Anteil (weder Food noch Beverage) und sind von der Regel unberührt.

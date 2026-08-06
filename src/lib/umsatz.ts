@@ -32,6 +32,9 @@
  *     food     = foodDirekt     + restNetto * (foodDirekt / basis)
  *     beverage = beverageDirekt + restNetto * (beverageDirekt / basis)
  *   (basis = 0 → hälftig; food + beverage ergibt exakt nettoUmsatz.)
+ *   Mandanten-Regel Oliv (taVollFood, seit 08/2026): Take-Away-Netto zählt
+ *   100% zu FOOD (kein Beverage über Take Away); nur der übrige Rest wird
+ *   anteilig verteilt. Beaulieu unverändert.
  *
  * VERIFIKATION Juli 2026 (manueller 27-Tage-Import, gegengerechnet):
  *   Gesamt 235'219.00 · TakeAway 29'898.50 · Marketing 13'193.40
@@ -65,6 +68,12 @@ export interface UmsatzTag {
   beverageBrutto: number;
   /** Marketing-Positionen, Nennwert = netto */
   marketingNetto: number;
+  /**
+   * Mandanten-Regel: Take Away zählt 100% zu FOOD (kein Beverage-Anteil).
+   * Wird vom Lader gesetzt (Oliv: true — keine Getränke über Take Away).
+   * Übrige Positionen (Keine Gruppierung, Rabatte, Marketing) bleiben anteilig.
+   */
+  taVollFood?: boolean;
 }
 
 /**
@@ -97,8 +106,11 @@ export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const bevDirekt = tag.beverageBrutto / mwstDivisorStandard();
   const basis = foodDirekt + bevDirekt;
   const foodAnteil = basis > 0 ? foodDirekt / basis : 0.5;
-  const rest = netto - foodDirekt - bevDirekt;
-  const food = foodDirekt + rest * foodAnteil;
+  // Mandanten-Regel (z.B. Oliv): Take-Away-Netto zählt 100% zu Food; nur der
+  // ÜBRIGE Rest (Keine Gruppierung, Rabatte, Marketing) wird anteilig verteilt.
+  const taNetto = tag.taVollFood ? tag.takeAwayBrutto / mwstDivisorTakeaway() : 0;
+  const rest = netto - foodDirekt - bevDirekt - taNetto;
+  const food = foodDirekt + taNetto + rest * foodAnteil;
   return { food, beverage: netto - food };
 }
 
@@ -172,6 +184,8 @@ export async function ladeUmsatzTage(
         foodBrutto: Number(day?.actualFood ?? 0),
         beverageBrutto: Number(day?.actualBeverage ?? 0),
         marketingNetto: r2(Math.abs(Number(marketing[datum] ?? 0))),
+        // Oliv verkauft keine Getränke über Take Away → TA zählt 100% zu Food.
+        taVollFood: tenantId === 'oliv',
       });
     }
     return result;

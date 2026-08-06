@@ -90,3 +90,44 @@ describe('Take Away Umsatz — dem Angebot-Schalter unterworfen', () => {
     expect(filterTakeAwayRows(rows, true).map(r => r.id)).toEqual(['take_away_umsatz', 'food']);
   });
 });
+
+// ── Mandanten-Regel Oliv: Take Away zählt 100% zu FOOD (taVollFood) ──────────
+import { foodBeverageSplit, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
+
+describe('foodBeverageSplit — taVollFood (Oliv: TA 100% Food)', () => {
+  const base: UmsatzTag = {
+    datum: '2026-07-01', gesamtBrutto: 10000, takeAwayBrutto: 2000,
+    foodBrutto: 5000, beverageBrutto: 2500, marketingNetto: 100,
+  };
+
+  it('ohne Flag: bisherige anteilige Verteilung, Invariante food+bev=netto', () => {
+    const s = foodBeverageSplit(base);
+    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(base), 10);
+    // Food-Anteil entspricht dem Direktverhältnis (2/3)
+    expect(s.food / (s.food + s.beverage)).toBeCloseTo(2 / 3, 3);
+  });
+
+  it('mit Flag: TA-Netto vollständig in Food, Rest weiterhin anteilig, Invariante hält', () => {
+    const tag = { ...base, taVollFood: true };
+    const alt = foodBeverageSplit(base);
+    const neu = foodBeverageSplit(tag);
+    const taNetto = tag.takeAwayBrutto / 1.026;
+    expect(neu.food + neu.beverage).toBeCloseTo(nettoUmsatzTag(tag), 10);
+    // Verschiebung = bisheriger Beverage-Anteil des TA (TA-Netto × Bev-Quote 1/3)
+    expect(neu.food - alt.food).toBeCloseTo(taNetto * (1 / 3), 6);
+    expect(alt.beverage - neu.beverage).toBeCloseTo(taNetto * (1 / 3), 6);
+    // Food enthält mindestens Direkt-Food + volles TA-Netto? Nein — Rest kann negativ sein;
+    // massgeblich ist: Beverage bekommt KEINEN TA-Anteil mehr:
+    const restOhneTa = nettoUmsatzTag(tag) - tag.foodBrutto / 1.081 - tag.beverageBrutto / 1.081 - taNetto;
+    expect(neu.beverage).toBeCloseTo(tag.beverageBrutto / 1.081 + restOhneTa * (1 / 3), 6);
+  });
+
+  it('mit Flag ohne F/B-Basis: TA zu Food, Rest hälftig', () => {
+    const tag: UmsatzTag = { datum: '2026-07-01', gesamtBrutto: 3000, takeAwayBrutto: 1000, foodBrutto: 0, beverageBrutto: 0, marketingNetto: 0, taVollFood: true };
+    const s = foodBeverageSplit(tag);
+    const taNetto = 1000 / 1.026;
+    const rest = nettoUmsatzTag(tag) - taNetto;
+    expect(s.food).toBeCloseTo(taNetto + rest / 2, 6);
+    expect(s.beverage).toBeCloseTo(rest / 2, 6);
+  });
+});
