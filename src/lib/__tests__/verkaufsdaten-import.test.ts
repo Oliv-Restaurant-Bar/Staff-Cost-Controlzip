@@ -231,8 +231,7 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
   const basePlan = (days: VkPlan['days']): VkPlan =>
     ({ days, neu: 0, aktualisiert: 0, unveraendert: 0 });
   const opts = (plan: VkPlan, year: number) => ({
-    year, tenantId: 'beaulieu', currentYear: 2026,
-    dailyBudgetsKey: 'beaulieu:dailyBudgets',
+    year, tenantId: 'beaulieu',
     archiveKey: `beaulieu:verkaufszahlen_${year}`,
     plan,
   });
@@ -240,30 +239,24 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getLockState).mockResolvedValue({ locked: false } as never);
-    vi.mocked(loadVjDailyYearStrict).mockResolvedValue({});
     vi.mocked(kvGetStrict).mockResolvedValue(null);
   });
 
-  it('vergangenes Jahr: vj_daily-Merge erhält bestehendes actualRevenue; explizite 0 ersetzt Feldwert', async () => {
-    vi.mocked(loadVjDailyYearStrict).mockResolvedValue({
-      '2025-01-01': { date: '2025-01-01', year: 2025, actualRevenue: 9999, foodRevenue: 5000, source: 'vorjahr_import' },
-    });
+  it('Datenquellen-Trennung: dailyBudgets und vj_daily werden NIE geschrieben (auch vergangene Jahre)', async () => {
     const res = await commitVerkaufsdaten(opts(basePlan({
       '2025-01-01': { foodRevenue: 0, beverageRevenue: 2100 },
       '2025-01-02': { foodRevenue: 4000 },
     }), 2025));
     expect(res.blocked).toBe(false);
-    const records = vi.mocked(upsertVjDailyBatch).mock.calls[0][0] as unknown as Array<Record<string, unknown>>;
-    const d1 = records.find(r => r.date === '2025-01-01')!;
-    expect(d1.actualRevenue).toBe(9999);      // NICHT überschrieben
-    expect(d1.foodRevenue).toBe(0);           // explizite 0 ersetzt 5000
-    expect(d1.beverageRevenue).toBe(2100);
-    const d2 = records.find(r => r.date === '2025-01-02')!;
-    expect(d2.actualRevenue).toBe(4000);      // neuer Tag: Food+Bev
-    // dailyBudgets: nur Kategorie-Felder
-    const [, updates] = vi.mocked(safeUpsertDailyBudgets).mock.calls[0];
-    expect(updates['2025-01-01']).toEqual({ actualFood: 0, actualBeverage: 2100 });
-    expect(updates['2025-01-02']).toEqual({ actualFood: 4000 });
+    expect(res.archivedDays).toBe(2);
+    // Cockpit-Food/Beverage-Quellen bleiben komplett unangetastet:
+    expect(vi.mocked(safeUpsertDailyBudgets)).not.toHaveBeenCalled();
+    expect(vi.mocked(upsertVjDailyBatch)).not.toHaveBeenCalled();
+    expect(vi.mocked(loadVjDailyYearStrict)).not.toHaveBeenCalled();
+    // Nur das Archiv wird geschrieben:
+    const [key, blob] = vi.mocked(kvSetStrict).mock.calls[0] as [string, { days: Record<string, unknown> }];
+    expect(key).toBe('beaulieu:verkaufszahlen_2025');
+    expect(blob.days['2025-01-01']).toEqual({ foodRevenue: 0, beverageRevenue: 2100 });
   });
 
   it('gesperrtes Jahr: blocked, KEINE Writes', async () => {
@@ -275,22 +268,19 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
     expect(vi.mocked(upsertVjDailyBatch)).not.toHaveBeenCalled();
   });
 
-  it('vj_daily-Lesefehler: Abbruch VOR dem ersten Write', async () => {
-    vi.mocked(loadVjDailyYearStrict).mockRejectedValue(new Error('read failed'));
-    await expect(commitVerkaufsdaten(opts(basePlan({ '2025-01-01': { foodRevenue: 1 } }), 2025)))
-      .rejects.toThrow('read failed');
-    expect(vi.mocked(kvSetStrict)).not.toHaveBeenCalled();
-    expect(vi.mocked(safeUpsertDailyBudgets)).not.toHaveBeenCalled();
-  });
-
-  it('aktuelles Jahr: kein vj_daily-Zugriff, Archiv-Merge mit Bestand', async () => {
+  it('Archiv-Merge mit Bestand (Lesefehler ≠ leer: kvGetStrict)', async () => {
     vi.mocked(kvGetStrict).mockResolvedValue({ days: { '2026-02-01': { foodCount: 5 } }, updatedAt: 'x' });
-    const res = await commitVerkaufsdaten(opts(basePlan({ '2026-01-01': { foodRevenue: 100 } }), 2026));
-    expect(res.vjUpserted).toBe(0);
-    expect(vi.mocked(loadVjDailyYearStrict)).not.toHaveBeenCalled();
+    await commitVerkaufsdaten(opts(basePlan({ '2026-01-01': { foodRevenue: 100 } }), 2026));
     const [, blob] = vi.mocked(kvSetStrict).mock.calls[0] as [string, { days: Record<string, unknown> }];
     expect(blob.days['2026-02-01']).toEqual({ foodCount: 5 }); // Bestand bleibt
     expect(blob.days['2026-01-01']).toEqual({ foodRevenue: 100 });
+  });
+
+  it('Archiv-Lesefehler: Abbruch VOR dem ersten Write', async () => {
+    vi.mocked(kvGetStrict).mockRejectedValue(new Error('read failed'));
+    await expect(commitVerkaufsdaten(opts(basePlan({ '2025-01-01': { foodRevenue: 1 } }), 2025)))
+      .rejects.toThrow('read failed');
+    expect(vi.mocked(kvSetStrict)).not.toHaveBeenCalled();
   });
 });
 
@@ -366,8 +356,7 @@ describe('parseVerkaufsdatenFile — taGuests (Anzahl-Dateien)', () => {
 
 describe('commitVerkaufsdaten — ta-gaeste-daily-Store', () => {
   const opts = (plan: VkPlan, year: number) => ({
-    year, tenantId: 'oliv', currentYear: 2026,
-    dailyBudgetsKey: 'dailyBudgets',
+    year, tenantId: 'oliv',
     archiveKey: `verkaufszahlen_${year}`,
     taGaesteKey: 'ta-gaeste-daily',
     plan,
@@ -377,7 +366,6 @@ describe('commitVerkaufsdaten — ta-gaeste-daily-Store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getLockState).mockResolvedValue({ locked: false } as never);
-    vi.mocked(loadVjDailyYearStrict).mockResolvedValue({});
     vi.mocked(kvGetStrict).mockResolvedValue(null);
   });
 

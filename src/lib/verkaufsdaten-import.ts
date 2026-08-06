@@ -2,8 +2,14 @@
  * verkaufsdaten-import.ts — Gastronovi Food/Beverage-Jahresexport (Artikel)
  * =========================================================================
  * Parst die vier Gastronovi-Artikel-Exporte pro Jahr (Food-Umsatz, Food-Anzahl,
- * Beverage-Umsatz, Beverage-Anzahl) und speist daraus die Cockpit-Zeilen
- * «Food»/«Beverage» — Ist UND dynamisches Vorjahr (Jahr − 1).
+ * Beverage-Umsatz, Beverage-Anzahl) und speist daraus AUSSCHLIESSLICH:
+ *  - die Cockpit-Zeile «Gäste Take Away» (Σ verkaufte Einheiten aller
+ *    TA-Artikel, 1 Einheit = 1 Gast — daraus auch der Take-Away-Anteil), und
+ *  - das Archiv `verkaufszahlen_{jahr}` (Vorschau-/Diff-Basis).
+ * Die Cockpit-Zeilen Food/Beverage kommen NICHT von hier — sie stammen
+ * ausschliesslich aus dem Umsatz-Excel (dailyBudgets → umsatz.ts-Split,
+ * Invariante Food+Beverage=Netto). Artikel-Umsätze/-Anzahlen für die
+ * Produktanalyse laufen über den separaten Produkte-Import (product_sales).
  *
  * FORMAT (an echten Dateien verankert):
  *  - Tab-getrennt (\t), UTF-8. Kopf: «Bezeichnung», «Zeitraum» (Periodentotal),
@@ -13,12 +19,10 @@
  *  - Umsatz-Werte im Format «CHF 1873993,50» (CHF-Präfix, Komma = Dezimal);
  *    Anzahl-Dateien analog ohne CHF (Stück).
  *
- * SPEICHERZIELE (Cockpit-Verkabelung, KEINE neue Report-Logik):
- *  - dailyBudgets.actualFood/actualBeverage je Tag (umsatz.ts-SSOT → Ist-Zeilen
- *    Food/Beverage, auch für vergangene Jahre — Cockpit liest per Datum).
- *  - vj_daily.foodRevenue/beverageRevenue je Tag (nur Jahre < aktuelles Jahr;
- *    Quelle der dynamischen Vorjahres-Spalte in Jahr + 1). Bestehende
- *    vj_daily-Records werden GEMERGT (actualRevenue bleibt erhalten).
+ * SPEICHERZIELE (Datenquellen-Trennung seit 08/2026 — dailyBudgets und
+ * vj_daily werden hier NICHT mehr geschrieben):
+ *  - `ta-gaeste-daily` (tenant-präfixiert): «Gäste Take Away» pro Tag aus den
+ *    Anzahl-Dateien (nur wenn TA-Artikel vorhanden).
  *  - Archiv-Blob `verkaufszahlen_{jahr}` (tenant-präfixiert): Umsatz UND Anzahl
  *    je Tag/Kategorie — Basis der Vorschau «neu/aktualisiert/unverändert».
  *
@@ -26,7 +30,6 @@
  * ein debug-Objekt + failureReason — nie blind an ein geratenes Format anpassen.
  */
 
-import { upsertVjDailyBatch, loadVjDailyYearStrict, vjDailyKey, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { getLockState } from '@/lib/prior-year-lock';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
@@ -286,10 +289,6 @@ export function buildVkPlan(year: number, files: VkParsedFile[], existing: Recor
 export interface VkCommitResult {
   blocked: boolean;
   lockedYear?: number;
-  /** Tage mit Umsatzwerten → dailyBudgets-Updates. */
-  revenueDays: number;
-  /** vj_daily-Upserts (nur Jahre < aktuelles Jahr). */
-  vjUpserted: number;
   /** Alle geschriebenen Archiv-Tage. */
   archivedDays: number;
   /** Tage mit «Gäste Take Away»-Werten → ta-gaeste-daily-Updates. */
@@ -297,52 +296,36 @@ export interface VkCommitResult {
 }
 
 /**
- * Schreibt den Plan: Archiv-Blob (Merge), dailyBudgets.actualFood/actualBeverage
- * (nur Tage mit Umsatzwerten; andere Tagesfelder bleiben unberührt) und — für
- * vergangene Jahre — vj_daily (Merge, actualRevenue bleibt erhalten; fehlt der
- * Tag ganz, wird er mit actualRevenue = Food + Beverage angelegt).
+ * Schreibt den Plan: Archiv-Blob (Merge) und «Gäste Take Away»
+ * (ta-gaeste-daily, Merge je Datum). dailyBudgets und vj_daily werden
+ * BEWUSST NICHT angefasst — die Cockpit-Zeilen Food/Beverage kommen
+ * ausschliesslich aus dem Umsatz-Excel (Datenquellen-Trennung 08/2026).
  *
  * JAHRES-SPERRE: frisch VOR jedem Write geprüft — gesperrt ⇒ keine Writes.
  */
 export async function commitVerkaufsdaten(opts: {
   year: number;
   tenantId: string | undefined;
-  /** tenant-präfixierter dailyBudgets-Key (tenantKey('dailyBudgets')). */
-  dailyBudgetsKey: string;
   /** tenant-präfixierter Archiv-Key (tenantKey(verkaufszahlenKey(year))). */
   archiveKey: string;
   /** tenant-präfixierter «Gäste Take Away»-Key (tenantKey('ta-gaeste-daily')). */
   taGaesteKey?: string;
   plan: VkPlan;
-  currentYear?: number;
 }): Promise<VkCommitResult> {
   const { year, tenantId, plan } = opts;
-  const currentYear = opts.currentYear ?? new Date().getFullYear();
 
   // ── Jahres-Sperre (frisch, nie nur UI-State) ──
   const lock = await getLockState(tenantId ?? 'oliv', year);
   if (lock.locked) {
     console.warn(`[VERKAUFSDATEN] commit blocked: locked | tenant: ${tenantId ?? 'oliv'} | year: ${year}`);
-    return { blocked: true, lockedYear: year, revenueDays: 0, vjUpserted: 0, archivedDays: 0, taGuestDays: 0 };
+    return { blocked: true, lockedYear: year, archivedDays: 0, taGuestDays: 0 };
   }
 
-  const { kvGetStrict, kvSetStrict, safeUpsertDailyBudgets } = await import('@/lib/supabase-kv');
+  const { kvGetStrict, kvSetStrict } = await import('@/lib/supabase-kv');
 
-  // ── 0) vj_daily-Merge-Basis STRIKT lesen — VOR dem ersten Write ──
-  // Lesefehler dürfen NIE als «leer» gelten, sonst würden neue Records mit
-  // actualRevenue = Food+Beverage echte Bestände überschreiben. Bei Fehler
-  // wirft loadVjDailyYearStrict → Import bricht ab, bevor irgendetwas
-  // geschrieben wurde.
-  const revenueDatesAll = Object.entries(plan.days)
-    .filter(([, r]) => r.foodRevenue !== undefined || r.beverageRevenue !== undefined)
-    .map(([d]) => d).sort();
-  const priorVj = year < currentYear && revenueDatesAll.length > 0
-    ? await loadVjDailyYearStrict(year, tenantId)
-    : {};
-
-  // ── 0b) «Gäste Take Away»-Merge-Basis STRIKT lesen — ebenfalls VOR dem
-  // ersten Write, damit ein Lesefehler keinen teilweise ausgeführten Import
-  // (Archiv/dailyBudgets geschrieben, TA nicht) hinterlässt.
+  // ── 0) «Gäste Take Away»-Merge-Basis STRIKT lesen — VOR dem ersten Write,
+  // damit ein Lesefehler keinen teilweise ausgeführten Import (Archiv
+  // geschrieben, TA nicht) hinterlässt.
   const taIncoming: Record<string, number> = {};
   for (const [date, rec] of Object.entries(plan.days)) {
     if (rec.taGuests !== undefined) taIncoming[date] = rec.taGuests;
@@ -361,20 +344,7 @@ export async function commitVerkaufsdaten(opts: {
   }
   await kvSetStrict(opts.archiveKey, { days: mergedDays, updatedAt: new Date().toISOString() } satisfies VkBlob);
 
-  // ── 2) dailyBudgets: nur Kategorien-Felder, nur Tage mit Umsatzwerten ──
-  const updates: Record<string, Record<string, unknown>> = {};
-  for (const [date, rec] of Object.entries(plan.days)) {
-    const u: Record<string, unknown> = {};
-    if (rec.foodRevenue !== undefined) u.actualFood = rec.foodRevenue;
-    if (rec.beverageRevenue !== undefined) u.actualBeverage = rec.beverageRevenue;
-    if (Object.keys(u).length > 0) updates[date] = u;
-  }
-  const revenueDates = Object.keys(updates).sort();
-  if (revenueDates.length > 0) {
-    await safeUpsertDailyBudgets(opts.dailyBudgetsKey, updates, false);
-  }
-
-  // ── 2b) «Gäste Take Away»: Tageswerte in den ta-gaeste-daily-Store ──
+  // ── 2) «Gäste Take Away»: Tageswerte in den ta-gaeste-daily-Store ──
   // Merge je Datum (gleiche Tage ersetzt, nie addiert; andere Jahre/Tage
   // bleiben erhalten — Merge-Basis wurde in 0b STRIKT gelesen). Keine
   // TA-Artikel in den Dateien (Beaulieu) → nichts geschrieben.
@@ -384,27 +354,5 @@ export async function commitVerkaufsdaten(opts: {
     taGuestDays = Object.keys(taIncoming).length;
   }
 
-  // ── 3) vj_daily (nur vergangene Jahre): Tag-Merge, actualRevenue erhalten ──
-  // Merge-Basis wurde oben STRIKT gelesen (priorVj). Explizite 0 ersetzt
-  // alte Feldwerte; nur fehlende Felder bleiben unangetastet.
-  let vjUpserted = 0;
-  if (year < currentYear && revenueDatesAll.length > 0) {
-    const records: VjDayRecord[] = revenueDatesAll.map(date => {
-      const rec = plan.days[date];
-      const prev = priorVj[date];
-      const food = rec.foodRevenue;
-      const bev = rec.beverageRevenue;
-      const base: VjDayRecord = prev
-        ? { ...prev }
-        : { date, year, actualRevenue: (food ?? 0) + (bev ?? 0), source: 'verkaufsdaten_import' };
-      if (food !== undefined) base.foodRevenue = food;
-      if (bev !== undefined) base.beverageRevenue = bev;
-      return base;
-    });
-    ({ upserted: vjUpserted } = await upsertVjDailyBatch(records, tenantId));
-  }
-
-  return { blocked: false, revenueDays: revenueDates.length, vjUpserted, archivedDays: Object.keys(plan.days).length, taGuestDays };
+  return { blocked: false, archivedDays: Object.keys(plan.days).length, taGuestDays };
 }
-
-export { vjDailyKey };

@@ -2,9 +2,12 @@
  * VerkaufsdatenImportSection — Gastronovi Food/Beverage-Jahresexport (Artikel)
  * ============================================================================
  * Vier Tab-getrennte Dateien pro Jahr (Food-Umsatz, Food-Anzahl,
- * Beverage-Umsatz, Beverage-Anzahl) → speist die Cockpit-Zeilen Food/Beverage
- * (Ist + dynamisches Vorjahr über vj_daily). Parser/Speicherlogik in
- * src/lib/verkaufsdaten-import.ts; hier nur UI, Vorschau, Sperre, Undo-Snapshot.
+ * Beverage-Umsatz, Beverage-Anzahl) → speist AUSSCHLIESSLICH «Gäste Take
+ * Away» (TA-Artikel = 1 Gast/Einheit) und das Verkaufszahlen-Archiv.
+ * Cockpit-Food/Beverage kommt NICHT von hier (nur Umsatz-Excel);
+ * Artikel-Details für die Produktanalyse über den Produkte-Import.
+ * Parser/Speicherlogik in src/lib/verkaufsdaten-import.ts; hier nur UI,
+ * Vorschau, Sperre, Undo-Snapshot.
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -20,9 +23,8 @@ import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { useTenant } from '@/contexts/TenantContext';
 import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
 import { getLockState } from '@/lib/prior-year-lock';
-import { loadVjDailyYearStrict } from '@/lib/vj-daily-supabase';
 import {
-  parseVerkaufsdatenFile, buildVkPlan, commitVerkaufsdaten, verkaufszahlenKey, vjDailyKey,
+  parseVerkaufsdatenFile, buildVkPlan, commitVerkaufsdaten, verkaufszahlenKey,
   type VkParsedFile, type VkBlob, type VkPlan,
 } from '@/lib/verkaufsdaten-import';
 import { taGaesteKeyFor } from '@/lib/ta-gaeste-store';
@@ -129,19 +131,17 @@ export function VerkaufsdatenImportSection() {
         return;
       }
 
-      const dailyBudgetsKey = tenantKey('dailyBudgets');
       const archiveKey = tenantKey(verkaufszahlenKey(year));
       const taGaesteKey = taGaesteKeyFor(tenantKey);
       const hasTaGuests = Object.values(plan.days).some(r => r.taGuests !== undefined);
-      const revenueDates = Object.entries(plan.days)
-        .filter(([, r]) => r.foodRevenue !== undefined || r.beverageRevenue !== undefined)
-        .map(([d]) => d).sort();
 
       // ── Undo-Snapshot VOR den Writes (best-effort; ohne Snapshot Warnung) ──
+      // Gesichert werden nur die tatsächlich geschriebenen Ziele: Archiv-Blob
+      // + «Gäste Take Away»-Blob. dailyBudgets/vj_daily werden seit der
+      // Datenquellen-Trennung nicht mehr angefasst.
       let snapshot: Parameters<typeof recordImportRun>[1]['snapshot'];
       try {
-        const { loadDailyBudgetsBaseStrict, kvGetStrict } = await import('@/lib/supabase-kv');
-        const base = await loadDailyBudgetsBaseStrict(dailyBudgetsKey);
+        const { kvGetStrict } = await import('@/lib/supabase-kv');
         const kvItems: KvKeyItem[] = [{
           key: archiveKey,
           value: ((await kvGetStrict(archiveKey)) as unknown) ?? null,
@@ -154,38 +154,14 @@ export function VerkaufsdatenImportSection() {
             value: ((await kvGetStrict(taGaesteKey)) as unknown) ?? null,
           });
         }
-        if (year < currentYear && revenueDates.length > 0) {
-          // STRIKT: Lesefehler ≠ leer — sonst würde Undo die vj_daily-Tage
-          // fälschlich löschen. Wirft bei Fehler → Import wird abgebrochen.
-          const priorVj = await loadVjDailyYearStrict(year, tenantId);
-          for (const d of revenueDates) {
-            kvItems.push({ key: vjDailyKey(d, tenantId), value: (priorVj[d] as unknown) ?? null });
-          }
-        }
-        snapshot = {
-          kind: 'kv-blob-entries' as const,
-          blobs: [{
-            key: dailyBudgetsKey,
-            entries: Object.fromEntries(revenueDates.map(d =>
-              [d, base[d] ? JSON.parse(JSON.stringify(base[d])) : null])),
-          }],
-          kvItems,
-        };
+        snapshot = { kind: 'kv-keys' as const, items: kvItems };
       } catch (err) {
-        if (year < currentYear && revenueDates.length > 0) {
-          // Vergangenes Jahr: ohne verlässlichen vj_daily-Vorzustand wäre
-          // sowohl Undo als auch der Merge unsicher → Import abbrechen.
-          throw new Error('Undo-Snapshot (vj_daily-Bestand) nicht lesbar — Import abgebrochen: ' +
-            String(err instanceof Error ? err.message : err));
-        }
         snapshot = undefined;
         console.warn('[VERKAUFSDATEN] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
         toast.warning('Rückgängig-Protokoll nicht verfügbar — Import läuft ohne Undo weiter.');
       }
 
-      const res = await commitVerkaufsdaten({
-        year, tenantId, dailyBudgetsKey, archiveKey, taGaesteKey, plan, currentYear,
-      });
+      const res = await commitVerkaufsdaten({ year, tenantId, archiveKey, taGaesteKey, plan });
       if (res.blocked) {
         toast.error(`Jahr ${res.lockedYear ?? year} ist gesperrt — Import nicht ausgeführt.`);
         return;
@@ -200,7 +176,6 @@ export function VerkaufsdatenImportSection() {
           itemLabel: 'Tage',
           fileName: okFiles.map(f => f.fileName).join(' · '),
           details: `${slotList} — neu ${plan.neu} / aktualisiert ${plan.aktualisiert} / unverändert ${plan.unveraendert}` +
-            (res.vjUpserted > 0 ? ` — vj_daily: ${res.vjUpserted} Tage` : '') +
             (res.taGuestDays > 0 ? ` — Gäste Take Away: ${res.taGuestDays} Tage` : ''),
           ...(snapshot ? { snapshot } : {}),
         });
@@ -211,8 +186,8 @@ export function VerkaufsdatenImportSection() {
 
       window.dispatchEvent(new Event('supabase-kv-synced'));
       notifyReportingDataChanged();
-      console.log(`[VERKAUFSDATEN] tenant: ${tenantId} | Jahr ${year} | Tage: ${res.archivedDays} | dailyBudgets: ${res.revenueDays} | vj_daily: ${res.vjUpserted}`);
-      toast.success(`Verkaufsdaten ${year} gespeichert: ${res.archivedDays} Tage (${res.revenueDays} mit Umsatz${res.vjUpserted > 0 ? `, ${res.vjUpserted} vj_daily` : ''}${res.taGuestDays > 0 ? `, ${res.taGuestDays} Tage Gäste Take Away` : ''}).`);
+      console.log(`[VERKAUFSDATEN] tenant: ${tenantId} | Jahr ${year} | Archiv-Tage: ${res.archivedDays} | Gäste TA: ${res.taGuestDays}`);
+      toast.success(`Verkaufsdaten ${year} gespeichert: ${res.archivedDays} Tage im Archiv${res.taGuestDays > 0 ? `, ${res.taGuestDays} Tage Gäste Take Away` : ''} — Cockpit-Food/Beverage bleibt unverändert (Quelle: Umsatz-Excel).`);
       reset();
     } catch (e) {
       toast.error('Fehler beim Speichern: ' + String(e instanceof Error ? e.message : e));
@@ -225,16 +200,18 @@ export function VerkaufsdatenImportSection() {
     <div className="space-y-3" data-testid="verkaufsdaten-import-section">
       <LastImportPanel
         source="verkaufsdaten-food-beverage"
-        undoHint="Zurückgesetzt werden die Food/Beverage-Felder der importierten Tage (dailyBudgets), das Verkaufsdaten-Archiv des Jahres, die «Gäste Take Away»-Tageswerte und — bei vergangenen Jahren — die betroffenen vj_daily-Tageswerte. Übrige Tagesdaten (Umsatz, Gäste IN) bleiben unberührt."
+        undoHint="Zurückgesetzt werden das Verkaufsdaten-Archiv des Jahres und die «Gäste Take Away»-Tageswerte. Cockpit-Food/Beverage und übrige Tagesdaten (Umsatz, Gäste IN) werden von diesem Import gar nicht berührt."
       />
       <div className="rounded-lg border border-lime-300 dark:border-lime-800 bg-lime-50/50 dark:bg-lime-950/10 p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
           Vier Gastronovi-Artikel-Exporte pro Jahr (Tab-getrennt): <strong>Food-Umsatz,
-          Food-Anzahl, Beverage-Umsatz, Beverage-Anzahl</strong>. Gespeichert wird die
-          «Gesamt»-Zeile pro Tag; Kategorie/Typ werden aus dem Inhalt erkannt.
-          Speist die Cockpit-Zeilen <strong>Food/Beverage</strong> (Ist) und — für
-          vergangene Jahre — das <strong>dynamische Vorjahr</strong> (Jahr + 1).
-          Aktiver Mandant: <strong>{tenant?.name ?? tenantId ?? 'Oliv'}</strong>.
+          Food-Anzahl, Beverage-Umsatz, Beverage-Anzahl</strong>. Speist ausschliesslich{' '}
+          <strong>«Gäste Take Away»</strong> (pro verkauftem TA-Artikel zählt 1 Gast — daraus
+          auch der Take-Away-Anteil) und das Verkaufszahlen-Archiv. Die Cockpit-Zeilen{' '}
+          <strong>Food/Beverage kommen NICHT von hier</strong> — sie stammen ausschliesslich
+          aus dem Umsatz-Excel («Umsatz Ist»/«Umsatz Vorjahr»). Artikel-Umsätze und -Anzahlen
+          für die <strong>Produktanalyse</strong> importierst du über den Produkte-Import
+          (Seite «Produkte»). Aktiver Mandant: <strong>{tenant?.name ?? tenantId ?? 'Oliv'}</strong>.
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -361,9 +338,10 @@ export function VerkaufsdatenImportSection() {
             <AlertDialogDescription>
               Mandant <strong>{tenant?.name ?? tenantId ?? 'Oliv'}</strong>, Jahr <strong>{year}</strong>:{' '}
               {plan ? <>{plan.neu} neue, {plan.aktualisiert} aktualisierte, {plan.unveraendert} unveränderte Tage.</> : null}{' '}
-              Geschrieben werden die Food/Beverage-Tageswerte (Cockpit Ist{year < currentYear ? ' und Vorjahres-Spalte' : ''})
-              und — falls die Anzahl-Dateien Take-Away-Artikel enthalten — die Cockpit-Zeile «Gäste Take Away»;
-              übrige Tagesdaten bleiben unberührt. Der Lauf ist über «Rückgängig» rückgängig machbar.
+              Geschrieben werden nur das Verkaufszahlen-Archiv und — falls die Anzahl-Dateien
+              Take-Away-Artikel enthalten — die Cockpit-Zeile «Gäste Take Away».
+              Cockpit-Food/Beverage (Quelle: Umsatz-Excel) und übrige Tagesdaten bleiben
+              unberührt. Der Lauf ist über «Rückgängig» rückgängig machbar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
