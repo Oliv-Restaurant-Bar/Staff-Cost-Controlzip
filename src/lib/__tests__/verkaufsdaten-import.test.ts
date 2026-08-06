@@ -52,7 +52,57 @@ const bevUmsatz = [
   ['Gesamt - Beverage (Getränke)', 'CHF 950000,00', 'CHF 2100,50', '', 'CHF 1800,00', 'CHF 3000,00'].join('\t'),
 ].join('\n');
 
+// Reales Gastronovi-Format: TAB-getrennt, JEDE Zelle in doppelten
+// Anführungszeichen, Tagesspalten «"01.01."» (MIT End-Punkt, OHNE Jahr).
+const q = (s: string) => `"${s}"`;
+const HEAD_QUOTED = ['Bezeichnung', 'Zeitraum', '01.01.', '02.01.', '15.03.', '31.12.'].map(q).join('\t');
+const foodUmsatzQuoted = [
+  HEAD_QUOTED,
+  ['Gesamt - Food (Speisen)', 'CHF 1467326,80', 'CHF 5100,25', 'CHF 4890,00', '', 'CHF 6200,75'].map(q).join('\t'),
+  ['Pasta TA', 'CHF 250000,00', 'CHF 800,00', 'CHF 750,00', '', 'CHF 900,00'].map(q).join('\t'),
+].join('\r\n');
+const foodAnzahlQuoted = [
+  HEAD_QUOTED,
+  ['Gesamt - Food (Speisen)', '412350', '317', '295', '', '402'].map(q).join('\t'),
+  ['Pasta TA', '9000', '40', '38', '', '45'].map(q).join('\t'),
+].join('\r\n');
+
+describe('parseVerkaufsdatenFile — gequotetes TSV (reales Gastronovi-Format)', () => {
+  it('erkennt Tagesspalten «"01.01."» und parst die Gesamt-Zeile', () => {
+    const r = parseVerkaufsdatenFile(foodUmsatzQuoted, 'export.csv');
+    expect(r.ok).toBe(true);
+    expect(r.category).toBe('food');
+    expect(r.kind).toBe('umsatz');
+    expect(r.debug.dayColumns).toBe(4);
+    expect(r.days['01-01']).toBe(5100.25);
+    expect(r.days['01-02']).toBe(4890);
+    expect(r.days['03-15']).toBeUndefined(); // leere Zelle = nicht geliefert
+    expect(r.days['12-31']).toBe(6200.75);
+    expect(r.periodTotal).toBe(1467326.8);
+  });
+  it('zählt TA-Gäste auch in gequoteten Anzahl-Dateien', () => {
+    const r = parseVerkaufsdatenFile(foodAnzahlQuoted, 'anzahl.csv');
+    expect(r.ok).toBe(true);
+    expect(r.kind).toBe('anzahl');
+    expect(r.taArticleCount).toBe(1);
+    expect(r.taGuests?.['01-01']).toBe(40);
+    expect(r.taGuests?.['12-31']).toBe(45);
+  });
+  it('akzeptiert Tagesspalten auch OHNE End-Punkt («01.01»)', () => {
+    const head = ['Bezeichnung', 'Zeitraum', '01.01', '02.01'].join('\t');
+    const r = parseVerkaufsdatenFile(
+      [head, ['Gesamt - Beverage (Getränke)', 'CHF 10,00', 'CHF 4,00', 'CHF 6,00'].join('\t')].join('\n'),
+      'bev.csv',
+    );
+    expect(r.ok).toBe(true);
+    expect(r.days['01-01']).toBe(4);
+  });
+});
+
 describe('parseVkNumber', () => {
+  it('parst gequotete Werte «"CHF 1467326,80"»', () => {
+    expect(parseVkNumber('"CHF 1467326,80"')).toBe(1467326.8);
+  });
   it('parst «CHF 1873993,50» (Komma = Dezimal, CHF-Präfix)', () => {
     expect(parseVkNumber('CHF 1873993,50')).toBe(1873993.5);
   });

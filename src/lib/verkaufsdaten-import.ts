@@ -94,9 +94,22 @@ export function isTakeAwayArticleName(name: string | null | undefined): boolean 
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
-/** «CHF 1873993,50» / «1'234,5» / «317» → Zahl; ungültig → null. */
+/**
+ * Zerlegt eine TSV-Zeile in Zellen und entfernt je Zelle umschliessende
+ * doppelte Anführungszeichen + Leerzeichen — die Gastronovi-Exporte liefern
+ * JEDE Zelle gequotet («"01.01."», «"CHF 1467326,80"»). Muss VOR der
+ * Tagesspalten-/Gesamt-Erkennung passieren.
+ */
+function splitTsvCells(line: string): string[] {
+  return line.split('\t').map(c => {
+    const t = c.trim();
+    return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1).trim() : t;
+  });
+}
+
+/** «CHF 1873993,50» / «"CHF 1467326,80"» / «1'234,5» / «317» → Zahl; ungültig → null. */
 export function parseVkNumber(raw: string): number | null {
-  let s = raw.replace(/CHF/gi, '').replace(/[\u00A0\u2019'\s]/g, '').trim();
+  let s = raw.replace(/CHF/gi, '').replace(/[\u00A0\u2019'"\s]/g, '').trim();
   if (s === '' || s === '-') return null;
   // Komma = Dezimaltrennzeichen; Punkte davor sind Tausendertrenner.
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
@@ -119,16 +132,17 @@ export function parseVerkaufsdatenFile(text: string, fileName: string): VkParsed
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
   if (lines.length < 2) return fail('Datei enthält keine Datenzeilen.');
 
-  const header = lines[0].split('\t');
+  const header = splitTsvCells(lines[0]);
   const headerPreview = header.slice(0, 5).join(' | ');
   if (header.length < 3) {
     return fail('Kopfzeile ist nicht Tab-getrennt (erwartet: «Bezeichnung», «Zeitraum», Tagesspalten «01.01.» …).', { headerPreview });
   }
 
-  // Tagesspalten «01.01.» … «31.12.» → 'MM-DD'
+  // Tagesspalten «01.01.» … «31.12.» → 'MM-DD' — mit ODER ohne End-Punkt,
+  // ohne Jahr (das Jahr kommt aus dem Dropdown).
   const dayCols: Array<{ idx: number; md: string }> = [];
   header.forEach((h, idx) => {
-    const m = /^(\d{2})\.(\d{2})\.$/.exec(h.trim());
+    const m = /^(\d{2})\.(\d{2})\.?$/.exec(h);
     if (m) dayCols.push({ idx, md: `${m[2]}-${m[1]}` });
   });
   const zeitraumIdx = header.findIndex(h => /zeitraum/i.test(h));
@@ -137,12 +151,12 @@ export function parseVerkaufsdatenFile(text: string, fileName: string): VkParsed
   }
 
   // Erste Datenzeile «Gesamt - …» = Tagestotale
-  const gesamtLine = lines.slice(1).find(l => /^\s*gesamt\b/i.test(l.split('\t')[0] ?? ''));
+  const gesamtLine = lines.slice(1).find(l => /^\s*gesamt\b/i.test(splitTsvCells(l)[0] ?? ''));
   if (!gesamtLine) {
     return fail('Keine «Gesamt - …»-Zeile gefunden (erste Datenzeile mit den Tagestotalen).',
       { headerPreview, dayColumns: dayCols.length, dataRows: lines.length - 1 });
   }
-  const cells = gesamtLine.split('\t');
+  const cells = splitTsvCells(gesamtLine);
   const gesamtCell = (cells[0] ?? '').trim();
 
   // Kategorie: Inhalt vor Dateiname
@@ -183,7 +197,7 @@ export function parseVerkaufsdatenFile(text: string, fileName: string): VkParsed
     const taByDay: Record<string, number> = {};
     for (const line of lines.slice(1)) {
       if (line === gesamtLine) continue;
-      const rowCells = line.split('\t');
+      const rowCells = splitTsvCells(line);
       const label = (rowCells[0] ?? '').trim();
       if (!label || /^\s*gesamt\b/i.test(label)) continue; // Gesamt-Zeile(n) ignorieren
       if (!isTakeAwayArticleName(label)) continue;
