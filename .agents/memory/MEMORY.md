@@ -91,4 +91,5 @@
 - [Plan-Std SSoT Personalkosten↔Dienstplan](plan-std-ssot.md) — schedule-v2-Cache voll durch Supabase ersetzen (kein Merge/Tick-Guard); Aggregation braucht Monatsfilter; async Spiegel braucht Stale-Guard.
 - [AG-Soz-Flag pro Flex-MA](ag-soz-flag.md) — «ohne AG» zentral in employee-rate.ts aufgelöst (totalHourly=gross); nur Flex-Pfade, Fix bleibt gross×agFactor; Memos brauchen agSozOff-Dep.
 - [Kreditoren-Abgleich](kreditoren-abgleich.md) — Infoniqa-Auszug als Kontrollebene: nur Haben=Rechnung, Dual matcht nur final:true, Mandanten-Wache fail-closed, canCreate in jedem Schreib-Handler.
+- [Anzahl Bons & Ø-Bon abgeleitet](bon-stats.md) — nie speichern: round(Brutto÷Ø-Bon) je Tag, Jahres-Ø gewichtet (Σ÷Σ); Events kennzeichnen, nicht ausschliessen.
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.

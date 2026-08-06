@@ -98,6 +98,7 @@ import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDailyReplaceYears, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
 import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, type GaesteDiff } from '@/lib/gaeste-store';
+import { berechneBonStats, ladeBruttoTageJahr, AUSREISSER_FAKTOR, type BonStats } from '@/lib/bon-stats';
 import { ladeUmsatzTage } from '@/lib/umsatz';
 import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
@@ -2717,6 +2718,9 @@ interface TagesdatenPreview {
   geaendert?: Array<{ date: string; alt: number; neu: number }>;
   /** Zellen ohne gültigen Zahlenwert (Zeile/Spalte/Rohwert) — BLOCKIERT den Import. */
   unlesbareWerte?: UnlesbareZelle[];
+  /** Nur durchschnitt: Kontrolltabelle Anzahl Bons (Bestand ⊕ Datei fürs Jahr,
+      gepaart mit Brutto-Tagesumsätzen; abgeleitet, wird NICHT gespeichert). */
+  bonStats?: BonStats;
 }
 
 /** Datums-Diff gegen den Bestand: neu / aktualisiert (Wert ändert sich) / unverändert. */
@@ -3006,8 +3010,31 @@ function TagesdatenImportSection() {
         datenDiff = undefined; geaendert = undefined;
       }
 
+      // Durchschnitt: Kontrolltabelle «Tage erkannt · Σ Bons · Jahres-Ø-Bon».
+      // Berechnung über den JAHRES-Bestand NACH dem Import (Bestand ⊕ Datei,
+      // Datei ersetzt gleiche Tage), gepaart mit den Brutto-Tagesumsätzen
+      // («Gesamt»-Zeile; laufendes Jahr dailyBudgets, Vorjahre vj_daily).
+      // Abgeleiteter Wert — wird nicht gespeichert; Fehler blockieren nichts.
+      let bonStats: BonStats | undefined;
+      if (typ === 'durchschnitt') {
+        try {
+          const [priorAvg, brutto] = await Promise.all([
+            loadAvgCheckDaily(tenantKey),
+            ladeBruttoTageJahr(tenantId ?? 'oliv', year),
+          ]);
+          bonStats = berechneBonStats(
+            { ...priorAvg, ...daily },
+            brutto,
+            `${year}-01-01`,
+            `${year}-12-31`,
+          );
+        } catch (err) {
+          console.warn('[TAGESDATEN] Bon-Kontrolltabelle nicht berechenbar:', err);
+        }
+      }
+
       setPreview({
-        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths,
+        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths, bonStats,
         marketingYears, marketingEntfernt, marketingJahrTotals, datenDiff, geaendert,
         dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
         monthTotals, zeitraum, tagessumme,
@@ -3404,6 +3431,49 @@ function TagesdatenImportSection() {
                   </div>
                 ))}
               </div>
+
+              {/* Durchschnitt: Kontrolltabelle Anzahl Bons (abgeleitet, nicht gespeichert) */}
+              {preview.typ === 'durchschnitt' && preview.bonStats && (
+                <div
+                  className="rounded border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 px-2.5 py-2 space-y-1"
+                  data-testid="tagesdaten-bon-kontrolle"
+                >
+                  <p className="text-[10px] uppercase tracking-wide text-teal-700 dark:text-teal-300 font-medium">
+                    Kontrolle Anzahl Bons {preview.year} (nach Import, ganzes Jahr)
+                  </p>
+                  <div className="grid grid-cols-3 gap-x-4 text-xs tabular-nums">
+                    <span className="text-muted-foreground">Tage erkannt</span>
+                    <span className="text-muted-foreground">Σ Bons</span>
+                    <span className="text-muted-foreground">Jahres-Ø-Bon</span>
+                    <span className="font-medium" data-testid="bon-kontrolle-tage">{preview.bonStats.tage.toLocaleString('de-CH')}</span>
+                    <span className="font-medium" data-testid="bon-kontrolle-bons">{preview.bonStats.bons.toLocaleString('de-CH')}</span>
+                    <span className="font-medium" data-testid="bon-kontrolle-avg">
+                      {preview.bonStats.avgBon != null
+                        ? preview.bonStats.avgBon.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : '—'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Anzahl Bons je Tag = Brutto-Tagesumsatz («Gesamt») ÷ Durchschnittsbon, gerundet.
+                    Jahres-Ø-Bon = Σ Umsatz ÷ Σ Bons (gewichtet). Tage ohne beide Werte bleiben leer.
+                  </p>
+                  {preview.bonStats.ohneUmsatz > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {preview.bonStats.ohneUmsatz} Tag{preview.bonStats.ohneUmsatz === 1 ? '' : 'e'} mit Durchschnittsbon,
+                      aber ohne importierten Tagesumsatz — dort bleibt die Bon-Anzahl leer.
+                    </p>
+                  )}
+                  {preview.bonStats.events.length > 0 && (
+                    <p className="text-[11px] text-teal-700 dark:text-teal-300" data-testid="bon-kontrolle-events">
+                      Event/Einzelbon (Ø ≥ {AUSREISSER_FAKTOR}× Jahres-Ø, kein Fehler):{' '}
+                      {preview.bonStats.events.slice(0, 5).map(e =>
+                        `${format(parseISO(e.date), 'dd.MM.')} CHF ${e.avg.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                      ).join(', ')}
+                      {preview.bonStats.events.length > 5 ? ` … +${preview.bonStats.events.length - 5}` : ''}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {warn && (
                 <p className="text-[11px] text-amber-700 dark:text-amber-400">{warn}</p>
