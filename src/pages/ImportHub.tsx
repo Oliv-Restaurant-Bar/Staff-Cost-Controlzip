@@ -46,7 +46,7 @@ import {
   generatePersonnelCostTemplate,
   type AnnualPersonnelCostResult,
 } from '@/lib/annual-personnel-cost-import';
-import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
+import { parseAnnualSageKontoblattByMonth, parseAnnualSageKontoblattFromPdf, AnnualKostenResult } from '@/lib/pdf-import-engine';
 import { matchCSVRows, buildMonthRecord, buildExpenseCategoriesOnly } from '@/lib/csv-import-engine';
 import {
   saveMonth,
@@ -1292,8 +1292,9 @@ const AnnualCostImportSection = () => {
   }, [result, reportingKey]);
 
   const handleFile = async (file: File) => {
-    if (!file.name.match(/\.(xlsx|xls)$/i)) {
-      setError('Nur Excel-Dateien (.xlsx/.xls) werden unterstützt.');
+    const isPdf = /\.pdf$/i.test(file.name);
+    if (!isPdf && !file.name.match(/\.(xlsx|xls)$/i)) {
+      setError('Nur Excel- (.xlsx/.xls) oder PDF-Dateien werden unterstützt.');
       return;
     }
     setParsing(true);
@@ -1303,7 +1304,9 @@ const AnnualCostImportSection = () => {
     setFileName(file.name);
     try {
       const buf = await file.arrayBuffer();
-      const res = await parseAnnualSageKontoblattByMonth(buf);
+      const res = isPdf
+        ? await parseAnnualSageKontoblattFromPdf(buf)
+        : await parseAnnualSageKontoblattByMonth(buf);
       if (res.failureReason) {
         // Uneindeutiges Jahr oder keine Buchungen → Import abbrechen, Grund anzeigen
         setError(res.failureReason);
@@ -1601,7 +1604,7 @@ const AnnualCostImportSection = () => {
       <input
         ref={fileRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept=".xlsx,.xls,.pdf"
         className="hidden"
         onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
       />
@@ -1616,10 +1619,10 @@ const AnnualCostImportSection = () => {
         >
           <Upload className="h-6 w-6 mx-auto mb-2 text-gray-400" />
           <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
-            Excel-Datei hierher ziehen oder klicken
+            Excel- oder PDF-Datei hierher ziehen oder klicken
           </p>
           <p className="text-[10px] text-muted-foreground mt-1">
-            .xlsx · Sage Kontoblatt (Jahresexport, z.B. 01.01.25 – 31.12.25)
+            .xlsx / .pdf · Sage Kontoblatt (Jahresexport, z.B. 01.01.25 – 31.12.25)
           </p>
         </div>
       )}

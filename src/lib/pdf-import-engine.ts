@@ -1182,6 +1182,126 @@ function expandYear(yy: number): number {
  * Ergebnis: pro Monat ein Array von ParsedCSVRow[], die dann über
  * matchCSVRows + Record-Builder + Replace-Scope gespeichert werden.
  */
+/**
+ * Liest ein Sage-Kontoblatt-PDF, das einen ganzen Jahres-/Mehrmonats-Zeitraum
+ * umfasst (z.B. «vom 01.01.25 bis 31.12.25»), und liefert dasselbe
+ * AnnualKostenResult wie der Excel-Jahresimport — damit läuft der PDF-Upload
+ * über exakt denselben Vorschau-/Modus-/Undo-/Lock-Pfad im ImportHub.
+ *
+ * Regeln identisch zum Excel-Pfad:
+ * - Buchungszeilen nach Buchungsdatum pro Monat gruppiert, Netto = Soll − Haben.
+ * - «Saldo Vortrag»/Kontokopf-Wiederholungen sind keine Buchungen (Parser-State-Machine).
+ * - Plausibilität je Konto: Σ Monate vs. Konto-Total (Endsaldo−Vortrag) > 0.05 → Warnung.
+ * - Zeitraum über mehrere Jahre → ambiguousYear, kein Speichern.
+ */
+export async function parseAnnualSageKontoblattFromPdf(
+  buffer: ArrayBuffer,
+): Promise<AnnualKostenResult> {
+  const empty = (failureReason: string, warnings: string[], debugPartial?: Partial<AnnualKostenResult['debug']>): AnnualKostenResult => ({
+    byMonth: new Map(),
+    journalByMonth: new Map(),
+    detectedYear: null,
+    yearSource: 'none',
+    ambiguousYear: false,
+    accountCount: 0,
+    bookingCount: 0,
+    skippedOutOfYear: 0,
+    skippedOtherRows: 0,
+    warnings,
+    failureReason,
+    debug: { sheetName: 'PDF', rowCount: 0, headerLines: [], bookingYearCounts: {}, sampleSkippedRows: [], ...debugPartial },
+  });
+
+  const pdf = await parsePDF(buffer);
+  const warnings = [...pdf.warnings];
+  const headerLines = pdf.rawLines.slice(0, 12);
+  const debugPartial: Partial<AnnualKostenResult['debug']> = {
+    rowCount: pdf.rawLines.length,
+    headerLines,
+  };
+
+  // Zeitraum «vom … bis …» aus dem Kopf (für Registry/Anzeige)
+  let periodFrom: string | undefined;
+  let periodTo: string | undefined;
+  for (const line of headerLines) {
+    const p = /vom:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})\s+bis\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(line);
+    if (p) { periodFrom = p[1]; periodTo = p[2]; break; }
+  }
+  const meta = parseSageHeaderMeta(pdf.rawLines);
+  if (meta.year !== undefined && meta.yearTo !== undefined && meta.year !== meta.yearTo) {
+    const reason = `Dateizeitraum umfasst mehrere Jahre (${periodFrom ?? '?'} – ${periodTo ?? '?'}). ` +
+      'Import abgebrochen — bitte eine Datei mit genau einem Geschäftsjahr exportieren.';
+    warnings.push(reason);
+    return { ...empty(reason, warnings, debugPartial), periodFrom, periodTo, ambiguousYear: true };
+  }
+
+  if (pdf.rows.length === 0) {
+    return {
+      ...empty(
+        'Keine Buchungszeilen im PDF erkannt. Prüfe, ob es ein Sage-Kontoblatt mit Textebene ist ' +
+        '(gescannte PDFs werden nicht unterstützt).',
+        warnings, debugPartial,
+      ),
+      periodFrom, periodTo,
+      ...(pdf.detectedCompany !== undefined ? { detectedCompany: pdf.detectedCompany } : {}),
+      ...(pdf.detectedTenant !== undefined ? { detectedTenant: pdf.detectedTenant } : {}),
+    };
+  }
+
+  if (!pdf.monthly) {
+    return {
+      ...empty(
+        'Das PDF konnte nicht pro Monat aufgeteilt werden (kein Mehrmonats-Zeitraum im Kopf ' +
+        'oder keine datierten Buchungszeilen). Für Einzelmonate bitte den Monats-Kostenimport verwenden.',
+        warnings, debugPartial,
+      ),
+      periodFrom, periodTo,
+      ...(pdf.detectedCompany !== undefined ? { detectedCompany: pdf.detectedCompany } : {}),
+      ...(pdf.detectedTenant !== undefined ? { detectedTenant: pdf.detectedTenant } : {}),
+    };
+  }
+
+  const { year, rowsByMonth, journalByMonth } = pdf.monthly;
+  const accountSet = new Set<string>();
+  let bookingCount = 0;
+  for (const rows of rowsByMonth.values()) {
+    for (const r of rows) if (r.amount !== 0) accountSet.add(r.accountNumber);
+  }
+  for (const entries of journalByMonth.values()) bookingCount += entries.length;
+  const skippedOutOfYear = pdf.journalEntries
+    ? pdf.journalEntries.length - bookingCount
+    : 0;
+
+  warnings.push(
+    `Sage-Jahres-Kontoblatt (PDF) erkannt: ${rowsByMonth.size} Monate mit Buchungsdaten, ` +
+    `${accountSet.size} Konten, ${bookingCount} Buchungen (Jahr ${year}).`,
+  );
+
+  return {
+    byMonth: rowsByMonth,
+    journalByMonth,
+    ...(pdf.detectedCompany !== undefined ? { detectedCompany: pdf.detectedCompany } : {}),
+    ...(pdf.detectedTenant !== undefined ? { detectedTenant: pdf.detectedTenant } : {}),
+    detectedYear: year,
+    yearSource: 'period',
+    periodFrom,
+    periodTo,
+    ambiguousYear: false,
+    accountCount: accountSet.size,
+    bookingCount,
+    skippedOutOfYear: Math.max(0, skippedOutOfYear),
+    skippedOtherRows: 0,
+    warnings,
+    debug: {
+      sheetName: 'PDF',
+      rowCount: pdf.rawLines.length,
+      headerLines,
+      bookingYearCounts: {},
+      sampleSkippedRows: [],
+    },
+  };
+}
+
 export async function parseAnnualSageKontoblattByMonth(
   buffer: ArrayBuffer,
 ): Promise<AnnualKostenResult> {
