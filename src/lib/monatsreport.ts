@@ -2177,10 +2177,36 @@ export async function ladeJahresvergleich(
     if (date < curFrom || date > curTo || tag.gesamtBrutto <= 0) continue;
     const netto = nettoUmsatzTag(tag);
     const split = foodBeverageSplit(tag);
-    gross += tag.gesamtBrutto; ta += tag.takeAwayBrutto; net += netto;
+    gross += tag.gesamtBrutto; net += netto;
+    ta += tag.takeAwayBrutto;
     food += split.food; bev += split.beverage; hatUmsatz = true;
     const g = gaesteDaily[date] ?? 0;
     if (g > 0) { pairedNet += netto; pairedGaeste += g; }
+  }
+
+  // Fallback GEWÄHLTES Jahr: hat der Ist-Store (dailyBudgets) im Zeitraum
+  // KEINEN Tag, liegt das Jahr nur im Vorjahr-Store (vj_daily) — z.B. 2024.
+  // Dann exakt dieselbe Quelle+Regel wie die Vorjahres-Spalte (vjTagWerte),
+  // damit ein Jahr als gewähltes Jahr dieselben Werte zeigt wie als Vorjahr.
+  // Invariante food+beverage=netto gilt konstruktiv. Mandantengetrennt.
+  if (!hatUmsatz && curMonths.length > 0) {
+    const curVjMaps = await Promise.all(
+      curMonths.map(mo =>
+        loadVjDailyMonth(curYear, mo, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+    );
+    const curVjDaily: Record<string, VjDayRecord> = {};
+    for (const m of curVjMaps) Object.assign(curVjDaily, m);
+    for (const [date, rec] of Object.entries(curVjDaily)) {
+      if (date < curFrom || date > curTo) continue;
+      const w = vjTagWerte(tenantId, rec, date);
+      if (w) {
+        gross += rec.actualRevenue!; net += w.netto;
+        food += w.food; bev += w.beverage; hatUmsatz = true;
+      }
+      if ((rec.takeawayRevenue ?? 0) > 0) ta += rec.takeawayRevenue!;
+      const g = gaesteDaily[date] ?? 0;
+      if (w && g > 0) { pairedNet += w.netto; pairedGaeste += g; }
+    }
   }
 
   // Gäste aktuell (volle importierte Summe im Zeitraum).
