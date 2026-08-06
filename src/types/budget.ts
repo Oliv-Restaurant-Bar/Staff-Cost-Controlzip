@@ -381,6 +381,9 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_lohn_13',        categoryId: 'pl_wages',           accountNumber: '5002', label: '13. Monatslohn',                  valueType: 'chf', sortOrder: 3 },
   { id: 'pli_lohn_ferien',    categoryId: 'pl_wages',           accountNumber: '5003', label: 'Ferien / Feiertage Rückst.',      valueType: 'chf', sortOrder: 4 },
   { id: 'pli_zulagen',        categoryId: 'pl_wages',           accountNumber: '5010', label: 'Zulagen / SozL. Vergütungen',     valueType: 'chf', sortOrder: 5 },
+  // Feste ER-Position: immer sichtbar, auch wenn Ist/Budget/VJ leer sind («—» statt ausgeblendet).
+  { id: 'pli_karate',         categoryId: 'pl_wages',           accountNumber: '5004', label: 'Personal Aushilfe',               valueType: 'chf', sortOrder: 6, isForceVisible: true },
+  { id: 'pli_aushilfe_5005',  categoryId: 'pl_wages',           accountNumber: '5005', label: 'Personal Aushilfe',               valueType: 'chf', sortOrder: 7, isForceVisible: true },
 
   // ── Sozialversicherungsaufwand ────────────────────────────────────────────────
   { id: 'pli_ahv',            categoryId: 'pl_social',          accountNumber: '5700', label: 'AHV, IV, EO, ALV',                valueType: 'chf', sortOrder: 1 },
@@ -425,8 +428,8 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
 
   // ── Werbeaufwand ─────────────────────────────────────────────────────────────
   { id: 'pli_werbung',        categoryId: 'pl_marketing',       accountNumber: '6600', label: 'Werbeinserate',                   valueType: 'chf', sortOrder: 1 },
-  // 6611 Kost & Logis ist PERSONALAUFWAND (nicht Werbung/Marketing 6600–6699)
-  { id: 'pli_kost_logis',     categoryId: 'pl_personnel_other', accountNumber: '6611', label: 'Kost & Logis Personal',           valueType: 'chf', sortOrder: 4 },
+  // 6611 Kost & Logis = WERBEAUFWAND (6600–6690) analog formeller OR-ER; Personalaufwand = nur 5xxx
+  { id: 'pli_kost_logis',     categoryId: 'pl_marketing',       accountNumber: '6611', label: 'Kost & Logis Personal',           valueType: 'chf', sortOrder: 2 },
   { id: 'pli_kundengesch',    categoryId: 'pl_marketing',       accountNumber: '6640', label: 'Kundengeschenke',                 valueType: 'chf', sortOrder: 3 },
 
   // ── Übriger Betriebsaufwand ───────────────────────────────────────────────────

@@ -21,7 +21,7 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle,
-  Calculator, ArrowRight, FileText, Landmark, SlidersHorizontal,
+  Calculator, ArrowRight, FileText, Landmark, SlidersHorizontal, Eye, EyeOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -707,6 +707,10 @@ export interface BPLRow {
   isTopDownable?: boolean;
   /** Zwischentotal-Zeile (z.B. Direkter/Übriger Warenaufwand) — nicht klickbar/editierbar */
   isGroupSubtotal?: boolean;
+  /** Normalerweise ausgeblendetes Konto (Ist=Budget=VJ leer), nur via «Ausgeblendete Konten einblenden» sichtbar — graue Zeile mit «—» */
+  isAutoHidden?: boolean;
+  /** Persistenter Sichtbarkeits-Status des Budget-Items (isForceVisible, pro Mandant gespeichert) */
+  itemForceVisible?: boolean;
 }
 
 export interface BPLRowWithValues extends BPLRow {
@@ -745,8 +749,8 @@ function normalizeAccountNum(categoryId: string): number {
 /**
  * Effektive BPL-Kategorie eines Kontos: Ein EXAKTES Konto-Mapping
  * (Stammdaten/Kontenzuordnung, custom oder default) überschreibt die reine
- * Bereichszuordnung — z.B. 6611 Kost & Logis → Personalaufwand statt
- * Werbung/Marketing. 4701-4703/4800-4900 zählen zum Warenaufwand (OR-ER).
+ * Bereichszuordnung. 6611 Kost & Logis → Werbeaufwand (formelle OR-ER,
+ * Personalaufwand = nur 5xxx). 4701-4703/4800-4900 zählen zum Warenaufwand (OR-ER).
  * Bereichs-Treffer (matchType 'range') behalten die bisherige BPL-Bereichslogik.
  */
 function bplCatForAccount(categoryId: string): string | undefined {
@@ -874,6 +878,7 @@ export function computeBPLRows(
   rec: MonthlyFinancialRecord | undefined,
   mIdx: number,
   prevRec?: MonthlyFinancialRecord,
+  opts?: { showHidden?: boolean },
 ): BPLRowWithValues[] {
   const cats  = (budget.plCategories ?? []).sort((a, b) => a.sortOrder - b.sortOrder);
   const items = budget.plLineItems ?? [];
@@ -975,13 +980,17 @@ export function computeBPLRows(
 
         // Zeige immer: intern (INTERN-Badge), explizit eingeblendet (isForceVisible), oder user-added (isDefault=false).
         // Verstecke nur Default-Items die in allen drei Spalten 0 haben (kein Sage-Wert, kein Budget, kein VJ).
+        // Mit opts.showHidden erscheinen diese Konten als graue «—»-Zeile (isAutoHidden) an ihrer Position.
         const alwaysShow = item.isInternal || item.isForceVisible || item.isDefault === false;
-        if (!alwaysShow && iA === 0 && iB === 0 && iP === 0) continue;
+        const isEmpty = iA === 0 && iB === 0 && iP === 0;
+        if (!alwaysShow && isEmpty && !opts?.showHidden) continue;
         memberRows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
           isInternal: item.isInternal,
+          isAutoHidden: !alwaysShow && isEmpty ? true : undefined,
+          itemForceVisible: item.isForceVisible === true,
           values: makeCell(iA, iB, iP, cat.isExpense),
         });
       }
@@ -1220,7 +1229,7 @@ const InlineRevenueEntry = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode: pctModeProp = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse, onBudgetEdit, readOnly = false, isMobile = false }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode: pctModeProp = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse, onBudgetEdit, readOnly = false, isMobile = false, onToggleVisibility }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -1241,6 +1250,8 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   readOnly?: boolean;
   /** E009: mobil reduzierte Spalten (zentrale reine Logik, keine Zweitberechnung). */
   isMobile?: boolean;
+  /** Auge-Icon pro Konto-Zeile: dauerhafte Sichtbarkeit (isForceVisible) umschalten. */
+  onToggleVisibility?: (itemId: string) => void;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
@@ -1381,7 +1392,8 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   }
 
   const isBudgetItem = row.itemId && !row.itemId.startsWith('actual_');
-  const canEdit = !row.isCategory && !readOnly;
+  const canEdit = !row.isCategory && !readOnly && !row.isAutoHidden;
+  const dash = <span className="text-muted-foreground/40">—</span>;
 
   const varPct = v.vsBudgetPct;
   const isVarianceHighlighted =
@@ -1405,16 +1417,35 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       className={cn(
         'hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group',
         row.isInternal && !isVarianceHighlighted && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
+        row.isAutoHidden && 'opacity-60 bg-muted/20 text-muted-foreground',
         varBgClass,
       )}
+      data-testid={row.isAutoHidden ? `bpl-hidden-${row.itemId}` : undefined}
     >
-      <td className={cn('px-3 pl-9 text-sm cursor-pointer sticky left-0 z-10', stickyItemBg, pyItem)} onClick={onClick}>
+      <td className={cn('px-3 pl-9 text-sm cursor-pointer sticky left-0 z-10', stickyItemBg, pyItem, row.isAutoHidden && 'text-muted-foreground')} onClick={onClick}>
         <span className="text-[10px] text-muted-foreground/50 font-mono mr-1.5">{row.itemAccountNumber}</span>
         {row.itemLabel}
         {row.isInternal && (
           <span className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
             INTERN
           </span>
+        )}
+        {isBudgetItem && onToggleVisibility && (
+          <button
+            onClick={e => { e.stopPropagation(); onToggleVisibility(row.itemId!); }}
+            title={row.itemForceVisible
+              ? 'Dauerhafte Einblendung aufheben (Konto wird bei leeren Werten wieder ausgeblendet)'
+              : 'Konto dauerhaft einblenden (auch wenn leer)'}
+            data-testid={`bpl-vis-toggle-${row.itemId}`}
+            className={cn(
+              'ml-1.5 align-middle transition-opacity',
+              row.itemForceVisible
+                ? 'opacity-60 hover:opacity-100 text-primary'
+                : 'opacity-0 group-hover:opacity-50 hover:!opacity-100 text-muted-foreground',
+            )}
+          >
+            {row.itemForceVisible ? <Eye className="h-3 w-3 inline" /> : <EyeOff className="h-3 w-3 inline" />}
+          </button>
         )}
       </td>
       <td className={cn('px-2 w-5', pyItem)}>
@@ -1448,7 +1479,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             onCancel={() => setEditingIst(false)}
           />
         ) : (
-          v.actual !== 0 ? fmt(v.actual) : <span className="text-muted-foreground/40">—</span>
+          v.actual !== 0 ? fmt(v.actual) : dash
         )}
       </td>
       {pctMode !== 'off' && (
@@ -1458,10 +1489,14 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       )}
       {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.budget !== 0 ? fmt(v.budget) : <span className="opacity-40">—</span>}</td>}
       {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyItem)}>{pctValBudget(v.budget) ?? <span className="opacity-25">—</span>}</td>}
-      {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />}
+      {showBudget && (row.isAutoHidden
+        ? <td className={cn('px-2 text-right text-xs', pyItem)}>{dash}</td>
+        : <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} />)}
       {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-muted-foreground cursor-pointer', pyItem)} onClick={onClick}>{v.prevYear !== 0 ? fmt(v.prevYear) : <span className="opacity-40">—</span>}</td>}
       {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyItem)}>{pctValPY(v.prevYear) ?? <span className="opacity-25">—</span>}</td>}
-      {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />}
+      {showPrevYear && (row.isAutoHidden
+        ? <td className={cn('px-2 text-right text-xs', pyItem)}>{dash}</td>
+        : <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} />)}
     </tr>
   );
 };
@@ -1487,6 +1522,7 @@ const BudgetPLView = ({
   onBudgetEdit,
   readOnly = false,
   isMobile = false,
+  onToggleVisibility,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1510,6 +1546,8 @@ const BudgetPLView = ({
   readOnly?: boolean;
   /** E009: mobil reduzierte Tabelle (zentrale reine Spalten-Logik). */
   isMobile?: boolean;
+  /** Auge-Icon pro Konto-Zeile: dauerhafte Sichtbarkeit umschalten (pro Mandant gespeichert). */
+  onToggleVisibility?: (itemId: string) => void;
 }) => {
   const { showBudget, showPrevYear, pctMode } = getBPLColumnVisibility(compareMode, pctModeProp, isMobile);
   // Sticky Tabellenkopf: jede th-Zelle braucht einen eigenen OPAKEN Hintergrund
@@ -1581,6 +1619,7 @@ const BudgetPLView = ({
                 onBudgetEdit={readOnly ? undefined : onBudgetEdit}
                 readOnly={readOnly}
                 isMobile={isMobile}
+                onToggleVisibility={onToggleVisibility}
               />
               {isLastRevItem && maisonEnabled && maisonNet > 0 && (
                 <tr className="bg-violet-50/70 dark:bg-violet-950/20 border-b border-violet-100 dark:border-violet-900/50">
@@ -2540,6 +2579,8 @@ const PLViewPage = () => {
   const isMobile = useIsMobile();
   const [excludeCurrentMonth, setExcludeCurrentMonth] = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
+  // «Ausgeblendete Konten einblenden»: leere Konten als graue «—»-Zeilen zeigen
+  const [showHiddenAccounts, setShowHiddenAccounts] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
   const [monthlyEbitInputs,  setMonthlyEbitInputs]  = useState<string[]>(() => Array(12).fill(''));
   const [annualDistribInput, setAnnualDistribInput] = useState('');
@@ -2927,8 +2968,8 @@ const PLViewPage = () => {
   );
 
   const bplRows = useMemo(
-    () => computeBPLRows(budgetData, effectiveMonthRecord, month - 1, prevYearRecords[month - 1]),
-    [budgetData, effectiveMonthRecord, month, prevYearRecords],
+    () => computeBPLRows(budgetData, effectiveMonthRecord, month - 1, prevYearRecords[month - 1], { showHidden: showHiddenAccounts }),
+    [budgetData, effectiveMonthRecord, month, prevYearRecords, showHiddenAccounts],
   );
 
   // ── Monat-vs-Monat Vergleich ─────────────────────────────────────────────
@@ -2942,7 +2983,10 @@ const PLViewPage = () => {
 
   const cmpBplRows = useMemo<BPLRowWithValues[]>(() => {
     if (!cmpRecord) return [];
-    return computeBPLRows(budgetData, cmpRecord, cmpMonth - 1, undefined);
+    // showHidden:true — auch leere Konten des Vergleichsmonats liefern (Wert 0),
+    // damit die Injektion einen Ist-Wert der aktuellen Zeile korrekt mit 0 vergleicht
+    // statt den nativen Vorjahreswert stehen zu lassen.
+    return computeBPLRows(budgetData, cmpRecord, cmpMonth - 1, undefined, { showHidden: true });
   }, [budgetData, cmpRecord, cmpMonth]);
 
   // effectiveBplRows: bplRows mit injizierten Vergleichsmonat-Werten als prevYear
@@ -2979,10 +3023,10 @@ const PLViewPage = () => {
       ? [0, 1, 2].map(i => (quarter - 1) * 3 + i)
       : Array.from({ length: 12 }, (_, i) => i);
     const rowsPerMonth = monthIdxs.map(i =>
-      computeBPLRows(budgetData, effectiveAllRecords[i], i, prevYearRecords[i]));
+      computeBPLRows(budgetData, effectiveAllRecords[i], i, prevYearRecords[i], { showHidden: showHiddenAccounts }));
     const hasDataFlags = monthIdxs.map(i => yearResult.months[i]?.hasData ?? false);
     return aggregateBPLRows(rowsPerMonth, hasDataFlags);
-  }, [mode, period, quarter, budgetData, effectiveAllRecords, prevYearRecords, yearResult]);
+  }, [mode, period, quarter, budgetData, effectiveAllRecords, prevYearRecords, yearResult, showHiddenAccounts]);
 
   // Anzeige-Zeilen: Monat = effectiveBplRows (inkl. Monat-vs-Monat-Injektion);
   // Quartal/Jahr = aggregierte Zeilen (Monat-vs-Monat dort nicht verfügbar).
@@ -3451,6 +3495,26 @@ const PLViewPage = () => {
               </button>
             )}
 
+            {/* «Ausgeblendete Konten einblenden»: leere Konten als graue «—»-Zeilen zeigen */}
+            {mode === 'budget_pl' && (
+              <button
+                onClick={() => setShowHiddenAccounts(v => !v)}
+                title={showHiddenAccounts
+                  ? 'Ausgeblendete Konten wieder verbergen'
+                  : 'Ausgeblendete Konten einblenden (leere Konten als graue «—»-Zeilen)'}
+                data-testid="plview-toggle-hidden-accounts"
+                className={cn(
+                  'h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-xs transition-colors',
+                  showHiddenAccounts
+                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted/50',
+                )}
+              >
+                {showHiddenAccounts ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                <span className="hidden md:inline">Ausgeblendete Konten</span>
+              </button>
+            )}
+
             {/* «Ansicht»-Menü: Darstellung + %-Spalte + Vergleichsmodus (E002) */}
             {mode === 'budget_pl' && (
               <DropdownMenu>
@@ -3480,6 +3544,14 @@ const PLViewPage = () => {
                     onSelect={e => e.preventDefault()}
                   >
                     Abweichung &gt;10% hervorheben
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    className="text-xs"
+                    checked={showHiddenAccounts}
+                    onCheckedChange={v => setShowHiddenAccounts(v === true)}
+                    onSelect={e => e.preventDefault()}
+                  >
+                    Ausgeblendete Konten einblenden
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuLabel className="text-xs">% Anteil am Umsatz</DropdownMenuLabel>
@@ -3974,6 +4046,19 @@ const PLViewPage = () => {
                   setBplTopDownMode('chf');
                 } : undefined}
                 isMobile={isMobile}
+                onToggleVisibility={itemId => {
+                  // Dauerhafte Sichtbarkeit pro Konto (isForceVisible) — im Budget
+                  // des Mandanten gespeichert, bleibt nach Neuladen erhalten.
+                  const freshItems = loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
+                  const item = freshItems.find(i => i.id === itemId);
+                  if (!item) return;
+                  const next = !item.isForceVisible;
+                  savePLLineItem(year, { ...item, isForceVisible: next }, tenantKey(BUDGET_STORAGE_KEY));
+                  setRefreshKey(k => k + 1);
+                  toast.success(next
+                    ? `${item.label}: dauerhaft eingeblendet (auch wenn leer)`
+                    : `${item.label}: wird bei leeren Werten wieder ausgeblendet`);
+                }}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />

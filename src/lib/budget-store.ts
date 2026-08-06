@@ -680,17 +680,32 @@ const PL_ITEM_CATEGORY_FIXES: Array<{ id: string; from: string; to: string; labe
   // Kehrt die frühere Umbuchung nach pl_other_op wieder um.
   { id: 'pli_betriebsmat', from: 'pl_other_op', to: 'pl_goods_cost' },
   { id: 'pli_gebinde_akt', from: 'pl_other_op', to: 'pl_goods_cost' },
-  { id: 'pli_kost_logis',  from: 'pl_marketing',  to: 'pl_personnel_other', label: 'Kost & Logis Personal' },
+  // 6611 Kost & Logis → Werbeaufwand (analog formeller OR-ER); kehrt die frühere
+  // Umbuchung nach pl_personnel_other wieder um. Werte bleiben unverändert.
+  { id: 'pli_kost_logis',  from: 'pl_personnel_other', to: 'pl_marketing', label: 'Kost & Logis Personal' },
 ];
 
 function migratePLItemCategories(budget: BudgetYear): BudgetYear {
   const items = budget.plLineItems ?? [];
   let changed = false;
   const next = items.map(i => {
+    let out = i;
     const fix = PL_ITEM_CATEGORY_FIXES.find(f => f.id === i.id && i.categoryId === f.from);
-    if (!fix) return i;
-    changed = true;
-    return { ...i, categoryId: fix.to, ...(fix.label ? { label: fix.label } : {}) };
+    if (fix) {
+      out = { ...out, categoryId: fix.to, ...(fix.label ? { label: fix.label } : {}) };
+      changed = true;
+    }
+    // «Personal Aushilfe» (Konto 5004): feste ER-Position — immer sichtbar,
+    // auch wenn Ist/Budget/VJ leer sind. Altes Label «Personal-Karate» wird
+    // korrigiert; ein manuell geändertes Label bleibt erhalten.
+    if (i.id === 'pli_karate') {
+      const relabel = out.label === 'Personal-Karate' ? { label: 'Personal Aushilfe' } : {};
+      if (!out.isForceVisible || 'label' in relabel) {
+        out = { ...out, isForceVisible: true, ...relabel };
+        changed = true;
+      }
+    }
+    return out;
   });
   return changed ? { ...budget, plLineItems: next } : budget;
 }

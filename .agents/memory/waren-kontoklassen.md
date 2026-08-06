@@ -36,3 +36,7 @@ kategorieFromKonto = FIBU-identisches Schema: Beverage {4020,4030,4040,4050}, Fo
 - ALLE WKQ-/Klassen-Pfade normalisieren Konten wie `normalizeWarenKonto`: 3–5 Ziffern, 5-stellig → erste 4 (`40201`→4020). `warenkosten-quote.normalisiereKontoNummer` (bewusst lokal dupliziert, Import-Zyklus) + `kontoKlasse` via normalizeWarenKonto. Nie roher `parseInt`.
 - Wochen-WKQ/Analyse-KPIs (`waren-analyse`): immer split-bewusste Basis `computeWarenkostenTotals(nurWarenAnteil(list,grenze)).relevantNet` — nie rohes amountNet.
 - Unkontierte (kein numerisches Konto, nicht Depot) zählen als Warenkosten; `zaehleUnkontierte()` + sichtbarer Amber-Hinweis in Cockpit/Analyse (Quote nie still unscharf).
+
+## 6611 & feste ER-Positionen (08/2026)
+- 6611 Kost & Logis = **Werbeaufwand** (marketing/operating_expenses) analog formeller OR-ER; Personalaufwand = nur 5xxx. Frühere Umbuchung nach personnel_other wurde wieder umgekehrt (PL_ITEM_CATEGORY_FIXES kehrt nur die BEKANNTE alte Kategorie um — idempotent).
+- `pli_karate` (Konto 5004, Label «Personal Aushilfe», in Sage teils auch 5005) ist feste, immer sichtbare Lohnaufwand-Position: `isForceVisible: true` ist der Mechanismus gegen die Zero-Row-Ausblendung in PLView (Default-Items mit Ist=Budget=VJ=0 werden sonst versteckt).

@@ -149,10 +149,11 @@ export const SEED_BEAULIEU_2026_LINE_ITEMS: BudgetPLLineItem[] = [
     id: 'pli_karate',
     categoryId: 'pl_wages',
     accountNumber: '5004',
-    label: 'Personal-Karate',
+    label: 'Personal Aushilfe',
     valueType: 'chf',
     sortOrder: 4,
     isDefault: true,
+    isForceVisible: true,
     monthlyValues: mv(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
   },
   {

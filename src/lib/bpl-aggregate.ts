@@ -87,6 +87,10 @@ export function aggregateBPLRows(
     const agg = byKey.get(k)!;
     return {
       ...agg.row,
+      // «Ausgeblendet» gilt für die Periode nur, wenn ALLE Monatssummen leer sind
+      // (ein Monat mit Wert ⇒ normale Zeile, auch wenn der erste Monat leer war).
+      isAutoHidden: agg.row.isAutoHidden && agg.actual === 0 && agg.budget === 0 && agg.prevYear === 0
+        ? true : undefined,
       values: makeAggregatedCell(agg.actual, agg.budget, agg.prevYear, agg.row.isExpense),
     };
   });

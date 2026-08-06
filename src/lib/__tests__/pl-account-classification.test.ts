@@ -42,11 +42,18 @@ describe('Konto-Klassifikations-Defaults', () => {
       expect(r.mapping?.plCategory).toBe('cogs_other');
     }
   });
-  it('6611 → Personalaufwand (personnel_other), nicht Marketing', () => {
+  it('6611 → Werbeaufwand (marketing, analog formeller OR-ER), nicht Personalaufwand', () => {
     const r = lookupAccount('6611');
     expect(r.matchType).toBe('exact');
-    expect(r.mapping?.plCategory).toBe('personnel_other');
-    expect(r.mapping?.plSection).toBe('personnel');
+    expect(r.mapping?.plCategory).toBe('marketing');
+    expect(r.mapping?.plSection).toBe('operating_expenses');
+  });
+  it('5004/5005 «Personal Aushilfe» → Lohnaufwand (personnel)', () => {
+    for (const n of ['5004', '5005']) {
+      const r = lookupAccount(n);
+      expect(r.mapping?.plSection).toBe('personnel');
+      expect(r.mapping?.accountName).toBe('Personal Aushilfe');
+    }
   });
   it('4900 → cogs_lager (WES)', () => {
     expect(lookupAccount('4900').mapping?.plCategory).toBe('cogs_lager');
@@ -69,10 +76,17 @@ describe('Konto-Klassifikations-Defaults', () => {
 });
 
 describe('Budget-Default-Positionen folgen der Klassifikation', () => {
-  it('pli_betriebsmat/pli_gebinde_akt in pl_goods_cost (OR-ER), pli_kost_logis in pl_personnel_other', () => {
+  it('pli_betriebsmat/pli_gebinde_akt in pl_goods_cost (OR-ER), pli_kost_logis in pl_marketing', () => {
     const byId = new Map(DEFAULT_PL_LINE_ITEMS.map(i => [i.id, i]));
     expect(byId.get('pli_betriebsmat')?.categoryId).toBe('pl_goods_cost');
     expect(byId.get('pli_gebinde_akt')?.categoryId).toBe('pl_goods_cost');
-    expect(byId.get('pli_kost_logis')?.categoryId).toBe('pl_personnel_other');
+    expect(byId.get('pli_kost_logis')?.categoryId).toBe('pl_marketing');
+  });
+  it('pli_karate «Personal Aushilfe» (5004) ist feste, immer sichtbare Position in pl_wages', () => {
+    const item = DEFAULT_PL_LINE_ITEMS.find(i => i.id === 'pli_karate');
+    expect(item?.categoryId).toBe('pl_wages');
+    expect(item?.accountNumber).toBe('5004');
+    expect(item?.label).toBe('Personal Aushilfe');
+    expect(item?.isForceVisible).toBe(true);
   });
 });
