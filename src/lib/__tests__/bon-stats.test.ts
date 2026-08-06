@@ -6,7 +6,7 @@
  * Ausreisser = Kennzeichnung (kein Fehler).
  */
 import { describe, it, expect } from 'vitest';
-import { berechneBonStats, AUSREISSER_FAKTOR } from '@/lib/bon-stats';
+import { berechneBonStats, berechneRestaurantBonStats, isTaArtikel, AUSREISSER_FAKTOR } from '@/lib/bon-stats';
 
 describe('berechneBonStats', () => {
   it('paart nur Tage mit beiden Werten und rundet die Bon-Anzahl je Tag', () => {
@@ -82,5 +82,67 @@ describe('berechneBonStats', () => {
     );
     expect(s.bons).toBe(100);
     expect(s.avgBon).toBe(79.87);
+  });
+});
+
+describe('isTaArtikel', () => {
+  it('erkennt Suffix « TA» (exakt, case-sensitiv) und Take-Away-Varianten', () => {
+    expect(isTaArtikel('Pad Thai TA')).toBe(true);
+    expect(isTaArtikel('Menü Take Away')).toBe(true);
+    expect(isTaArtikel('TakeAway Box')).toBe(true);
+    expect(isTaArtikel('Take-away Kaffee')).toBe(true);
+    expect(isTaArtikel('Tarte Tatin')).toBe(false);   // endet nicht auf ' TA'
+    expect(isTaArtikel('Pasta')).toBe(false);
+    expect(isTaArtikel('Pad Thai ta')).toBe(false);   // Suffix nur Grossschreibung
+  });
+});
+
+describe('berechneRestaurantBonStats', () => {
+  const avg = { '2025-01-01': 80, '2025-01-02': 100 };
+  const gross = { '2025-01-01': 8000, '2025-01-02': 10000 }; // 100 + 100 Bons
+
+  it('Restaurant-Ø = (ΣGesamt − ΣTA-Umsatz) ÷ (ΣBons − ΣTA-Artikel), gewichtet', () => {
+    const s = berechneRestaurantBonStats(
+      avg, gross,
+      { '2025-01-01': 2000 },            // TA-Umsatz
+      { '2025-01-01': 40, '2025-01-02': 10 }, // TA-Artikel = TA-Bons
+      '2025-01-01', '2025-12-31',
+    );
+    expect(s.restBons).toBe(200 - 50);
+    expect(s.restBrutto).toBe(16000);
+    expect(s.avgBonRest).toBe(Math.round((16000 / 150) * 100) / 100); // 106.67
+  });
+
+  it('ohne TA-Artikel-Daten im Zeitraum → null (leer statt irreführender Zahl)', () => {
+    const s = berechneRestaurantBonStats(avg, gross, { '2025-01-01': 2000 }, {}, '2025-01-01', '2025-12-31');
+    expect(s.avgBonRest).toBeNull();
+  });
+
+  it('restBons ≤ 0 → null (nie durch 0 oder negativ teilen)', () => {
+    const s = berechneRestaurantBonStats(
+      { '2025-01-01': 80 }, { '2025-01-01': 800 },   // 10 Bons
+      {}, { '2025-01-01': 10 },                      // 10 TA-Artikel → 0 Rest
+      '2025-01-01', '2025-12-31',
+    );
+    expect(s.restBons).toBe(0);
+    expect(s.avgBonRest).toBeNull();
+  });
+
+  it('zählt TA nur an gepaarten Tagen (gleiches Fenster wie die Bon-Paarung)', () => {
+    const s = berechneRestaurantBonStats(
+      avg, { '2025-01-01': 8000 },                   // 02.01. ohne Umsatz → unpaarbar
+      { '2025-01-02': 999 }, { '2025-01-02': 99, '2025-01-01': 20 },
+      '2025-01-01', '2025-12-31',
+    );
+    expect(s.tage).toBe(1);
+    expect(s.restBons).toBe(100 - 20);
+    expect(s.restBrutto).toBe(8000);
+  });
+});
+
+describe('isTaArtikel — Whitespace-Varianten (Server-Prefilter muss Obermenge sein)', () => {
+  it('erkennt auch «Take - Away» und Mehrfach-Leerzeichen', () => {
+    expect(isTaArtikel('Menü Take - Away')).toBe(true);
+    expect(isTaArtikel('Menü Take   Away')).toBe(true);
   });
 });

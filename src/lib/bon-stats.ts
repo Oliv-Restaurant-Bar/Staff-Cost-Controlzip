@@ -19,6 +19,7 @@
 import type { TenantId } from '@/contexts/TenantContext';
 import { ladeUmsatzTage } from '@/lib/umsatz';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
+import { supabase } from '@/integrations/supabase/client';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -68,6 +69,117 @@ export function berechneBonStats(
         .sort((a, b) => b.avg - a.avg)
     : [];
   return { tage, bons, brutto: r2(brutto), avgBon, ohneUmsatz, events };
+}
+
+// ── Ø-Bon Restaurant (ohne Take Away) — nur Mandanten MIT TA (Oliv) ──────────
+
+export interface RestaurantBonStats {
+  /** Gepaarte Tage (wie BonStats.tage). */
+  tage: number;
+  /** Σ Bons − Σ TA-Artikel (1 TA-Artikel = 1 Bon = 1 Gast). */
+  restBons: number;
+  /** Σ Umsatz «Gesamt» − Σ TA-Umsatz über die gepaarten Tage. */
+  restBrutto: number;
+  /** Gewichtet: restBrutto ÷ restBons; null wenn nicht berechenbar (nie ÷0). */
+  avgBonRest: number | null;
+}
+
+/**
+ * Restaurant-Ø-Bon ohne Take Away, GEWICHTET über die gepaarten Tage
+ * (dieselbe Paarung wie berechneBonStats):
+ *   (Σ Brutto − Σ TA-Umsatz) ÷ (Σ Bons − Σ TA-Artikel)
+ * TA-Artikel-Regel: 1 Artikel = 1 Bon = 1 Gast. Ohne TA-Artikel-Daten im
+ * Zeitraum → null (leer statt 0, nie durch 0).
+ */
+export function berechneRestaurantBonStats(
+  avgDaily: Record<string, number>,
+  bruttoDaily: Record<string, number>,
+  taUmsatzDaily: Record<string, number>,
+  taBonsDaily: Record<string, number>,
+  fromIso: string,
+  toIso: string,
+): RestaurantBonStats {
+  let tage = 0, bons = 0, brutto = 0, taU = 0, taB = 0, hatTaBons = false;
+  for (const [date, avg] of Object.entries(avgDaily)) {
+    if (date < fromIso || date > toIso || !(avg > 0)) continue;
+    const g = bruttoDaily[date] ?? 0;
+    if (!(g > 0)) continue;
+    tage++;
+    bons += Math.round(g / avg);
+    brutto += g;
+    const u = taUmsatzDaily[date] ?? 0;
+    if (u > 0) taU += u;
+    const b = taBonsDaily[date] ?? 0;
+    if (b > 0) { taB += b; hatTaBons = true; }
+  }
+  const restBons = bons - taB;
+  const restBrutto = r2(brutto - taU);
+  // Ohne TA-Artikel-Daten wäre das Resultat identisch mit dem Gesamt-Ø-Bon
+  // abzüglich TA-Umsatz — irreführend. Dann leer lassen.
+  const avgBonRest = hatTaBons && restBons > 0 && restBrutto > 0
+    ? r2(restBrutto / restBons)
+    : null;
+  return { tage, restBons, restBrutto, avgBonRest };
+}
+
+/** TA-Artikel-Erkennung: Name endet auf « TA» oder enthält Take Away/TakeAway. */
+export function isTaArtikel(name: string): boolean {
+  return name.endsWith(' TA') || /take\s*-?\s*away/i.test(name);
+}
+
+/**
+ * TA-Umsatz («Take Away»-Zeile) je Tag eines Zeitraums, mandantengetrennt —
+ * aus dem Ist-Store (dailyBudgets via ladeUmsatzTage).
+ */
+export async function ladeTaUmsatzTage(
+  tenantId: TenantId,
+  fromIso: string,
+  toIso: string,
+): Promise<Record<string, number>> {
+  const map: Record<string, number> = {};
+  const tage = await ladeUmsatzTage(tenantId, fromIso, toIso);
+  for (const [date, tag] of tage) {
+    if (tag.takeAwayBrutto > 0) map[date] = tag.takeAwayBrutto;
+  }
+  return map;
+}
+
+/**
+ * TA-Artikelmengen je Tag aus product_sales (Verkaufsdaten-Import),
+ * mandantengetrennt. 1 Artikel = 1 Bon = 1 Gast. Server-seitig vorgefiltert
+ * (Namensmuster), client-seitig exakt via isTaArtikel; paginiert (PostgREST
+ * kappt unsortierte Abfragen bei ~1000 Zeilen).
+ */
+export async function ladeTaBonsTage(
+  tenantId: TenantId,
+  fromIso: string,
+  toIso: string,
+): Promise<Record<string, number>> {
+  const map: Record<string, number> = {};
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from('product_sales')
+      .select('sale_date, quantity, product_name')
+      .eq('restaurant_id', tenantId)
+      .gte('sale_date', fromIso)
+      .lte('sale_date', toIso)
+      // «*take*away*» ist bewusst BREITER als isTaArtikel (beliebige Zeichen
+      // dazwischen) — der exakte Client-Filter engt ein. Nie umgekehrt!
+      .or('product_name.like."* TA",product_name.ilike.*take*away*')
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`TA-Artikel laden fehlgeschlagen: ${error.message}`);
+    for (const row of data ?? []) {
+      const name = String(row.product_name ?? '');
+      const qty = Number(row.quantity ?? 0);
+      const date = String(row.sale_date ?? '');
+      if (!date || !(qty > 0) || !isTaArtikel(name)) continue;
+      map[date] = (map[date] ?? 0) + qty;
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return map;
 }
 
 /**
