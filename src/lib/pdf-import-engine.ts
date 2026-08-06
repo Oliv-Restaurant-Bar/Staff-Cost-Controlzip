@@ -1215,6 +1215,17 @@ export async function parseAnnualSageKontoblattFromPdf(
   const pdf = await parsePDF(buffer);
   const warnings = [...pdf.warnings];
   const headerLines = pdf.rawLines.slice(0, 12);
+
+  // Fail-closed: unlesbare Seiten dürfen NIE zu einem Teil-Jahresimport führen
+  // (fehlende Buchungen würden sonst still als vollständige Monatswerte gespeichert).
+  const pageFailures = warnings.filter((w) => /Seite \d+ konnte nicht gelesen werden/.test(w));
+  if (pageFailures.length > 0) {
+    const reason =
+      `${pageFailures.length} Seite(n) des PDFs konnten nicht gelesen werden — der Jahresimport wurde abgebrochen, ` +
+      'da sonst unvollständige Monatswerte gespeichert würden. Bitte das PDF neu exportieren.';
+    warnings.push(reason);
+    return empty(reason, warnings, { rowCount: pdf.rawLines.length, headerLines });
+  }
   const debugPartial: Partial<AnnualKostenResult['debug']> = {
     rowCount: pdf.rawLines.length,
     headerLines,

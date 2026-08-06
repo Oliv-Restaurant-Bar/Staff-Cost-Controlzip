@@ -12,3 +12,8 @@ description: Regeln für Kosten-Importe, die mehrere Monate abdecken (Jahres-/Pe
 - Undo-Snapshots für Kostenimporte müssen expenseCategories UND Journal-Vorzustände enthalten (reporting-fields-Snapshot mit journals[]), sonst ist Undo unvollständig.
 - Mandanten-Check: Firma aus dem Dateikopf (oliv/beaulieu) gegen den aktiven Mandanten prüfen und bei Mismatch STOPPEN — gilt für PDF und Excel gleichermassen.
 - Save-Pfad-Locks immer strict/fail-closed prüfen (getLockStateStrict); permissives getLockState hebelt die Jahres-Sperre bei Lesefehlern aus.
+
+## PDF-Jahresimport (Sage-Kontoblatt-PDF)
+- `parseAnnualSageKontoblattFromPdf` (pdf-import-engine.ts) mappt parsePDF+buildMonthlyFromJournal auf `AnnualKostenResult`; läuft über denselben ImportHub-Pfad wie das Jahres-Excel (Vorschau, Modi, Lock, Undo, Journal).
+- **Fail-closed Pflicht:** parsePDF überspringt unlesbare Seiten nur mit Warnung («Seite N konnte nicht gelesen werden») — der Jahres-Wrapper MUSS bei solchen Warnungen abbrechen, sonst werden Teilmonate als vollständig gespeichert.
+- Plausibilität eingebaut: Σ Monats-Netto je Konto vs. Endsaldo−Vortrag (>0.05 → Warnung). Beim echten 2025-PDF (83 S., 55 Konten, 2681 Buchungen) exakt deckend — Abweichungen zu externen Kontrollwerten bedeuten dann unvollständigen EXPORT, nicht Parserfehler (2025: Mietzins Lager, 8900, Finanzertrag fehlten im PDF).
