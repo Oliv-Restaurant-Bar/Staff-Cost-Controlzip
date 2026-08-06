@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 // Zeilenstatus + Tagessumme: zentrale SSoT-Logik (auch von der Startseiten-
 // Monatsübersicht read-only konsumiert) — hier KEINE eigene Zweitberechnung.
 import { getUmsatzRowStatus } from '@/lib/umsatzabstimmung-status';
-import { countVjDailyYear } from '@/lib/vj-daily-supabase';
+import { countVjDailyYear, loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import { ladeUmsatzTage, mwstDivisorTakeaway, type UmsatzTag } from '@/lib/umsatz';
 import { useTenant, type TenantId } from '@/contexts/TenantContext';
 
@@ -60,6 +60,32 @@ async function ladeGnMonate(tenantId: TenantId, year: number): Promise<GnMonthGr
     }),
   );
   return perMonth;
+}
+
+/** Herkunft der «Summe Tage»-Spalte. */
+type DailySource = 'tage' | 'vj';
+
+/**
+ * FALLBACK für abgeschlossene Vorjahre: Monats-Brutto-Summen aus den
+ * Jahres-Tageswerten (vj_daily, Jahres-Tagesimport/Umsatz-Excel, brutto
+ * actualRevenue). Greift NUR, wenn der kanonische Tages-Store für das ganze
+ * Jahr leer ist — so ist z. B. 2024/2025 abstimmbar, ohne Tages-Z-Berichte
+ * nachzuladen. Mandantengetrennt (vj_daily-Keys sind tenant-präfixiert).
+ * Tage ohne Wert fehlen weiterhin (nie 0); actualRevenue ≤ 0 zählt nicht als
+ * Import («leer statt 0», gleiche Regel wie vjTagWerte).
+ */
+async function ladeVjMonate(tenantId: TenantId, year: number): Promise<GnMonthGross[]> {
+  const recs = await loadVjDailyYear(year, tenantId);
+  const months: GnMonthGross[] = Array.from({ length: 12 }, () => ({ gross: 0, hasImport: false }));
+  for (const [date, rec] of Object.entries(recs)) {
+    const gross = Number(rec?.actualRevenue ?? 0);
+    if (!(gross > 0)) continue;
+    const m = Number(date.slice(5, 7));
+    if (!(m >= 1 && m <= 12)) continue;
+    months[m - 1].gross += gross;
+    months[m - 1].hasImport = true;
+  }
+  return months;
 }
 
 function fmt(n: number): string {
@@ -125,17 +151,29 @@ export function UmsatzAbstimmung({
   const [gnMonths, setGnMonths] = useState<GnMonthGross[]>(() =>
     Array.from({ length: 12 }, () => ({ gross: 0, hasImport: false })),
   );
+  // Herkunft der «Summe Tage»-Werte: 'tage' = kanonischer Tages-Store,
+  // 'vj' = Fallback Jahres-Tageswerte (vj_daily) für Vorjahre ohne Tagesimporte.
+  const [dailySource, setDailySource] = useState<DailySource>('tage');
   // Generationszähler statt lokalem stale-Flag: auch überlappende Reloads
   // (store-synced) können so nie ein älteres Ergebnis über ein neueres schreiben.
   const gnLoadGen = useRef(0);
   const loadGnMonths = useCallback(() => {
     const gen = ++gnLoadGen.current;
-    ladeGnMonate(tenantId, year).then(months => {
-      if (gnLoadGen.current === gen) setGnMonths(months);
-    });
+    (async () => {
+      let months = await ladeGnMonate(tenantId, year);
+      let source: DailySource = 'tage';
+      // Fallback NUR für Vorjahre und NUR wenn das ganze Jahr im Tages-Store
+      // leer ist (kein Mischen der Quellen innerhalb eines Jahres).
+      if (year < new Date().getFullYear() && !months.some(m => m.hasImport)) {
+        const vj = await ladeVjMonate(tenantId, year);
+        if (vj.some(m => m.hasImport)) { months = vj; source = 'vj'; }
+      }
+      if (gnLoadGen.current === gen) { setGnMonths(months); setDailySource(source); }
+    })().catch(err => console.warn('[UMSATZABSTIMMUNG] Summe-Tage-Laden fehlgeschlagen:', err));
   }, [year, tenantId]);
   useEffect(() => {
     setGnMonths(Array.from({ length: 12 }, () => ({ gross: 0, hasImport: false })));
+    setDailySource('tage');
     loadGnMonths();
     return () => { gnLoadGen.current++; };
   }, [loadGnMonths]);
@@ -262,8 +300,9 @@ export function UmsatzAbstimmung({
               data-testid="umsatzabstimmung-vj-hint"
             >
               Hinweis: Für {year} sind <strong>{vjDayCount} Tageswerte aus dem Jahres-Tagesimport</strong>
-              {' '}vorhanden. Die Spalte «Summe Tage» der Abstimmung zeigt hingegen die
-              Gastronovi-Tages-Z-Berichte; die Jahres-Tageswerte können im{' '}
+              {' '}vorhanden — die Spalte «Summe Tage» fällt für Vorjahre automatisch auf diese
+              Werte zurück, sobald die Abstimmung geöffnet wird. Die Jahres-Tageswerte können
+              zudem im{' '}
               <Link to="/import" className="text-primary hover:underline inline-flex items-center gap-0.5">
                 Import-Center <ArrowRight className="h-3 w-3" />
               </Link>{' '}
@@ -321,7 +360,9 @@ export function UmsatzAbstimmung({
               )}
               <th className="text-right py-2 px-2 font-semibold min-w-[120px] text-violet-700 dark:text-violet-400">
                 Summe Tage
-                <span className="block text-[10px] font-normal">Gastronovi Z-Bericht, Brutto</span>
+                <span className="block text-[10px] font-normal" data-testid="ua-daily-source-label">
+                  {dailySource === 'vj' ? 'Jahres-Tageswerte (Vorjahr), Brutto' : 'Gastronovi Z-Bericht, Brutto'}
+                </span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[100px]">
                 Differenz
@@ -512,7 +553,7 @@ export function UmsatzAbstimmung({
           {!isBeaulieu && (
             <span><strong>Take Away:</strong> Bruttoumsatz Takeaway, inkl. 2.6 % MwSt. Netto und MwSt-Betrag werden automatisch berechnet (÷ 1.026).</span>
           )}
-          <span><strong>Summe Tage:</strong> Automatisch — Brutto-Summe der Gastronovi Tages-Z-Berichte des Monats (kanonische Umsatzquelle, Replace-Semantik). Tage ohne Import werden nicht als 0 gewertet.</span>
+          <span><strong>Summe Tage:</strong> Automatisch — Brutto-Summe der Tages-Z-Berichte des Monats (kanonische Umsatzquelle, Replace-Semantik). Für abgeschlossene Vorjahre ohne Tages-Z-Berichte wird automatisch auf die Jahres-Tageswerte (Jahres-Tagesimport/Umsatz-Excel) zurückgegriffen. Tage ohne Import werden nicht als 0 gewertet.</span>
           <span><strong>Differenz:</strong> Manuell minus Summe Tage — Ziel: 0. Grün &lt; 1 %, Gelb = 1–3 %, Rot &gt; 3 %.</span>
         </div>
       </CardContent>

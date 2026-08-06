@@ -10,8 +10,10 @@ Die Monatsabstimmung Umsatz (`UmsatzAbstimmung.tsx`) entscheidet «keine Abstimm
 2. `actualRevenue`-Tagessummen aus `tenantKey('dailyBudgets')`
 3. `gn_imports` (aktive Z-Berichte, `restaurant_id`-gefiltert)
 
+**Seit 08/2026:** «Summe Tage» fällt für VORJAHRE automatisch auf `vj_daily` (brutto actualRevenue, monatsweise) zurück — aber NUR wenn der kanonische Tages-Store fürs ganze Jahr leer ist (nie Quellen mischen); Spaltenlabel zeigt die Quelle. Laufendes Jahr unverändert.
+
 **Unsichtbar für die UA (bewusst prüfen, bevor man «Daten fehlen» glaubt):**
-- `vj_daily:*`-Zeilen in app_settings (VJ-Tagesumsatz-Import) — werden NUR von Tagesansicht/P&L-VJ-Spalte gelesen. Beleg 2026-07: 366 × `vj_daily:2024-*` (Oliv) existierten, UA 2024 zeigte trotzdem leer — korrekt aus UA-Sicht.
+- `vj_daily:*` war bis 08/2026 komplett unsichtbar (Beleg 2026-07: 366 × `vj_daily:2024-*` Oliv, UA 2024 leer); jetzt nur noch als Vorjahres-Fallback sichtbar (s. oben).
 - `revenueActual` / `expenseCategories` in reporting_v1 (Jahres-Kontoblatt-/ER-Importe).
 
 **Why:** Import-Erfolg ≠ UA-Sichtbarkeit. ER (P&L) liest vj_daily für die VJ-Spalte, UA nicht → «ER zeigt 2024, UA nicht» ist Quellen-Mismatch, kein Datenverlust.
