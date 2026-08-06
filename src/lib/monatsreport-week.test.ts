@@ -331,6 +331,29 @@ describe('computeVergleichsWindow', () => {
     expect(w.vjTo).toBe('2023-03-31');
   });
 
+  it('baseYear (Jahres-Navigation): abgeschlossenes Jahr → «ytd» wird ganzes Jahr vs. ganzes Vorjahr', () => {
+    const w = computeVergleichsWindow('ytd', heute, undefined, undefined, 2024);
+    expect(w).toMatchObject({
+      curYear: 2024, vjYear: 2023,
+      curFrom: '2024-01-01', curTo: '2024-12-31',
+      vjFrom: '2023-01-01', vjTo: '2023-12-31',
+    });
+  });
+
+  it('baseYear = laufendes Jahr: «ytd» bleibt YTD (identisch ohne baseYear)', () => {
+    expect(computeVergleichsWindow('ytd', heute, undefined, undefined, 2025))
+      .toEqual(computeYtdWindow(heute));
+  });
+
+  it('baseYear + «custom»: Bereich im gewählten Jahr vs. gleicher MM-TT-Bereich im Jahr davor', () => {
+    const w = computeVergleichsWindow('custom', heute, '2024-03-10', '2024-06-20', 2024);
+    expect(w).toMatchObject({
+      curYear: 2024, vjYear: 2023,
+      curFrom: '2024-03-10', curTo: '2024-06-20',
+      vjFrom: '2023-03-10', vjTo: '2023-06-20',
+    });
+  });
+
   it('«custom» von>bis: Fenster wird NICHT normalisiert (Aufrufer validiert; Werte bleiben roh)', () => {
     // computeVergleichsWindow spiegelt nur — die von≤bis-Validierung liegt in der UI.
     const w = computeVergleichsWindow('custom', heute, '2025-06-20', '2025-03-10');

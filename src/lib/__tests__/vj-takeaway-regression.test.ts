@@ -109,11 +109,13 @@ describe('V2 — VJ-TA-Anteil-Berechnung (Guard/Formel wie im Report)', () => {
   });
 });
 
-// Exakte Formel/Guard aus monatsreport.ts (Vorjahr-Zelle «Umsatz pro Gast»):
+// Formel/Guard aus monatsreport.ts (Vorjahr-Zelle «Umsatz pro Gast»):
 //   pro Tag: rec.actualRevenue>0 UND gaesteDaily[date]>0
-//     vjPairedNet    += rec.actualRevenue / VAT_STD
+//     vjPairedNet    += Tages-Netto (vjTagWerte: TA/1.026 + (Gesamt−TA)/1.081)
 //     vjPairedGaeste += gaesteDaily[date]
 //   vj = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null
+// Nachbildung hier OHNE takeawayRevenue-Tage → Tages-Netto = actualRevenue/1.081
+// (identisch zur zentralen Regel bei TA = 0).
 const VAT_STD = 1.081;
 function vjUmsatzProGast(
   vjDaily: Record<string, { actualRevenue?: number }>,

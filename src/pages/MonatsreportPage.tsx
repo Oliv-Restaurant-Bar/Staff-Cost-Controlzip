@@ -1404,13 +1404,28 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
   const curYear = heute.getFullYear();
   const heuteIso = heute.toISOString().slice(0, 10);
 
+  // Jahres-Navigation: frei wählbares Basisjahr, Vergleich immer Jahr vs. Jahr−1.
+  const JAHR_MIN = 2022;
+  const [jahr, setJahr] = useState(curYear);
+  const istLaufendesJahr = jahr === curYear;
+
   const [modus, setModus] = useState<VergleichsModus>('ytd');
-  // Eigener Zeitraum: Default 01.01. → heute; auf aktuelles Jahr begrenzt.
+  // Eigener Zeitraum: Default 01.01. → heute (bzw. 31.12. bei abgeschlossenem Jahr).
   const [von, setVon] = useState(`${curYear}-01-01`);
   const [bis, setBis] = useState(heuteIso);
 
-  const jahrMin = `${curYear}-01-01`;
-  const jahrMax = `${curYear}-12-31`;
+  const wechsleJahr = (j: number) => {
+    if (j < JAHR_MIN || j > curYear) return;
+    setJahr(j);
+    // Abgeschlossenes Jahr kennt kein YTD → explizit auf «Ganzes Jahr» stellen.
+    if (j !== curYear && modus === 'ytd') setModus('ganzjahr');
+    // Eigener Zeitraum auf das neue Jahr zurücksetzen (Grenzen ändern sich).
+    setVon(`${j}-01-01`);
+    setBis(j === curYear ? heuteIso : `${j}-12-31`);
+  };
+
+  const jahrMin = `${jahr}-01-01`;
+  const jahrMax = `${jahr}-12-31`;
   // Validierung nur im custom-Modus: von ≤ bis. Sonst kein Load, Hinweis anzeigen.
   const customValid = modus !== 'custom' || (!!von && !!bis && von <= bis);
 
@@ -1418,7 +1433,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
   const loadVon = modus === 'custom' ? von : undefined;
   const loadBis = modus === 'custom' ? bis : undefined;
 
-  const cacheKey = `${tenantId}:${heuteIso}:${modus}:${modus === 'custom' ? `${von}_${bis}` : '-'}`;
+  const cacheKey = `${tenantId}:${heuteIso}:${jahr}:${modus}:${modus === 'custom' ? `${von}_${bis}` : '-'}`;
   const cached = jahresvergleichCache?.key === cacheKey ? jahresvergleichCache!.daten : null;
   const [daten, setDaten] = useState<JahresvergleichDaten | null>(cached);
   const [loading, setLoading] = useState(!cached);
@@ -1436,7 +1451,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeJahresvergleich(tenantId, tenantKey, rates, heute, modus, loadVon, loadBis)
+    ladeJahresvergleich(tenantId, tenantKey, rates, heute, modus, loadVon, loadBis, jahr)
       .then(d => {
         jahresvergleichCache = { key: cacheKey, daten: d };
         if (alive) setDaten(d);
@@ -1444,7 +1459,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey, modus, loadVon, loadBis, customValid]);
+  }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey, modus, loadVon, loadBis, customValid, jahr]);
 
   const spaltenLabel = daten?.modus === 'ytd'
     ? (jahr: number) => `YTD ${jahr}`
@@ -1457,20 +1472,23 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
     let subtitle: string;
     let fileName: string;
     if (daten && customValid) {
-      subtitle = daten.modus === 'ganzjahr'
+      subtitle = daten.modus === 'ganzjahr' && daten.curYear === curYear
         ? `Aktuelles Jahr bis heute vs. ganzes Vorjahr · ${fmtFull(daten.curFrom)}–${fmtFull(daten.curTo)} vs. ${daten.vjYear}`
         : `${fmtFull(daten.curFrom)}–${fmtFull(daten.curTo)} vs. ${fmtFull(daten.vjFrom)}–${fmtFull(daten.vjTo)}`;
       fileName = `cockpit-jahresvergleich-${modusSlug}-${daten.curFrom}_${daten.curTo}`;
     } else {
-      subtitle = modus === 'custom' ? `Eigener Zeitraum ${von}–${bis}` : `${curYear} vs. ${curYear - 1}`;
-      fileName = `cockpit-jahresvergleich-${modusSlug}-${curYear}`;
+      subtitle = modus === 'custom' ? `Eigener Zeitraum ${von}–${bis}` : `${jahr} vs. ${jahr - 1}`;
+      fileName = `cockpit-jahresvergleich-${modusSlug}-${jahr}`;
     }
     const footnote = 'Jahresvergleich: «Bis heute (YTD)» = 01.01.–heute vs. 01.01.–gleiches Datum im Vorjahr · '
-      + '«Ganzes Jahr» = aktuelles Jahr bis heute vs. ganzes Vorjahr · «Eigener Zeitraum» = gewählter Bereich vs. gleicher MM-TT-Bereich im Vorjahr (29.02. → 28.02. geklemmt) · '
+      + (jahr === curYear
+        ? '«Ganzes Jahr» = aktuelles Jahr bis heute vs. ganzes Vorjahr · '
+        : '«Ganzes Jahr» = vollständiges Basisjahr vs. vollständiges Vorjahr · ')
+      + '«Eigener Zeitraum» = gewählter Bereich vs. gleicher MM-TT-Bereich im Vorjahr (29.02. → 28.02. geklemmt) · '
       + 'gleiche Quellen & Berechnung wie die Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr (nur wenn beide Werte vorhanden) · '
       + 'Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben keine VJ-Quelle → «—» · leere Felder (—) = keine Datenquelle, nie 0.';
     onPdfMeta({ title: 'Jahresvergleich', subtitle, fileName, footnote });
-  }, [onPdfMeta, daten, customValid, modus, von, bis, curYear]);
+  }, [onPdfMeta, daten, customValid, modus, von, bis, curYear, jahr]);
 
   const modusText = modus === 'ganzjahr' ? 'Ganzes Jahr' : modus === 'custom' ? 'Eigener Zeitraum' : 'Bis heute (YTD)';
 
@@ -1487,14 +1505,49 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
       </div>
       {/* Zeitraum-Wähler */}
       <div className="pdf-hide flex flex-wrap items-center gap-3">
+        {/* Jahres-Navigation: ‹ Jahr › + Dropdown — Vergleich immer Jahr vs. Jahr−1 */}
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline" size="icon" className="h-8 w-8"
+            onClick={() => wechsleJahr(jahr - 1)}
+            disabled={jahr <= JAHR_MIN}
+            data-testid="button-prev-jahr"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Select value={String(jahr)} onValueChange={(v) => wechsleJahr(Number(v))}>
+            <SelectTrigger className="h-8 w-[92px] text-sm font-semibold" data-testid="select-jahr">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: curYear - JAHR_MIN + 1 }, (_, i) => curYear - i).map(j => (
+                <SelectItem key={j} value={String(j)}>{j}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline" size="icon" className="h-8 w-8"
+            onClick={() => wechsleJahr(jahr + 1)}
+            disabled={jahr >= curYear}
+            data-testid="button-next-jahr"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <span className="text-xs text-muted-foreground ml-1" data-testid="text-vergleich-jahre">
+            vs. {jahr - 1}
+          </span>
+        </div>
+
         <ToggleGroup
           type="single"
-          value={modus}
+          value={istLaufendesJahr ? modus : (modus === 'ytd' ? 'ganzjahr' : modus)}
           onValueChange={(v) => v && setModus(v as VergleichsModus)}
           className="justify-start"
           data-testid="toggle-vergleichsmodus"
         >
-          <ToggleGroupItem value="ytd" data-testid="modus-ytd" className="text-xs">Bis heute (YTD)</ToggleGroupItem>
+          {istLaufendesJahr && (
+            <ToggleGroupItem value="ytd" data-testid="modus-ytd" className="text-xs">Bis heute (YTD)</ToggleGroupItem>
+          )}
           <ToggleGroupItem value="ganzjahr" data-testid="modus-ganzjahr" className="text-xs">Ganzes Jahr</ToggleGroupItem>
           <ToggleGroupItem value="custom" data-testid="modus-custom" className="text-xs">Eigener Zeitraum</ToggleGroupItem>
         </ToggleGroup>
@@ -1541,7 +1594,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
       {daten && customValid && (
         <div className="pdf-hide flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
           <span data-testid="jahresvergleich-kopf">
-            {daten.modus === 'ganzjahr'
+            {daten.modus === 'ganzjahr' && daten.curYear === curYear
               ? <>Aktuelles Jahr bis heute vs. ganzes Vorjahr · {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>
               : <>{daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>}
           </span>

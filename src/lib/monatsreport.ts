@@ -19,7 +19,7 @@
  *  - Stunden Ist/Plan:        ladePersonalkostenDaten (MIRUS actual_hours / Dienstplan)
  */
 import { supabase } from '@/integrations/supabase/client';
-import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz';
+import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@/lib/umsatz';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import {
@@ -522,15 +522,22 @@ export type VergleichsModus = 'ytd' | 'ganzjahr' | 'custom';
  *  - 'custom'   : von→bis im aktuellen Jahr (auf aktuelles Jahr begrenzt);
  *                 Vorjahr = derselbe MM-TT-Bereich mit 29.02.-Klemmung.
  * von/bis sind 'YYYY-MM-DD' und nur im 'custom'-Modus relevant. Reine Funktion.
+ *
+ * baseYear (optional): frei gewähltes Basisjahr (Jahres-Navigation). Vergleich
+ * ist immer baseYear vs. baseYear−1. Ist baseYear NICHT das laufende Jahr
+ * (abgeschlossen), wird 'ytd' wie 'ganzjahr' behandelt (ganzes Jahr).
  */
 export function computeVergleichsWindow(
   modus: VergleichsModus,
   heute: Date,
   von?: string,
   bis?: string,
+  baseYear?: number,
 ): YtdWindow {
-  const curYear = heute.getFullYear();
+  const curYear = baseYear ?? heute.getFullYear();
   const vjYear = curYear - 1;
+  // Abgeschlossenes Jahr: YTD ist bedeutungslos → ganzes Jahr.
+  if (modus === 'ytd' && curYear !== heute.getFullYear()) modus = 'ganzjahr';
 
   if (modus === 'ganzjahr') {
     return {
@@ -1115,20 +1122,24 @@ export async function ladeMonatsreport(
     : null;
 
   // ── Vorjahr (vj_daily) ─────────────────────────────────────────────────────
-  let vjGross = 0, vjFoodG = 0, vjBevG = 0, vjTa = 0;
-  let hatVj = false, hatVjFood = false, hatVjBev = false, hatVjTa = false;
+  // Netto + F/B je Tag über vjTagWerte — EXAKT dieselbe Regel wie das laufende
+  // Jahr (TA-Satz, Oliv-TA→Food, Rest 50/50). Invariante food+bev=netto.
+  let vjGross = 0, vjNetSum = 0, vjFoodNetS = 0, vjBevNetS = 0, vjTa = 0;
+  let hatVj = false, hatVjTa = false;
   // «Umsatz pro Gast» VJ: Netto-VJ ÷ Gäste-VJ, aber NUR über GEPAARTE Tage
   // (Tag mit vj_daily.actualRevenue>0 UND gaesteDaily[date]>0 im Vorjahr) —
   // exakt dieselbe Paarungs-Regel wie im Ist-Zweig, gleicher Zeitraum.
   let vjPairedNet = 0, vjPairedGaeste = 0;
   for (const [date, rec] of Object.entries(vjDaily)) {
-    if ((rec.actualRevenue ?? 0) > 0) { vjGross += rec.actualRevenue; hatVj = true; }
-    if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue!; hatVjFood = true; }
-    if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue!; hatVjBev = true; }
+    const w = vjTagWerte(tenantId, rec, date);
+    if (w) {
+      vjGross += rec.actualRevenue!; vjNetSum += w.netto;
+      vjFoodNetS += w.food; vjBevNetS += w.beverage; hatVj = true;
+    }
     if ((rec.takeawayRevenue ?? 0) > 0) { vjTa += rec.takeawayRevenue!; hatVjTa = true; }
     const gVj = gaesteDaily[date] ?? 0;
-    if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vjPairedNet += rec.actualRevenue / VAT_STD(); // Netto wie vjNetV (Standard-MwSt)
+    if (w && gVj > 0) {
+      vjPairedNet += w.netto; // Netto wie vjNetV (gleiche Tagesregel)
       vjPairedGaeste += gVj;
     }
   }
@@ -1137,23 +1148,23 @@ export async function ladeMonatsreport(
   // Verhältnis-/Prozent-Zeilen werden NICHT summiert, sondern als Quote über
   // die Woche gebildet (TA-Anteil, Umsatz/Gast, Durchschnittsverkauf). Gäste-
   // Tagessumme massgeblich; «leer statt 0».
-  let vwGross = 0, vwFoodG = 0, vwBevG = 0, vwTa = 0;
-  let hatVwUmsatz = false, hatVwFood = false, hatVwBev = false, hatVwTa = false;
+  let vwGross = 0, vwNetSum = 0, vwFoodNetS = 0, vwBevNetS = 0, vwTa = 0;
+  let hatVwUmsatz = false, hatVwTa = false;
   let vwGaeste = 0, hatVwGaeste = false;
   let vwPairedNet = 0, vwPairedGaeste = 0;
   let vwAvgSum = 0, vwAvgWeight = 0, vwAvgSimpleSum = 0, vwAvgSimpleCount = 0;
   for (const { vj } of vjWochePaare) {
     const rec = vjWocheDaily[vj];
-    if (rec) {
-      if ((rec.actualRevenue ?? 0) > 0) { vwGross += rec.actualRevenue; hatVwUmsatz = true; }
-      if ((rec.foodRevenue ?? 0) > 0) { vwFoodG += rec.foodRevenue!; hatVwFood = true; }
-      if ((rec.beverageRevenue ?? 0) > 0) { vwBevG += rec.beverageRevenue!; hatVwBev = true; }
-      if ((rec.takeawayRevenue ?? 0) > 0) { vwTa += rec.takeawayRevenue!; hatVwTa = true; }
+    const w = rec ? vjTagWerte(tenantId, rec, vj) : null;
+    if (rec && w) {
+      vwGross += rec.actualRevenue!; vwNetSum += w.netto;
+      vwFoodNetS += w.food; vwBevNetS += w.beverage; hatVwUmsatz = true;
     }
+    if (rec && (rec.takeawayRevenue ?? 0) > 0) { vwTa += rec.takeawayRevenue!; hatVwTa = true; }
     const gVj = gaesteDaily[vj] ?? 0;
     if (gVj > 0) { vwGaeste += gVj; hatVwGaeste = true; }
-    if (rec && (rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vwPairedNet += rec.actualRevenue / VAT_STD(); vwPairedGaeste += gVj;
+    if (w && gVj > 0) {
+      vwPairedNet += w.netto; vwPairedGaeste += gVj;
     }
     // Durchschnittsverkauf VJ-Woche: gäste-gewichtet, Fallback einfacher Mittel.
     const av = avgDaily[vj];
@@ -1162,7 +1173,7 @@ export async function ladeMonatsreport(
       vwAvgSimpleSum += av; vwAvgSimpleCount++;
     }
   }
-  const vwNet = vwGross / VAT_STD();
+  const vwNet = vwNetSum;
 
   // ── Stunden-Stapel Bedarf → Dienstplan → Ist ───────────────────────────────
   // GEMEINSAME Helfer (bedarf-stunden-utils) — identische Semantik wie die
@@ -1364,7 +1375,7 @@ export async function ladeMonatsreport(
   const budgetNetV = hatBudget ? r2(budgetNet) : null;
   const wBudget = hatBudget && weekFrom ? r2(wBudgetNet) : null;
   const vjGrossV = N(vjGross, hatVj);
-  const vjNetV = hatVj ? r2(vjGross / VAT_STD()) : null;
+  const vjNetV = hatVj ? r2(vjNetSum) : null;
   const mGaesteV = N(mGaeste, hatGaeste);
   const wGaesteV = weekFrom ? N(wGaeste, hatWGaeste) : null;
   const vjGaesteV = N(vjGaeste, hatVjGaeste);
@@ -1378,8 +1389,8 @@ export async function ladeMonatsreport(
   const vwGrossV = hatVw && hatVwUmsatz ? r2(vwGross) : null;
   const vwNetV = hatVw && hatVwUmsatz ? r2(vwNet) : null;
   const vwGaesteV = hatVw && hatVwGaeste ? r2(vwGaeste) : null;
-  const vwFoodNet = hatVw && hatVwFood ? r2(vwFoodG / VAT_STD()) : null;
-  const vwBevNet = hatVw && hatVwBev ? r2(vwBevG / VAT_STD()) : null;
+  const vwFoodNet = hatVw && hatVwUmsatz ? r2(vwFoodNetS) : null;
+  const vwBevNet = hatVw && hatVwUmsatz ? r2(vwBevNetS) : null;
   // Durchschnittsverkauf VJ-Woche: gäste-gewichtet (Fallback einfacher Mittel).
   let vwAvg: number | null = null;
   if (hatVw) {
@@ -1400,8 +1411,8 @@ export async function ladeMonatsreport(
   // Take-Away-UMSATZ Vorjahres-Monat (CHF brutto) — Zähler des VJ-Anteils. «—» ohne TA-Quelle.
   const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa) : null;
   const vjUpgM = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
-  const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD()) : null;
-  const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD()) : null;
+  const vjFoodNet = hatVj ? r2(vjFoodNetS) : null;
+  const vjBevNet = hatVj ? r2(vjBevNetS) : null;
 
   /** Anteil n ÷ basis in % — null ohne Basis oder Wert (nie durch 0 teilen). */
   const anteilPct = (n: number | null | undefined, basis: number | null): number | null =>
@@ -1738,15 +1749,17 @@ async function aggregiereVjWochen(
     if (wi < 0) continue;
     const a = aggs[wi];
     if (!a) continue;
-    if ((rec.actualRevenue ?? 0) > 0) {
-      a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD(); a.hatUmsatz = true;
+    // Netto + F/B je Tag über vjTagWerte — identische Regel wie laufendes Jahr.
+    const w = vjTagWerte(tenantId, rec, date);
+    if (w) {
+      a.gross += rec.actualRevenue!; a.net += w.netto; a.hatUmsatz = true;
+      a.food += w.food; a.hatFood = true;
+      a.bev += w.beverage; a.hatBev = true;
     }
-    if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD(); a.hatFood = true; }
-    if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD(); a.hatBev = true; }
     if ((rec.takeawayRevenue ?? 0) > 0) { a.ta += rec.takeawayRevenue!; a.hatTa = true; }
     const g = gaesteDaily[date] ?? 0;
-    if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
-      a.pairedNet += rec.actualRevenue / VAT_STD(); a.pairedGaeste += g;
+    if (w && g > 0) {
+      a.pairedNet += w.netto; a.pairedGaeste += g;
     }
   }
   for (const [date, n] of Object.entries(gaesteDaily)) {
@@ -2126,8 +2139,12 @@ export async function ladeJahresvergleich(
   modus: VergleichsModus = 'ytd',
   von?: string,
   bis?: string,
+  baseYear?: number,
 ): Promise<JahresvergleichDaten> {
-  const win = computeVergleichsWindow(modus, heute, von, bis);
+  const win = computeVergleichsWindow(modus, heute, von, bis, baseYear);
+  // Abgeschlossenes Jahr: 'ytd' wurde im Fenster als 'ganzjahr' behandelt —
+  // auch im Rückgabewert ausweisen (Kopf-/Spalten-Beschriftung).
+  if (modus === 'ytd' && win.curYear !== heute.getFullYear()) modus = 'ganzjahr';
   const { curYear, vjYear, curFrom, curTo, vjFrom, vjTo } = win;
   // Monats-Fenster (1-basiert) für PK/vj_daily aus dem gewählten Zeitraum ableiten.
   // Aktuelles Jahr: nur bis zum aktuellen Monat laden, wenn der Zeitraum darüber
@@ -2207,20 +2224,22 @@ export async function ladeJahresvergleich(
   const vjDaily: Record<string, VjDayRecord> = {};
   for (const m of vjMonthMaps) Object.assign(vjDaily, m);
 
+  // Netto + F/B je Tag über vjTagWerte — identische Regel wie das laufende
+  // Jahr (TA-Satz, Oliv-TA→Food, Rest 50/50). Invariante food+bev=netto.
   let vjGross = 0, vjNet = 0, vjFoodG = 0, vjBevG = 0, vjTaG = 0;
-  let hatVj = false, hatVjFood = false, hatVjBev = false, hatVjTa = false;
+  let hatVj = false, hatVjTa = false;
   let vjPairedNet = 0, vjPairedGaeste = 0;
   for (const [date, rec] of Object.entries(vjDaily)) {
     if (date < vjFrom || date > vjTo) continue;
-    if ((rec.actualRevenue ?? 0) > 0) {
-      vjGross += rec.actualRevenue; vjNet += rec.actualRevenue / VAT_STD(); hatVj = true;
+    const w = vjTagWerte(tenantId, rec, date);
+    if (w) {
+      vjGross += rec.actualRevenue!; vjNet += w.netto; hatVj = true;
+      vjFoodG += w.food; vjBevG += w.beverage;
     }
-    if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue! / VAT_STD(); hatVjFood = true; }
-    if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue! / VAT_STD(); hatVjBev = true; }
     if ((rec.takeawayRevenue ?? 0) > 0) { vjTaG += rec.takeawayRevenue!; hatVjTa = true; }
     const gVj = gaesteDaily[date] ?? 0;
-    if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vjPairedNet += rec.actualRevenue / VAT_STD(); vjPairedGaeste += gVj;
+    if (w && gVj > 0) {
+      vjPairedNet += w.netto; vjPairedGaeste += gVj;
     }
   }
   // Gäste VJ (volle Summe im VJ-Zeitraum).
@@ -2262,9 +2281,9 @@ export async function ladeJahresvergleich(
       cur: hatUmsatz && gross > 0 && ta > 0 ? r2((ta / gross) * 100) : null,
       vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null },
     { label: 'Food', fmt: 'chf',
-      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVjFood ? r2(vjFoodG) : null },
+      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null },
     { label: 'Beverage', fmt: 'chf',
-      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVjBev ? r2(vjBevG) : null },
+      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null },
     { label: 'Produktive Stunden (Ist)', fmt: 'hours',
       cur: hatIst ? r2(istStd) : null, vj: null },  // keine VJ-Quelle
     { label: 'Produktive Stunden geplant', fmt: 'hours',

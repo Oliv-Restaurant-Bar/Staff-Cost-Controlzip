@@ -91,8 +91,76 @@ describe('Take Away Umsatz — dem Angebot-Schalter unterworfen', () => {
   });
 });
 
-// ── Mandanten-Regel Oliv: Take Away zählt 100% zu FOOD (taVollFood) ──────────
+// ── Einheitlicher F/B-Split (beide Mandanten, seit 08/2026) ──────────────────
+// Direkt: Food→Food, Beverage→Beverage; Oliv: TA 100% Food (taVollFood);
+// DEFAULT: gesamter übriger Rest (auch unbekannte Positionen) 50/50.
 import { foodBeverageSplit, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
+
+describe('foodBeverageSplit — einheitlicher Default: Rest 50/50', () => {
+  const base: UmsatzTag = {
+    datum: '2026-07-01', gesamtBrutto: 10000, takeAwayBrutto: 0,
+    foodBrutto: 5000, beverageBrutto: 2500, marketingNetto: 100,
+  };
+
+  it('Rest (Non-Food, Rabatte, Marketing, Unbekanntes) hälftig, direkte Kategorien direkt, Invariante hält', () => {
+    const s = foodBeverageSplit(base);
+    const fd = base.foodBrutto / 1.081, bd = base.beverageBrutto / 1.081;
+    const rest = nettoUmsatzTag(base) - fd - bd;
+    expect(s.food).toBeCloseTo(fd + rest / 2, 6);
+    expect(s.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(base), 10);
+  });
+
+  it('negativer Rest (z.B. Rabatte drücken Gesamt unter die Kategorien) wird ebenfalls 50/50 getragen', () => {
+    const tag: UmsatzTag = { datum: '2026-07-01', gesamtBrutto: 7000, takeAwayBrutto: 0, foodBrutto: 5000, beverageBrutto: 2600, marketingNetto: 0 };
+    const s = foodBeverageSplit(tag);
+    const fd = tag.foodBrutto / 1.081, bd = tag.beverageBrutto / 1.081;
+    const rest = nettoUmsatzTag(tag) - fd - bd; // < 0
+    expect(rest).toBeLessThan(0);
+    expect(s.food).toBeCloseTo(fd + rest / 2, 6);
+    expect(s.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(tag), 10);
+  });
+
+  it('keine direkten Kategorien: alles 50/50 (unbekannte Positionen gehen nicht verloren)', () => {
+    const tag: UmsatzTag = { datum: '2026-07-01', gesamtBrutto: 3000, takeAwayBrutto: 0, foodBrutto: 0, beverageBrutto: 0, marketingNetto: 50 };
+    const s = foodBeverageSplit(tag);
+    expect(s.food).toBeCloseTo(nettoUmsatzTag(tag) / 2, 6);
+    expect(s.beverage).toBeCloseTo(nettoUmsatzTag(tag) / 2, 6);
+  });
+});
+
+// ── Vorjahr (vj_daily): identische Regel über vjTagWerte ─────────────────────
+import { vjTagWerte } from '@/lib/umsatz';
+
+describe('vjTagWerte — Vorjahr nach identischer Regel', () => {
+  it('Beaulieu: Kategorien > Gesamt (Rabatte) → negativer Rest 50/50, Invariante hält', () => {
+    // Nachbau des gemeldeten Falls: foodRev+bevRev übersteigen actualRevenue.
+    const w = vjTagWerte('beaulieu', { actualRevenue: 7000, takeawayRevenue: 0, foodRevenue: 5000, beverageRevenue: 2600 })!;
+    const fd = 5000 / 1.081, bd = 2600 / 1.081, netto = 7000 / 1.081;
+    const rest = netto - fd - bd; // < 0
+    expect(w.netto).toBeCloseTo(netto, 10);
+    expect(w.food).toBeCloseTo(fd + rest / 2, 6);
+    expect(w.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(w.food + w.beverage).toBeCloseTo(w.netto, 10);
+  });
+
+  it('Oliv: TA-Netto (÷1.026) vollständig Food, Rest 50/50, Invariante hält', () => {
+    const w = vjTagWerte('oliv', { actualRevenue: 10000, takeawayRevenue: 2000, foodRevenue: 5000, beverageRevenue: 2500 })!;
+    const taN = 2000 / 1.026, netto = taN + 8000 / 1.081;
+    const fd = 5000 / 1.081, bd = 2500 / 1.081;
+    const rest = netto - fd - bd - taN;
+    expect(w.netto).toBeCloseTo(netto, 10);
+    expect(w.food).toBeCloseTo(fd + taN + rest / 2, 6);
+    expect(w.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(w.food + w.beverage).toBeCloseTo(w.netto, 10);
+  });
+
+  it('kein Umsatz → null («leer statt 0»)', () => {
+    expect(vjTagWerte('oliv', { actualRevenue: 0, foodRevenue: 500 })).toBeNull();
+    expect(vjTagWerte('beaulieu', {})).toBeNull();
+  });
+});
 
 describe('foodBeverageSplit — taVollFood (Oliv: TA 100% Food)', () => {
   const base: UmsatzTag = {
@@ -100,26 +168,23 @@ describe('foodBeverageSplit — taVollFood (Oliv: TA 100% Food)', () => {
     foodBrutto: 5000, beverageBrutto: 2500, marketingNetto: 100,
   };
 
-  it('ohne Flag: bisherige anteilige Verteilung, Invariante food+bev=netto', () => {
-    const s = foodBeverageSplit(base);
-    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(base), 10);
-    // Food-Anteil entspricht dem Direktverhältnis (2/3)
-    expect(s.food / (s.food + s.beverage)).toBeCloseTo(2 / 3, 3);
+  it('mit Flag: TA-Netto vollständig in Food, übriger Rest 50/50, Invariante hält', () => {
+    const tag = { ...base, taVollFood: true };
+    const s = foodBeverageSplit(tag);
+    const fd = tag.foodBrutto / 1.081, bd = tag.beverageBrutto / 1.081;
+    const taNetto = tag.takeAwayBrutto / 1.026;
+    const rest = nettoUmsatzTag(tag) - fd - bd - taNetto;
+    expect(s.food).toBeCloseTo(fd + taNetto + rest / 2, 6);
+    expect(s.beverage).toBeCloseTo(bd + rest / 2, 6);
+    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(tag), 10);
   });
 
-  it('mit Flag: TA-Netto vollständig in Food, Rest weiterhin anteilig, Invariante hält', () => {
-    const tag = { ...base, taVollFood: true };
-    const alt = foodBeverageSplit(base);
-    const neu = foodBeverageSplit(tag);
-    const taNetto = tag.takeAwayBrutto / 1.026;
-    expect(neu.food + neu.beverage).toBeCloseTo(nettoUmsatzTag(tag), 10);
-    // Verschiebung = bisheriger Beverage-Anteil des TA (TA-Netto × Bev-Quote 1/3)
-    expect(neu.food - alt.food).toBeCloseTo(taNetto * (1 / 3), 6);
-    expect(alt.beverage - neu.beverage).toBeCloseTo(taNetto * (1 / 3), 6);
-    // Food enthält mindestens Direkt-Food + volles TA-Netto? Nein — Rest kann negativ sein;
-    // massgeblich ist: Beverage bekommt KEINEN TA-Anteil mehr:
-    const restOhneTa = nettoUmsatzTag(tag) - tag.foodBrutto / 1.081 - tag.beverageBrutto / 1.081 - taNetto;
-    expect(neu.beverage).toBeCloseTo(tag.beverageBrutto / 1.081 + restOhneTa * (1 / 3), 6);
+  it('ohne Flag (Beaulieu): TA bliebe im 50/50-Rest — Beverage erhält TA-Hälfte', () => {
+    const mit = foodBeverageSplit({ ...base, taVollFood: true });
+    const ohne = foodBeverageSplit(base);
+    const taNetto = base.takeAwayBrutto / 1.026;
+    expect(mit.food - ohne.food).toBeCloseTo(taNetto / 2, 6);
+    expect(ohne.beverage - mit.beverage).toBeCloseTo(taNetto / 2, 6);
   });
 
   it('mit Flag ohne F/B-Basis: TA zu Food, Rest hälftig', () => {
@@ -129,26 +194,5 @@ describe('foodBeverageSplit — taVollFood (Oliv: TA 100% Food)', () => {
     const rest = nettoUmsatzTag(tag) - taNetto;
     expect(s.food).toBeCloseTo(taNetto + rest / 2, 6);
     expect(s.beverage).toBeCloseTo(rest / 2, 6);
-  });
-});
-
-describe('foodBeverageSplit — restHaelftig (Beaulieu: Rest 50/50)', () => {
-  const base: UmsatzTag = {
-    datum: '2026-07-01', gesamtBrutto: 10000, takeAwayBrutto: 0,
-    foodBrutto: 5000, beverageBrutto: 2500, marketingNetto: 100,
-  };
-
-  it('Rest wird hälftig verteilt, direkte Kategorien bleiben direkt, Invariante hält', () => {
-    const s = foodBeverageSplit({ ...base, restHaelftig: true });
-    const fd = base.foodBrutto / 1.081, bd = base.beverageBrutto / 1.081;
-    const rest = nettoUmsatzTag(base) - fd - bd;
-    expect(s.food).toBeCloseTo(fd + rest / 2, 6);
-    expect(s.beverage).toBeCloseTo(bd + rest / 2, 6);
-    expect(s.food + s.beverage).toBeCloseTo(nettoUmsatzTag(base), 10);
-  });
-
-  it('ohne Flag unverändert anteilig (Regression)', () => {
-    const s = foodBeverageSplit(base);
-    expect(s.food / (s.food + s.beverage)).toBeCloseTo(2 / 3, 3);
   });
 });
