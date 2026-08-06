@@ -231,14 +231,12 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
   const basePlan = (days: VkPlan['days']): VkPlan =>
     ({ days, neu: 0, aktualisiert: 0, unveraendert: 0 });
   const opts = (plan: VkPlan, year: number) => ({
-    year, tenantId: 'beaulieu',
     archiveKey: `beaulieu:verkaufszahlen_${year}`,
     plan,
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getLockState).mockResolvedValue({ locked: false } as never);
     vi.mocked(kvGetStrict).mockResolvedValue(null);
   });
 
@@ -247,7 +245,6 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
       '2025-01-01': { foodRevenue: 0, beverageRevenue: 2100 },
       '2025-01-02': { foodRevenue: 4000 },
     }), 2025));
-    expect(res.blocked).toBe(false);
     expect(res.archivedDays).toBe(2);
     // Cockpit-Food/Beverage-Quellen bleiben komplett unangetastet:
     expect(vi.mocked(safeUpsertDailyBudgets)).not.toHaveBeenCalled();
@@ -259,13 +256,14 @@ describe('commitVerkaufsdaten (gemockte Persistenz)', () => {
     expect(blob.days['2025-01-01']).toEqual({ foodRevenue: 0, beverageRevenue: 2100 });
   });
 
-  it('gesperrtes Jahr: blocked, KEINE Writes', async () => {
+  it('festgeschriebenes Jahr (z. B. Beaulieu 2025): Import läuft TROTZ Sperre — Jahres-Sperre wird gar nicht konsultiert, gesperrte Cockpit-Quellen bleiben unberührt', async () => {
     vi.mocked(getLockState).mockResolvedValue({ locked: true } as never);
-    const res = await commitVerkaufsdaten(opts(basePlan({ '2025-01-01': { foodRevenue: 1 } }), 2025));
-    expect(res.blocked).toBe(true);
-    expect(vi.mocked(kvSetStrict)).not.toHaveBeenCalled();
-    expect(vi.mocked(safeUpsertDailyBudgets)).not.toHaveBeenCalled();
-    expect(vi.mocked(upsertVjDailyBatch)).not.toHaveBeenCalled();
+    const res = await commitVerkaufsdaten(opts(basePlan({ '2025-01-01': { foodRevenue: 1, taGuests: 2 } }), 2025));
+    expect(res.archivedDays).toBe(1);
+    expect(vi.mocked(getLockState)).not.toHaveBeenCalled();               // Sperre bewusst ausgenommen
+    expect(vi.mocked(kvSetStrict)).toHaveBeenCalled();                    // Archiv geschrieben
+    expect(vi.mocked(safeUpsertDailyBudgets)).not.toHaveBeenCalled();     // gesperrte Umsatzdaten unberührt
+    expect(vi.mocked(upsertVjDailyBatch)).not.toHaveBeenCalled();         // gesperrtes Vorjahr unberührt
   });
 
   it('Archiv-Merge mit Bestand (Lesefehler ≠ leer: kvGetStrict)', async () => {
@@ -356,7 +354,6 @@ describe('parseVerkaufsdatenFile — taGuests (Anzahl-Dateien)', () => {
 
 describe('commitVerkaufsdaten — ta-gaeste-daily-Store', () => {
   const opts = (plan: VkPlan, year: number) => ({
-    year, tenantId: 'oliv',
     archiveKey: `verkaufszahlen_${year}`,
     taGaesteKey: 'ta-gaeste-daily',
     plan,
@@ -365,7 +362,6 @@ describe('commitVerkaufsdaten — ta-gaeste-daily-Store', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getLockState).mockResolvedValue({ locked: false } as never);
     vi.mocked(kvGetStrict).mockResolvedValue(null);
   });
 

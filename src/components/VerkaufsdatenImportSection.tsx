@@ -22,7 +22,6 @@ import {
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { useTenant } from '@/contexts/TenantContext';
 import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
-import { getLockState } from '@/lib/prior-year-lock';
 import {
   parseVerkaufsdatenFile, buildVkPlan, commitVerkaufsdaten, verkaufszahlenKey,
   type VkParsedFile, type VkBlob, type VkPlan,
@@ -124,13 +123,9 @@ export function VerkaufsdatenImportSection() {
     setConfirmOpen(false);
     setBusy(true);
     try {
-      // ── Jahres-Sperre FRISCH prüfen (nie nur UI-State) ──
-      const lock = await getLockState(tenantId ?? 'oliv', year);
-      if (lock.locked) {
-        toast.error(`Jahr ${year} ist abgeschlossen (festgeschrieben) — Import nicht ausgeführt.`);
-        return;
-      }
-
+      // KEINE Jahres-Sperr-Prüfung: dieser Import berührt keine
+      // festgeschriebenen Umsatz-/Kosten-/Cockpit-Daten (nur Archiv + Gäste
+      // Take Away) und ist deshalb bewusst von der Sperre ausgenommen.
       const archiveKey = tenantKey(verkaufszahlenKey(year));
       const taGaesteKey = taGaesteKeyFor(tenantKey);
       const hasTaGuests = Object.values(plan.days).some(r => r.taGuests !== undefined);
@@ -161,11 +156,7 @@ export function VerkaufsdatenImportSection() {
         toast.warning('Rückgängig-Protokoll nicht verfügbar — Import läuft ohne Undo weiter.');
       }
 
-      const res = await commitVerkaufsdaten({ year, tenantId, archiveKey, taGaesteKey, plan });
-      if (res.blocked) {
-        toast.error(`Jahr ${res.lockedYear ?? year} ist gesperrt — Import nicht ausgeführt.`);
-        return;
-      }
+      const res = await commitVerkaufsdaten({ archiveKey, taGaesteKey, plan });
 
       const slotList = okFiles.map(f => `${CAT_LABEL[f.category!]} ${f.kind === 'umsatz' ? 'Umsatz' : 'Anzahl'}`).join(', ');
       try {
@@ -341,7 +332,9 @@ export function VerkaufsdatenImportSection() {
               Geschrieben werden nur das Verkaufszahlen-Archiv und — falls die Anzahl-Dateien
               Take-Away-Artikel enthalten — die Cockpit-Zeile «Gäste Take Away».
               Cockpit-Food/Beverage (Quelle: Umsatz-Excel) und übrige Tagesdaten bleiben
-              unberührt. Der Lauf ist über «Rückgängig» rückgängig machbar.
+              unberührt — deshalb gilt die Jahres-Sperre für diesen Import nicht (auch
+              festgeschriebene Jahre sind importierbar). Der Lauf ist über «Rückgängig»
+              rückgängig machbar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

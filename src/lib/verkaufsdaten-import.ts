@@ -30,7 +30,6 @@
  * ein debug-Objekt + failureReason — nie blind an ein geratenes Format anpassen.
  */
 
-import { getLockState } from '@/lib/prior-year-lock';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -287,8 +286,6 @@ export function buildVkPlan(year: number, files: VkParsedFile[], existing: Recor
 // ── Commit ────────────────────────────────────────────────────────────────────
 
 export interface VkCommitResult {
-  blocked: boolean;
-  lockedYear?: number;
   /** Alle geschriebenen Archiv-Tage. */
   archivedDays: number;
   /** Tage mit «Gäste Take Away»-Werten → ta-gaeste-daily-Updates. */
@@ -301,25 +298,19 @@ export interface VkCommitResult {
  * BEWUSST NICHT angefasst — die Cockpit-Zeilen Food/Beverage kommen
  * ausschliesslich aus dem Umsatz-Excel (Datenquellen-Trennung 08/2026).
  *
- * JAHRES-SPERRE: frisch VOR jedem Write geprüft — gesperrt ⇒ keine Writes.
+ * JAHRES-SPERRE: gilt hier BEWUSST NICHT (User-Entscheid 08/2026) — der Import
+ * berührt keine festgeschriebenen Umsatz-/Kosten-/Cockpit-Daten, nur das
+ * Verkaufszahlen-Archiv und «Gäste Take Away». Die Sperre bleibt für alle
+ * Umsatz-/Kosten-/Cockpit-Importe unverändert bestehen.
  */
 export async function commitVerkaufsdaten(opts: {
-  year: number;
-  tenantId: string | undefined;
   /** tenant-präfixierter Archiv-Key (tenantKey(verkaufszahlenKey(year))). */
   archiveKey: string;
   /** tenant-präfixierter «Gäste Take Away»-Key (tenantKey('ta-gaeste-daily')). */
   taGaesteKey?: string;
   plan: VkPlan;
 }): Promise<VkCommitResult> {
-  const { year, tenantId, plan } = opts;
-
-  // ── Jahres-Sperre (frisch, nie nur UI-State) ──
-  const lock = await getLockState(tenantId ?? 'oliv', year);
-  if (lock.locked) {
-    console.warn(`[VERKAUFSDATEN] commit blocked: locked | tenant: ${tenantId ?? 'oliv'} | year: ${year}`);
-    return { blocked: true, lockedYear: year, archivedDays: 0, taGuestDays: 0 };
-  }
+  const { plan } = opts;
 
   const { kvGetStrict, kvSetStrict } = await import('@/lib/supabase-kv');
 
@@ -354,5 +345,5 @@ export async function commitVerkaufsdaten(opts: {
     taGuestDays = Object.keys(taIncoming).length;
   }
 
-  return { blocked: false, archivedDays: Object.keys(plan.days).length, taGuestDays };
+  return { archivedDays: Object.keys(plan.days).length, taGuestDays };
 }
