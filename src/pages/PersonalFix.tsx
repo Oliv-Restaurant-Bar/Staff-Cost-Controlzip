@@ -11,11 +11,11 @@ import {
   Repeat, TrendingDown,
 } from 'lucide-react';
 import {
-  exportPersonalFixToPDF,
   exportVarKostenvergleich,
   exportFlexAuswertungToPDF,
   exportFlexAuswertungToExcel,
 } from '@/lib/personalfix-export';
+import { exportPersonalkostenSeiteToPDF, type PkAmpel } from '@/lib/personalkosten-seite-pdf';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth, saveScheduleEntry } from '@/lib/supabase-db';
@@ -4407,64 +4407,118 @@ export default function PersonalFixPage() {
     }
   };
 
+  // PDF-Export = 1:1-Abbild der Seite (gleiche Memos wie das Rendering, ohne
+  // Verlaufs-/PKQ-Diagramme). Nur Darstellung — keine neue Berechnung.
   const handleExportPDF = () => {
     try {
-      const varRowsByDept: Record<string, Array<{ emp: Employee; hours: number; monthlyCost: number; hourlyWage: number }>> = {};
-      for (const [dept, emps] of Object.entries(varByDept)) {
-        varRowsByDept[dept] = emps.map(emp => ({
-          emp,
-          hours: getVarHoursFor(emp.id),
-          monthlyCost: getVarMonthlyCostFor(emp.id, emp),
-          hourlyWage: getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
-        }));
-      }
+      if (!pkZentral || !pkDaten) { toast.error('Personalkosten noch nicht geladen.'); return; }
 
-      exportPersonalFixToPDF({
-        selectedYear,
-        selectedMonth,
-        byDept,
-        totalFixCost,
-        totalFixBase,
-        totalFixAnnual,
-        varByDept: varRowsByDept,
-        totalVarCost,
-        totalVarHours,
-        totalCombined,
-        personnelBudget: personnelBudget ?? 0,
-        availableVarBudget,
-        varBudgetDelta,
-        varBudgetOverrun,
-        varView,
-        avgHourlyWage,
-        maxVarHours,
-        // Ferienabbau
-        totalVarArbeitCHF,
-        totalFerienabbauCHF,
-        totalVariabelCHF,
-        ferienabbauByDept,
-        deptSummary,
-        // Pro-Rata
-        proRataDay,
-        proRataFactor,
-        proRataFixCost,
-        proRataVarCost,
-        proRataTotal,
-        proRataVarByEmp,
-        daysInSelectedMonth,
-        // PKQ
-        // PKQ nur zeitkonsistent (Total): Ziel-Quote vs. Hochrechnungs-PKQ.
-        // Keine Teil-Quoten je Ebene mehr (volle Kosten ÷ Teilumsatz entfernt).
-        pkqPlan,
-        pkqIst,
-        pkqFlexPlan: null,
-        pkqFlexIst: null,
-        pkqFix: null,
-        monthRevenue: pkZentral?.ums.hochrechnung ?? 0,
-        revenueLabel: 'Hochrechnungs-Umsatz',
-        pfixPlanWork:  pfix.active.planWork,
-        pfixIstWork:   pfix.active.istWork,
-        pfixPlanTotal: pkZentral?.pkBudget?.total ?? pfix.active.planTotal,
-        pfixIstTotal:  pkZentral?.kHr.total ?? pfix.active.istTotal,
+      // 2) Fix-Lohnkosten — exakt wie gerendert (Sortierung + aktiver Filter)
+      const deptOrder = ['service', 'küche'];
+      const allFixRows = Object.entries(byDept)
+        .flatMap(([dept, rows]) => rows.map(r => ({ ...r, dept })))
+        .sort((a, b) => {
+          const da = deptOrder.indexOf(a.dept); const db = deptOrder.indexOf(b.dept);
+          if (da !== db) return (da === -1 ? 99 : da) - (db === -1 ? 99 : db);
+          return a.emp.name.localeCompare(b.emp.name, 'de');
+        });
+      const fixFiltered = fixDeptFilter === 'alle' ? allFixRows : allFixRows.filter(r => r.dept === fixDeptFilter);
+      const fixTotals = {
+        basis:  fixFiltered.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0),
+        inkl13: fixFiltered.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0),
+        agMt:   fixFiltered.reduce((s, r) => s + r.cost, 0),
+      };
+
+      // 3) Flex pro Mitarbeiter — inkl. manueller Ist-Overrides (wie Tabelle)
+      const flexRows = pfixPerEmp.map(r => {
+        const ov = flexOverrides.employees[r.id] ?? null;
+        const effIst = ov ? effectiveFlexIst(ov, flexAgFactor) : r.istWork;
+        return {
+          name: r.name,
+          dept: r.dept,
+          hourly: r.hourlyWage,
+          planH: r.planH,
+          istH: r.istH,
+          planCHF: r.planWork,
+          istCHF: effIst,
+          diff: effIst - r.planWork,
+          zusatz: (r as any).isFixedAdditional === true,
+          lohnFehlt: (r as any).isFixedAdditional !== true && r.hourlyWage === 0,
+          agOff: (r as any).agOff === true,
+          manuell: ov !== null,
+        };
+      });
+      const flexIstTotal = flexOverrides.total
+        ? effectiveFlexIst(flexOverrides.total, flexAgFactor)
+        : flexIstEffectiveSum;
+
+      // 4) Flex-Auswertung — aktuelle Aggregation der Seite (Ampel identisch)
+      const { days, weeks, monthPlan, monthIst, monthDiff } = pfixAbw;
+      const monthPct = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
+      const monthLabelStr = getMonthLabel(selectedYear, selectedMonth);
+      const abwBase =
+        abwMode === 'week' ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct })) :
+        abwMode === 'day'  ? days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct })) :
+        [{ period: monthLabelStr, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }];
+      let cum = 0;
+      const abwRows = abwBase.map(r => {
+        cum += r.diff;
+        return { ...r, cum, status: ampelStatus(r.diff, r.plan) as PkAmpel };
+      });
+
+      exportPersonalkostenSeiteToPDF({
+        tenantLabel: tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
+        monthLabel: monthLabelStr,
+        year: selectedYear,
+        month: selectedMonth,
+        // 1) Kopf — identisch zu den PkHeadline-Props (SSOT pkZentral/pkDaten)
+        hrTotalCHF: pkZentral.kHr.total,
+        hrFixCHF: pkZentral.kHr.fix,
+        hrFlexCHF: pkZentral.kHr.flex,
+        budgetCHF: pkZentral.pkBudget?.total ?? null,
+        umsatzBudgetCHF: pkDaten.umsatzBudgetMonat ?? 0,
+        zielQuote: pkZentral.zielQuote,
+        pkqHochrechnung: pkZentral.pkq.pkqHochrechnung,
+        umsatzHochrechnungCHF: pkZentral.ums.hochrechnung,
+        istTotalCHF: pkZentral.kIst.total,
+        umsatzIstCHF: pkZentral.ums.istBisHeute,
+        pkqIst: pkZentral.pkq.pkqIst,
+        istTage: pkZentral.ums.istTage,
+        daysInMonth: pkDaten.daysInMonth,
+        stichtag: pkZentral.stichtag,
+        agOffFlexCount,
+        // 2) Fix
+        fixFilterLabel: fixDeptFilter === 'alle' ? null : fixDeptFilter === 'küche' ? 'nur Küche' : 'nur Service',
+        fixRows: fixFiltered.map(({ emp, cost, label, dept }) => ({
+          name: emp.name,
+          label,
+          dept: DEPT_LABEL[dept] ?? dept,
+          basis: emp.monthlySalary ?? null,
+          inkl13: emp.monthlySalaryWith13th ?? null,
+          agMt: cost,
+        })),
+        fixTotals,
+        // 3) Flex
+        flexProRataDay: proRataDay,
+        flexRows,
+        flexTotals: {
+          planH: pfixPerEmp.reduce((s, r) => s + r.planH, 0),
+          istH:  pfixPerEmp.reduce((s, r) => s + r.istH, 0),
+          planCHF: pfixPerEmp.reduce((s, r) => s + r.planWork, 0),
+          istCHF: flexIstTotal,
+        },
+        flexManualNote: flexOverrides.total
+          ? 'Flex-Ist-Total manuell aus der Lohnabrechnung übersteuert'
+          : flexManualCount > 0
+            ? `${flexManualCount} Zeile${flexManualCount === 1 ? '' : 'n'} mit manuell überschriebenem Flex Ist`
+            : null,
+        // 4) Flex-Auswertung
+        abwModeLabel: abwMode === 'day' ? 'Tag' : abwMode === 'week' ? 'Woche' : abwMode === 'month' ? 'Monat' : 'Jahr',
+        abwStatus: ampelStatus(monthDiff, monthPlan) as PkAmpel,
+        abwRows,
+        abwTotal: abwRows.length > 1
+          ? { plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }
+          : null,
       });
       toast.success('PDF erfolgreich exportiert');
     } catch (err) {
@@ -4626,7 +4680,7 @@ export default function PersonalFixPage() {
             data-testid="pfix-export"
             actions={[
               { key: 'excel', label: 'Excel-Export (Personalkosten)', kind: 'excel', onSelect: handleExportExcel },
-              { key: 'pdf', label: 'Personal FIX (PDF)', kind: 'pdf', onSelect: handleExportPDF },
+              { key: 'pdf', label: 'Personalkosten-Seite (PDF)', kind: 'pdf', onSelect: handleExportPDF },
             ]}
           />
         </div>

@@ -29,3 +29,6 @@ description: Alle Personalkosten-Ansichten müssen die zentrale Lib nutzen; Budg
 - `addAg`-Häkchen = eingegebener Betrag ist Brutto ohne AG-Kosten → × socialCostFactorFromRates. Ohne Häkchen 1:1.
 - Save-Pfad: synchroner Ref-Spiegel + serialisierte latest-wins-Queue pro Scope (Monat/Mandant) — nie kvSet direkt aus dem setState-Updater (StrictMode/Races).
 - Export muss Übersichts-Total UND Abschnitts-Total «Total FLEX» konsistent aus demselben Override ableiten (flexIstTotalOverride), sonst zwei verschiedene Totale in einer Datei.
+
+## Seiten-PDF-Export (08/2026)
+- `personalkosten-seite-pdf.ts` = 1:1-Abbild der PersonalFix-Seite (Kopf/Fix/Flex/Flex-Auswertung), bewusst OHNE Verlaufs-/PKQ-Diagramme. Reine Darstellung: Handler übergibt die gerenderten Memo-Werte (pkZentral, byDept+Filter, pfixPerEmp+Overrides, pfixAbw) — im Export NIE neu rechnen, sonst weicht das PDF von der Seite ab. Alte `exportPersonalFixToPDF` ist abgelöst (nicht mehr verdrahtet).
