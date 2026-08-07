@@ -1,0 +1,40 @@
+BUILD — Budget-Spalte im Cockpit + Budget-Eingabeseite
+
+1. Budget-Datenmodell erweitern (types/budget.ts)
+
+Speicherung bleibt pro Jahr + Mandant, 12 Monatswerte. Einheiten pro Position erweitern: CHF · Anzahl (Gäste) · Stunden · % (nicht nur chf/percent).
+Neue optionale Wochen-Override-Ebene pro Position (für direkte Wocheneingabe).
+Pro Position ein Feld prorataMode: 'seasonal' | 'even' (Standard seasonal).
+
+2. Budget-Eingabeseite (neue Seite, eigener Menüpunkt)
+
+Pro Position eingebbar auf Jahr / Monat / Woche:
+Jahr → pro rata auf 12 Monate: bei seasonal nach dem Vorjahres-Ist-Muster genau dieser Kennzahl (z.B. Gäste-Saisonalität), bei even gleichmäßig nach Kalendertagen. Umschaltbar je Position.
+Monat → direkt in den Monatswert.
+Woche → in den Wochen-Override; sonst wird Wochenbudget aus dem Monat per Tagesanteil abgeleitet.
+Präzedenz: expliziter Monat schlägt Jahres-Verteilung; explizite Woche schlägt Monats-Ableitung.
+Positionen entsprechen den Cockpit-Zeilen (Reihenfolge/Position wie im Cockpit), mandantengetrennt, pro Jahr wählbar. Vorschau der Monatsverteilung + Rückgängig.
+
+3. Basis- vs. Verhältnis-Positionen
+
+Direkt budgetierbar (Basis): Umsatz netto (und/oder brutto), Food, Beverage, Take Away, Gäste (Anzahl), Produktive Stunden, Personalkosten.
+Automatisch abgeleitet, aber pro Zeile überschreibbar (Verhältnis):
+Ø-Verkauf pro Gast = (Budget-Umsatz netto − TA + Maison) ÷ Budget-Gäste (Oliv-Logik) bzw. Budget-Umsatz netto ÷ Budget-Gäste (Beaulieu).
+Personalquote = Budget-Personal ÷ Budget-Umsatz.
+Produktivität = Budget-Umsatz ÷ Budget-Stunden.
+Take-Away-Anteil = Budget-TA ÷ Budget-Umsatz.
+
+4. Cockpit-Spalten
+
+Budget-Spalte dauerhaft sichtbar, plus Abweichung (Ist − Budget, absolut UND %).
+Vorjahr-Spalte nur auf Klick (Toggle, Default aus).
+Pro-rata bis Stichtag: im laufenden Jahr/Monat/Woche wird das Budget auf denselben Zeitraum wie das Ist gekappt (gemeinsamer Stichtag) — genau wie bei der Personalkosten-pro-rata — damit Ist-vs-Budget fair ist.
+Budget/Abweichung für alle Ist-Zeilen, für die ein Budget existiert.
+
+5. Rollout Gäste + Ø-Verkauf pro Gast
+
+Beide Kennzahlen zusätzlich in Monats- UND Wochenübersicht anzeigen (bisher nur Jahr), jeweils mit Budget-Spalte.
+
+6. Regeln (unverändert): leer statt 0 · nie durch 0 teilen · mandantengetrennt · pro Jahr · Vorschau + Rückgängig.
+
+7. Kontrolle: Bei einer even-Position muss z.B. ein Jahresbudget von 120'000 CHF für Januar (31 Tage) = 120'000 × 31/365 = 10'191 ergeben; bei seasonal entsprechend dem Vorjahresanteil des Januars. Bitte je ein Beispiel (seasonal + even) nennen, dann rechne ich die Verteilung gegen.

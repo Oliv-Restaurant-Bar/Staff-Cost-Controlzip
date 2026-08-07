@@ -202,7 +202,7 @@ function SortableDataRow({ id, bold, children }: {
  */
 function ReportTable({
   rows, granularity, budgetSub, vjHeader = 'Vorjahr', vjSub, istHeader, istSub, testid,
-  editMode = false, onReorder, onDrill,
+  editMode = false, onReorder, onDrill, showVj = false,
 }: {
   rows: MrRow[];
   granularity: ReportGranularity;
@@ -219,7 +219,12 @@ function ReportTable({
   onReorder?: (ids: string[]) => void;
   /** Drilldown: Zeilen-IDs mit Detail-Liste (z.B. Reservationen) klickbar machen. */
   onDrill?: (id: string) => void;
+  /** Vorjahr-Spalte anzeigen (Toggle, Default AUS — Budget-Vergleich im Fokus). */
+  showVj?: boolean;
 }) {
+  // Spaltenzahl für Trenner-/Colspan-Zeilen: Kennzahl+Δ%+Δabs+Ist+Budget (5)
+  // + optional Vorjahr + optional Ziehgriff.
+  const colCount = 5 + (showVj ? 1 : 0) + (editMode ? 1 : 0);
   const pick = (row: MrRow) => granularity === 'monat'
     ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget,
         vjPax: row.vjMonthPax, istPax: row.monthPax,
@@ -271,25 +276,28 @@ function ReportTable({
             {editMode ? <th className="px-2 py-2 w-16" /> : null}
             <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
             <th className="px-3 py-2 text-right font-semibold">Δ %</th>
+            <th className="px-3 py-2 text-right font-semibold">Δ abs</th>
             <th className="px-3 py-2 text-right font-semibold">
               {istHeader}
               {istSub ? <span className="block normal-case font-normal">{istSub}</span> : null}
             </th>
             <th className="px-3 py-2 text-right font-semibold">
-              {vjHeader}
-              {vjSub ? <span className="block normal-case font-normal">{vjSub}</span> : null}
-            </th>
-            <th className="px-3 py-2 text-right font-semibold">
               Budget
               {budgetSub ? <span className="block normal-case font-normal">{budgetSub}</span> : null}
             </th>
+            {showVj && (
+              <th className="px-3 py-2 text-right font-semibold">
+                {vjHeader}
+                {vjSub ? <span className="block normal-case font-normal">{vjSub}</span> : null}
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
           <SortableContext items={sortIds} strategy={verticalListSortingStrategy}>
           {shown.map((row, i) => {
             if (row.type === 'empty') {
-              return <tr key={`e${i}`}><td colSpan={editMode ? 6 : 5} className="h-3 bg-muted/20" /></tr>;
+              return <tr key={`e${i}`}><td colSpan={colCount} className="h-3 bg-muted/20" /></tr>;
             }
             const p = pick(row);
             const children = row.id ? (childrenBy.get(row.id) ?? []) : [];
@@ -303,6 +311,11 @@ function ReportTable({
             //  - Standard:  Δ% gegen das Budget.
             let dev: number | null = null;
             let inverted = !!row.deltaInverted;
+            // Δ abs: GLEICHE Basis wie Δ% — Zeilen mit VJ-Vergleich (deltaVsVj/
+            // sharePct) rechnen Ist − VJ, alle anderen Ist − Budget. Nie zwei
+            // verschiedene Basen nebeneinander in derselben Zeile.
+            const devAbsBase = (row.deltaVsVj || row.sharePct) ? p.vj : p.devBudget;
+            const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
             if (row.deltaPp) {
               dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
               inverted = true; // Quote über Ziel = rot
@@ -419,6 +432,12 @@ function ReportTable({
                   {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
                   {(row.deltaVsVj || row.sharePct) && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
                 </td>
+                {/* Δ abs (Ist − Budget): Farbe wie Δ%; leer ohne Budget. */}
+                <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
+                  devAbs === null ? undefined
+                    : (inverted ? devAbs <= 0 : devAbs >= 0) ? 'text-emerald-600' : 'text-red-600')}>
+                  {devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
+                </td>
                 {/* Ist-Zelle: Zahl gross; bei Anteil-Zeilen der Anteil als dezente
                     Unterzeile («18.3 % Anteil Gäste IN»). Ohne Basis kein Anteil. */}
                 <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>
@@ -429,15 +448,17 @@ function ReportTable({
                     </span>
                   ) : null}
                 </td>
-                <td className="px-3 py-1.5 text-right tabular-nums">
-                  {fmtCell(p.vj, row.fmt, p.vjPax)}
-                  {row.sharePct && p.vj !== null && p.vjShare !== null ? (
-                    <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`share-vj-${row.id}-${granularity}`}>
-                      {p.vjShare.toFixed(1)} %
-                    </span>
-                  ) : null}
-                </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
+                {showVj && (
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {fmtCell(p.vj, row.fmt, p.vjPax)}
+                    {row.sharePct && p.vj !== null && p.vjShare !== null ? (
+                      <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`share-vj-${row.id}-${granularity}`}>
+                        {p.vjShare.toFixed(1)} %
+                      </span>
+                    ) : null}
+                  </td>
+                )}
               </>
             );
             const parentTr = editMode && row.id ? (
@@ -461,6 +482,7 @@ function ReportTable({
                     <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row-${child.id}`}>
                       <td className="px-3 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
                       <td className="px-3 py-1" />
+                      <td className="px-3 py-1" />
                       <td className="px-3 py-1 text-right tabular-nums text-xs">
                         {fmtCell(cp.ist, child.fmt)}
                         {/* Quote je Lieferant in % auf den Netto-Umsatz der Periode. */}
@@ -470,8 +492,10 @@ function ReportTable({
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.vj, child.fmt)}</td>
                       <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.budget, child.fmt)}</td>
+                      {showVj && (
+                        <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.vj, child.fmt)}</td>
+                      )}
                     </tr>
                   );
                 })}
@@ -621,6 +645,9 @@ export default function MonatsreportPage() {
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
   const next = () => { if (month === 12) { setYear(y => y + 1); setMonth(1); } else setMonth(m => m + 1); };
 
+  // Vorjahr-Spalte: nur per Toggle (Default AUS) — Budget-Vergleich im Fokus.
+  const [showVj, setShowVj] = useState(false);
+
   const wocheRange = daten?.weekFrom && daten?.weekTo
     ? `${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
     : null;
@@ -753,6 +780,13 @@ export default function MonatsreportPage() {
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              <Button
+                variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
+                onClick={() => setShowVj(v => !v)}
+                data-testid="button-toggle-vj-monat"
+              >
+                Vorjahr {showVj ? 'ein' : 'aus'}
+              </Button>
               <RowOrderControls
                 editMode={editRows}
                 onToggle={() => setEditRows(v => !v)}
@@ -788,6 +822,7 @@ export default function MonatsreportPage() {
                 editMode={editRows}
                 onReorder={reorderRows}
                 onDrill={(id) => openDrill(id, 'monat')}
+                showVj={showVj}
               />
             )}
 
@@ -840,6 +875,13 @@ export default function MonatsreportPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
+                onClick={() => setShowVj(v => !v)}
+                data-testid="button-toggle-vj-woche"
+              >
+                Vorjahr {showVj ? 'ein' : 'aus'}
+              </Button>
               <RowOrderControls
                 editMode={editRows}
                 onToggle={() => setEditRows(v => !v)}
@@ -875,6 +917,7 @@ export default function MonatsreportPage() {
                 editMode={editRows}
                 onReorder={reorderRows}
                 onDrill={(id) => openDrill(id, 'woche')}
+                showVj={showVj}
               />
             )}
 
@@ -1413,6 +1456,8 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
   // Eigener Zeitraum: Default 01.01. → heute (bzw. 31.12. bei abgeschlossenem Jahr).
   const [von, setVon] = useState(`${curYear}-01-01`);
   const [bis, setBis] = useState(heuteIso);
+  // Vorjahr-Spalten nur per Toggle (Default AUS — Budget-Vergleich im Fokus).
+  const [showVj, setShowVj] = useState(false);
 
   const wechsleJahr = (j: number) => {
     if (j < JAHR_MIN || j > curYear) return;
@@ -1598,6 +1643,13 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
               ? <>Aktuelles Jahr bis heute vs. ganzes Vorjahr · {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>
               : <>{daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>}
           </span>
+          <Button
+            variant={showVj ? 'default' : 'outline'} size="sm" className="h-7"
+            onClick={() => setShowVj(v => !v)}
+            data-testid="button-toggle-vj-jahr"
+          >
+            Vorjahr {showVj ? 'ein' : 'aus'}
+          </Button>
         </div>
       )}
 
@@ -1616,13 +1668,23 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
               <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
                 <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.curYear)}</th>
-                <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.vjYear)}</th>
-                <th className="px-3 py-2 text-right font-semibold">Δ %</th>
+                <th className="px-3 py-2 text-right font-semibold">Budget<span className="block normal-case font-normal">pro rata</span></th>
+                <th className="px-3 py-2 text-right font-semibold">Δ abs</th>
+                <th className="px-3 py-2 text-right font-semibold">Δ %<span className="block normal-case font-normal">vs. Budget</span></th>
+                {showVj && <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.vjYear)}</th>}
+                {showVj && <th className="px-3 py-2 text-right font-semibold">Δ %<span className="block normal-case font-normal">vs. VJ</span></th>}
               </tr>
             </thead>
             <tbody>
               {daten.rows.map((row, i) => {
                 const delta = trendPct(row.cur, row.vj);
+                const budget = row.budget ?? null;
+                // Δ abs / Δ% gegen das Budget; Kosten-artige Zeilen (deltaInverted)
+                // färben «über Budget» rot. %-Zeilen: Δ als Prozentpunkte.
+                const devAbs = row.cur !== null && budget !== null ? row.cur - budget : null;
+                const devPct = row.cur !== null && budget !== null && budget !== 0
+                  ? ((row.cur - budget) / Math.abs(budget)) * 100 : null;
+                const gut = (v: number) => (row.deltaInverted ? v <= 0 : v >= 0);
                 return (
                   <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}>
                     <td className="px-3 py-1.5">{row.label}</td>
@@ -1632,12 +1694,29 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
                       {row.cur === null ? <span className="text-muted-foreground">—</span> : fmtCell(row.cur, row.fmt)}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">
-                      {row.vj === null ? <span className="text-muted-foreground">—</span> : fmtCell(row.vj, row.fmt)}
+                      {budget === null ? <span className="text-muted-foreground">—</span> : fmtCell(budget, row.fmt)}
                     </td>
                     <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
-                      delta !== null && (delta >= 0 ? 'text-emerald-600' : 'text-red-600'))}>
-                      {delta === null ? '' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} %`}
+                      devAbs !== null && (gut(devAbs) ? 'text-emerald-600' : 'text-red-600'))}>
+                      {devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
                     </td>
+                    <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
+                      devPct !== null && (gut(devPct) ? 'text-emerald-600' : 'text-red-600'))}>
+                      {row.fmt === 'pct'
+                        ? (devAbs === null ? '' : `${devAbs >= 0 ? '+' : ''}${devAbs.toFixed(1)} PP`)
+                        : (devPct === null ? '' : `${devPct >= 0 ? '+' : ''}${devPct.toFixed(1)} %`)}
+                    </td>
+                    {showVj && (
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {row.vj === null ? <span className="text-muted-foreground">—</span> : fmtCell(row.vj, row.fmt)}
+                      </td>
+                    )}
+                    {showVj && (
+                      <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
+                        delta !== null && (delta >= 0 ? 'text-emerald-600' : 'text-red-600'))}>
+                        {delta === null ? '' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} %`}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

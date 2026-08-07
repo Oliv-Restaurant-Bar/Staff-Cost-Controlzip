@@ -95,4 +95,5 @@
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.
 - [ER unvollständige Monate & Aushilfe-Konten](er-month-completeness.md) — partial-Monate (Umsatz XOR Kosten) grau & aus Summen; 5004/5005/5011 IMMER additiv eingerechnet (08/2026 v2), nur PDF-Export abwählbar.
 - [ER Umsatz vergangener Hauptjahre](plview-past-year-revenue.md) — canonicalRevenue/vj_daily-State {year,tenant}-taggen; Vergangenheitsjahr liest vj_daily:<jahr> via vjTagWerte, nie Fremdjahr behalten.
+- [Cockpit-KPI-Budget](cockpit-kpi-budget.md) — separater KV-Store cockpit-budget:<jahr> (budget_v1 unangetastet); Ratio-Budgets bewusst als Perioden-Totale-Ratio wie das Ist; Nav-Gate = Route-Gate.
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.

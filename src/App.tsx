@@ -47,6 +47,7 @@ import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
 import PersonalkostenNeu from "./pages/PersonalkostenNeu";
 import MonatsreportPage from "./pages/MonatsreportPage";
+import BudgetCockpitPage from "./pages/BudgetCockpitPage";
 import DataIntegrityTest from "./pages/DataIntegrityTest";
 import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
@@ -264,6 +265,10 @@ const AppContent = () => {
             {/* Monatsreport auch unter eigener URL (analog Kennzahlen-Bericht) */}
             <Route path="/monatsreport"
               element={<RequireAdmin path="/monatsreport" allowBeaulieu><MonatsreportPage /></RequireAdmin>}
+            />
+            {/* Budget-Eingabe fürs Cockpit (Kennzahlen-Budgets, getrennt vom P&L) */}
+            <Route path="/budget-eingabe"
+              element={<RequireAdmin path="/budget-eingabe" allowBeaulieu><BudgetCockpitPage /></RequireAdmin>}
             />
             {/* Bisherige Startübersicht bleibt über das Menü erreichbar */}
             <Route path="/startuebersicht"

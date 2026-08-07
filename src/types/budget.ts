@@ -447,3 +447,49 @@ export function createDefaultPLLineItem(
 ): BudgetPLLineItem {
   return { ...def, monthlyValues: [...Z12] as BudgetPLLineItem['monthlyValues'], isDefault: true };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cockpit-KPI-Budget (SEPARATES Modell — NICHT Teil von budget_v1!)
+// ═══════════════════════════════════════════════════════════════════════════
+// Budget für die Cockpit-Kennzahlen (Monats-/Wochen-/Jahresübersicht).
+// Bewusst getrennt vom P&L-Budget (budget_v1): eigene Einheiten (CHF, Anzahl,
+// Stunden, %), Wochen-Overrides und pro-rata-Verteilmodi. Speicherung pro
+// Jahr + Mandant im KV `cockpit-budget:<jahr>` (tenant-präfixiert).
+
+/** Einheit einer Cockpit-Budget-Position. */
+export type CockpitBudgetUnit = 'chf' | 'count' | 'hours' | 'pct';
+
+/**
+ * Verteilmodus einer Jahres-Eingabe auf 12 Monate:
+ *   'seasonal' → nach dem Vorjahres-Ist-Muster GENAU dieser Kennzahl
+ *   'even'     → gleichmässig nach Kalendertagen
+ */
+export type CockpitProrataMode = 'seasonal' | 'even';
+
+export interface CockpitBudgetPosition {
+  /** Kennzahl-ID (entspricht der Cockpit-Zeilen-ID, z.B. 'netto_umsatz'). */
+  id: string;
+  unit: CockpitBudgetUnit;
+  prorataMode: CockpitProrataMode;
+  /** Zuletzt eingegebener Jahreswert (informativ; massgeblich sind die Monate). */
+  yearValue: number | null;
+  /** 12 Monatswerte (Index 0 = Januar); null = kein Budget («leer statt 0»). */
+  monthlyValues: (number | null)[];
+  /**
+   * true = Monat wurde DIREKT eingegeben (Präzedenz: expliziter Monat schlägt
+   * die Jahres-Verteilung — bei Neuverteilung bleiben diese Monate stehen).
+   */
+  monthlyExplicit: boolean[];
+  /**
+   * Wochen-Overrides: ISO-Wochen-Schlüssel 'GGGG-Www' (ISO-Wochenjahr!) →
+   * Wochenwert. Präzedenz: explizite Woche schlägt die Monats-Ableitung.
+   */
+  weekOverrides: Record<string, number>;
+}
+
+export interface CockpitBudgetYear {
+  year: number;
+  /** Positionen nach Kennzahl-ID. Fehlende Position = kein Budget. */
+  positions: Record<string, CockpitBudgetPosition>;
+  updatedAt: string;
+}

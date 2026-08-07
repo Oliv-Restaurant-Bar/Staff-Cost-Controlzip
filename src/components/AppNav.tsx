@@ -37,7 +37,7 @@ import {
   Contact, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2, Star,
+  Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2, Star, Target,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -86,6 +86,15 @@ const DASHBOARD_ITEM: NavItem = {
   label: 'Cockpit',
   shortLabel: 'Cockpit',
   icon: LayoutDashboard,
+  module: 'dashboard',
+};
+
+// Budget-Eingabe fürs Cockpit (Kennzahlen-Budgets, getrennt vom P&L-Budget).
+const BUDGET_EINGABE_ITEM: NavItem = {
+  path: '/budget-eingabe',
+  label: 'Budget-Eingabe',
+  shortLabel: 'Budget',
+  icon: Target,
   module: 'dashboard',
 };
 
@@ -678,6 +687,24 @@ export const AppSidebar = () => {
               <Icon className="h-4 w-4 flex-shrink-0" />
               {DASHBOARD_ITEM.label}
             </NavLink>
+            {/* Budget-Eingabe direkt unter dem Cockpit. Sichtbarkeit = exakt
+                das Route-Gate von /budget-eingabe (RequireAdmin allowBeaulieu),
+                sonst sähen Manager einen Link, der beim Klick abblockt. */}
+            {(isAdmin || isBeaulieuManager) && (
+            <NavLink
+              to={BUDGET_EINGABE_ITEM.path}
+              className={cn(
+                'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                location.pathname === '/budget-eingabe'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+              data-testid="nav-budget-eingabe"
+            >
+              <Target className="h-4 w-4 flex-shrink-0" />
+              {BUDGET_EINGABE_ITEM.label}
+            </NavLink>
+            )}
             </>
           );
         })()}

@@ -23,6 +23,7 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@
 import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
+import { loadCockpitBudget, resolveCockpitBudgets } from '@/lib/cockpit-budget';
 import {
   ladeWochentagsGewichte, ladePersonalkostenDaten,
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
@@ -578,6 +579,13 @@ export interface JahresvergleichRow {
   vj: number | null;
   /** Farb-Tönung der Werte (Rezensions-Zeilen: 5 grün, 1 rot, 3 neutral). */
   tint?: 'green' | 'red';
+  /**
+   * Cockpit-KPI-Budget des Zeitraums (pro rata bis Stichtag gekappt, gleiche
+   * Tage wie `cur`). undefined/null = kein Budget erfasst («leer statt 0»).
+   */
+  budget?: number | null;
+  /** true = Kosten-Zeile: über Budget = rot (Vorzeichen-Färbung invertiert). */
+  deltaInverted?: boolean;
 }
 
 export interface JahresvergleichDaten extends YtdWindow {
@@ -1046,6 +1054,12 @@ export async function ladeMonatsreport(
   // «Umsatz pro Gast»: Netto ÷ Gäste, aber NUR über Tage, die BEIDE Quellen
   // haben (Umsatz-Tag mit gesamtBrutto>0 UND gaesteDaily[date]>0).
   let pairedNet = 0, pairedGaeste = 0, wPairedNet = 0, wPairedGaeste = 0;
+  // «Ø-Verkauf pro Gast» (gepaarte Tage, mandantenspezifisch):
+  //   Oliv: Netto − TA-Netto (TA-brutto ÷ 1.026) · Beaulieu: Netto.
+  // Identische Regel wie der Jahresvergleich (ladeJahresvergleich).
+  let pairedVerkauf = 0, wPairedVerkauf = 0;
+  const verkaufTagM = (netto: number, taBrutto: number): number =>
+    tenantId === 'oliv' ? netto - taBrutto / mwstDivisorTakeaway() : netto;
   // Transparenz: im Netto-Umsatz enthaltener Marketing-/Maison-Anteil (CHF),
   // exakt über dieselben gezählten Tage summiert wie mNet/wNet (kein zweiter
   // Datenpfad → keine Abweichung zum ausgewiesenen Netto möglich).
@@ -1069,7 +1083,11 @@ export async function ladeMonatsreport(
     const g = gaesteDaily[date] ?? 0;
     if (g > 0) {
       pairedNet += netto; pairedGaeste += g;
-      if (inWeek) { wPairedNet += netto; wPairedGaeste += g; }
+      pairedVerkauf += verkaufTagM(netto, tag.takeAwayBrutto);
+      if (inWeek) {
+        wPairedNet += netto; wPairedGaeste += g;
+        wPairedVerkauf += verkaufTagM(netto, tag.takeAwayBrutto);
+      }
     }
   }
 
@@ -1079,6 +1097,20 @@ export async function ladeMonatsreport(
   const budgetProTag = budgetNet > 0 ? computeMonthlyDailyBudgets(budgetNet, year, month, gewichte) : {};
   const wBudgetNet = wocheTage.reduce((s, d) => s + (budgetProTag[d] ?? 0), 0);
   const hatBudget = budgetNet > 0;
+
+  // ── Cockpit-KPI-Budget (cockpit-budget:<jahr>, SEPARAT von budget_v1) ──────
+  // Monats-Budget pro rata bis Stichtag gekappt (laufender Monat = bis heute,
+  // wie das Ist; Zukunftsmonat = ganzer Monat als Vorschau). Wochen-Budget über
+  // die geklemmten Wochentage (Wochen-Overrides greifen dort). Vorhandene
+  // Cockpit-Budgets haben VORRANG vor den bisherigen Quellen (budget_v1-Umsatz,
+  // PK-Ziel); fehlen sie, bleibt alles beim bestehenden Verhalten.
+  const ckBlob = await loadCockpitBudget(tenantKey, year).catch(() => null);
+  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, istToIso || toIso);
+  const ckW: Record<string, number | null> = weekFrom && weekTo
+    ? resolveCockpitBudgets(ckBlob, tenantId, weekFrom, weekTo, wocheTage)
+    : {};
+  const ckMk = (id: string): number | null => ckM[id] ?? null;
+  const ckWk = (id: string): number | null => ckW[id] ?? null;
 
   // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
   let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
@@ -1130,7 +1162,7 @@ export async function ladeMonatsreport(
   // «Umsatz pro Gast» VJ: Netto-VJ ÷ Gäste-VJ, aber NUR über GEPAARTE Tage
   // (Tag mit vj_daily.actualRevenue>0 UND gaesteDaily[date]>0 im Vorjahr) —
   // exakt dieselbe Paarungs-Regel wie im Ist-Zweig, gleicher Zeitraum.
-  let vjPairedNet = 0, vjPairedGaeste = 0;
+  let vjPairedNet = 0, vjPairedGaeste = 0, vjPairedVerkauf = 0;
   for (const [date, rec] of Object.entries(vjDaily)) {
     const w = vjTagWerte(tenantId, rec, date);
     if (w) {
@@ -1142,6 +1174,8 @@ export async function ladeMonatsreport(
     if (w && gVj > 0) {
       vjPairedNet += w.netto; // Netto wie vjNetV (gleiche Tagesregel)
       vjPairedGaeste += gVj;
+      // vj_daily kennt kein Marketing — Netto ohne Maison (bekannte Grenze).
+      vjPairedVerkauf += verkaufTagM(w.netto, Number(rec.takeawayRevenue ?? 0));
     }
   }
 
@@ -1152,7 +1186,7 @@ export async function ladeMonatsreport(
   let vwGross = 0, vwNetSum = 0, vwFoodNetS = 0, vwBevNetS = 0, vwTa = 0;
   let hatVwUmsatz = false, hatVwTa = false;
   let vwGaeste = 0, hatVwGaeste = false;
-  let vwPairedNet = 0, vwPairedGaeste = 0;
+  let vwPairedNet = 0, vwPairedGaeste = 0, vwPairedVerkauf = 0;
   let vwAvgSum = 0, vwAvgWeight = 0, vwAvgSimpleSum = 0, vwAvgSimpleCount = 0;
   for (const { vj } of vjWochePaare) {
     const rec = vjWocheDaily[vj];
@@ -1166,6 +1200,7 @@ export async function ladeMonatsreport(
     if (gVj > 0) { vwGaeste += gVj; hatVwGaeste = true; }
     if (w && gVj > 0) {
       vwPairedNet += w.netto; vwPairedGaeste += gVj;
+      vwPairedVerkauf += verkaufTagM(w.netto, Number(rec?.takeawayRevenue ?? 0));
     }
     // Durchschnittsverkauf VJ-Woche: gäste-gewichtet, Fallback einfacher Mittel.
     const av = avgDaily[vj];
@@ -1423,17 +1458,20 @@ export async function ladeMonatsreport(
     // ── Block Umsatz/Gäste ──
     // Budget-Spalte = Budget-WOCHENANTEIL (= weekBudget, Basis der Woche-Δ%);
     // Vorjahr-Spalte = VJ-WOCHE. monthBudget trägt das Monatsbudget für die Monat-Δ%.
+    // Cockpit-KPI-Budget (falls erfasst) hat VORRANG vor budget_v1-Ableitung.
     d('brutto_umsatz', 'Brutto Umsatz', {
       month: mGrossV, week: wGrossV,
-      weekBudget: wBudget != null ? r2(wBudget * VAT_STD()) : null,
-      budget: wBudget != null ? r2(wBudget * VAT_STD()) : null,
-      monthBudget: budgetGross,
+      weekBudget: ckWk('brutto_umsatz') ?? (wBudget != null ? r2(wBudget * VAT_STD()) : null),
+      budget: ckWk('brutto_umsatz') ?? (wBudget != null ? r2(wBudget * VAT_STD()) : null),
+      monthBudget: ckMk('brutto_umsatz') ?? budgetGross,
       vj: vwGrossV, vjMonth: vjGrossV,
     }, { bold: true }),
     {
       ...d('netto_umsatz', 'Netto Umsatz', {
         month: mNetV, week: wNetV,
-        weekBudget: wBudget, budget: wBudget, monthBudget: budgetNetV,
+        weekBudget: ckWk('netto_umsatz') ?? wBudget,
+        budget: ckWk('netto_umsatz') ?? wBudget,
+        monthBudget: ckMk('netto_umsatz') ?? budgetNetV,
         vj: vwNetV, vjMonth: vjNetV,
       }, { bold: true }),
       marketingNetto: {
@@ -1441,7 +1479,10 @@ export async function ladeMonatsreport(
         week: weekFrom && wHatUmsatz ? r2(wMkt) : null,
       },
     },
-    d('gaeste_in', 'Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV }, { fmt: 'count' }),
+    d('gaeste_in', 'Gäste IN', {
+      month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV,
+      monthBudget: ckMk('gaeste_in'), weekBudget: ckWk('gaeste_in'), budget: ckWk('gaeste_in'),
+    }, { fmt: 'count' }),
     // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
     // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
     // KW-genaue VJ-Zuordnung); VJ-Monat = gleicher Monat Vorjahr.
@@ -1507,6 +1548,8 @@ export async function ladeMonatsreport(
       week: taW != null && wGross > 0 ? r2((wTa / wGross) * 100) : null,
       // Vorjahr-Woche: TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche (Quote, nicht summiert).
       vj: vwTaAnteil, vjMonth: vjTaAnteilM,
+      monthBudget: ckMk('take_away_anteil'), weekBudget: ckWk('take_away_anteil'),
+      budget: ckWk('take_away_anteil'),
     }, { fmt: 'pct' }),
     // Take Away Umsatz (CHF brutto): identische Quelle wie der TA-Anteil (dessen
     // Zähler = takeawayRevenue/takeAwayBrutto). Es gilt: Anteil = Umsatz ÷ Gesamt.
@@ -1516,18 +1559,23 @@ export async function ladeMonatsreport(
     d('take_away_umsatz', 'Take Away Umsatz', {
       month: taM, week: taW,
       vj: vwTaUmsatz, vjMonth: vjTaUmsatzM,
-    }, { deltaVsVj: true }),
+      monthBudget: ckMk('take_away_umsatz'), weekBudget: ckWk('take_away_umsatz'),
+      budget: ckWk('take_away_umsatz'),
+      // Mit erfasstem Cockpit-Budget Δ% gegen das Budget, sonst gegen das VJ.
+    }, { deltaVsVj: ckMk('take_away_umsatz') == null }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
     d('food', 'Food', {
       month: mHatUmsatz && mFood > 0 ? r2(mFood) : null,
       week: weekFrom && wHatUmsatz && wFood > 0 ? r2(wFood) : null,
       vj: vwFoodNet, vjMonth: vjFoodNet,
+      monthBudget: ckMk('food'), weekBudget: ckWk('food'), budget: ckWk('food'),
     }),
     d('beverage', 'Beverage', {
       month: mHatUmsatz && mBev > 0 ? r2(mBev) : null,
       week: weekFrom && wHatUmsatz && wBev > 0 ? r2(wBev) : null,
       vj: vwBevNet, vjMonth: vjBevNet,
+      monthBudget: ckMk('beverage'), weekBudget: ckWk('beverage'), budget: ckWk('beverage'),
     }),
     e(),
     // ── Block Produktivität ──
@@ -1540,14 +1588,20 @@ export async function ladeMonatsreport(
       month: planStd, week: wPlanStd,
       monthBudget: bedarfStdM, budget: bedarfStdW, weekBudget: bedarfStdW,
     }, { fmt: 'hours', deltaInverted: true }),
+    // Ist-Stunden: Cockpit-Budget «Produktive Stunden» (falls erfasst) hat
+    // Vorrang vor der Bedarf-Leitplanke als Budget-Basis.
     d('prod_stunden_ist', 'Ist-Stunden (MIRUS)', {
       month: istStd, week: wIstStd,
-      monthBudget: bedarfStdM, budget: bedarfStdW, weekBudget: bedarfStdW,
+      monthBudget: ckMk('prod_stunden') ?? bedarfStdM,
+      budget: ckWk('prod_stunden') ?? bedarfStdW,
+      weekBudget: ckWk('prod_stunden') ?? bedarfStdW,
     }, { fmt: 'hours', deltaInverted: true }),
     d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
       // vj_daily hat keine Personalstunden → keine VJ-Produktivität.
+      monthBudget: ckMk('produktivitaet'), weekBudget: ckWk('produktivitaet'),
+      budget: ckWk('produktivitaet'),
     }),
     // Netto ÷ Gäste, NUR über Tage mit BEIDEN Quellen (Umsatz + Gäste).
     d('umsatz_pro_gast', 'Umsatz pro Gast', {
@@ -1556,15 +1610,26 @@ export async function ladeMonatsreport(
       // Vorjahr: Netto-VJ ÷ Gäste-VJ über gepaarte Tage (Woche bzw. Monat).
       vj: vwUpg, vjMonth: vjUpgM,
     }),
+    // Ø-Verkauf pro Gast (wie Jahresvergleich): Oliv (Netto − TA-Netto) ÷ Gäste,
+    // Beaulieu Netto ÷ Gäste — NUR gepaarte Tage, «leer statt 0», nie ÷ 0.
+    // Budget = Verhältnis-Budget (Basis-Budgets) bzw. direktes Override.
+    d('avg_verkauf_gast', 'Ø-Verkauf pro Gast', {
+      month: pairedGaeste > 0 ? r2(pairedVerkauf / pairedGaeste) : null,
+      week: weekFrom && wPairedGaeste > 0 ? r2(wPairedVerkauf / wPairedGaeste) : null,
+      vj: hatVw && vwPairedGaeste > 0 ? r2(vwPairedVerkauf / vwPairedGaeste) : null,
+      vjMonth: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null,
+      monthBudget: ckMk('avg_verkauf_gast'), weekBudget: ckWk('avg_verkauf_gast'),
+      budget: ckWk('avg_verkauf_gast'),
+    }),
     e(),
     // ── Block Personal (ALLE Werte aus dem Kern personalkosten.ts) ─────────────
     // Kosten-Zeile: deltaInverted → über Budget = rot. MONAT = Hochrechnung
     // (bewusst anders als «Ist bis heute» der übrigen Zeilen; im Label markiert).
     d('personalkosten', 'Personalkosten (Monat = Hochrechnung)', {
       week: personal?.pkIstWoche ?? null,
-      weekBudget: personal?.pkBudgetWoche ?? null,
-      budget: personal?.pkBudgetWoche ?? null,
-      monthBudget: personal?.pkBudgetMonat ?? null,
+      weekBudget: ckWk('personalkosten') ?? personal?.pkBudgetWoche ?? null,
+      budget: ckWk('personalkosten') ?? personal?.pkBudgetWoche ?? null,
+      monthBudget: ckMk('personalkosten') ?? personal?.pkBudgetMonat ?? null,
       month: personal?.pkHrMonat ?? null,
       // Vorjahr NUR Monat: Buchhaltungswert (vorjahres_personalkosten,
       // ausschliesslich Jahre < 2026 ohne Dienstplan-Berechnung).
@@ -1574,10 +1639,12 @@ export async function ladeMonatsreport(
     // PKQ: Budget = Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz, aus dem
     // Kern budgetZielQuote) in BEIDEN Sichten; Δ = Ist − Ziel in PROZENTPUNKTEN
     // (deltaPp, über Ziel = rot); zusätzlich rot über harter Obergrenze.
+    // PKQ-Ziel: direktes Cockpit-Budget (Quote/Override) hat Vorrang vor der
+    // Kern-Zielquote (budgetZielQuote).
     d('personalquote', 'Personalquote (PKQ)', {
-      budget: pk ? r2(budgetZielQuote(pk) * 100) : null,
-      weekBudget: pk ? r2(budgetZielQuote(pk) * 100) : null,
-      monthBudget: pk ? r2(budgetZielQuote(pk) * 100) : null,
+      budget: ckWk('personalquote') ?? (pk ? r2(budgetZielQuote(pk) * 100) : null),
+      weekBudget: ckWk('personalquote') ?? (pk ? r2(budgetZielQuote(pk) * 100) : null),
+      monthBudget: ckMk('personalquote') ?? (pk ? r2(budgetZielQuote(pk) * 100) : null),
       week: personal?.pkqWochePct ?? null,
       month: personal?.pkqMonatPct ?? null,
       // PKQ Vorjahr (nur Monat) = Buchhaltungs-Personalkosten ÷ Netto-Umsatz
@@ -2312,14 +2379,25 @@ export async function ladeJahresvergleich(
     fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null as SingleReview[] | null),
   ]);
 
+  // ── Cockpit-KPI-Budget des Zeitraums (pro rata über die Ist-Tage) ──────────
+  // Fenster = exakt der Ist-Zeitraum [curFrom..curTo] (bei YTD/Ganzjahr bereits
+  // bis heute gekappt) → periodenBudget kappt pro rata über Tagesanteile.
+  const jvBudget = await loadCockpitBudget(tenantKey, curYear)
+    .then(b => resolveCockpitBudgets(b, tenantId, curFrom, curTo))
+    .catch(() => ({} as Record<string, number | null>));
+  const jb = (id: string): number | null => jvBudget[id] ?? null;
+
   // ── Zeilen bauen (cur | vj; Δ% berechnet die UI) ───────────────────────────
   const rows: JahresvergleichRow[] = [
     { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
-      cur: hatUmsatz ? r2(gross) : null, vj: hatVj ? r2(vjGross) : null },
+      cur: hatUmsatz ? r2(gross) : null, vj: hatVj ? r2(vjGross) : null,
+      budget: jb('brutto_umsatz') },
     { label: 'Netto Umsatz', fmt: 'chf', bold: true,
-      cur: hatUmsatz ? r2(net) : null, vj: hatVj ? r2(vjNet) : null },
+      cur: hatUmsatz ? r2(net) : null, vj: hatVj ? r2(vjNet) : null,
+      budget: jb('netto_umsatz') },
     { label: 'Gäste IN', fmt: 'count',
-      cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null },
+      cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null,
+      budget: jb('gaeste_in') },
     { label: 'Durchschnittsverkauf', fmt: 'chf', cur: avgCur, vj: avgVj },
     // Ø-Verkauf pro Gast (ersetzt die alten Bon-Zeilen): mandantenspezifisch —
     // Beaulieu Netto÷Gäste, Oliv (Netto−TA-Netto)÷Gäste; Maison immer im
@@ -2327,20 +2405,26 @@ export async function ladeJahresvergleich(
     // keine Gäste → leer (nie ÷ 0).
     { label: 'Ø-Verkauf pro Gast', fmt: 'chf',
       cur: pairedGaeste > 0 ? r2(pairedVerkauf / pairedGaeste) : null,
-      vj: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null },
+      vj: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null,
+      budget: jb('avg_verkauf_gast') },
     { label: 'Take Away Anteil', fmt: 'pct',
       cur: hatUmsatz && gross > 0 && ta > 0 ? r2((ta / gross) * 100) : null,
-      vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null },
+      vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null,
+      budget: jb('take_away_anteil') },
     { label: 'Food', fmt: 'chf',
-      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null },
+      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null,
+      budget: jb('food') },
     { label: 'Beverage', fmt: 'chf',
-      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null },
+      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null,
+      budget: jb('beverage') },
     { label: 'Produktive Stunden (Ist)', fmt: 'hours',
-      cur: hatIst ? r2(istStd) : null, vj: null },  // keine VJ-Quelle
+      cur: hatIst ? r2(istStd) : null, vj: null,   // keine VJ-Quelle
+      budget: jb('prod_stunden'), deltaInverted: true },
     { label: 'Produktive Stunden geplant', fmt: 'hours',
       cur: hatPlan ? r2(planStd) : null, vj: null }, // keine VJ-Quelle
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
-      cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null }, // keine VJ-Quelle
+      cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null, // keine VJ-Quelle
+      budget: jb('produktivitaet') },
     { label: 'Umsatz pro Gast', fmt: 'chf',
       cur: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
       vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
