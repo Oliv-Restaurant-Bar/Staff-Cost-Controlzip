@@ -31,6 +31,12 @@ export interface PLExportOptions {
   includeSelectedMonths: boolean;
   selectedMonths:        number[];  // 1-basiert (1 = Jan … 12 = Dez)
   includeMaison?:        boolean;   // Maison/Marketing-Umsatzkanal einschliessen
+  /**
+   * Personal Aushilfe (5004/5005/5011) im Export einrechnen? Default = true.
+   * false = Konten im PDF weder angezeigt noch in Summen gerechnet — nur der
+   * Export ist betroffen, die App-Ansicht bleibt immer voll eingerechnet.
+   */
+  includeAushilfe?:      boolean;
 }
 
 // ── Farb-Palette ──────────────────────────────────────────────────────────────

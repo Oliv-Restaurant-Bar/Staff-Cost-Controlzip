@@ -36,6 +36,9 @@ export function PDFExportDialog({
     Array.from({ length: month }, (_, i) => i + 1),
   );
   const [includeMaison, setIncludeMaison] = useState(maisonAvailable);
+  // Personal Aushilfe (5004/5005/5011): Standard = Ja (eingerechnet + sichtbar).
+  // Nein betrifft NUR das PDF — die App-Ansicht bleibt immer voll eingerechnet.
+  const [includeAushilfe, setIncludeAushilfe] = useState(true);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -65,6 +68,7 @@ export function PDFExportDialog({
         includeSelectedMonths: includeSelectedMonths && selectedMonths.length > 0,
         selectedMonths,
         includeMaison:         maisonAvailable ? includeMaison : undefined,
+        includeAushilfe,
       });
       setLoading(false);
       onClose();
@@ -155,6 +159,24 @@ export function PDFExportDialog({
               )}
             </div>
           )}
+
+          <div className="border rounded-lg p-3 bg-slate-50 border-slate-200">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Personalaufwand</p>
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <Checkbox
+                checked={includeAushilfe}
+                onCheckedChange={v => setIncludeAushilfe(!!v)}
+                className="mt-0.5"
+                data-testid="pdf-include-aushilfe"
+              />
+              <div>
+                <p className="text-sm font-medium leading-tight">Personal Aushilfe (5004/5005/5011) im Export einrechnen?</p>
+                <p className="text-xs text-muted-foreground">
+                  Nein = im PDF weder angezeigt noch in Summen gerechnet. Betrifft nur den Export — die App-Ansicht bleibt voll eingerechnet.
+                </p>
+              </div>
+            </label>
+          </div>
 
           {maisonAvailable && (
             <div className="border rounded-lg p-3 bg-violet-50 border-violet-200">

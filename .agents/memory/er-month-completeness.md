@@ -1,16 +1,18 @@
 ---
-name: ER unvollständige Monate & nachrichtliche Konten
-description: Monats-Vollständigkeits-Regel (partial ausklammern) und Nachrichtlich-Konten 5004/5005/5011 in ER/P&L
+name: ER unvollständige Monate & Personal-Aushilfe-Konten
+description: Monats-Vollständigkeits-Regel (partial ausklammern) und Aushilfe-Konten 5004/5005/5011 in ER/P&L (immer eingerechnet, PDF abwählbar)
 ---
 
 ## Regeln
 - **Partial-Monat** = genau EINE Seite vorhanden (Umsatz XOR importierte Kosten) → grau «unvollständig», ausgeklammert aus Jahres-/Periodensummen, Budget-Vergleich, KPIs, Betriebsergebnis. Ganz leere Monate bleiben drin (Budget zählt weiter). SSOT: `src/lib/month-completeness.ts` (`monthCompleteness`, `isNachrichtlichAccount`).
-- **Nachrichtliche Konten 5004/5005/5011** (Personal Aushilfe, nicht im Infoniqa-Export): Zeilen bleiben sichtbar (Badge NACHRICHTLICH, `BPLRow.isMemo`), zählen aber in KEINE Summe.
+- **Personal Aushilfe 5004/5005/5011** (nicht im Infoniqa-Export): seit Befehl 08/2026 v2 IMMER voll in Lohnaufwand/Personalaufwand + alle Folgesummen — ADDITIV auch wenn `personnelCostActual`/`personnelCostPreviousYear` gesetzt ist (keine Doppelzählung, da nicht im Export enthalten). Die frühere «nachrichtlich, zählt nirgends»-Regel ist AUFGEHOBEN; NACHRICHTLICH-Badge/`isMemo` entfernt.
+- **PDF-Export**: Checkbox «Personal Aushilfe einrechnen?» (Default Ja) im PDFExportDialog. Bei Nein werden die 3 Konten NUR für den Export aus den Records gestrippt (expenseCategories + PreviousYear) UND die Overrides (prevYearByRow/budgetByRow/cogsBudgetSplit) aus den gestrippten Quellen neu gebaut — sonst injizieren die Overrides die Konten in die VJ-/Budget-Spalten zurück. Maison-Delta danach auf den gestrippten Records.
 
-**Why:** Befehl 08/2026 — Monate mit nur Umsatz (Bsp. Aug 2026) verfälschten YTD/Budget-Vergleich; 5004/5005 wurden früher ADDITIV zu personnelCostActual gezählt (alte ADDITIVE_WAGE_ACCOUNTS-Sonderbehandlung in pl-engine — bewusst ENTFERNT, nicht wiederherstellen).
+**Why:** Befehl 08/2026 (v2): App soll die realen Personalkosten inkl. Aushilfe zeigen; nur der PDF-Export soll die Konten optional ausblenden können. Monate mit nur Umsatz verfälschten YTD/Budget-Vergleich → Partial-Regel bleibt.
 
 **How to apply:**
-- Ausschluss muss in BEIDEN Rechenwegen sitzen: BPL (`computeBPLRows`/`sumCatFromCategories` in PLView) UND klassischer `pl-engine` (numericActual-, numericPY-Loop, `buildPrevYearByRowForMonth`, `buildBudgetByRowForMonth`). Nur PLView filtern reicht NICHT — YearView/KPIs/EBIT kommen aus pl-engine.
+- Die additive Ausnahme sitzt in pl-engine (numericActual/numericPY-Loop: personnel_wages-Skip gilt NICHT für `isNachrichtlichAccount`); BPL-Summen (`sumCatFromCategories`, computeBPLRows-Items) filtern NICHT mehr.
+- `isNachrichtlichAccount` bleibt bewusst in `monthCompleteness` (Kosten-Seite): Monate mit nur Umsatz + manueller 5004 sind weiterhin unvollständig.
 - Partial-Filter greift in PLView: `periodAgg`, `registryKpis` (periodPls), `yearEffectiveMonths`, `YearView/YearRow` via `incompleteIdxs`-Set (zusätzlich zu `excludeMonthIdx`).
-- Bekannte Grenze: `hasData` bleibt true, wenn nur Memo-Kosten existieren (kein Summenleck).
 - pl-engine-Tests brauchen happy-dom (Supabase-transitiv) und `r.def.id` (nicht `r.id`).
+- Kontrollwerte Juli 2026 (Beaulieu-Daten, 5004=10'028): Lohnaufwand 52'509 mit / 42'481 ohne — verifiziert.

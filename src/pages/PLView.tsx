@@ -822,8 +822,7 @@ function sumCatFromCategories(
   cats: { categoryId?: string; amount?: number }[] | undefined,
 ): number {
   return (cats ?? [])
-    // Nachrichtliche Konten (5004/5005/5011) zählen nie in Kategorie-Summen
-    .filter(c => !isNachrichtlichAccount(c.categoryId) && bplCatForAccount(c.categoryId ?? '') === catId)
+    .filter(c => bplCatForAccount(c.categoryId ?? '') === catId)
     .reduce((s, c) => s + (c.amount ?? 0), 0);
 }
 
@@ -953,10 +952,9 @@ export function computeBPLRows(
 
   for (const cat of cats) {
     if (cat.type === 'items') {
-      // Interne, ausgeblendete und nachrichtliche Positionen (Personal Aushilfe
-      // 5004/5005/5011 — nicht im Infoniqa-Export) werden aus den Kategorie-Summen ausgeschlossen
+      // Interne und ausgeblendete Positionen werden aus den Kategorie-Summen ausgeschlossen
       const its = items.filter(i =>
-        i.categoryId === cat.id && !i.isInternal && !i.isHidden && !isNachrichtlichAccount(i.accountNumber));
+        i.categoryId === cat.id && !i.isInternal && !i.isHidden);
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
       catP[cat.id] = getCatPY(cat.id, rec, prevRec);
@@ -1038,7 +1036,6 @@ export function computeBPLRows(
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
           isInternal: item.isInternal,
-          isMemo: isNachrichtlichAccount(item.accountNumber) ? true : undefined,
           isAutoHidden: !alwaysShow && isEmpty ? true : undefined,
           itemForceVisible: item.isForceVisible === true,
           values: makeCell(iA, iB, iP, cat.isExpense),
@@ -1063,7 +1060,6 @@ export function computeBPLRows(
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: `actual_${ar.accountNum}`, itemLabel: ar.label, itemAccountNumber: ar.accountNum,
-          isMemo: isNachrichtlichAccount(ar.accountNum) ? true : undefined,
           values: makeCell(ar.amount, 0, iP, cat.isExpense),
         });
       }
@@ -1468,7 +1464,6 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       className={cn(
         'hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group',
         row.isInternal && !isVarianceHighlighted && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
-        row.isMemo && !isVarianceHighlighted && 'opacity-75 bg-slate-50/60 dark:bg-slate-900/30',
         row.isAutoHidden && 'opacity-60 bg-muted/20 text-muted-foreground',
         varBgClass,
       )}
@@ -1480,14 +1475,6 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         {row.isInternal && (
           <span className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
             INTERN
-          </span>
-        )}
-        {row.isMemo && (
-          <span
-            className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-            title="Nachrichtlich: nicht im Infoniqa-Export — zählt nicht in die Summen (Personalaufwand/Ergebnis)"
-          >
-            NACHRICHTLICH
           </span>
         )}
         {isBudgetItem && onToggleVisibility && (
@@ -3248,6 +3235,52 @@ const PLViewPage = () => {
     let exportMonthResult = monthResult;
     let exportYearResult  = yearResult;
 
+    // Personal Aushilfe (5004/5005/5011) = Nein: Konten NUR für den Export aus
+    // den Records entfernen (weder angezeigt noch in Summen) und neu rechnen.
+    // Reine Darstellungs-Wahl — gespeicherte Werte/App-Ansicht bleiben unberührt.
+    const stripAushilfe = opts.includeAushilfe === false;
+    const stripRec = <T extends MonthlyFinancialRecord>(rec: T): T => ({
+      ...rec,
+      expenseCategories: rec.expenseCategories
+        ? rec.expenseCategories.filter(c => !isNachrichtlichAccount(c.categoryId))
+        : rec.expenseCategories,
+      expenseCategoriesPreviousYear: rec.expenseCategoriesPreviousYear
+        ? rec.expenseCategoriesPreviousYear.filter(c => !isNachrichtlichAccount(c.categoryId))
+        : rec.expenseCategoriesPreviousYear,
+    });
+    let exportMonthRecord = effectiveMonthRecord;
+    let exportAllRecords  = effectiveAllRecords;
+    let exportOverrides   = allMonthOverrides;
+    if (stripAushilfe) {
+      exportMonthRecord = exportMonthRecord ? stripRec(exportMonthRecord) : exportMonthRecord;
+      exportAllRecords  = exportAllRecords.map(stripRec);
+      // Auch Budget- und VJ-Overrides ohne die Aushilfe-Konten neu aufbauen —
+      // sonst injiziert prevYearByRow/budgetByRow die gestrippten Konten zurück
+      // in die VJ-/Budget-Spalten des PDFs.
+      const strippedPrev = prevYearRecords.map(r => (r ? stripRec(r) : r));
+      const strippedBudget = budgetData
+        ? {
+            ...budgetData,
+            plLineItems: (budgetData.plLineItems ?? []).filter(
+              i => !isNachrichtlichAccount(i.accountNumber),
+            ),
+          }
+        : budgetData;
+      exportOverrides = Array.from({ length: 12 }, (_, idx) => {
+        const budgetByRow   = buildBudgetByRowForMonth(strippedBudget, idx, lookupAccount);
+        const prevYearByRow = buildPrevYearByRowForMonth(strippedPrev[idx], exportAllRecords[idx], lookupAccount);
+        return {
+          budgetByRow:     budgetByRow.size   > 0 ? budgetByRow   : undefined,
+          prevYearByRow:   prevYearByRow.size > 0 ? prevYearByRow : undefined,
+          cogsBudgetSplit: buildCogsBudgetSplitForMonth(strippedBudget, idx, lookupAccount),
+        };
+      });
+      if (exportMonthRecord) {
+        exportMonthResult = computePLForMonth(exportMonthRecord, exportOverrides[month - 1]);
+      }
+      exportYearResult = computePLForYear(exportAllRecords, exportOverrides);
+    }
+
     // If the export Maison setting differs from the current view state, recompute
     if (opts.includeMaison !== undefined && !!opts.includeMaison !== !!currentlyIncludes) {
       const delta = opts.includeMaison ? 1 : -1;
@@ -3266,23 +3299,23 @@ const PLViewPage = () => {
         return net;
       };
 
-      // Adjust the selected month
+      // Adjust the selected month (auf Basis der ggf. Aushilfe-bereinigten Records)
       const monthMaisonNet = getMaisonNetForMonth(month);
-      if (monthMaisonNet > 0 && effectiveMonthRecord) {
+      if (monthMaisonNet > 0 && exportMonthRecord) {
         const adjRec = {
-          ...effectiveMonthRecord,
-          revenueActual: (effectiveMonthRecord.revenueActual ?? 0) + delta * monthMaisonNet,
+          ...exportMonthRecord,
+          revenueActual: (exportMonthRecord.revenueActual ?? 0) + delta * monthMaisonNet,
         };
-        exportMonthResult = computePLForMonth(adjRec, allMonthOverrides[month - 1]);
+        exportMonthResult = computePLForMonth(adjRec, exportOverrides[month - 1]);
       }
 
       // Adjust all months for yearResult (cumulative/prevMonth sections)
-      const adjAllRecs = effectiveAllRecords.map((rec, idx) => {
+      const adjAllRecs = exportAllRecords.map((rec, idx) => {
         const mNet = getMaisonNetForMonth(idx + 1);
         if (mNet <= 0) return rec;
         return { ...rec, revenueActual: (rec.revenueActual ?? 0) + delta * mNet };
       });
-      exportYearResult = computePLForYear(adjAllRecs, allMonthOverrides);
+      exportYearResult = computePLForYear(adjAllRecs, exportOverrides);
     }
 
     const exportMaisonLabel = opts.includeMaison && maisonMonthNet > 0
@@ -3296,7 +3329,7 @@ const PLViewPage = () => {
       console.error(e);
       toast.error('PDF-Export fehlgeschlagen');
     }
-  }, [monthResult, yearResult, effectiveMonthRecord, effectiveAllRecords, allMonthOverrides, year, month, mode, tenantId, maisonEnabled, maisonColPref, maisonDaily, maisonMonthNet]);
+  }, [monthResult, yearResult, effectiveMonthRecord, effectiveAllRecords, allMonthOverrides, prevYearRecords, budgetData, year, month, mode, tenantId, maisonEnabled, maisonColPref, maisonDaily, maisonMonthNet]);
 
   const handleYearMonthClick = useCallback((m: number) => {
     setMonth(m);
