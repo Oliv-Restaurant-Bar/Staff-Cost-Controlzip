@@ -1,0 +1,29 @@
+BUILD — Budget-Autofill + Ø-Verkauf-pro-Gast konsolidieren
+
+1. Metrik-Konsolidierung
+
+Zeile „Umsatz pro Gast" aus dem Cockpit entfernen (alle Ansichten). Es bleibt nur „Ø-Verkauf pro Gast" = (Netto − Take-Away-netto + Maison) ÷ Gäste. („Durchschnittsverkauf" = Umsatz ÷ Bons bleibt als eigene Zeile bestehen — anderer Blickwinkel.)
+
+2. CHF/%-Umschalter je Budgetposition
+
+Jede Position wahlweise als CHF-Betrag ODER als % vom Netto-Umsatz-Budget eingebbar (Toggle pro Zeile). Bei % wird der CHF-Wert je Monat automatisch = % × budgetierter Netto-Umsatz dieses Monats. Beide Richtungen jederzeit umschaltbar, Wert bleibt konsistent.
+
+3. Auto-Befüllung „2026-Run-Rate + 10% besser"
+
+Basis = 2026 aufs Jahr hochgerechnet (YTD über das saisonale Vorjahresmuster auf 12 Monate projiziert).
+Richtungsabhängig „besser": Umsatz, Gäste, Ø-Verkauf pro Gast, Produktivität → × 1.10; Kosten-/Quotenzeilen (Personalquote, Wareneinsatzquote) → × 0.90.
+Auto-Werte sind ein Vorschlag, editierbar (nicht gesperrt). Ein Klick „Aus Vorjahren befüllen" pro Position oder gesamt.
+
+4. Positions-Logik
+
+Brutto/Netto Umsatz: aus dem bereits eingegebenen Budget (Basis aller %-Rechnungen) — nicht überschreiben.
+Personalkosten: Eingabe als Personalquote % → CHF = % × Netto-Umsatz-Budget. Daraus produktive Planstunden = Netto-Umsatz-Budget ÷ Ziel-Produktivität (Umsatz/Std aus Personalbedarf).
+Gäste IN (Budget): abgeleitet = (budgetiertes Restaurant-Netto = Netto − TA + Maison) ÷ Ziel-Ø-Verkauf pro Gast. Auf Monat gerechnet, dann auf Wochen heruntergebrochen / aufs Jahr summiert.
+Ø-Verkauf pro Gast (Budget): aus den Vorjahren (2026-Run-Rate) plus wählbare Steigerung: „+X CHF" ODER „+X %" (Default +10 %). Dieser Zielwert ist der Treiber fürs Gäste-Budget.
+Take-Away: Budget als % → TA-Umsatz-CHF = % × Umsatz; Take-Away-Anteil = TA ÷ Umsatz bleibt damit automatisch konsistent.
+Food + Beverage: zu einer Position „Wareneinsatz" zusammenführen; Budget = kalkulierte Wareneinsatzquote % (aus den Gastronovi-Dateien, z.B. Beaulieu Juli: Ø 21.28 %) × Umsatz. Keine Umsatzaufteilung mehr. Die Gegenüberstellung zur Ist-Warenkostenquote (aus „Warenkosten total") wird im nächsten Schritt (Waren-Block) angeschlossen — Feld schon anlegen, Ist-Seite darf vorerst leer sein.
+Zeilen ohne Budget: einfache Direkteingabe (CHF oder Anzahl), kein Herunterbrechen nötig.
+
+5. Regeln unverändert: pro Jahr + Mandant · leer statt 0 · nie ÷ 0 · Vorschau + Rückgängig · Pro-rata bis Stichtag · Budget-Spalte alle Ansichten · Vorjahr nur auf Klick.
+
+6. Kontrolle: Beispiel Ø-Verkauf pro Gast Oliv: 2026-Run-Rate ≈ 25.45, +10 % = 28.00 Ziel; Gäste-Budget eines Monats = Restaurant-Netto-Budget ÷ 28.00. Bitte je ein befülltes Beispiel (Personalquote %, Wareneinsatzquote %, Ø-Verkauf-Ziel) nennen, dann rechne ich CHF-Umrechnung, abgeleitete Planstunden und Gäste-Budget gegen.

@@ -674,8 +674,8 @@ export default function MonatsreportPage() {
         subtitle: `${MONATE[month - 1]} ${year}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
         footnote: 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
-          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) '
-          + 'als Quote über den Monat, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
+          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
+          + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
           + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
           + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
@@ -690,8 +690,8 @@ export default function MonatsreportPage() {
         fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
         footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
           + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
-          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, '
-          + 'Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
+          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, '
+          + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
           + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
           + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
@@ -829,8 +829,8 @@ export default function MonatsreportPage() {
             <p className="pdf-footnote text-xs text-muted-foreground">
               Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) ·
               Ist (Monat) = Ist bis heute · Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen
-              (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) werden als Quote
-              über den Monat gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
+              (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) werden als Quote
+              über den Monat gebildet, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit
               beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
               Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, Budget =
               Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz), Δ in PROZENTPUNKTEN (über Ziel = rot), rot über
@@ -926,8 +926,8 @@ export default function MonatsreportPage() {
               {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Budget =
               Budget-Wochenanteil dieses Zeitraums · Vorjahr = gleiche Kalenderwoche im Vorjahr
               (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · Δ% = Woche-Ist vs. Budget-Woche ·
-              Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast,
-              Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Umsatz pro Gast =
+              Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast,
+              Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Ø-Verkauf pro Gast =
               Netto ÷ Gäste nur über Tage mit beiden Quellen · Personalkosten = FIX pro-rata der Wochentage
               + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · PKQ =
               Ist ÷ Ist, Budget = Ziel-PKQ, Δ in PROZENTPUNKTEN (über Ziel = rot), rot über Obergrenze 40 %;
@@ -1097,7 +1097,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
       footnote: 'Wochenverlauf = ISO-Kalenderwochen inkl. laufender Woche (Mo–So, älteste links, aktuelle Woche ganz rechts) · '
         + 'laufende Woche = partiell bis heute; Trend/VJ-Δ/Verlauf nur über volle Wochen · Trend ▲/▼ = Veränderung zur Vorwoche · '
         + 'Verlauf = Mini-Trend über alle Wochen · gleiche Quellen & Berechnung wie die Monatsübersicht · '
-        + 'leere Felder (—) = keine Datenquelle, nie 0 · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen'
+        + 'leere Felder (—) = keine Datenquelle, nie 0 · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen'
         + (mitVorjahr ? ' · Vorjahr = kleine Zeile darunter + Δ%; Produktive Stunden/Produktivität haben keine VJ-Quelle.' : '.'),
     });
   }, [onPdfMeta, jahr, anzahl, mitVorjahr, effektiveAnsicht, einstellungText]);
@@ -1309,7 +1309,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
           {istAktuellesJahr && ' laufende Woche = partiell bis heute (Trend/VJ-Δ/Verlauf nur über volle Wochen) ·'}
           Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
           gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
-          nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
+          nie 0. Ø-Verkauf pro Gast nur über Tage mit beiden Quellen.
           {!istAktuellesJahr && ` · ${jahr} aus Vorjahresdaten (vj_daily); Produktive Stunden/Produktivität nur fürs aktuelle Jahr → «—».`}
           {showVj && ` · Vergleich = gleiche ISO-KW ${jahr - 1} (kleine Zeile darunter + Δ%); Produktive Stunden/Produktivität haben keine Vergleichsquelle.`}
         </p>
@@ -1323,7 +1323,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
 /** Kennzahlen (Reihenfolge) fürs Grafik-Grid — ohne Produktive Stunden/Produktivität. */
 const CHART_METRICS = [
   'Brutto Umsatz', 'Netto Umsatz', 'Gäste IN', 'Durchschnittsverkauf',
-  'Take Away Anteil', 'Food', 'Beverage', 'Umsatz pro Gast',
+  'Take Away Anteil', 'Food', 'Beverage',
 ];
 
 /** Kompaktes Achsen-Label: 60'000 → «60k», 1'250'000 → «1.25M». */
@@ -1732,7 +1732,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
         MM-TT-Bereich im Vorjahr (29.02. → 28.02. geklemmt) · gleiche Quellen &amp; Berechnung wie die
         Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr (nur wenn beide Werte vorhanden) ·
         Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben keine VJ-Quelle → «—» · leere Felder (—)
-        = keine Datenquelle, nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
+        = keine Datenquelle, nie 0. Ø-Verkauf pro Gast nur über Tage mit beiden Quellen.
       </p>
     </>
   );

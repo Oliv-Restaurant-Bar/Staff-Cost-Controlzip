@@ -1057,6 +1057,8 @@ export async function ladeMonatsreport(
   // «Ø-Verkauf pro Gast» (gepaarte Tage, mandantenspezifisch):
   //   Oliv: Netto − TA-Netto (TA-brutto ÷ 1.026) · Beaulieu: Netto.
   // Identische Regel wie der Jahresvergleich (ladeJahresvergleich).
+  // Nenner = gaesteDaily («Gäste IN», ohne Take-Away) — gleiche Basis wie
+  // Jahresvergleich/Wochenverlauf; TA-Gäste (ta-gaeste-daily) NIE abziehen.
   let pairedVerkauf = 0, wPairedVerkauf = 0;
   const verkaufTagM = (netto: number, taBrutto: number): number =>
     tenantId === 'oliv' ? netto - taBrutto / mwstDivisorTakeaway() : netto;
@@ -1437,8 +1439,6 @@ export async function ladeMonatsreport(
   const vwTaAnteil = hatVw && hatVwTa && vwGross > 0 ? r2((vwTa / vwGross) * 100) : null;
   // Take-Away-UMSATZ VJ-Woche (CHF brutto) — Zähler des VJ-Anteils. «—» wenn keine TA-Quelle.
   const vwTaUmsatz = hatVw && hatVwTa && vwTa > 0 ? r2(vwTa) : null;
-  // Umsatz/Gast VJ-Woche = Netto ÷ Gäste über gepaarte Tage (Regel wie Ist).
-  const vwUpg = hatVw && vwPairedGaeste > 0 ? r2(vwPairedNet / vwPairedGaeste) : null;
 
   // ── Vorjahres-MONAT: Anzeigewerte der «Vorjahr»-Spalte in der Monatssicht ──
   // Absolutwerte = Summe über den Vorjahres-Monat; Quoten als Quote (nicht
@@ -1446,7 +1446,6 @@ export async function ladeMonatsreport(
   const vjTaAnteilM = hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null;
   // Take-Away-UMSATZ Vorjahres-Monat (CHF brutto) — Zähler des VJ-Anteils. «—» ohne TA-Quelle.
   const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa) : null;
-  const vjUpgM = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
   const vjFoodNet = hatVj ? r2(vjFoodNetS) : null;
   const vjBevNet = hatVj ? r2(vjBevNetS) : null;
 
@@ -1565,18 +1564,26 @@ export async function ladeMonatsreport(
     }, { deltaVsVj: ckMk('take_away_umsatz') == null }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
+    // Food/Beverage: nur noch Ist + VJ — das BUDGET läuft konsolidiert über die
+    // Position «Wareneinsatz» (keine Umsatzaufteilung im Budget mehr).
     d('food', 'Food', {
       month: mHatUmsatz && mFood > 0 ? r2(mFood) : null,
       week: weekFrom && wHatUmsatz && wFood > 0 ? r2(wFood) : null,
       vj: vwFoodNet, vjMonth: vjFoodNet,
-      monthBudget: ckMk('food'), weekBudget: ckWk('food'), budget: ckWk('food'),
     }),
     d('beverage', 'Beverage', {
       month: mHatUmsatz && mBev > 0 ? r2(mBev) : null,
       week: weekFrom && wHatUmsatz && wBev > 0 ? r2(wBev) : null,
       vj: vwBevNet, vjMonth: vjBevNet,
-      monthBudget: ckMk('beverage'), weekBudget: ckWk('beverage'), budget: ckWk('beverage'),
     }),
+    // Wareneinsatz (Budget-Position, ersetzt Food/Beverage-Budgets): Ist-Seite
+    // bewusst noch leer — die Gegenüberstellung zur Ist-Warenkostenquote (aus
+    // «Warenkosten total») folgt im Waren-Block-Schritt. Kostenzeile (inverted).
+    d('wareneinsatz', 'Wareneinsatz', {
+      month: null, week: null,
+      monthBudget: ckMk('wareneinsatz'), weekBudget: ckWk('wareneinsatz'),
+      budget: ckWk('wareneinsatz'),
+    }, { deltaInverted: true }),
     e(),
     // ── Block Produktivität ──
     // Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (Budget-Spalte der
@@ -1603,13 +1610,7 @@ export async function ladeMonatsreport(
       monthBudget: ckMk('produktivitaet'), weekBudget: ckWk('produktivitaet'),
       budget: ckWk('produktivitaet'),
     }),
-    // Netto ÷ Gäste, NUR über Tage mit BEIDEN Quellen (Umsatz + Gäste).
-    d('umsatz_pro_gast', 'Umsatz pro Gast', {
-      month: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
-      week: weekFrom && wPairedGaeste > 0 ? r2(wPairedNet / wPairedGaeste) : null,
-      // Vorjahr: Netto-VJ ÷ Gäste-VJ über gepaarte Tage (Woche bzw. Monat).
-      vj: vwUpg, vjMonth: vjUpgM,
-    }),
+    // «Umsatz pro Gast» wurde konsolidiert — es bleibt NUR «Ø-Verkauf pro Gast».
     // Ø-Verkauf pro Gast (wie Jahresvergleich): Oliv (Netto − TA-Netto) ÷ Gäste,
     // Beaulieu Netto ÷ Gäste — NUR gepaarte Tage, «leer statt 0», nie ÷ 0.
     // Budget = Verhältnis-Budget (Basis-Budgets) bzw. direktes Override.
@@ -1898,9 +1899,8 @@ function baueWochenverlaufRows(
       ist: a => a.hatPlan ? r2(a.planStd) : null, vj: () => null },      // keine vj-Quelle
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
       ist: a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null, vj: () => null },
-    { label: 'Umsatz pro Gast', fmt: 'chf',
-      ist: a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null,
-      vj: a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null },
+    // «Umsatz pro Gast» konsolidiert (es bleibt «Ø-Verkauf pro Gast» in den
+    // Monats-/Wochen-/Jahres-Ansichten; hier keine TA-Netto-Quelle je Woche).
   ];
 
   return defs.map(d => ({
@@ -2247,6 +2247,10 @@ export async function ladeJahresvergleich(
   //   Oliv:     Netto − Take-Away-Netto (TA-brutto ÷ 1.026); Maison bleibt drin.
   // Der maisonExclude-Anzeige-Toggle greift hier bewusst NICHT (reine
   // Betriebsertrags-Darstellung, nicht diese Kennzahl).
+  // NENNER-INVARIANTE (alle Ansichten: Jahr/Monat/Woche): gaesteDaily =
+  // «Gäste IN» (importierte Anzahl Personen, OHNE Take-Away — TA-Gäste liegen
+  // separat in ta-gaeste-daily; verifiziert 08/2026 Oliv: 1'384 vs. 517).
+  // NIE TA-Gäste zusätzlich abziehen (wäre Doppelabzug) und NIE addieren.
   let pairedVerkauf = 0, vjPairedVerkauf = 0;
   const verkaufTagCur = (netto: number, taBrutto: number): number =>
     tenantId === 'oliv' ? netto - taBrutto / mwstDivisorTakeaway() : netto;
@@ -2412,11 +2416,12 @@ export async function ladeJahresvergleich(
       vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null,
       budget: jb('take_away_anteil') },
     { label: 'Food', fmt: 'chf',
-      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null,
-      budget: jb('food') },
+      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null },
     { label: 'Beverage', fmt: 'chf',
-      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null,
-      budget: jb('beverage') },
+      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null },
+    // Wareneinsatz: konsolidierte Budget-Position (Ist folgt im Waren-Block).
+    { label: 'Wareneinsatz', fmt: 'chf', cur: null, vj: null,
+      budget: jb('wareneinsatz'), deltaInverted: true },
     { label: 'Produktive Stunden (Ist)', fmt: 'hours',
       cur: hatIst ? r2(istStd) : null, vj: null,   // keine VJ-Quelle
       budget: jb('prod_stunden'), deltaInverted: true },
@@ -2425,9 +2430,6 @@ export async function ladeJahresvergleich(
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
       cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null, // keine VJ-Quelle
       budget: jb('produktivitaet') },
-    { label: 'Umsatz pro Gast', fmt: 'chf',
-      cur: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
-      vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
     { label: 'Reservierte Gäste', fmt: 'count',
       cur: resCur.reservedGuests, vj: resVj.reservedGuests },
     { label: `Gruppen ab ${jvCounting.groupThreshold} Pax`, fmt: 'count',

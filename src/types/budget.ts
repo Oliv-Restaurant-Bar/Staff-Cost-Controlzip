@@ -485,6 +485,15 @@ export interface CockpitBudgetPosition {
    * Wochenwert. Präzedenz: explizite Woche schlägt die Monats-Ableitung.
    */
   weekOverrides: Record<string, number>;
+  /**
+   * Eingabemodus: 'chf' (Default) = Direktwerte · 'pct' = % vom Umsatz-Budget
+   * (Take Away: Brutto-Umsatz-Budget, sonst Netto-Umsatz-Budget). Bei 'pct'
+   * werden die Monats-CHF materialisiert (monthlyValues) — die Engine rechnet
+   * IMMER auf monthlyValues, der Modus ist reine Eingabe-Konvention.
+   */
+  inputMode?: 'chf' | 'pct';
+  /** Erfasster %-Satz (nur inputMode='pct'; informativ fürs Zurückschalten). */
+  pctValue?: number | null;
 }
 
 export interface CockpitBudgetYear {
