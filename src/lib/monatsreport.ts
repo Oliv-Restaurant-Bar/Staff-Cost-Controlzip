@@ -1419,6 +1419,11 @@ export async function ladeMonatsreport(
   const vjGaesteV = N(vjGaeste, hatVjGaeste);
   const taM = mHatUmsatz && mTa > 0 ? r2(mTa) : null;
   const taW = weekFrom && wHatUmsatz && wTa > 0 ? r2(wTa) : null;
+  // «Take Away Umsatz»-ZEILE zeigt NETTO (TA-brutto ÷ TA-MwSt-Divisor) —
+  // konsistent zur netto budgetierten TA-Position («Überall nur Netto»).
+  // Der TA-ANTEIL bleibt bewusst brutto ÷ brutto (unveränderte Ist-Quote).
+  const taNettoM = taM !== null ? r2(mTa / mwstDivisorTakeaway()) : null;
+  const taNettoW = taW !== null ? r2(wTa / mwstDivisorTakeaway()) : null;
 
   // ── Vorjahres-WOCHE: Anzeigewerte der «Vorjahr (Woche)»-Spalte ─────────────
   // Absolutwerte = Summe über die VJ-Woche; Quoten/Prozente = über die Woche
@@ -1438,14 +1443,14 @@ export async function ladeMonatsreport(
   // TA-Anteil VJ-Woche = TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche.
   const vwTaAnteil = hatVw && hatVwTa && vwGross > 0 ? r2((vwTa / vwGross) * 100) : null;
   // Take-Away-UMSATZ VJ-Woche (CHF brutto) — Zähler des VJ-Anteils. «—» wenn keine TA-Quelle.
-  const vwTaUmsatz = hatVw && hatVwTa && vwTa > 0 ? r2(vwTa) : null;
+  const vwTaUmsatz = hatVw && hatVwTa && vwTa > 0 ? r2(vwTa / mwstDivisorTakeaway()) : null;
 
   // ── Vorjahres-MONAT: Anzeigewerte der «Vorjahr»-Spalte in der Monatssicht ──
   // Absolutwerte = Summe über den Vorjahres-Monat; Quoten als Quote (nicht
   // summiert), gleiche Regeln wie Ist. «leer statt 0».
   const vjTaAnteilM = hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null;
   // Take-Away-UMSATZ Vorjahres-Monat (CHF brutto) — Zähler des VJ-Anteils. «—» ohne TA-Quelle.
-  const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa) : null;
+  const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa / mwstDivisorTakeaway()) : null; // netto
   const vjFoodNet = hatVj ? r2(vjFoodNetS) : null;
   const vjBevNet = hatVj ? r2(vjBevNetS) : null;
 
@@ -1550,13 +1555,13 @@ export async function ladeMonatsreport(
       monthBudget: ckMk('take_away_anteil'), weekBudget: ckWk('take_away_anteil'),
       budget: ckWk('take_away_anteil'),
     }, { fmt: 'pct' }),
-    // Take Away Umsatz (CHF brutto): identische Quelle wie der TA-Anteil (dessen
-    // Zähler = takeawayRevenue/takeAwayBrutto). Es gilt: Anteil = Umsatz ÷ Gesamt.
-    // Woche = gewählte Woche, Monat = ganzer Monat; VJ wie beim TA-Anteil.
+    // Take Away Umsatz (CHF NETTO): gleiche Quelle wie der TA-Anteil, aber
+    // netto ausgewiesen (÷ TA-MwSt-Divisor) — konsistent zum netto budgetierten
+    // Cockpit-Budget. Woche = gewählte Woche, Monat = ganzer Monat; VJ analog.
     // Kein Budget vorhanden → Δ% gegen das Vorjahr (deltaVsVj), Farblogik wie
     // die übrigen Umsatzkennzahlen (mehr = grün).
-    d('take_away_umsatz', 'Take Away Umsatz', {
-      month: taM, week: taW,
+    d('take_away_umsatz', 'Take Away Umsatz (netto)', {
+      month: taNettoM, week: taNettoW,
       vj: vwTaUmsatz, vjMonth: vjTaUmsatzM,
       monthBudget: ckMk('take_away_umsatz'), weekBudget: ckWk('take_away_umsatz'),
       budget: ckWk('take_away_umsatz'),

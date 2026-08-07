@@ -1,0 +1,43 @@
+BUILD — Budget-Eingabe: Autofill aus Ist, Take-Away netto, %-Anwenden reparieren
+
+Ziel: Die Budget-Eingabe soll als Startpunkt ALLE Positionen mit den echten
+Ist-Werten vorbefüllen ("Stand der Dinge"), danach ist alles manuell korrigierbar.
+
+1. Autofill NEU = Ist-Werte (nicht mehr Run-Rate ±10%):
+   - "Alle befüllen" füllt JEDE Position — inkl. Brutto- UND Netto-Umsatz — aus
+     den Ist-Daten des gewählten Jahres + Mandanten.
+   - Pro Monat: abgeschlossene Monate bekommen ihren ECHTEN Ist-Monatswert;
+     unvollständige/zukünftige Monate (kein oder nur teilweiser Ist) bekommen den
+     DURCHSCHNITT der abgeschlossenen Monate. Beispiel 2026 (Ist bis 05.08.):
+     Jan–Jul = echte Monatswerte, Aug(unvollständig)–Dez = Schnitt Jan–Jul.
+   - Quoten-Zeilen (Take-Away-Anteil, Wareneinsatzquote, Personalquote): pro Monat
+     der ECHTE Ist-Prozentsatz dieses Monats (z.B. Januar Ist-TA-Anteil 10 % →
+     Budget Januar 10 %), unvollständige Monate = Schnitt der abgeschlossenen.
+   - KEIN automatisches ±10% mehr. Optional bleibt ein separater Button
+     "Steigerung +X % / +X CHF anwenden" für manuelle Anpassung (Default aus).
+   - Nach dem Befüllen ist jeder Wert editierbar. Die manuelle Jahreswert-Eingabe
+     mit "Auf Monate verteilen" (saisonal/gleichmäßig) bleibt zusätzlich bestehen.
+
+2. Umsatz-Positionen werden jetzt ebenfalls von "Alle befüllen" gefüllt (bisher
+   blieben sie leer). Das Netto-Umsatz-Budget ist die Basis aller %-Positionen —
+   ohne gefülltes Umsatz-Budget rechnen die Prozente ins Leere.
+
+3. Take-Away auf NETTO umstellen: Position heißt "Take Away Umsatz (netto)",
+   %-Basis = Netto-Umsatz. Überall nur Netto, konsistent zum Cockpit. Kein Brutto.
+
+4. Bug "% anwenden füllt nichts" beheben: Bei Klick auf "% anwenden" (z.B.
+   Wareneinsatz 24 %) müssen die 12 Monats-CHF sofort = % × Netto-Umsatz-Budget des
+   jeweiligen Monats gesetzt UND angezeigt werden. Fehlt für einen Monat das
+   Netto-Umsatz-Budget, klaren Hinweis zeigen ("Netto-Umsatz-Budget fehlt") statt
+   still leer zu bleiben.
+
+5. Cockpit-Budget-Spalte liest aus DIESEM Store (cockpit-budget), damit
+   Budget-Eingabe und Cockpit exakt übereinstimmen.
+
+6. Regeln unverändert: leer statt 0, nie ÷ 0, mandantengetrennt, pro Jahr,
+   Vorschau + Rückgängig.
+
+Kontrolle: Nach "Alle befüllen" für Oliv 2026 muss z.B. Netto-Umsatz Januar =
+Ist-Netto Januar 2026 sein, Take-Away-Anteil Januar = Ist-TA-Anteil Januar, und
+Wareneinsatzquote je Monat = die kalkulierte Ist-WEQ dieses Monats. Nenn mir nach
+dem Lauf zwei, drei Monatswerte, dann rechne ich sie gegen die Quelldaten.

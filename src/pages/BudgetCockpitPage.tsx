@@ -11,10 +11,11 @@
  *  - CHF/%-Umschalter je Position: %-Eingabe = % vom Umsatz-Budget (TA auf
  *    Brutto, sonst Netto); Monats-CHF werden materialisiert, beide Richtungen
  *    umschaltbar (CHF→%: Σ Monate ÷ Σ Basis).
- *  - Auto-Befüllung «Run-Rate + 10 % besser»: laufendes Jahr aufs Jahr
- *    hochgerechnet (saisonales VJ-Muster); Leistungszahlen ×1.10, Quoten ×0.90.
- *    Nur ein VORSCHLAG — alles bleibt editierbar. Brutto/Netto werden beim
- *    Gesamt-Befüllen NIE überschrieben (Basis aller %-Rechnungen).
+ *  - Auto-Befüllung «Ist-Werte übernehmen» (Startpunkt «Stand der Dinge»):
+ *    abgeschlossene Monate = ECHTER Ist-Monatswert, unvollständige/zukünftige
+ *    Monate = Durchschnitt der abgeschlossenen. Gilt für JEDE Position, auch
+ *    Brutto/Netto. KEIN automatisches ±10 % — Steigerung nur per separatem
+ *    Button (+X % / +X CHF, manuell).
  *  - Ableitungen: Gäste IN = Restaurant-Netto-Budget ÷ Ø-Verkauf-Ziel;
  *    Produktive Stunden = Netto-Budget ÷ Ziel-Produktivität.
  */
@@ -31,10 +32,9 @@ import { useToast } from '@/hooks/use-toast';
 import {
   COCKPIT_BUDGET_KPIS, leereCockpitBudgetPosition,
   loadCockpitBudget, saveCockpitBudget, kalendertagGewichte, verteileJahreswert,
-  ladeSaisonGewichte, runRateJahr, runRateQuote, AUTOFILL_FAKTOR,
+  ladeSaisonGewichte, istMonatswerte, abgeschlosseneMonate,
   pctBasisId, pctAufMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
-import { mwstDivisorTakeaway } from '@/lib/mwst';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
 
 const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -42,7 +42,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 const EINHEIT: Record<string, string> = { chf: 'CHF', count: 'Anzahl', hours: 'Std', pct: '%' };
 
-/** Positionen mit CHF/%-Umschalter (% vom Umsatz-Budget). Brutto/Netto sind
+/** Positionen mit CHF/%-Umschalter (% vom NETTO-Umsatz-Budget — auch TA, netto). Brutto/Netto sind
  *  die BASIS der %-Rechnung und bleiben reine CHF-Eingaben. BEWUSST nur die
  *  CHF-Kostenzeilen: für Anzahl- (Gäste), Stunden- und Quoten-Zeilen ist
  *  «% vom Netto» semantisch sinnlos — die Spec sieht dort Direkteingabe bzw.
@@ -94,7 +94,9 @@ export default function BudgetCockpitPage() {
     loadCockpitBudget(tenantKey, year)
       .then(b => {
         if (!alive) return;
-        const eff: CockpitBudgetYear = b ?? { year, positions: {}, updatedAt: '' };
+        // taNetto: neuer Blob ist per Definition netto — Marker sofort setzen,
+        // sonst würde der nächste Load die frischen Netto-Werte nochmals teilen.
+        const eff: CockpitBudgetYear = b ?? { year, positions: {}, updatedAt: '', taNetto: true };
         setBlob(eff);
         setSnapshot(JSON.parse(JSON.stringify(eff)));
         setPctInput(Object.fromEntries(Object.entries(eff.positions)
@@ -151,17 +153,25 @@ export default function BudgetCockpitPage() {
     if (!basis || !basis.monthlyValues.some(v => v !== null)) {
       toast({
         title: 'Kein Umsatz-Budget',
-        description: `Bitte zuerst «${basisId === 'brutto_umsatz' ? 'Brutto' : 'Netto'} Umsatz» budgetieren — die %-Eingabe rechnet darauf.`,
+        description: 'Netto-Umsatz-Budget fehlt — bitte zuerst «Netto Umsatz» budgetieren (z.B. per «Alle aus Ist befüllen»); die %-Eingabe rechnet darauf.',
       });
       return false;
     }
     const pos = getPos(def);
+    const mv = pctAufMonate(pct, basis);
     setPos(def.id, {
       ...pos, inputMode: 'pct', pctValue: pct,
-      monthlyValues: pctAufMonate(pct, basis),
+      monthlyValues: mv,
       monthlyExplicit: Array(12).fill(false),
       yearValue: null,
     });
+    const fehlend = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
+    if (fehlend.length > 0) {
+      toast({
+        title: 'Netto-Umsatz-Budget fehlt teilweise',
+        description: `${fehlend.join(', ')} ohne Netto-Budget — diese Monate bleiben leer.`,
+      });
+    }
     return true;
   }, [getPos, getPosById, setPos, toast]);
 
@@ -187,94 +197,57 @@ export default function BudgetCockpitPage() {
     if (pct !== null) setPctInput(s => ({ ...s, [def.id]: String(pct) }));
   }, [getPos, getPosById, setPos]);
 
-  // ── Auto-Befüllung «Run-Rate + 10 % besser» ───────────────────────────────
-
-  /** Basisjahr der Run-Rate = laufendes Jahr (bzw. Budget-Jahr, falls älter). */
-  const basisJahr = Math.min(year, curYear);
-
-  /** Konstanten %-/Quotenwert in alle 12 Monate schreiben (nicht «fix»). */
-  const monateKonstant = useCallback((def: CockpitBudgetKpiDef, wert: number) => {
-    const pos = getPos(def);
-    setPos(def.id, {
-      ...pos, monthlyValues: Array(12).fill(r2(wert)),
-      monthlyExplicit: Array(12).fill(false),
-    });
-  }, [getPos, setPos]);
+  // ── Auto-Befüllung: Ist-Werte des gewählten Jahres («Stand der Dinge») ───
 
   /**
-   * Eine Position aus der Run-Rate befüllen. Liefert eine Meldung (oder null
-   * bei Erfolg ohne Besonderheit); wirft nie.
+   * Eine Position mit Ist-Monatswerten befüllen: abgeschlossene Monate mit
+   * Daten = echter Ist-Wert; alle übrigen Monate (unvollständig/zukünftig/ohne
+   * Daten) = Durchschnitt der befüllten abgeschlossenen Monate. Liefert eine
+   * Meldung bei fehlender Quelle, sonst null; wirft nie.
    */
   const autofillPosition = useCallback(async (def: CockpitBudgetKpiDef): Promise<string | null> => {
-    const faktor = AUTOFILL_FAKTOR[def.id];
-    if (faktor === undefined || def.id === 'prod_stunden') return `«${def.label}» hat keinen direkten Autofill.`;
-    const tid = tenantId as TenantId;
-
-    // Quoten-Zeilen: konstante Quote (Run-Rate × Faktor) in alle Monate.
-    if (def.id === 'personalquote' || def.id === 'take_away_anteil' || def.id === 'produktivitaet') {
-      const q = await runRateQuote(tid, tenantKey, basisJahr, def.id, rates).catch(() => null);
-      if (q === null) return `Keine ${basisJahr}-Ist-Daten für «${def.label}».`;
-      monateKonstant(def, q * faktor);
-      return null;
-    }
-
-    // Ø-Verkauf pro Gast: Run-Rate + wählbare Steigerung (+X % oder +X CHF).
-    if (def.id === 'avg_verkauf_gast') {
-      const q = await runRateQuote(tid, tenantKey, basisJahr, def.id, rates).catch(() => null);
-      if (q === null) return `Keine ${basisJahr}-Ist-Daten für «${def.label}».`;
-      const x = Number(steigWert);
-      const ziel = !isFinite(x) ? q * 1.10
-        : steigArt === 'pct' ? q * (1 + x / 100) : q + x;
-      monateKonstant(def, ziel);
-      return `Ø-Verkauf: Run-Rate ${r2(q).toFixed(2)} → Ziel ${r2(ziel).toFixed(2)} CHF/Gast.`;
-    }
-
-    // Personalkosten/Wareneinsatz: als Quote ×0.9 auf das Netto-Budget.
-    if (def.id === 'personalkosten' || def.id === 'wareneinsatz') {
-      const quoteId = def.id === 'personalkosten' ? 'personalquote' : 'wareneinsatz_quote';
-      const q = await runRateQuote(tid, tenantKey, basisJahr, quoteId, rates).catch(() => null);
-      if (q === null) return `Keine ${basisJahr}-Ist-Quote für «${def.label}».`;
-      const pct = r2(q * faktor);
-      if (!pctAnwenden(def, pct)) return `«${def.label}»: Netto-Umsatz-Budget fehlt (Basis der %-Rechnung).`;
-      setPctInput(s => ({ ...s, [def.id]: String(pct) }));
-      return `${def.label}: Ist-Quote ${r2(q)} % → Budget-Quote ${pct} % vom Netto-Budget.`;
-    }
-
-    // Basis-Kennzahlen (Umsätze, Gäste): Jahres-Run-Rate × Faktor, saisonal verteilt.
-    const rr = await runRateJahr(tid, tenantKey, basisJahr, def.id, rates).catch(() => null);
-    if (!rr) return `Keine ${basisJahr}-Ist-Daten für «${def.label}».`;
-    const jahreswert = r2(rr.value * faktor);
-    let weights = kalendertagGewichte(year);
-    const w = await ladeSaisonGewichte(tid, tenantKey, year - 1, def.id, rates).catch(() => null);
-    if (w) weights = w;
+    const ist = await istMonatswerte(tenantId as TenantId, tenantKey, year, def.id, rates)
+      .catch(() => null);
+    if (!ist) return `Keine ${year}-Ist-Daten für «${def.label}».`;
+    const closed = new Set(abgeschlosseneMonate(year));
+    const basisWerte = Array.from({ length: 12 }, (_, i) => i)
+      .filter(i => closed.has(i + 1) && ist[i] !== null)
+      .map(i => ist[i] as number);
+    if (basisWerte.length === 0) return `Keine abgeschlossenen ${year}-Ist-Monate für «${def.label}».`;
+    const schnitt = basisWerte.reduce((s, v) => s + v, 0) / basisWerte.length;
+    const runde = def.unit === 'count'
+      ? (v: number) => Math.round(v)
+      : (v: number) => r2(v);
+    const mv = Array.from({ length: 12 }, (_, i) =>
+      runde(closed.has(i + 1) && ist[i] !== null ? (ist[i] as number) : schnitt));
     const pos = getPos(def);
     setPos(def.id, {
-      ...pos, yearValue: jahreswert, inputMode: 'chf', pctValue: null,
-      monthlyValues: verteileJahreswert(jahreswert, weights, Array(12).fill(null), Array(12).fill(false)),
+      ...pos, monthlyValues: mv,
       monthlyExplicit: Array(12).fill(false),
+      inputMode: 'chf', pctValue: null,
+      yearValue: def.unit === 'pct' ? null : r2(mv.reduce((s, v) => s + (v ?? 0), 0)),
     });
     return null;
-  }, [tenantId, tenantKey, basisJahr, year, rates, steigArt, steigWert,
-      monateKonstant, pctAnwenden, getPos, setPos]);
+  }, [tenantId, tenantKey, year, rates, getPos, setPos]);
 
   const autofillEine = useCallback(async (def: CockpitBudgetKpiDef) => {
     setBusy(def.id);
     try {
       const msg = await autofillPosition(def);
       if (msg) toast({ title: 'Autofill', description: msg });
-      else toast({ title: 'Vorschlag eingefüllt', description: `«${def.label}» aus ${basisJahr}-Run-Rate — editierbar.` });
+      else toast({
+        title: 'Ist-Werte übernommen',
+        description: `«${def.label}»: abgeschlossene ${year}-Monate = Ist, Rest = Schnitt — editierbar.`,
+      });
     } finally { setBusy(null); }
-  }, [autofillPosition, basisJahr, toast]);
+  }, [autofillPosition, year, toast]);
 
-  /** Gesamt-Befüllung: NUR leere Positionen; Brutto/Netto NIE anfassen. */
+  /** Gesamt-Befüllung: JEDE Position (auch Brutto/Netto) aus den Ist-Werten. */
   const autofillAlle = useCallback(async () => {
     setBusy('*');
     try {
       const meldungen: string[] = [];
       for (const def of COCKPIT_BUDGET_KPIS) {
-        if (def.id === 'brutto_umsatz' || def.id === 'netto_umsatz' || def.id === 'prod_stunden') continue;
-        const pos = getPos(def);
-        if (pos.yearValue !== null || pos.monthlyValues.some(v => v !== null)) continue; // nichts überschreiben
         const msg = await autofillPosition(def);
         if (msg) meldungen.push(msg);
       }
@@ -282,20 +255,50 @@ export default function BudgetCockpitPage() {
         title: 'Autofill abgeschlossen',
         description: meldungen.length
           ? meldungen.slice(0, 3).join(' ')
-          : 'Alle leeren Positionen aus der Run-Rate befüllt (Brutto/Netto unangetastet).',
+          : `Alle Positionen mit ${year}-Ist-Werten vorbefüllt (abgeschlossene Monate = Ist, Rest = Schnitt).`,
       });
     } finally { setBusy(null); }
-  }, [autofillPosition, getPos, toast]);
+  }, [autofillPosition, year, toast]);
+
+  /**
+   * Manuelle Steigerung (+X % oder +X CHF) auf die BEFÜLLTEN Monate einer
+   * Position anwenden — bewusst separater Schritt (kein Auto-±10 % mehr).
+   */
+  const steigerungAnwenden = useCallback((def: CockpitBudgetKpiDef) => {
+    const x = Number(steigWert);
+    if (!isFinite(x) || x === 0) {
+      toast({ title: 'Steigerung', description: 'Bitte einen Wert ≠ 0 erfassen (+ erhöht, − senkt).' });
+      return;
+    }
+    const pos = getPos(def);
+    if (!pos.monthlyValues.some(v => v !== null)) {
+      toast({ title: 'Steigerung', description: 'Keine Monatswerte vorhanden — zuerst befüllen.' });
+      return;
+    }
+    const runde = def.unit === 'count' ? (v: number) => Math.round(v) : (v: number) => r2(v);
+    const mv = pos.monthlyValues.map(v => v === null ? null
+      : runde(steigArt === 'pct' ? v * (1 + x / 100) : v + x));
+    setPos(def.id, {
+      ...pos, monthlyValues: mv, inputMode: 'chf', pctValue: null,
+      yearValue: def.unit === 'pct' ? pos.yearValue
+        : r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+    });
+    toast({
+      title: 'Steigerung angewendet',
+      description: `«${def.label}»: ${steigArt === 'pct' ? `${x > 0 ? '+' : ''}${x} %` : `${x > 0 ? '+' : ''}${x} CHF/Einheit`} auf alle befüllten Monate.`,
+    });
+  }, [steigArt, steigWert, getPos, setPos, toast]);
 
   // ── Ableitungen (Gäste aus Ø-Verkauf-Ziel · Stunden aus Ziel-Produktivität) ─
 
-  /** Restaurant-Netto-Budget je Monat: Netto − TA-Netto (Oliv; Beaulieu ohne TA). */
+  /** Restaurant-Netto-Budget je Monat: Netto − TA (TA-Budget ist bereits
+   *  NETTO; Oliv — Beaulieu ohne TA). */
   const restaurantNettoMonat = useCallback((i: number): number | null => {
     const netto = getPosById('netto_umsatz')?.monthlyValues[i];
     if (typeof netto !== 'number') return null;
     if (tenantId !== 'oliv') return netto;
     const ta = getPosById('take_away_umsatz')?.monthlyValues[i];
-    return netto - (typeof ta === 'number' ? ta / mwstDivisorTakeaway() : 0);
+    return netto - (typeof ta === 'number' ? ta : 0);
   }, [getPosById, tenantId]);
 
   const gaesteAbleiten = useCallback(() => {
@@ -408,10 +411,10 @@ export default function BudgetCockpitPage() {
             disabled={busy !== null || loading}
             onClick={autofillAlle} data-testid="button-autofill-alle">
             <Wand2 className="h-4 w-4" />
-            {busy === '*' ? 'Befüllt …' : `Alle befüllen (${basisJahr}-Run-Rate, ±10 %)`}
+            {busy === '*' ? 'Befüllt …' : `Alle aus ${year}-Ist befüllen`}
           </Button>
           <span className="text-[10px] text-muted-foreground">
-            nur leere Positionen · Brutto/Netto nie
+            alle Positionen inkl. Brutto/Netto · abgeschlossene Monate = Ist, Rest = Schnitt · überschreibt (Rückgängig möglich)
           </span>
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={!dirty || saving}
@@ -432,8 +435,7 @@ export default function BudgetCockpitPage() {
           const summe = pos.monthlyValues.reduce<number>((s, v) => s + (v ?? 0), 0);
           const hatWerte = pos.monthlyValues.some(v => v !== null);
           const imPctModus = PCT_TOGGLE_IDS.has(def.id) && (pos.inputMode ?? 'chf') === 'pct';
-          const hatAutofill = AUTOFILL_FAKTOR[def.id] !== undefined
-            && def.id !== 'brutto_umsatz' && def.id !== 'netto_umsatz';
+          const hatAutofill = true; // jede Position hat eine Ist-Quelle
           return (
             <div key={def.id} className="rounded-xl border bg-card shadow-sm" data-testid={`budget-pos-${def.id}`}>
               <button
@@ -471,28 +473,28 @@ export default function BudgetCockpitPage() {
                         disabled={busy !== null}
                         onClick={() => autofillEine(def)} data-testid={`button-autofill-${def.id}`}>
                         <Wand2 className="h-3.5 w-3.5" />
-                        {busy === def.id ? 'Befüllt …'
-                          : `Autofill (${basisJahr}-Run-Rate ${AUTOFILL_FAKTOR[def.id] >= 1
-                              ? `+${Math.round((AUTOFILL_FAKTOR[def.id] - 1) * 100)}`
-                              : `−${Math.round((1 - AUTOFILL_FAKTOR[def.id]) * 100)}`} %)`}
+                        {busy === def.id ? 'Befüllt …' : `Ist-Werte ${year} übernehmen`}
                       </Button>
                     )}
-                    {def.id === 'avg_verkauf_gast' && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <span className="text-muted-foreground">Steigerung:</span>
-                        <Input type="number" className="h-7 w-16 text-right text-xs" value={steigWert}
-                          onChange={e => setSteigWert(e.target.value)} data-testid="input-steigerung-wert" />
-                        <Select value={steigArt} onValueChange={v => setSteigArt(v as 'pct' | 'chf')}>
-                          <SelectTrigger className="h-7 w-[90px] text-xs" data-testid="select-steigerung-art">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="pct">+ %</SelectItem>
-                            <SelectItem value="chf">+ CHF</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                    {/* Manuelle Steigerung — bewusst separater Schritt (kein Auto-±10 %). */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <Input type="number" className="h-7 w-16 text-right text-xs" value={steigWert}
+                        onChange={e => setSteigWert(e.target.value)} data-testid={`input-steigerung-wert-${def.id}`} />
+                      <Select value={steigArt} onValueChange={v => setSteigArt(v as 'pct' | 'chf')}>
+                        <SelectTrigger className="h-7 w-[90px] text-xs" data-testid={`select-steigerung-art-${def.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pct">± %</SelectItem>
+                          <SelectItem value="chf">± CHF</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button variant="outline" size="sm" className="h-7 text-xs"
+                        onClick={() => steigerungAnwenden(def)}
+                        data-testid={`button-steigerung-${def.id}`}>
+                        Steigerung anwenden
+                      </Button>
+                    </div>
                     {PCT_TOGGLE_IDS.has(def.id) && (
                       <div className="flex items-center gap-1.5">
                         <div className="flex overflow-hidden rounded-md border">
@@ -522,7 +524,7 @@ export default function BudgetCockpitPage() {
                               % anwenden
                             </Button>
                             <span className="text-[10px] text-muted-foreground">
-                              % vom {pctBasisId(def.id) === 'brutto_umsatz' ? 'Brutto' : 'Netto'}-Umsatz-Budget je Monat
+                              % vom Netto-Umsatz-Budget je Monat
                             </span>
                           </>
                         )}
@@ -654,9 +656,10 @@ export default function BudgetCockpitPage() {
           Kalendertage, über Monatsgrenzen) · Wochen-Override wird bei auf den
           Monat geklemmten Wochen anteilig (Tage ÷ 7) gerechnet, %-Werte ungekürzt ·
           Cockpit kappt Monats-/Jahresbudgets pro rata bis zum Stichtag ·
-          %-Eingaben rechnen auf dem Umsatz-Budget je Monat (TA: Brutto, sonst
-          Netto) · Autofill = Vorschlag aus der {basisJahr}-Run-Rate (saisonales
-          Vorjahresmuster), immer editierbar · leere Felder = kein Budget (nie 0)
+          %-Eingaben rechnen auf dem NETTO-Umsatz-Budget je Monat (auch Take
+          Away — netto) · Autofill = {year}-Ist-Werte (abgeschlossene Monate =
+          Ist, unvollständige = Schnitt), immer editierbar; Steigerung nur
+          manuell per Button · leere Felder = kein Budget (nie 0)
           · Mandanten getrennt (aktuell:
           {tenantId === 'oliv' ? ' Oliv' : ' Beaulieu'}).
         </p>

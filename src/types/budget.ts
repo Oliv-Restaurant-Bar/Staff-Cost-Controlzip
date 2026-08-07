@@ -501,4 +501,7 @@ export interface CockpitBudgetYear {
   /** Positionen nach Kennzahl-ID. Fehlende Position = kein Budget. */
   positions: Record<string, CockpitBudgetPosition>;
   updatedAt: string;
+  /** Schema-Marker: true = take_away_umsatz ist NETTO gespeichert. Fehlt der
+   *  Marker (Alt-Blob), migriert loadCockpitBudget die TA-Werte brutto→netto. */
+  taNetto?: boolean;
 }

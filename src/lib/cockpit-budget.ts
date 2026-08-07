@@ -53,7 +53,7 @@ export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
   // Position, typischerweise als WKQ-% vom Netto-Umsatz-Budget erfasst).
   { id: 'wareneinsatz',     label: 'Wareneinsatz (netto)', unit: 'chf',   kind: 'base',
     hint: 'Empfohlen: als Wareneinsatzquote % vom Netto-Umsatz-Budget erfassen' },
-  { id: 'take_away_umsatz', label: 'Take Away Umsatz (brutto)', unit: 'chf', kind: 'base' },
+  { id: 'take_away_umsatz', label: 'Take Away Umsatz (netto)', unit: 'chf', kind: 'base' },
   { id: 'gaeste_in',        label: 'Gäste IN',             unit: 'count', kind: 'base' },
   { id: 'prod_stunden',     label: 'Produktive Stunden',   unit: 'hours', kind: 'base' },
   { id: 'personalkosten',   label: 'Personalkosten',       unit: 'chf',   kind: 'base' },
@@ -64,7 +64,7 @@ export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
   { id: 'produktivitaet',   label: 'Produktivität (Umsatz/Std)', unit: 'chf', kind: 'ratio',
     hint: 'Netto Umsatz ÷ Produktive Stunden' },
   { id: 'take_away_anteil', label: 'Take Away Anteil',     unit: 'pct',   kind: 'ratio',
-    hint: 'TA brutto ÷ Brutto Umsatz × 100' },
+    hint: 'TA brutto ÷ Brutto Umsatz × 100 (TA-Budget netto wird umgerechnet)' },
 ];
 
 // ── Store (KV, tenant-präfixiert, pro Jahr) ──────────────────────────────────
@@ -104,11 +104,11 @@ function normalisierePosition(p: unknown, id: string, unit: CockpitBudgetUnit): 
 }
 
 /**
- * Basis-Position für den %-Eingabemodus: Take Away rechnet auf dem BRUTTO-
- * Umsatz-Budget (TA-Anteil = TA ÷ Brutto), alle übrigen auf dem NETTO-Budget.
+ * Basis-Position für den %-Eingabemodus: IMMER das Netto-Umsatz-Budget
+ * (Spec «Überall nur Netto» — auch Take Away wird netto budgetiert).
  */
-export function pctBasisId(kpiId: string): 'brutto_umsatz' | 'netto_umsatz' {
-  return kpiId === 'take_away_umsatz' ? 'brutto_umsatz' : 'netto_umsatz';
+export function pctBasisId(_kpiId: string): 'netto_umsatz' {
+  return 'netto_umsatz';
 }
 
 /**
@@ -136,7 +136,21 @@ export async function loadCockpitBudget(
     const p = blob.positions?.[def.id];
     if (p) positions[def.id] = normalisierePosition(p, def.id, def.unit);
   }
-  return { year, positions, updatedAt: String(blob.updatedAt ?? '') };
+  // Einmalige, idempotente Migration: Alt-Blobs (ohne taNetto-Marker) haben
+  // das TA-Budget BRUTTO gespeichert — beim Laden auf netto umrechnen
+  // (Monate, Jahreswert, Wochen-Overrides). Der Marker wird erst beim
+  // nächsten Speichern persistiert; bis dahin liegt der Blob unverändert
+  // brutto in der DB und wird bei jedem Laden konsistent erneut umgerechnet
+  // (nie doppelt: Division immer nur auf dem gespeicherten Brutto-Stand).
+  if (blob.taNetto !== true && positions['take_away_umsatz']) {
+    const div = mwstDivisorTakeaway();
+    const p = positions['take_away_umsatz'];
+    p.monthlyValues = p.monthlyValues.map(v => (v === null ? null : r2(v / div)));
+    if (p.yearValue !== null) p.yearValue = r2(p.yearValue / div);
+    p.weekOverrides = Object.fromEntries(
+      Object.entries(p.weekOverrides).map(([k, v]) => [k, r2(v / div)]));
+  }
+  return { year, positions, updatedAt: String(blob.updatedAt ?? ''), taNetto: true };
 }
 
 /** Speichert das komplette Jahres-Blob (kvSetStrict — Finanzdaten). */
@@ -191,6 +205,8 @@ export function verteileJahreswert(
  * Saisonale Gewichte = Vorjahres-Ist-MONATSSUMMEN genau dieser Kennzahl.
  * null = keine (oder nur 0-)Vorjahresdaten → Aufrufer fällt auf 'even' zurück.
  * `rates` nur für prod_stunden/personalkosten nötig (Personalkosten-Kern).
+ * take_away_umsatz liefert NETTO-Summen (TA-brutto ÷ TA-MwSt-Divisor) —
+ * die TA-Budget-Position ist netto («Überall nur Netto»).
  */
 export async function ladeSaisonGewichte(
   tenantId: TenantId,
@@ -242,7 +258,7 @@ export async function ladeSaisonGewichte(
     else if (kpiId === 'netto_umsatz') add(date, netto);
     else if (kpiId === 'food') add(date, split.food);
     else if (kpiId === 'beverage') add(date, split.beverage);
-    else if (kpiId === 'take_away_umsatz') add(date, tag.takeAwayBrutto);
+    else if (kpiId === 'take_away_umsatz') add(date, tag.takeAwayBrutto / mwstDivisorTakeaway());
   }
   if (!hatTage) {
     for (let mo = 1; mo <= 12; mo++) {
@@ -251,7 +267,7 @@ export async function ladeSaisonGewichte(
       for (const [date, rec] of Object.entries(map)) {
         const w = vjTagWerte(tenantId, rec, date);
         if (kpiId === 'brutto_umsatz') add(date, Number(rec.actualRevenue ?? 0));
-        else if (kpiId === 'take_away_umsatz') add(date, Number(rec.takeawayRevenue ?? 0));
+        else if (kpiId === 'take_away_umsatz') add(date, Number(rec.takeawayRevenue ?? 0) / mwstDivisorTakeaway());
         else if (w) {
           if (kpiId === 'netto_umsatz') add(date, w.netto);
           else if (kpiId === 'food') add(date, w.food);
@@ -263,19 +279,7 @@ export async function ladeSaisonGewichte(
   return hat ? sums : null;
 }
 
-// ── Auto-Befüllung: «Run-Rate + 10 % besser» ─────────────────────────────────
-
-/**
- * Richtungsfaktor «10 % besser» je Position (Autofill ist nur ein VORSCHLAG,
- * editierbar): Leistungszahlen ×1.10, Kosten-/Quotenzeilen ×0.90.
- * Nicht gelistete Positionen haben keinen direkten Autofill (Brutto/Netto =
- * Basis, wird nie überschrieben; Stunden/Gäste/PK via Ableitung bzw. Quote).
- */
-export const AUTOFILL_FAKTOR: Record<string, number> = {
-  brutto_umsatz: 1.10, netto_umsatz: 1.10, take_away_umsatz: 1.10,
-  gaeste_in: 1.10, avg_verkauf_gast: 1.10, produktivitaet: 1.10,
-  personalquote: 0.90, wareneinsatz: 0.90, take_away_anteil: 1.0,
-};
+// ── Auto-Befüllung: Ist-Monatswerte («Stand der Dinge») ─────────────────────
 
 /** Abgeschlossene Monate (1-basiert) eines Jahres: laufendes Jahr bis zum
  *  Vormonat (der laufende Monat ist unvollständig), Vergangenheit = alle 12. */
@@ -286,109 +290,78 @@ export function abgeschlosseneMonate(year: number, heute: Date = new Date()): nu
   return Array.from({ length: maxM }, (_, i) => i + 1);
 }
 
-export interface RunRateInfo {
-  /** Aufs Jahr hochgerechneter Wert (Run-Rate, OHNE Besser-Faktor). */
-  value: number;
-  /** Anzahl abgeschlossener Ist-Monate, auf denen die Hochrechnung beruht. */
-  basisMonate: number;
+/** Ist-Waren-CHF (netto, nur Waren-Kontoklassen) je Monat eines Jahres. */
+async function warenIstMonate(tenantId: TenantId, year: number): Promise<number[] | null> {
+  const [{ loadMonthInvoices, loadWarenkostenGrenze }, { nurWarenAnteil }, { sumInvoicesNet }] =
+    await Promise.all([
+      import('@/lib/waren-db'), import('@/lib/waren-klassen'), import('@/lib/waren-cockpit')]);
+  const grenze = await loadWarenkostenGrenze(tenantId).catch(() => undefined);
+  const sums = Array(12).fill(0) as number[];
+  let hat = false;
+  await Promise.all(Array.from({ length: 12 }, (_, i) => i + 1).map(async m => {
+    const inv = await loadMonthInvoices(tenantId, `${year}-${pad2(m)}`).catch(() => null);
+    if (inv) {
+      const v = sumInvoicesNet(nurWarenAnteil(inv, grenze));
+      if (v > 0) { sums[m - 1] = v; hat = true; }
+    }
+  }));
+  return hat ? sums : null;
 }
 
 /**
- * Jahres-Run-Rate einer BASIS-Kennzahl: Σ Ist der abgeschlossenen Monate,
- * über das saisonale VORJAHRESMUSTER derselben Kennzahl auf 12 Monate
- * projiziert (YTD ÷ VJ-Anteil-YTD × VJ-Total). Ohne VJ-Muster: Hochrechnung
- * nach Kalendertagen. null = keine Ist-Daten («leer statt 0»).
- *
- * Monate mit Summe 0 gelten BEWUSST als «keine Daten» (die Quellen können
- * echte 0 nicht von fehlenden Daten unterscheiden) und werden konsistent aus
- * Ist UND Vorjahresmuster ausgeschlossen — das hält die Projektion unverzerrt.
+ * Ist-MONATSWERTE einer Budget-Position im gewählten Jahr (Basis des neuen
+ * Autofills «Ist-Werte übernehmen»): je Monat der echte Ist-Wert, null wo
+ * keine Daten («leer statt 0» — 0-Summen gelten als fehlende Daten, die
+ * Quellen können echte 0 nicht unterscheiden). Quoten-/Verhältnis-Zeilen
+ * liefern die ECHTE Monatsquote (Zähler ÷ Nenner desselben Monats).
+ * take_away_umsatz ist NETTO. null insgesamt = Position ohne Ist-Quelle.
  */
-export async function runRateJahr(
+export async function istMonatswerte(
   tenantId: TenantId, tenantKey: KeyFn, year: number, kpiId: string,
-  rates?: SocialCostRates | null, heute: Date = new Date(),
-): Promise<RunRateInfo | null> {
-  const cur = await ladeSaisonGewichte(tenantId, tenantKey, year, kpiId, rates ?? null)
-    .catch(() => null);
-  if (!cur) return null;
-  const monate = abgeschlosseneMonate(year, heute).filter(m => cur[m - 1] > 0);
-  if (monate.length === 0) return null;
-  const ytd = monate.reduce((s, m) => s + cur[m - 1], 0);
-  const muster = await ladeSaisonGewichte(tenantId, tenantKey, year - 1, kpiId, rates ?? null)
-    .catch(() => null);
-  if (muster) {
-    const mYtd = monate.reduce((s, m) => s + muster[m - 1], 0);
-    const mAll = muster.reduce((s, v) => s + v, 0);
-    if (mYtd > 0 && mAll > 0) return { value: r2(ytd * mAll / mYtd), basisMonate: monate.length };
-  }
-  const tage = monate.reduce((s, m) => s + daysInMonth(year, m), 0);
-  const jahrTage = kalendertagGewichte(year).reduce((s, v) => s + v, 0);
-  return { value: r2(ytd * jahrTage / tage), basisMonate: monate.length };
-}
-
-/**
- * Run-Rate der QUOTEN/VERHÄLTNIS-Kennzahlen: YTD-Quote über die gemeinsamen
- * abgeschlossenen Monate — gleiche Methodik wie die Ist-Seite (Ratio der
- * Perioden-Totale). Zusätzlich 'wareneinsatz_quote' (Ist-WKQ % = erfasste
- * Warenrechnungen (nur Waren-Kontoklassen) ÷ Netto-Umsatz).
- * Bekannte Grenze: Ø-Verkauf-Run-Rate ohne Maison-Marketing im Zähler.
- */
-export async function runRateQuote(
-  tenantId: TenantId, tenantKey: KeyFn, year: number, kpiId: string,
-  rates?: SocialCostRates | null, heute: Date = new Date(),
-): Promise<number | null> {
-  const monate = abgeschlosseneMonate(year, heute);
-  if (monate.length === 0) return null;
+  rates?: SocialCostRates | null,
+): Promise<(number | null)[] | null> {
   const lade = (id: string) =>
     ladeSaisonGewichte(tenantId, tenantKey, year, id, rates ?? null).catch(() => null);
+  const zuMonaten = (arr: number[] | null): (number | null)[] | null =>
+    arr ? arr.map(v => (v > 0 ? r2(v) : null)) : null;
   const quote = (
-    zaehler: number[] | null, nenner: number[] | null,
-    map: (z: number, n: number) => number, faktor = 1,
-  ): number | null => {
-    if (!zaehler || !nenner) return null;
-    const gem = monate.filter(m => zaehler[m - 1] > 0 && nenner[m - 1] > 0);
-    if (gem.length === 0) return null;
-    const z = gem.reduce((s, m) => s + zaehler[m - 1], 0);
-    const n = gem.reduce((s, m) => s + nenner[m - 1], 0);
-    return n > 0 ? r2(map(z, n) * faktor) : null;
+    z: number[] | null, n: number[] | null, map: (z: number, n: number) => number,
+  ): (number | null)[] | null => {
+    if (!z || !n) return null;
+    const out = Array.from({ length: 12 }, (_, i) =>
+      z[i] > 0 && n[i] > 0 ? r2(map(z[i], n[i])) : null);
+    return out.some(v => v !== null) ? out : null;
   };
   switch (kpiId) {
+    case 'brutto_umsatz': case 'netto_umsatz': case 'take_away_umsatz':
+    case 'gaeste_in': case 'prod_stunden': case 'personalkosten':
+      return zuMonaten(await lade(kpiId));
+    case 'wareneinsatz':
+      return zuMonaten(await warenIstMonate(tenantId, year));
+    case 'personalquote': {
+      const [pk, netto] = await Promise.all([lade('personalkosten'), lade('netto_umsatz')]);
+      return quote(pk, netto, (z, n) => (z / n) * 100);
+    }
+    case 'produktivitaet': {
+      const [netto, std] = await Promise.all([lade('netto_umsatz'), lade('prod_stunden')]);
+      return quote(netto, std, (z, n) => z / n);
+    }
+    case 'take_away_anteil': {
+      // Ist-Anteil wie die Cockpit-Ist-Seite: TA-BRUTTO ÷ Brutto-Umsatz × 100.
+      // lade('take_away_umsatz') liefert netto → zurückrechnen (× Divisor).
+      const [taNetto, brutto] = await Promise.all([lade('take_away_umsatz'), lade('brutto_umsatz')]);
+      return quote(taNetto, brutto, (z, n) => (z * mwstDivisorTakeaway() / n) * 100);
+    }
     case 'avg_verkauf_gast': {
       const [netto, ta, gaeste] = await Promise.all([
         lade('netto_umsatz'), lade('take_away_umsatz'), lade('gaeste_in')]);
       if (!netto || !gaeste) return null;
-      const gem = monate.filter(m => netto[m - 1] > 0 && gaeste[m - 1] > 0);
-      if (gem.length === 0) return null;
-      const n = gem.reduce((s, m) => s + netto[m - 1], 0);
-      const g = gem.reduce((s, m) => s + gaeste[m - 1], 0);
-      const t = tenantId === 'oliv' && ta ? gem.reduce((s, m) => s + ta[m - 1], 0) : 0;
-      const zaehler = n - t / mwstDivisorTakeaway();
-      return g > 0 ? r2(zaehler / g) : null;
-    }
-    case 'personalquote': {
-      const [pkS, nettoS] = await Promise.all([lade('personalkosten'), lade('netto_umsatz')]);
-      return quote(pkS, nettoS, (z, n) => (z / n) * 100);
-    }
-    case 'produktivitaet': {
-      const [nettoS, stdS] = await Promise.all([lade('netto_umsatz'), lade('prod_stunden')]);
-      return quote(nettoS, stdS, (z, n) => z / n);
-    }
-    case 'take_away_anteil': {
-      const [taS, bruttoS] = await Promise.all([lade('take_away_umsatz'), lade('brutto_umsatz')]);
-      return quote(taS, bruttoS, (z, n) => (z / n) * 100);
-    }
-    case 'wareneinsatz_quote': {
-      const [{ loadMonthInvoices, loadWarenkostenGrenze }, { nurWarenAnteil }, { sumInvoicesNet }] =
-        await Promise.all([
-          import('@/lib/waren-db'), import('@/lib/waren-klassen'), import('@/lib/waren-cockpit')]);
-      const grenze = await loadWarenkostenGrenze(tenantId).catch(() => undefined);
-      const nettoS = await lade('netto_umsatz');
-      if (!nettoS) return null;
-      const warenS = Array(12).fill(0) as number[];
-      await Promise.all(monate.map(async m => {
-        const inv = await loadMonthInvoices(tenantId, `${year}-${pad2(m)}`).catch(() => null);
-        if (inv) warenS[m - 1] = sumInvoicesNet(nurWarenAnteil(inv, grenze));
-      }));
-      return quote(warenS, nettoS, (z, n) => (z / n) * 100);
+      const out = Array.from({ length: 12 }, (_, i) => {
+        if (!(netto[i] > 0) || !(gaeste[i] > 0)) return null;
+        const z = tenantId === 'oliv' ? netto[i] - (ta?.[i] ?? 0) : netto[i]; // ta bereits netto
+        return z > 0 ? r2(z / gaeste[i]) : null;
+      });
+      return out.some(v => v !== null) ? out : null;
     }
     default:
       return null;
@@ -490,9 +463,8 @@ export function ratioBudget(kpiId: string, tenantId: TenantId, b: BasisBudgets):
   switch (kpiId) {
     case 'avg_verkauf_gast': {
       if (b.netto === null || b.gaeste === null || b.gaeste <= 0) return null;
-      const zaehler = tenantId === 'oliv'
-        ? b.netto - (b.ta ?? 0) / mwstDivisorTakeaway()
-        : b.netto;
+      // b.ta ist NETTO (TA-Budget-Position netto) — direkt abziehen.
+      const zaehler = tenantId === 'oliv' ? b.netto - (b.ta ?? 0) : b.netto;
       return r2(zaehler / b.gaeste);
     }
     case 'personalquote':
@@ -502,8 +474,10 @@ export function ratioBudget(kpiId: string, tenantId: TenantId, b: BasisBudgets):
       return b.netto !== null && b.stunden !== null && b.stunden > 0
         ? r2(b.netto / b.stunden) : null;
     case 'take_away_anteil':
+      // TA-Budget ist netto, der Ist-Anteil rechnet brutto ÷ brutto —
+      // fürs konsistente Δ das Netto-Budget auf brutto zurückrechnen.
       return b.ta !== null && b.brutto !== null && b.brutto > 0
-        ? r2((b.ta / b.brutto) * 100) : null;
+        ? r2((b.ta * mwstDivisorTakeaway() / b.brutto) * 100) : null;
     default:
       return null;
   }
