@@ -14,19 +14,28 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// ── Formatierer (identisch zur Seite: de-CH) ────────────────────────────────
-const fmtCHF = (n: number) =>
-  n.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
-const fmtCHFDec = (n: number) =>
-  n.toLocaleString('de-CH', { style: 'currency', currency: 'CHF', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// ── Formatierer — bewusst ASCII-sicher für jsPDF-Standardfonts ──────────────
+// KEIN toLocaleString: de-CH-Währungsausgabe enthält NBSP/Narrow-NBSP, die
+// Helvetica (WinAnsi) zerreisst («CHF 3 0», kaputte Sonderzeichen). Eigene
+// Gruppierung mit geradem Apostroph, Minus als ASCII '-'.
+const grp = (s: string) => s.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+const fmtCHF = (n: number) => {
+  const v = Math.round(Math.abs(n));
+  return `${n < 0 ? '-' : ''}CHF ${grp(String(v))}`;
+};
+const fmtCHFDec = (n: number) => {
+  const v = Math.abs(n).toFixed(2);
+  const [int, dec] = v.split('.');
+  return `${n < 0 ? '-' : ''}CHF ${grp(int)}.${dec}`;
+};
 const fmtDiff = (v: number) => {
   const s = fmtCHF(Math.abs(v));
-  return v > 0.005 ? `+${s}` : v < -0.005 ? `−${s}` : s;
+  return v > 0.005 ? `+${s}` : v < -0.005 ? `-${s}` : s;
 };
 const fmtPct = (v: number | null) => {
-  if (v === null) return '–';
+  if (v === null) return '-';
   const s = `${Math.abs(v).toFixed(1)} %`;
-  return v > 0.05 ? `+${s}` : v < -0.05 ? `−${s}` : s;
+  return v > 0.05 ? `+${s}` : v < -0.05 ? `-${s}` : s;
 };
 
 // ── Farben (an die Seite angelehnt) ─────────────────────────────────────────
@@ -67,6 +76,11 @@ export interface PkSeitePdfData {
   monthLabel: string;
   year: number;
   month: number;
+  /**
+   * false = Datenschutz-Modus: Fix-Tabelle ohne CHF-Spalten
+   * (nur Name · Abteilung · Pensum %); Total FIX (Aggregat) bleibt sichtbar.
+   */
+  showWageDetail: boolean;
 
   // 1) Kopf (PkHeadline, SSOT personalkosten.ts)
   hrTotalCHF: number;
@@ -90,6 +104,8 @@ export interface PkSeitePdfData {
   fixRows: Array<{
     name: string; label: string | null; dept: string;
     basis: number | null; inkl13: number | null; agMt: number;
+    /** Pensum in % (weeklyHours ÷ 42 × 100), für den Datenschutz-Modus. */
+    pensumPct: number | null;
   }>;
   fixTotals: { basis: number; inkl13: number; agMt: number };
 
@@ -109,6 +125,8 @@ export interface PkSeitePdfData {
   abwRows: Array<{
     period: string; plan: number; ist: number; diff: number;
     diffPct: number | null; cum: number; status: PkAmpel;
+    /** true = Zeitraum ohne Ist (Zukunft) — «noch offen», keine Abweichung. */
+    offen?: boolean;
   }>;
   abwTotal: { plan: number; ist: number; diff: number; diffPct: number | null } | null;
 }
@@ -164,32 +182,41 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
     M, y + 14,
   );
 
-  // Kernzahlen rechts (wie PkHeadline-Spalte)
-  const kx = pageW / 2 + 4;
-  const kv = (row: number, label: string, value: string, sub: string | null, color?: [number, number, number]) => {
-    const yy = y + row * 9;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...C.muted);
-    doc.text(label, kx, yy);
-    doc.setFont('helvetica', 'bold');
+  // Kernzahlen rechts: 2×2-Kartengrid (Label klein/grau, Wert gross/fett,
+  // einheitliche Ausrichtung, klare Abstände).
+  const gridX = pageW / 2 + 2;
+  const gridW = pageW - M - gridX;
+  const gap = 3;
+  const cardW = (gridW - gap) / 2;
+  const cardH = 15;
+  const card = (col: number, row: number, label: string, value: string, sub: string | null, color?: [number, number, number]) => {
+    const cx = gridX + col * (cardW + gap);
+    const cy = y - 4 + row * (cardH + gap);
+    doc.setFillColor(...C.white);
+    doc.setDrawColor(...C.border);
+    doc.roundedRect(cx, cy, cardW, cardH, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(...C.muted);
+    doc.text(label.toUpperCase(), cx + 3, cy + 4);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
     doc.setTextColor(...(color ?? C.black));
-    doc.text(value, pageW - M, yy, { align: 'right' });
+    doc.text(value, cx + 3, cy + 9.5);
     if (sub) {
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...C.muted);
-      doc.text(sub, kx, yy + 3.2);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(...C.muted);
+      doc.text(sub, cx + 3, cy + 13);
     }
   };
-  kv(0, 'Budget', hasBudget ? fmtCHF(d.budgetCHF as number) : '—',
-    hasBudget ? `${zielPct.toFixed(1)} % von Umsatz-Budget ${fmtCHF(d.umsatzBudgetCHF)}` : `Kein Umsatz-Budget ${d.monthLabel} hinterlegt`);
-  kv(1, 'Abweichung (HR − Budget)',
-    hasBudget ? `${abwHr >= 0 ? '+' : '−'}${fmtCHF(Math.abs(abwHr))}${abwPct != null ? ` (${abwHr >= 0 ? '+' : '−'}${Math.abs(abwPct).toFixed(1)} %)` : ''}` : '—',
+  card(0, 0, 'Budget', hasBudget ? fmtCHF(d.budgetCHF as number) : '—',
+    hasBudget ? `${zielPct.toFixed(1)} % von Umsatz-Budget ${fmtCHF(d.umsatzBudgetCHF)}` : `Kein Umsatz-Budget hinterlegt`);
+  card(1, 0, 'Abweichung (HR - Budget)',
+    hasBudget ? `${abwHr >= 0 ? '+' : '-'}${fmtCHF(Math.abs(abwHr))}${abwPct != null ? ` (${abwHr >= 0 ? '+' : '-'}${Math.abs(abwPct).toFixed(1)} %)` : ''}` : '—',
     hasBudget ? (ueberBudget ? 'über Budget' : abwHr < -0.5 ? 'unter Budget' : 'im Budget') : 'Kein Budget hinterlegt',
     hasBudget ? (ueberBudget ? C.red : C.green) : undefined);
-  kv(2, 'PKQ Hochrechnung', pkqHrPct != null ? `${pkqHrPct.toFixed(1)} %` : '—',
+  card(0, 1, 'PKQ Hochrechnung', pkqHrPct != null ? `${pkqHrPct.toFixed(1)} %` : '—',
     `Umsatz HR ${fmtCHF(d.umsatzHochrechnungCHF)}`,
     pkqHrPct != null ? (pkqHrPct > 40 ? C.red : pkqHrPct > zielPct ? C.amber : C.green) : undefined);
-  kv(3, 'FIX + FLEX', `${fmtCHF(d.hrFixCHF)}  +  ${fmtCHF(d.hrFlexCHF)}`, null);
+  card(1, 1, 'FIX + FLEX', `${fmtCHF(d.hrFixCHF)} + ${fmtCHF(d.hrFlexCHF)}`, 'Hochrechnung Fix + Flex');
 
-  y += 40;
+  y += 2 * cardH + gap + 4;
 
   // Ist-Zeile (grauer Balken wie auf der Seite)
   doc.setFillColor(...C.rowAlt);
@@ -230,23 +257,24 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
   // ── 2) Fix-Lohnkosten ─────────────────────────────────────────────────────
   if (d.fixRows.length > 0) {
     sectionHead(
-      `Fix-Lohnkosten (${d.fixRows.length})${d.fixFilterLabel ? ` — ${d.fixFilterLabel}` : ''}`,
+      `Fix-Lohnkosten (${d.fixRows.length})${d.fixFilterLabel ? ` — ${d.fixFilterLabel}` : ''}${d.showWageDetail ? '' : ' — ohne Detaillöhne'}`,
       `Total AG/Mt ${fmtCHF(d.fixTotals.agMt)}`,
       C.headerBlue,
     );
-    autoTable(doc, {
+    const totalLabel = `Total FIX${d.fixFilterLabel ? ` — ${d.fixFilterLabel.replace(/^nur /, '')}` : ''}`;
+    autoTable(doc, d.showWageDetail ? {
       startY: y,
       margin: { left: M, right: M },
       head: [['Name', 'Abteilung', 'Basis-Lohn/Mt', 'inkl. 13. /Mt', 'Total AG/Mt']],
       body: d.fixRows.map(r => [
         r.label ? `${r.name}  [${r.label}]` : r.name,
         r.dept,
-        r.basis != null && r.basis > 0 ? fmtCHFDec(r.basis) : '–',
-        r.inkl13 != null && r.inkl13 > 0 ? fmtCHFDec(r.inkl13) : '–',
-        r.agMt > 0 ? fmtCHF(r.agMt) + (r.label ? ' *' : '') : '–',
+        r.basis != null && r.basis > 0 ? fmtCHFDec(r.basis) : '-',
+        r.inkl13 != null && r.inkl13 > 0 ? fmtCHFDec(r.inkl13) : '-',
+        r.agMt > 0 ? fmtCHF(r.agMt) + (r.label ? ' *' : '') : '-',
       ]),
       foot: [[
-        `Total FIX${d.fixFilterLabel ? ` — ${d.fixFilterLabel.replace(/^nur /, '')}` : ''}`,
+        totalLabel,
         '',
         fmtCHF(d.fixTotals.basis),
         fmtCHF(d.fixTotals.inkl13),
@@ -260,6 +288,26 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
         0: { cellWidth: 60 }, 1: { cellWidth: 28 },
         2: { halign: 'right' }, 3: { halign: 'right' },
         4: { halign: 'right', textColor: C.blue, fontStyle: 'bold' },
+      },
+    } : {
+      // Datenschutz-Modus: KEINE CHF-Spalten pro Mitarbeiter — nur
+      // Name · Abteilung · Pensum. Total FIX (Aggregat) bleibt sichtbar.
+      startY: y,
+      margin: { left: M, right: M },
+      head: [['Name', 'Abteilung', 'Pensum']],
+      body: d.fixRows.map(r => [
+        r.label ? `${r.name}  [${r.label}]` : r.name,
+        r.dept,
+        r.pensumPct != null ? `${Math.round(r.pensumPct)} %` : '-',
+      ]),
+      foot: [[totalLabel, '', fmtCHF(d.fixTotals.agMt)]],
+      styles: { fontSize: 7.5, cellPadding: 1.6, textColor: C.black, lineColor: C.border, lineWidth: 0.1 },
+      headStyles: { fillColor: C.tableHead, textColor: C.muted, fontStyle: 'bold' },
+      footStyles: { fillColor: C.lightBlue, textColor: C.blue, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: C.rowAlt },
+      columnStyles: {
+        0: { cellWidth: 90 }, 1: { cellWidth: 45 },
+        2: { halign: 'right' },
       },
     });
     y = (doc as any).lastAutoTable.finalY + 3;
@@ -293,12 +341,12 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
         return [
           badges.length ? `${r.name}  [${badges.join(', ')}]` : r.name,
           r.dept,
-          r.hourly > 0 ? r.hourly.toFixed(2) + (r.agOff ? ' *' : '') : '–',
-          r.planH > 0 ? `${r.planH.toFixed(1)} h` : '–',
-          r.istH > 0 ? `${r.istH.toFixed(1)} h` : '–',
-          r.planCHF > 0 ? fmtCHF(r.planCHF) : '–',
-          r.istCHF > 0 ? fmtCHF(r.istCHF) : '–',
-          r.diff === 0 ? '–' : `${r.diff > 0 ? '+' : ''}${fmtCHF(r.diff)}`,
+          r.hourly > 0 ? r.hourly.toFixed(2) + (r.agOff ? ' *' : '') : '-',
+          r.planH > 0 ? `${r.planH.toFixed(1)} h` : '-',
+          r.istH > 0 ? `${r.istH.toFixed(1)} h` : '-',
+          r.planCHF > 0 ? fmtCHF(r.planCHF) : '-',
+          r.istCHF > 0 ? fmtCHF(r.istCHF) : '-',
+          r.diff === 0 ? '-' : `${r.diff > 0 ? '+' : ''}${fmtCHF(r.diff)}`,
         ];
       }),
       foot: [[
@@ -327,6 +375,12 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
         const row = d.flexRows[hook.row.index];
         if (!row) return;
         if (row.zusatz) hook.cell.styles.fillColor = C.lightOrange;
+        // «ohne AG-Kosten» klar abgegrenzt: ganze Zeile kursiv + eigene
+        // (hellgelbe) Zeilenfarbe — auf einen Blick erkennbar.
+        if (row.agOff) {
+          hook.cell.styles.fillColor = [254, 249, 195];
+          hook.cell.styles.fontStyle = hook.cell.styles.fontStyle === 'bold' ? 'bolditalic' : 'italic';
+        }
         if (hook.column.index === 7) {
           hook.cell.styles.textColor = row.diff > 0 ? C.red : row.diff < 0 ? C.green : C.muted;
         }
@@ -334,7 +388,7 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
     });
     y = (doc as any).lastAutoTable.finalY + 3;
     const notes: string[] = [];
-    if (d.flexRows.some(r => r.agOff)) notes.push('* Bruttolohn ohne AG-Sozialkosten');
+    if (d.flexRows.some(r => r.agOff)) notes.push('* Gelb/kursiv markierte Zeilen: Bruttolohn OHNE AG-Sozialkosten');
     if (d.flexManualNote) notes.push(d.flexManualNote);
     for (const n of notes) {
       doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...C.muted);
@@ -354,37 +408,55 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       startY: y,
       margin: { left: M, right: M },
       head: [['Status', 'Zeitraum', 'Flex Arbeit Plan', 'Flex Arbeit Ist', 'Diff. CHF', 'Diff. %', 'Kum. Abw. CHF']],
-      body: d.abwRows.map(r => [
+      body: d.abwRows.map(r => r.offen ? [
+        // Zukunftswoche ohne Ist: klar als «noch offen» markiert — KEINE
+        // Abweichung, KEINE Kumulation («100 % unter Plan»-Falle).
+        'noch offen',
+        r.period,
+        fmtCHF(r.plan),
+        '-',
+        'kein Ist',
+        '-',
+        '-',
+      ] : [
         AMPEL_LABEL[r.status],
         r.period,
         fmtCHF(r.plan),
         fmtCHF(r.ist),
         fmtDiff(r.diff),
         fmtPct(r.diffPct),
-        `${r.cum > 0.005 ? '+' : r.cum < -0.005 ? '−' : ''}${fmtCHF(Math.abs(r.cum))}`,
+        `${r.cum > 0.005 ? '+' : r.cum < -0.005 ? '-' : ''}${fmtCHF(Math.abs(r.cum))}`,
       ]),
       foot: d.abwTotal ? [[
         AMPEL_LABEL[d.abwStatus],
-        'Total',
+        d.abwRows.some(r => r.offen) ? 'Total (bis Ist)' : 'Total',
         fmtCHF(d.abwTotal.plan),
         fmtCHF(d.abwTotal.ist),
         fmtDiff(d.abwTotal.diff),
         fmtPct(d.abwTotal.diffPct),
-        `${d.abwTotal.diff > 0.005 ? '+' : d.abwTotal.diff < -0.005 ? '−' : ''}${fmtCHF(Math.abs(d.abwTotal.diff))}`,
+        `${d.abwTotal.diff > 0.005 ? '+' : d.abwTotal.diff < -0.005 ? '-' : ''}${fmtCHF(Math.abs(d.abwTotal.diff))}`,
       ]] : undefined,
-      styles: { fontSize: 7.5, cellPadding: 1.6, textColor: C.black, lineColor: C.border, lineWidth: 0.1 },
-      headStyles: { fillColor: C.tableHead, textColor: C.muted, fontStyle: 'bold' },
+      styles: { fontSize: 7.5, cellPadding: 1.4, textColor: C.black, lineColor: C.border, lineWidth: 0.1, overflow: 'linebreak' },
+      headStyles: { fillColor: C.tableHead, textColor: C.muted, fontStyle: 'bold', fontSize: 7 },
       footStyles: { fillColor: C.tableHead, textColor: C.black, fontStyle: 'bold' },
+      // Feste Spaltenbreiten: nichts wird abgeschnitten/zerrissen; Zahlen
+      // rechtsbündig (A4 nutzbar: 182 mm).
       columnStyles: {
-        0: { cellWidth: 24 },
-        2: { halign: 'right', textColor: C.blue },
-        3: { halign: 'right', textColor: C.orange },
-        4: { halign: 'right', fontStyle: 'bold' },
-        5: { halign: 'right' },
+        0: { cellWidth: 25 },
+        1: { cellWidth: 30 },
+        2: { halign: 'right', cellWidth: 26, textColor: C.blue },
+        3: { halign: 'right', cellWidth: 26, textColor: C.orange },
+        4: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+        5: { halign: 'right', cellWidth: 20 },
         6: { halign: 'right', fontStyle: 'bold' },
       },
       didParseCell: (hook) => {
         const row = hook.section === 'body' ? d.abwRows[hook.row.index] : null;
+        if (hook.section === 'body' && row?.offen) {
+          hook.cell.styles.textColor = C.muted;
+          hook.cell.styles.fontStyle = 'italic';
+          return;
+        }
         const status = hook.section === 'body' ? row?.status : d.abwTotal ? d.abwStatus : null;
         if (!status) return;
         if (hook.column.index === 0) {
@@ -403,7 +475,7 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
     });
     y = (doc as any).lastAutoTable.finalY + 3;
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...C.muted);
-    doc.text('Ampel: Grün = im Plan · Gelb = ≤5 % über Plan · Rot = >5 % über Plan', M, y);
+    doc.text('Ampel: Grün = im Plan · Gelb = bis 5 % über Plan · Rot = über 5 % über Plan · «noch offen» = Zeitraum ohne Ist (zählt nicht)', M, y);
   }
 
   // ── Fusszeile mit Seitenzahlen ────────────────────────────────────────────

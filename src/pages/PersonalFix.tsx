@@ -91,7 +91,7 @@ import {
 } from '@/lib/personal-fix-reconciliation';
 import {
   ladePersonalkostenDaten, personalkosten, personalquote, umsatz,
-  fixKosten, flexKostenProTag, letzterVergangenerTag, budget, budgetZielQuote,
+  fixKosten, flexKostenProTag, letzterVergangenerTag, effektiverIstStichtag, budget, budgetZielQuote,
   type PersonalkostenDaten,
 } from '@/lib/personalkosten';
 import {
@@ -1337,6 +1337,9 @@ interface AbwRow {
   diff:      number;
   diffPct:   number | null;
   dates:     string[];
+  /** true = Zeitraum liegt (ganz) nach dem letzten Ist-Tag — «noch offen / kein Ist»:
+   *  nicht als Abweichung werten, nicht in Total/Kumulation zählen. */
+  offen?:    boolean;
 }
 
 type AbwMode = 'day' | 'week' | 'month' | 'year';
@@ -2548,7 +2551,10 @@ export default function PersonalFixPage() {
   // Kanonische Kennzahlen (Hochrechnung/Ist/PKQ/Umsatz/Stichtag) aus der SSOT.
   const pkZentral = useMemo(() => {
     if (!pkDaten) return null;
-    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    // Effektiver Ist-Stichtag: letzter Tag mit importierten Ist-Stunden/-Umsatz
+    // (gemeinsamer früherer Tag → PK-Ist und Umsatz-Ist messen denselben
+    // Zeitraum, PKQ Ist bleibt kongruent) — nie ein leerer Folgetag.
+    const stichtag = effektiverIstStichtag(pkDaten);
     const kHr = personalkosten(pkDaten, 'hochrechnung', { stichtag });
     const kIst = personalkosten(pkDaten, 'istBisHeute', { stichtag });
     const pkq = personalquote(pkDaten, { stichtag });
@@ -2566,7 +2572,7 @@ export default function PersonalFixPage() {
   // flexKostenProTag wird EINMAL berechnet und kumuliert (keine 31 Lib-Aufrufe).
   const pkqVerlauf = useMemo(() => {
     if (!pkDaten) return null;
-    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    const stichtag = effektiverIstStichtag(pkDaten); // konsistent mit pkZentral
     if (stichtag <= 0) return null;
     const fixMonat = fixKosten(pkDaten).totalMonat; // voller Monat, einmalig
     const tage = flexKostenProTag(pkDaten, { stichtag }); // einmalig
@@ -4161,6 +4167,8 @@ export default function PersonalFixPage() {
     monthPlan: number;
     monthIst:  number;
     monthDiff: number;
+    /** Totals NUR über den Zeitraum bis zum letzten Ist-Tag (Zukunft zählt nicht). */
+    bisIst:    { plan: number; ist: number; diff: number; lastIstDate: string };
   } => {
     const cutoff = proRataDay;
     // Only Flex Arbeit (work hours × wage) — no ferien in this view
@@ -4210,6 +4218,9 @@ export default function PersonalFixPage() {
       e.p += d.planTotal; e.i += d.istTotal; e.dates.push(d.date);
       weekMap.set(wk, e);
     }
+    // Letzter Tag mit tatsächlichem Ist (>0): Zeiträume danach sind «noch offen»
+    // — Zukunftswochen ohne Ist dürfen NICHT als «100 % unter Plan» erscheinen.
+    const lastIstDate = days.reduce((max, d) => (d.istTotal > 0 && d.date > max ? d.date : max), '');
     const weeks: AbwRow[] = Array.from(weekMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([period, v]) => ({
@@ -4219,11 +4230,19 @@ export default function PersonalFixPage() {
         diff:      v.i - v.p,
         diffPct:   v.p > 0 ? ((v.i - v.p) / v.p) * 100 : null,
         dates:     v.dates,
+        offen:     v.i <= 0 && (lastIstDate === '' || v.dates.every(dt => dt > lastIstDate)),
       }));
 
     const monthPlan = days.reduce((s, d) => s + d.planTotal, 0);
     const monthIst  = days.reduce((s, d) => s + d.istTotal,  0);
     const monthDiff = monthIst - monthPlan;
+
+    // Nur-bis-Ist-Sicht: Plan/Ist/Diff ausschliesslich über Tage bis zum letzten
+    // Ist-Tag (Total/Kumulation der Flex-Auswertung; Zukunft zählt nicht).
+    const bisIstDays = lastIstDate ? days.filter(d => d.date <= lastIstDate) : [];
+    const bisIstPlan = bisIstDays.reduce((s, d) => s + d.planTotal, 0);
+    const bisIstIst  = bisIstDays.reduce((s, d) => s + d.istTotal,  0);
+    const bisIst = { plan: bisIstPlan, ist: bisIstIst, diff: bisIstIst - bisIstPlan, lastIstDate };
 
     const monthStatus = ampelStatus(monthDiff, monthPlan);
     const monthPctVal = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : 0;
@@ -4235,7 +4254,7 @@ export default function PersonalFixPage() {
     console.log(`[FLEX] daily rows: ${days.length}, week rows: ${weeks.length}`);
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
-    return { days, weeks, monthPlan, monthIst, monthDiff };
+    return { days, weeks, monthPlan, monthIst, monthDiff, bisIst };
   }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
@@ -4409,7 +4428,7 @@ export default function PersonalFixPage() {
 
   // PDF-Export = 1:1-Abbild der Seite (gleiche Memos wie das Rendering, ohne
   // Verlaufs-/PKQ-Diagramme). Nur Darstellung — keine neue Berechnung.
-  const handleExportPDF = () => {
+  const handleExportPDF = (showWageDetail: boolean) => {
     try {
       if (!pkZentral || !pkDaten) { toast.error('Personalkosten noch nicht geladen.'); return; }
 
@@ -4452,19 +4471,23 @@ export default function PersonalFixPage() {
         ? effectiveFlexIst(flexOverrides.total, flexAgFactor)
         : flexIstEffectiveSum;
 
-      // 4) Flex-Auswertung — aktuelle Aggregation der Seite (Ampel identisch)
-      const { days, weeks, monthPlan, monthIst, monthDiff } = pfixAbw;
-      const monthPct = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
+      // 4) Flex-Auswertung — aktuelle Aggregation der Seite (Ampel identisch);
+      //    Woche: «offen»-Zeiträume neutral, Total/Kum. nur über Wochen mit Ist.
+      const { days, weeks, monthPlan, monthIst, monthDiff, bisIst } = pfixAbw;
       const monthLabelStr = getMonthLabel(selectedYear, selectedMonth);
       const abwBase =
-        abwMode === 'week' ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct })) :
-        abwMode === 'day'  ? days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct })) :
-        [{ period: monthLabelStr, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }];
+        abwMode === 'week' ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct, offen: w.offen === true })) :
+        abwMode === 'day'  ? days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct, offen: false })) :
+        [{ period: monthLabelStr, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null, offen: false }];
       let cum = 0;
       const abwRows = abwBase.map(r => {
-        cum += r.diff;
-        return { ...r, cum, status: ampelStatus(r.diff, r.plan) as PkAmpel };
+        if (!r.offen) cum += r.diff;
+        return { ...r, cum, status: (r.offen ? 'neutral' : ampelStatus(r.diff, r.plan)) as PkAmpel };
       });
+      const abwTotPlan = abwMode === 'week' ? bisIst.plan : monthPlan;
+      const abwTotIst  = abwMode === 'week' ? bisIst.ist  : monthIst;
+      const abwTotDiff = abwMode === 'week' ? bisIst.diff : monthDiff;
+      const abwTotPct  = abwTotPlan > 0 ? (abwTotDiff / abwTotPlan) * 100 : null;
 
       exportPersonalkostenSeiteToPDF({
         tenantLabel: tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv',
@@ -4487,15 +4510,17 @@ export default function PersonalFixPage() {
         daysInMonth: pkDaten.daysInMonth,
         stichtag: pkZentral.stichtag,
         agOffFlexCount,
-        // 2) Fix
+        showWageDetail,
+        // 2) Fix — NUR im PDF: «Ramadani Mejdi» anonymisiert (on-screen normal)
         fixFilterLabel: fixDeptFilter === 'alle' ? null : fixDeptFilter === 'küche' ? 'nur Küche' : 'nur Service',
         fixRows: fixFiltered.map(({ emp, cost, label, dept }) => ({
-          name: emp.name,
+          name: emp.name.trim().toLowerCase() === 'ramadani mejdi' ? 'Zusatzkosten Fix-Lohn' : emp.name,
           label,
           dept: DEPT_LABEL[dept] ?? dept,
           basis: emp.monthlySalary ?? null,
           inkl13: emp.monthlySalaryWith13th ?? null,
           agMt: cost,
+          pensumPct: emp.weeklyHours != null && emp.weeklyHours > 0 ? (emp.weeklyHours / 42) * 100 : null,
         })),
         fixTotals,
         // 3) Flex
@@ -4514,10 +4539,10 @@ export default function PersonalFixPage() {
             : null,
         // 4) Flex-Auswertung
         abwModeLabel: abwMode === 'day' ? 'Tag' : abwMode === 'week' ? 'Woche' : abwMode === 'month' ? 'Monat' : 'Jahr',
-        abwStatus: ampelStatus(monthDiff, monthPlan) as PkAmpel,
+        abwStatus: ampelStatus(abwTotDiff, abwTotPlan) as PkAmpel,
         abwRows,
         abwTotal: abwRows.length > 1
-          ? { plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct }
+          ? { plan: abwTotPlan, ist: abwTotIst, diff: abwTotDiff, diffPct: abwTotPct }
           : null,
       });
       toast.success('PDF erfolgreich exportiert');
@@ -4680,7 +4705,8 @@ export default function PersonalFixPage() {
             data-testid="pfix-export"
             actions={[
               { key: 'excel', label: 'Excel-Export (Personalkosten)', kind: 'excel', onSelect: handleExportExcel },
-              { key: 'pdf', label: 'Personalkosten-Seite (PDF)', kind: 'pdf', onSelect: handleExportPDF },
+              { key: 'pdf', label: 'Personalkosten-Seite (PDF) — mit Detaillöhnen', kind: 'pdf', onSelect: () => handleExportPDF(true) },
+              { key: 'pdf-anon', label: 'Personalkosten-Seite (PDF) — ohne Detaillöhne', kind: 'pdf', onSelect: () => handleExportPDF(false) },
             ]}
           />
         </div>
@@ -5067,11 +5093,17 @@ export default function PersonalFixPage() {
 
         {/* ── Einheitliche Flex-Auswertung ───────────────────────────────────── */}
         {(pfixAbw.days.length > 0 || pfixPerEmp.length > 0) && (() => {
-          const { days, weeks, monthPlan, monthIst, monthDiff } = pfixAbw;
-          const monthPct    = monthPlan > 0 ? (monthDiff / monthPlan) * 100 : null;
-          const avgWeekDiff = weeks.length > 0 ? monthDiff / weeks.length : 0;
+          const { days, weeks, monthPlan, monthIst, monthDiff, bisIst } = pfixAbw;
+          // Bewertung/Total NUR über den Zeitraum bis zum letzten Ist-Tag —
+          // Zukunftswochen ohne Ist sind «noch offen», keine Abweichung.
+          const istWeeks    = weeks.filter(w => !w.offen);
+          const totalPlan   = abwMode === 'week' ? bisIst.plan : monthPlan;
+          const totalIst    = abwMode === 'week' ? bisIst.ist  : monthIst;
+          const totalDiff   = abwMode === 'week' ? bisIst.diff : monthDiff;
+          const monthPct    = totalPlan > 0 ? (totalDiff / totalPlan) * 100 : null;
+          const avgWeekDiff = istWeeks.length > 0 ? bisIst.diff / istWeeks.length : 0;
           const avgDayDiff  = days.length  > 0 ? monthDiff / days.length  : 0;
-          const monthStatus = ampelStatus(monthDiff, monthPlan);
+          const monthStatus = ampelStatus(totalDiff, totalPlan);
           const mA          = AMPEL[monthStatus];
 
           const fmtDiff = (v: number) => {
@@ -5087,16 +5119,16 @@ export default function PersonalFixPage() {
           const allDates = days.map(d => d.date);
           const monthLabel = getMonthLabel(selectedYear, selectedMonth);
 
-          type PeriodRow = { period: string; plan: number; ist: number; diff: number; diffPct: number | null; dates: string[] };
+          type PeriodRow = { period: string; plan: number; ist: number; diff: number; diffPct: number | null; dates: string[]; offen?: boolean };
           const tableRows: PeriodRow[] =
             abwMode === 'year'  ? [{ period: monthLabel, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct, dates: allDates }] :
             abwMode === 'month' ? [{ period: monthLabel, plan: monthPlan, ist: monthIst, diff: monthDiff, diffPct: monthPct, dates: allDates }] :
-            abwMode === 'week'  ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct, dates: w.dates })) :
+            abwMode === 'week'  ? weeks.map(w => ({ period: w.period, plan: w.planTotal, ist: w.istTotal, diff: w.diff, diffPct: w.diffPct, dates: w.dates, offen: w.offen })) :
             days.map(d => ({ period: fmtDate(d.date), plan: d.planTotal, ist: d.istTotal, diff: d.diff, diffPct: d.diffPct, dates: [d.date] }));
 
           const kpiChips = [
-            { label: 'Abweichung Monat', val: monthDiff,   plan: monthPlan,                                          pct: monthPct },
-            { label: 'Ø Abw./Woche',     val: avgWeekDiff, plan: weeks.length > 0 ? monthPlan / weeks.length : 0,   pct: weeks.length > 0 ? (avgWeekDiff / (monthPlan / weeks.length)) * 100 : null },
+            { label: 'Abweichung Monat', val: totalDiff,   plan: totalPlan,                                          pct: monthPct },
+            { label: 'Ø Abw./Woche',     val: avgWeekDiff, plan: istWeeks.length > 0 ? bisIst.plan / istWeeks.length : 0, pct: istWeeks.length > 0 && bisIst.plan > 0 ? (avgWeekDiff / (bisIst.plan / istWeeks.length)) * 100 : null },
             { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0,  pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
           ];
 
@@ -5168,11 +5200,10 @@ export default function PersonalFixPage() {
                       {(() => {
                         let cumDiff = 0;
                         return tableRows.map((row, i) => {
-                          cumDiff += row.diff;
-                          console.log(`[FLEX-CUM] aggregation: ${abwMode}`);
-                          console.log(`[FLEX-CUM] row diff: ${row.diff.toFixed(2)}`);
-                          console.log(`[FLEX-CUM] running diff total: ${cumDiff.toFixed(2)}`);
-                          const st = ampelStatus(row.diff, row.plan);
+                          // «noch offen»: kein Ist im Zeitraum → keine Abweichung,
+                          // zählt nicht in die Kumulation (neutral markiert).
+                          if (!row.offen) cumDiff += row.diff;
+                          const st = row.offen ? 'neutral' as const : ampelStatus(row.diff, row.plan);
                           const a  = AMPEL[st];
                           const cumCls = cumDiff > 0.005 ? 'text-red-600 dark:text-red-400'
                             : cumDiff < -0.005 ? 'text-emerald-600 dark:text-emerald-400'
@@ -5180,7 +5211,7 @@ export default function PersonalFixPage() {
                           return (
                             <tr
                               key={i}
-                              className={cn('hover:bg-muted/30 cursor-pointer transition-colors', a.bg)}
+                              className={cn('hover:bg-muted/30 cursor-pointer transition-colors', a.bg, row.offen && 'opacity-60 italic')}
                               onClick={() => setFlexPeriodPopup({
                                 label:     row.period,
                                 dates:     row.dates,
@@ -5196,11 +5227,11 @@ export default function PersonalFixPage() {
                               </td>
                               <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{row.period}</td>
                               <td className="px-4 py-2 text-right font-mono tabular-nums text-blue-700 dark:text-blue-400">{fmtCHF(row.plan)}</td>
-                              <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
-                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
-                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
-                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold text-xs', cumCls)}>
-                                {cumDiff > 0.005 ? '+' : cumDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiff))}
+                              <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{row.offen ? '–' : fmtCHF(row.ist)}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{row.offen ? 'noch offen' : fmtDiff(row.diff)}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{row.offen ? 'kein Ist' : fmtPct(row.diffPct)}</td>
+                              <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold text-xs', row.offen ? 'text-muted-foreground/50' : cumCls)}>
+                                {row.offen ? '–' : `${cumDiff > 0.005 ? '+' : cumDiff < -0.005 ? '−' : ''}${fmtCHF(Math.abs(cumDiff))}`}
                               </td>
                             </tr>
                           );
@@ -5211,13 +5242,13 @@ export default function PersonalFixPage() {
                       <tfoot>
                         <tr className={cn('border-t-2 border-border', mA.bg || 'bg-muted/20')}>
                           <td className="px-3 py-2.5 text-center"><span className={cn('inline-block w-2.5 h-2.5 rounded-full', mA.dot)} /></td>
-                          <td className="px-4 py-2.5 font-bold text-xs">Total</td>
-                          <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(monthPlan)}</td>
-                          <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
-                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
+                          <td className="px-4 py-2.5 font-bold text-xs">Total{abwMode === 'week' && weeks.some(w => w.offen) ? ' (bis Ist)' : ''}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(totalPlan)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(totalIst)}</td>
+                          <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(totalDiff)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold text-xs', mA.text)}>
-                            {monthDiff > 0.005 ? '+' : monthDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(monthDiff))}
+                            {totalDiff > 0.005 ? '+' : totalDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(totalDiff))}
                           </td>
                         </tr>
                       </tfoot>

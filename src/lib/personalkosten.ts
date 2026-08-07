@@ -472,6 +472,36 @@ export function budgetZielQuote(daten: PersonalkostenDaten): number {
  * - vergangener Monat → letzter Monatstag
  * - zukünftiger Monat → 0
  */
+/**
+ * Effektiver Ist-Stichtag: letzter Tag mit TATSÄCHLICH importierten
+ * Ist-Stunden (>0) bzw. Ist-Umsatz — nie ein leerer Folgetag.
+ * Regeln:
+ * - Basis = letzter Tag mit Ist-Stunden (istTage) UND letzter Tag mit
+ *   Ist-Umsatz (>0); liegen BEIDE vor, gilt der gemeinsame (frühere) Tag,
+ *   damit PK-Ist und Umsatz-Ist denselben Zeitraum messen (PKQ-Ist-Kongruenz).
+ * - Fehlt eine der beiden Quellen ganz, gilt der Tag der vorhandenen Quelle.
+ * - Fehlen beide, Fallback auf letzterVergangenerTag (Kalender).
+ * - Nie später als letzterVergangenerTag (kein Blick in die Zukunft).
+ */
+export function effektiverIstStichtag(daten: PersonalkostenDaten, heute: Date = new Date()): number {
+  const kalender = letzterVergangenerTag(daten.year, daten.month, heute);
+  const prefix = `${daten.year}-${pad2(daten.month)}-`;
+  const tagAus = (key: string) => parseInt(key.slice(8, 10), 10) || 0;
+  let letzterStundenTag = 0;
+  for (const d of daten.istTage) {
+    if (d.startsWith(prefix)) letzterStundenTag = Math.max(letzterStundenTag, tagAus(d));
+  }
+  let letzterUmsatzTag = 0;
+  for (const [d, v] of Object.entries(daten.umsatzIstProTag)) {
+    if (v > 0 && d.startsWith(prefix)) letzterUmsatzTag = Math.max(letzterUmsatzTag, tagAus(d));
+  }
+  let s: number;
+  if (letzterStundenTag > 0 && letzterUmsatzTag > 0) s = Math.min(letzterStundenTag, letzterUmsatzTag);
+  else if (letzterStundenTag > 0 || letzterUmsatzTag > 0) s = Math.max(letzterStundenTag, letzterUmsatzTag);
+  else s = kalender;
+  return Math.min(s, kalender);
+}
+
 export function letzterVergangenerTag(year: number, month: number, heute: Date = new Date()): number {
   const hY = heute.getFullYear(), hM = heute.getMonth() + 1;
   const daysInMonth = new Date(year, month, 0).getDate();

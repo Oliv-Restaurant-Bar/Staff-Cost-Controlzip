@@ -1,0 +1,33 @@
+BEFEHL — Personalkosten-PDF-Export & Flex-Auswertung überarbeiten (gilt für Oliv + Beaulieu)
+
+1) Ist-Zeitraum automatisch & korrekt erkennen
+
+Den letzten Tag mit tatsächlich importierten Ist-Stunden (> 0) ermitteln, nicht einen leeren Folgetag. Aktuell steht „IST BIS 06.08. · 6 von 31 Tagen" — richtig sind 05.08. · 5 Tage.
+Diesen Stichtag überall konsistent verwenden (Kopfzeile, „IST BIS TT.MM.", Ist-Kennzahlen).
+PKQ Ist nur über deckungsgleichen Zeitraum: Personalkosten-Ist und Netto-Umsatz-Ist müssen denselben Zeitraum messen. Ist der Umsatz nur bis 05.08. und die Stunden bis 06.08., nimm den gemeinsamen (früheren) Stichtag für beide → PKQ Ist = Personalkosten(Zeitraum) ÷ Umsatz(gleicher Zeitraum). Fehlt der Umsatz für den Ist-Zeitraum, PKQ Ist leer lassen — nie über ungleiche Zeiträume rechnen.
+
+2) Fix-Lohnkosten: Detail ausblendbar (Datenschutz)
+
+Neue Export-Option „Detaillöhne anzeigen: Ja / Nein" — beides möglich.
+Nein (datenschutzkonform): pro Mitarbeiter nur Name · Abteilung · Pensum (%); die CHF-Spalten (Basis-Lohn, inkl. 13., Total AG/Mt) werden ausgeblendet. Total FIX (Aggregat) bleibt sichtbar.
+Ja: wie bisher mit Detaillöhnen.
+
+3) Ramadani Mejdi im PDF anonymisieren
+
+Nur im PDF-Export: die Zeile „Ramadani Mejdi" als „Zusatzkosten Fix-Lohn" ausweisen (Name nicht sichtbar). In der App on-screen bleibt der Name normal.
+
+4) Flex-Kosten pro Mitarbeiter: „ohne AG-Kosten" klar abgrenzen
+
+Mitarbeiter ohne AG-Kosten visuell klar markieren (eigenes Badge „ohne AG-Kosten" + dezent andere Zeilenfarbe/kursiv) statt nur „[ohne AG-Kosten]" + Sternchen — damit man auf einen Blick sieht, welche Zeilen keine Arbeitgeberkosten enthalten.
+
+5) Beschriftung oben rechts visuell verbessern
+
+Die vier Blöcke Budget · Abweichung (HR − Budget) · PKQ Hochrechnung · FIX + FLEX sauber als Karten/Grid: Label klein/grau, Wert gross/fett, einheitliche Ausrichtung, mehr Abstand. Wirkt aktuell gedrängt und uneinheitlich.
+
+6) Flex-Auswertung „Plan vs. Ist (Woche)" — komplett neu
+
+Rendering fixen: Spaltenbreiten so, dass nichts abgeschnitten wird (aktuell „CHF 3 0", zerrissene Zahlen, kaputte Sonderzeichen). Zahlen rechtsbündig, CHF sauber, Pfeile/Ampel korrekt.
+Nur bis zum Ist-Zeitraum zeigen: Wochen ohne Ist (Zukunft — aktuell KW 33–35 mit Ist = 0 → fälschlich „100 % unter Plan") nicht als Abweichung werten; entweder weglassen oder klar als „noch offen / kein Ist" markieren. Total/Kum. nur über Wochen mit Ist.
+Kennzahlen sauber: Plan · Ist · Diff CHF · Diff % · Kum. Abweichung, Ampel (grün ≤ Plan · gelb ≤ 5 % über · rot > 5 % über).
+
+Gilt für beide Mandanten.
