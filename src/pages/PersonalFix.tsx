@@ -4211,27 +4211,40 @@ export default function PersonalFixPage() {
         };
       });
 
-    const weekMap = new Map<string, { p: number; i: number; dates: string[] }>();
-    for (const d of days) {
-      const wk = isoWeekLabel(d.date);
-      const e  = weekMap.get(wk) ?? { p: 0, i: 0, dates: [] };
-      e.p += d.planTotal; e.i += d.istTotal; e.dates.push(d.date);
-      weekMap.set(wk, e);
-    }
     // Letzter Tag mit tatsächlichem Ist (>0): Zeiträume danach sind «noch offen»
     // — Zukunftswochen ohne Ist dürfen NICHT als «100 % unter Plan» erscheinen.
     const lastIstDate = days.reduce((max, d) => (d.istTotal > 0 && d.date > max ? d.date : max), '');
+
+    // pBis = Plan NUR über Tage ≤ Stichtag (letzter Ist-Tag): die Woche, die den
+    // Stichtag enthält, wird pro rata gekappt — Plan und Ist vergleichen dann
+    // denselben Zeitraum (Befehl 08/2026). Volle Vergangenheitswochen bleiben
+    // unverändert (alle Tage ≤ Stichtag), Zukunftswochen bleiben «offen».
+    const weekMap = new Map<string, { p: number; pBis: number; i: number; dates: string[] }>();
+    for (const d of days) {
+      const wk = isoWeekLabel(d.date);
+      const e  = weekMap.get(wk) ?? { p: 0, pBis: 0, i: 0, dates: [] };
+      e.p += d.planTotal;
+      if (lastIstDate !== '' && d.date <= lastIstDate) e.pBis += d.planTotal;
+      e.i += d.istTotal; e.dates.push(d.date);
+      weekMap.set(wk, e);
+    }
     const weeks: AbwRow[] = Array.from(weekMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([period, v]) => ({
-        period,
-        planTotal: v.p,
-        istTotal:  v.i,
-        diff:      v.i - v.p,
-        diffPct:   v.p > 0 ? ((v.i - v.p) / v.p) * 100 : null,
-        dates:     v.dates,
-        offen:     v.i <= 0 && (lastIstDate === '' || v.dates.every(dt => dt > lastIstDate)),
-      }));
+      .map(([period, v]) => {
+        const offen = v.i <= 0 && (lastIstDate === '' || v.dates.every(dt => dt > lastIstDate));
+        // Offene Zukunftswochen zeigen weiterhin den vollen Wochenplan;
+        // Wochen mit Ist werden auf den Zeitraum bis Stichtag gekappt.
+        const plan = offen ? v.p : v.pBis;
+        return {
+          period,
+          planTotal: plan,
+          istTotal:  v.i,
+          diff:      v.i - plan,
+          diffPct:   plan > 0 ? ((v.i - plan) / plan) * 100 : null,
+          dates:     v.dates,
+          offen,
+        };
+      });
 
     const monthPlan = days.reduce((s, d) => s + d.planTotal, 0);
     const monthIst  = days.reduce((s, d) => s + d.istTotal,  0);
@@ -4252,6 +4265,9 @@ export default function PersonalFixPage() {
     console.log(`[FLEX] ist total: ${monthIst.toFixed(2)}`);
     console.log(`[FLEX] diff: ${monthDiff.toFixed(2)}`);
     console.log(`[FLEX] daily rows: ${days.length}, week rows: ${weeks.length}`);
+    for (const w of weeks) {
+      console.log(`[FLEX] ${w.period}: planVoll=${(weekMap.get(w.period)?.p ?? 0).toFixed(0)} planKappe=${w.planTotal.toFixed(0)} ist=${w.istTotal.toFixed(0)} diffPct=${w.diffPct == null ? '-' : w.diffPct.toFixed(1)} offen=${w.offen}`);
+    }
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff, bisIst };
@@ -4511,10 +4527,11 @@ export default function PersonalFixPage() {
         stichtag: pkZentral.stichtag,
         agOffFlexCount,
         showWageDetail,
-        // 2) Fix — NUR im PDF: «Ramadani Mejdi» anonymisiert (on-screen normal)
+        // 2) Fix — Anonymisierung («Ramadani Mejdi») greift zentral in der
+        //    PDF-Lib für ALLE Tabellen (Fix UND Flex); on-screen bleibt der Name.
         fixFilterLabel: fixDeptFilter === 'alle' ? null : fixDeptFilter === 'küche' ? 'nur Küche' : 'nur Service',
         fixRows: fixFiltered.map(({ emp, cost, label, dept }) => ({
-          name: emp.name.trim().toLowerCase() === 'ramadani mejdi' ? 'Zusatzkosten Fix-Lohn' : emp.name,
+          name: emp.name,
           label,
           dept: DEPT_LABEL[dept] ?? dept,
           basis: emp.monthlySalary ?? null,

@@ -38,6 +38,13 @@ const fmtPct = (v: number | null) => {
   return v > 0.05 ? `+${s}` : v < -0.05 ? `-${s}` : s;
 };
 
+// ── PDF-Anonymisierung ───────────────────────────────────────────────────────
+// «Ramadani Mejdi» darf im exportierten PDF NIRGENDS im Klartext stehen —
+// zentral hier für ALLE Tabellen (Fix UND Flex). On-screen bleibt der Name.
+const ANON_LABEL = 'Zusatzkosten Fix-Lohn';
+const anonName = (name: string) =>
+  /ramadani|mejdi/i.test(name) ? ANON_LABEL : name;
+
 // ── Farben (an die Seite angelehnt) ─────────────────────────────────────────
 const C = {
   headerBlue:  [30, 58, 138] as [number, number, number],
@@ -199,7 +206,8 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
     doc.text(label.toUpperCase(), cx + 3, cy + 4);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
     doc.setTextColor(...(color ?? C.black));
-    doc.text(value, cx + 3, cy + 9.5);
+    // Werte (CHF/%-Beträge) einheitlich rechtsbündig in der Karte
+    doc.text(value, cx + cardW - 3, cy + 9.5, { align: 'right' });
     if (sub) {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(...C.muted);
       doc.text(sub, cx + 3, cy + 13);
@@ -267,7 +275,7 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       margin: { left: M, right: M },
       head: [['Name', 'Abteilung', 'Basis-Lohn/Mt', 'inkl. 13. /Mt', 'Total AG/Mt']],
       body: d.fixRows.map(r => [
-        r.label ? `${r.name}  [${r.label}]` : r.name,
+        r.label ? `${anonName(r.name)}  [${r.label}]` : anonName(r.name),
         r.dept,
         r.basis != null && r.basis > 0 ? fmtCHFDec(r.basis) : '-',
         r.inkl13 != null && r.inkl13 > 0 ? fmtCHFDec(r.inkl13) : '-',
@@ -284,10 +292,13 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       headStyles: { fillColor: C.tableHead, textColor: C.muted, fontStyle: 'bold' },
       footStyles: { fillColor: C.lightBlue, textColor: C.blue, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: C.rowAlt },
+      // Feste Spaltenbreiten (A4 nutzbar 182 mm): CHF-Spalten rechtsbündig,
+      // Zahlen «schwimmen» nicht zwischen den Spalten.
       columnStyles: {
-        0: { cellWidth: 60 }, 1: { cellWidth: 28 },
-        2: { halign: 'right' }, 3: { halign: 'right' },
-        4: { halign: 'right', textColor: C.blue, fontStyle: 'bold' },
+        0: { cellWidth: 56 }, 1: { cellWidth: 26 },
+        2: { halign: 'right', cellWidth: 32 },
+        3: { halign: 'right', cellWidth: 32 },
+        4: { halign: 'right', cellWidth: 36, textColor: C.blue, fontStyle: 'bold' },
       },
     } : {
       // Datenschutz-Modus: KEINE CHF-Spalten pro Mitarbeiter — nur
@@ -296,7 +307,7 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       margin: { left: M, right: M },
       head: [['Name', 'Abteilung', 'Pensum']],
       body: d.fixRows.map(r => [
-        r.label ? `${r.name}  [${r.label}]` : r.name,
+        r.label ? `${anonName(r.name)}  [${r.label}]` : anonName(r.name),
         r.dept,
         r.pensumPct != null ? `${Math.round(r.pensumPct)} %` : '-',
       ]),
@@ -306,8 +317,8 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       footStyles: { fillColor: C.lightBlue, textColor: C.blue, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: C.rowAlt },
       columnStyles: {
-        0: { cellWidth: 90 }, 1: { cellWidth: 45 },
-        2: { halign: 'right' },
+        0: { cellWidth: 92 }, 1: { cellWidth: 50 },
+        2: { halign: 'right', cellWidth: 40 },
       },
     });
     y = (doc as any).lastAutoTable.finalY + 3;
@@ -334,12 +345,14 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       head: [['Name', 'Abt.', 'Total AG/h', 'Plan Std', 'Ist Std', 'Flex Plan', 'Flex Ist', 'Diff.']],
       body: d.flexRows.map(r => {
         const badges: string[] = [];
-        if (r.zusatz) badges.push('Zusatzkosten');
+        const name = anonName(r.name);
+        // Anonymisierte Zeile: «Zusatzkosten»-Badge wäre redundant zum Ersatztext
+        if (r.zusatz && name !== ANON_LABEL) badges.push('Zusatzkosten');
         if (r.lohnFehlt) badges.push('Lohn fehlt');
         if (r.agOff) badges.push('ohne AG-Kosten');
         if (r.manuell) badges.push('Ist manuell');
         return [
-          badges.length ? `${r.name}  [${badges.join(', ')}]` : r.name,
+          badges.length ? `${name}  [${badges.join(', ')}]` : name,
           r.dept,
           r.hourly > 0 ? r.hourly.toFixed(2) + (r.agOff ? ' *' : '') : '-',
           r.planH > 0 ? `${r.planH.toFixed(1)} h` : '-',
@@ -361,14 +374,15 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       headStyles: { fillColor: C.tableHead, textColor: C.muted, fontStyle: 'bold' },
       footStyles: { fillColor: C.lightOrange, textColor: C.orange, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: C.rowAlt },
+      // Feste Spaltenbreiten (Σ = 182 mm): alle CHF-/Zahlenspalten rechtsbündig
       columnStyles: {
-        0: { cellWidth: 52 }, 1: { cellWidth: 14 },
-        2: { halign: 'right' },
-        3: { halign: 'right', textColor: C.blue },
-        4: { halign: 'right', textColor: C.orange },
-        5: { halign: 'right', textColor: C.blue, fontStyle: 'bold' },
-        6: { halign: 'right', textColor: C.orange, fontStyle: 'bold' },
-        7: { halign: 'right' },
+        0: { cellWidth: 46 }, 1: { cellWidth: 14 },
+        2: { halign: 'right', cellWidth: 20 },
+        3: { halign: 'right', cellWidth: 19, textColor: C.blue },
+        4: { halign: 'right', cellWidth: 19, textColor: C.orange },
+        5: { halign: 'right', cellWidth: 22, textColor: C.blue, fontStyle: 'bold' },
+        6: { halign: 'right', cellWidth: 22, textColor: C.orange, fontStyle: 'bold' },
+        7: { halign: 'right', cellWidth: 20 },
       },
       didParseCell: (hook) => {
         if (hook.section !== 'body') return;
@@ -443,12 +457,12 @@ export function exportPersonalkostenSeiteToPDF(d: PkSeitePdfData): void {
       // rechtsbündig (A4 nutzbar: 182 mm).
       columnStyles: {
         0: { cellWidth: 25 },
-        1: { cellWidth: 30 },
+        1: { cellWidth: 33 },
         2: { halign: 'right', cellWidth: 26, textColor: C.blue },
         3: { halign: 'right', cellWidth: 26, textColor: C.orange },
         4: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
         5: { halign: 'right', cellWidth: 20 },
-        6: { halign: 'right', fontStyle: 'bold' },
+        6: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
       },
       didParseCell: (hook) => {
         const row = hook.section === 'body' ? d.abwRows[hook.row.index] : null;
