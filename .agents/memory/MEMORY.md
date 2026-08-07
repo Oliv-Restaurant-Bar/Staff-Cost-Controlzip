@@ -94,4 +94,5 @@
 - [Anzahl Bons & Ø-Bon abgeleitet](bon-stats.md) — nie speichern: round(Brutto÷Ø-Bon) je Tag, Jahres-Ø gewichtet (Σ÷Σ); Events kennzeichnen, nicht ausschliessen.
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.
 - [ER unvollständige Monate & Nachrichtlich-Konten](er-month-completeness.md) — partial-Monate (Umsatz XOR Kosten) grau & aus allen Summen; 5004/5005/5011 sichtbar aber nie summiert — Filter in PLView UND pl-engine.
+- [ER Umsatz vergangener Hauptjahre](plview-past-year-revenue.md) — canonicalRevenue/vj_daily-State {year,tenant}-taggen; Vergangenheitsjahr liest vj_daily:<jahr> via vjTagWerte, nie Fremdjahr behalten.
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.

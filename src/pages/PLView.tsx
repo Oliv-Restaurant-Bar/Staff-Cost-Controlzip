@@ -81,7 +81,8 @@ import {
 // IST-Umsatz NETTO/BRUTTO des laufenden Zeitraums: kanonische Quelle (SSOT).
 // gn_imports Tages-Z-Berichte via ladeUmsatzTage/summiereUmsatz — keine eigene
 // grossToNet/1.081-Rechnung mehr. VJ + Budget + FIBU-Logik bleiben unberührt.
-import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
+import { ladeUmsatzTage, summiereUmsatz, vjTagWerte, type UmsatzTag } from '@/lib/umsatz';
+import type { TenantId } from '@/contexts/TenantContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -120,6 +121,37 @@ function aggregateCanonicalByMonth(tage: Map<string, UmsatzTag>): CanonicalReven
     if (list.length === 0) { out[m] = { net: 0, gross: 0, hasData: false }; continue; }
     const s = summiereUmsatz(list);
     out[m] = { net: s.netto, gross: s.bruttoGesamt, hasData: true };
+  }
+  return out;
+}
+
+/**
+ * Jahresspezifischer Umsatz-Fallback für VERGANGENE Hauptjahre: aggregiert die
+ * vj_daily-Tagesrecords des GEWÄHLTEN Jahres (derselbe Speicher, aus dem die
+ * Vorjahr-Spalte der Folgejahr-Ansicht liest) auf Monatsnetto/-brutto —
+ * Umrechnung EXAKT nach umsatz-SSOT (vjTagWerte: TA/1.026 + Rest/1.081).
+ * Füllt nur Monate, die der manuelle Tagesumsatz-Import (dailyBudgets) nicht
+ * abdeckt; Monate ohne Daten bleiben hasData:false («leer statt 0»).
+ */
+function aggregateVjDailyByMonth(
+  tenantId: TenantId,
+  year: number,
+  vjDaily: Record<string, VjDayRecord>,
+): CanonicalRevenueByMonth {
+  const out: CanonicalRevenueByMonth = {};
+  for (let m = 1; m <= 12; m++) out[m] = { net: 0, gross: 0, hasData: false };
+  const prefix = `${year}-`;
+  for (const [datum, rec] of Object.entries(vjDaily)) {
+    if (!datum.startsWith(prefix)) continue;
+    const m = parseInt(datum.slice(5, 7), 10);
+    if (!m || m < 1 || m > 12) continue;
+    const w = vjTagWerte(tenantId, rec, datum);
+    if (!w) continue;
+    out[m] = {
+      net: Math.round((out[m].net + w.netto) * 100) / 100,
+      gross: Math.round((out[m].gross + Number(rec.actualRevenue ?? 0)) * 100) / 100,
+      hasData: true,
+    };
   }
   return out;
 }
@@ -2760,6 +2792,21 @@ const PLViewPage = () => {
     });
   }, [year, tenantId]);
 
+  // vj_daily des GEWÄHLTEN Jahres: Umsatz-Fallback für vergangene Hauptjahre
+  // («Jahr 2025» liest denselben Speicher wie die Vorjahr-Spalte der 2026-Ansicht).
+  // Jahres-getaggt gegen Stale-State beim Jahreswechsel; fürs laufende Jahr
+  // ist vj_daily leer → Fallback greift nie (kein Verhaltenswechsel).
+  const [mainYearVjDaily, setMainYearVjDaily] = useState<{ year: number; tenant: TenantId | ''; data: Record<string, VjDayRecord> }>({ year: 0, tenant: '', data: {} });
+  useEffect(() => {
+    let cancelled = false;
+    loadVjDailyYear(year, tenantId).then(data => {
+      if (cancelled) return;
+      console.log(`[REVENUE-SYNC] Hauptjahr-vj_daily geladen: ${Object.keys(data).length} Tage für ${year}`);
+      setMainYearVjDaily({ year, tenant: tenantId, data });
+    });
+    return () => { cancelled = true; };
+  }, [year, tenantId]);
+
   // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
   useEffect(() => {
     syncJournalYearFromDB(year, tenantId).then(() => setRefreshKey(k => k + 1));
@@ -2829,7 +2876,10 @@ const PLViewPage = () => {
   // ── Kanonischer IST-Umsatz pro Monat (umsatz.ts, gn_imports Tages-Z-Berichte) ──
   // SSOT für den IST-Umsatz des laufenden Jahres; ersetzt die frühere
   // grossToNet/dailyBudgets-Herleitung. Tage ohne Import fehlen → kein 0 erfunden.
-  const [canonicalRevenue, setCanonicalRevenue] = useState<CanonicalRevenueByMonth>({});
+  // Jahres-getaggt: verhindert, dass beim Jahreswechsel die noch geladenen
+  // Monatswerte des ALTEN Jahres (Map ist nur monats-indiziert!) in die neue
+  // Jahresansicht einfliessen (Bug: «Jahr 2025» zeigte 2026-Ist).
+  const [canonicalRevenue, setCanonicalRevenue] = useState<{ year: number; tenant: TenantId | ''; months: CanonicalRevenueByMonth }>({ year: 0, tenant: '', months: {} });
   useEffect(() => {
     // WICHTIG: KEIN refreshKey in den Deps. Der Wert kommt direkt aus Supabase
     // (gn_imports), nicht aus localStorage — refreshKey wird von mehreren anderen
@@ -2849,9 +2899,14 @@ const PLViewPage = () => {
         .then(tage => {
           if (myGen !== gen) return;
           const agg = aggregateCanonicalByMonth(tage);
-          // Leeres Ergebnis überschreibt nie ein bereits geladenes (Session-Race).
+          // Leeres Ergebnis überschreibt nie ein bereits geladenes (Session-Race)
+          // — aber NUR innerhalb DESSELBEN Jahres UND Mandanten; Fremdjahr-/
+          // Fremdmandant-Daten werden NIE behalten (Tenant-Isolation).
           setCanonicalRevenue(prev =>
-            tage.size === 0 && Object.values(prev).some(m => m.hasData) ? prev : agg,
+            tage.size === 0 && prev.year === year && prev.tenant === tenantId
+              && Object.values(prev.months).some(m => m.hasData)
+              ? prev
+              : { year, tenant: tenantId, months: agg },
           );
         })
         .catch(() => { /* Fehler bereits in ladeUmsatzTage geloggt; State behalten */ });
@@ -2930,6 +2985,24 @@ const PLViewPage = () => {
   //   VJ-Umsatz:  Tagesansicht-VJ-NETTO schlägt reporting_v1, ausser wenn Sage 3xxx-PY-Konten vorhanden.
   // → Garantiert: PLView-Umsatz ≡ Tagesansicht-Umsatz
   const effectiveAllRecords = useMemo(() => {
+    // Jahres-Guard: nur Monatswerte verwenden, die WIRKLICH fürs gewählte Jahr
+    // geladen wurden (Stale-State beim Jahreswechsel sonst = Fremdjahr-Umsatz).
+    const canonicalMonths = canonicalRevenue.year === year && canonicalRevenue.tenant === tenantId
+      ? canonicalRevenue.months : {};
+    // Fallback für vergangene Hauptjahre: Monate ohne manuellen Tagesimport aus
+    // vj_daily des GEWÄHLTEN Jahres füllen (gleicher Speicher wie die
+    // Vorjahr-Spalte der Folgejahr-Ansicht; Netto nach umsatz-SSOT).
+    const vjFallback = mainYearVjDaily.year === year && mainYearVjDaily.tenant === tenantId
+      && Object.keys(mainYearVjDaily.data).length > 0
+      ? aggregateVjDailyByMonth(tenantId, year, mainYearVjDaily.data)
+      : null;
+    const mergedCanonical: CanonicalRevenueByMonth = {};
+    for (let m = 1; m <= 12; m++) {
+      const cur = canonicalMonths[m];
+      mergedCanonical[m] = cur?.hasData
+        ? cur
+        : (vjFallback?.[m]?.hasData ? vjFallback[m] : (cur ?? { net: 0, gross: 0, hasData: false }));
+    }
     return records.map((rec, idx) => {
       const m = idx + 1;
       // ── IST-Umsatz (kanonische Quelle umsatz.ts) + Personalkosten-Vorrang ──
@@ -2937,7 +3010,7 @@ const PLViewPage = () => {
       // mit Dashboard/Monatsreport); Maison ist ggf. eine separate Anzeige-Spalte.
       let r = applyCanonicalIstRule(rec, m, {
         year,
-        canonical: canonicalRevenue,
+        canonical: mergedCanonical,
         takeawayMonthly: takeawayMonthlyMap,
         net: showNetRevenue,
       });
@@ -2953,7 +3026,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, canonicalRevenue, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
+  }, [records, prevYearRecords, year, tenantId, canonicalRevenue, mainYearVjDaily, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -3893,7 +3966,7 @@ const PLViewPage = () => {
         {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month'))
           && !monthResult.hasData
           && !effectiveMonthRecord?.revenueActual
-          && !canonicalRevenue[month]?.hasData && (
+          && !(canonicalRevenue.year === year && canonicalRevenue.tenant === tenantId && canonicalRevenue.months[month]?.hasData) && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4 flex items-start gap-3">
             <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
             <div className="text-xs text-amber-800 dark:text-amber-300">
