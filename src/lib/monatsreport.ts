@@ -28,7 +28,6 @@ import {
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
 } from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
-import { berechneBonStats, berechneRestaurantBonStats, ladeTaBonsTage } from '@/lib/bon-stats';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { istAlsVjRecord } from '@/lib/vj-overlay';
 import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
@@ -2184,19 +2183,13 @@ export async function ladeJahresvergleich(
   let pairedVerkauf = 0, vjPairedVerkauf = 0;
   const verkaufTagCur = (netto: number, taBrutto: number): number =>
     tenantId === 'oliv' ? netto - taBrutto / mwstDivisorTakeaway() : netto;
-  // Brutto je Tag für die Bon-Ableitung (Anzahl Bons = Brutto ÷ Ø-Bon).
-  const curBruttoByDate: Record<string, number> = {};
-  // TA-Umsatz je Tag («Take Away»-Zeile) — für Ø-Bon Restaurant (ohne TA).
-  const curTaByDate: Record<string, number> = {};
   for (const [date, tag] of umsatzTage) {
     if (date < curFrom || date > curTo || tag.gesamtBrutto <= 0) continue;
     const netto = nettoUmsatzTag(tag);
     const split = foodBeverageSplit(tag);
     gross += tag.gesamtBrutto; net += netto;
     ta += tag.takeAwayBrutto;
-    if (tag.takeAwayBrutto > 0) curTaByDate[date] = tag.takeAwayBrutto;
     food += split.food; bev += split.beverage; hatUmsatz = true;
-    curBruttoByDate[date] = tag.gesamtBrutto;
     const g = gaesteDaily[date] ?? 0;
     if (g > 0) {
       pairedNet += netto; pairedGaeste += g;
@@ -2222,9 +2215,8 @@ export async function ladeJahresvergleich(
       if (w) {
         gross += rec.actualRevenue!; net += w.netto;
         food += w.food; bev += w.beverage; hatUmsatz = true;
-        curBruttoByDate[date] = rec.actualRevenue!;
       }
-      if ((rec.takeawayRevenue ?? 0) > 0) { ta += rec.takeawayRevenue!; curTaByDate[date] = rec.takeawayRevenue!; }
+      if ((rec.takeawayRevenue ?? 0) > 0) { ta += rec.takeawayRevenue!; }
       const g = gaesteDaily[date] ?? 0;
       if (w && g > 0) {
         pairedNet += w.netto; pairedGaeste += g;
@@ -2280,17 +2272,14 @@ export async function ladeJahresvergleich(
   let vjGross = 0, vjNet = 0, vjFoodG = 0, vjBevG = 0, vjTaG = 0;
   let hatVj = false, hatVjTa = false;
   let vjPairedNet = 0, vjPairedGaeste = 0;
-  const vjBruttoByDate: Record<string, number> = {};
-  const vjTaByDate: Record<string, number> = {};
   for (const [date, rec] of Object.entries(vjDaily)) {
     if (date < vjFrom || date > vjTo) continue;
     const w = vjTagWerte(tenantId, rec, date);
     if (w) {
       vjGross += rec.actualRevenue!; vjNet += w.netto; hatVj = true;
       vjFoodG += w.food; vjBevG += w.beverage;
-      vjBruttoByDate[date] = rec.actualRevenue!;
     }
-    if ((rec.takeawayRevenue ?? 0) > 0) { vjTaG += rec.takeawayRevenue!; hatVjTa = true; vjTaByDate[date] = rec.takeawayRevenue!; }
+    if ((rec.takeawayRevenue ?? 0) > 0) { vjTaG += rec.takeawayRevenue!; hatVjTa = true; }
     const gVj = gaesteDaily[date] ?? 0;
     if (w && gVj > 0) {
       vjPairedNet += w.netto; vjPairedGaeste += gVj;
@@ -2323,30 +2312,6 @@ export async function ladeJahresvergleich(
     fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null as SingleReview[] | null),
   ]);
 
-  // ── Bons (abgeleitet): Ø-Bon-Tageswerte × Brutto-Tagesumsätze ──────────────
-  const bonCur = berechneBonStats(avgDaily, curBruttoByDate, curFrom, curTo);
-  const bonVj  = berechneBonStats(avgDaily, vjBruttoByDate, vjFrom, vjTo);
-
-  // Ø-Bon Restaurant (ohne TA) — NUR Oliv (Beaulieu hat kein Take Away).
-  // TA-Bons = TA-Artikelmengen aus product_sales (1 Artikel = 1 Bon = 1 Gast);
-  // Ladefehler → Zeile leer, blockiert den Report nie.
-  let restCurAvg: number | null = null;
-  let restVjAvg: number | null = null;
-  if (tenantId === 'oliv') {
-    const [taBonsCur, taBonsVj] = await Promise.all([
-      ladeTaBonsTage(tenantId, curFrom, curTo).catch(() => null),
-      ladeTaBonsTage(tenantId, vjFrom, vjTo).catch(() => null),
-    ]);
-    if (taBonsCur) {
-      restCurAvg = berechneRestaurantBonStats(
-        avgDaily, curBruttoByDate, curTaByDate, taBonsCur, curFrom, curTo).avgBonRest;
-    }
-    if (taBonsVj) {
-      restVjAvg = berechneRestaurantBonStats(
-        avgDaily, vjBruttoByDate, vjTaByDate, taBonsVj, vjFrom, vjTo).avgBonRest;
-    }
-  }
-
   // ── Zeilen bauen (cur | vj; Δ% berechnet die UI) ───────────────────────────
   const rows: JahresvergleichRow[] = [
     { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
@@ -2356,26 +2321,13 @@ export async function ladeJahresvergleich(
     { label: 'Gäste IN', fmt: 'count',
       cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null },
     { label: 'Durchschnittsverkauf', fmt: 'chf', cur: avgCur, vj: avgVj },
-    // Bons: abgeleitet aus Durchschnittsbon-Tageswerten (avgcheck-daily) und
-    // Brutto-Tagesumsätzen — Anzahl = round(Brutto÷Ø) je gepaartem Tag, Ø-Bon
-    // Jahr = Σ Brutto ÷ Σ Bons (GEWICHTET, nie Mittelwert der Tageswerte).
-    // Keine gepaarten Tage → leer (nie durch 0 teilen).
-    { label: 'Anzahl Bons', fmt: 'count',
-      cur: bonCur.bons > 0 ? bonCur.bons : null,
-      vj: bonVj.bons > 0 ? bonVj.bons : null },
-    // Ø-Verkauf pro Gast (ersetzt «Ø-Bon (gewichtet)»): mandantenspezifisch —
+    // Ø-Verkauf pro Gast (ersetzt die alten Bon-Zeilen): mandantenspezifisch —
     // Beaulieu Netto÷Gäste, Oliv (Netto−TA-Netto)÷Gäste; Maison immer im
     // Zähler (unabhängig vom maisonExclude-Toggle). Nur gepaarte Tage,
     // keine Gäste → leer (nie ÷ 0).
     { label: 'Ø-Verkauf pro Gast', fmt: 'chf',
       cur: pairedGaeste > 0 ? r2(pairedVerkauf / pairedGaeste) : null,
       vj: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null },
-    // Restaurant-Ø ohne TA = (Σ Gesamt − Σ TA-Umsatz) ÷ (Σ Bons − Σ TA-Artikel),
-    // gewichtet — nur Oliv (Beaulieu ohne TA).
-    ...(tenantId === 'oliv'
-      ? [{ label: 'Ø-Bon Restaurant (ohne TA)', fmt: 'chf' as const,
-           cur: restCurAvg, vj: restVjAvg }]
-      : []),
     { label: 'Take Away Anteil', fmt: 'pct',
       cur: hatUmsatz && gross > 0 && ta > 0 ? r2((ta / gross) * 100) : null,
       vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null },
