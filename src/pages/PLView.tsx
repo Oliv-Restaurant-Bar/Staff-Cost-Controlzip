@@ -38,6 +38,7 @@ import {
   DropdownMenuSeparator, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu';
 import { aggregateBPLRows, aggregateFinancialMetricValues } from '@/lib/bpl-aggregate';
+import { monthCompleteness, isNachrichtlichAccount } from '@/lib/month-completeness';
 import { getBPLColumnVisibility } from '@/lib/bpl-columns';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
@@ -303,7 +304,7 @@ const MonthRow = ({
 const NET_REV_ROW_IDX = PL_STRUCTURE.findIndex(r => r.id === 'net_revenue');
 
 const YearRow = ({
-  rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0, excludeMonthIdx = -1,
+  rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0, excludeMonthIdx = -1, incompleteIdxs,
 }: {
   rows: PLComputedRow[][];  // rows[monthIndex][rowIndex]
   rowIndex: number;
@@ -311,6 +312,8 @@ const YearRow = ({
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueTotal?: number;
   excludeMonthIdx?: number; // 0-basiert; -1 = kein Ausschluss
+  /** Unvollständige Monate (Umsatz ohne Kosten o. umgekehrt) — grau, nicht im Total. */
+  incompleteIdxs?: ReadonlySet<number>;
 }) => {
   const def = PL_STRUCTURE[rowIndex];
   const showPct = pctMode !== 'off';
@@ -328,9 +331,9 @@ const YearRow = ({
     );
   }
 
-  // Total: laufenden Monat bei Bedarf ausschliessen
+  // Total: laufenden Monat und unvollständige Monate bei Bedarf ausschliessen
   const vals = rows
-    .map((r, i) => (i === excludeMonthIdx ? undefined : r[rowIndex]?.values.actual))
+    .map((r, i) => (i === excludeMonthIdx || incompleteIdxs?.has(i) ? undefined : r[rowIndex]?.values.actual))
     .filter((v): v is number => v !== undefined);
   const total = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : undefined;
   const pctStr = showPct && revenueTotal > 0 && total !== undefined && total !== 0
@@ -374,6 +377,7 @@ const YearRow = ({
       {rows.map((monthRows, mIdx) => {
         const row = monthRows[rowIndex];
         const actual = row?.values.actual;
+        const isIncomplete = incompleteIdxs?.has(mIdx) ?? false;
         const monthNetRev = showPct ? (monthRows[NET_REV_ROW_IDX]?.values.actual ?? 0) : 0;
         const monthPctStr = showPct && monthNetRev > 0 && actual !== undefined
           ? `${(actual / monthNetRev * 100).toFixed(1)}%`
@@ -386,6 +390,7 @@ const YearRow = ({
                 def.type === 'line' && 'cursor-pointer hover:underline',
                 def.type === 'result' && 'font-bold',
                 actual !== undefined && def.valueRole === 'positive' && actual < 0 && 'text-red-600',
+                isIncomplete && 'opacity-50 italic text-muted-foreground',
               )}
               onClick={def.type === 'line' ? () => onClickMonth(mIdx + 1) : undefined}
             >
@@ -594,12 +599,15 @@ const YearView = ({
   pctMode = 'off',
   revenueTotal = 0,
   excludeMonthIdx = -1,
+  incompleteIdxs,
 }: {
   results: PLMonthResult[];
   onClickMonth: (month: number) => void;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueTotal?: number;
   excludeMonthIdx?: number; // 0-basiert; -1 = kein Ausschluss
+  /** Unvollständige Monate (Umsatz ohne Kosten o. umgekehrt) — grau, nicht im Total. */
+  incompleteIdxs?: ReadonlySet<number>;
 }) => {
   const allRows = results.map(r => r.rows);
   const totalLabel = excludeMonthIdx >= 0
@@ -630,21 +638,24 @@ const YearView = ({
             )}
             {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => {
               const isExcluded = i === excludeMonthIdx;
+              const isIncomplete = incompleteIdxs?.has(i) ?? false;
               return (
                 <React.Fragment key={i}>
                   <th
                     className={cn(
                       'text-right px-2 py-2 cursor-pointer whitespace-nowrap',
-                      isExcluded
+                      isExcluded || isIncomplete
                         ? 'bg-slate-600/60 opacity-60 italic'
                         : 'hover:bg-[#3d5640]',
                     )}
                     onClick={() => onClickMonth(i + 1)}
                     title={isExcluded
                       ? `${MONTH_NAMES_DE[i + 1]} – laufender Monat (vom Total ausgeschlossen)`
+                      : isIncomplete
+                      ? `${MONTH_NAMES_DE[i + 1]} – unvollständig (Umsatz ohne importierte Kosten) — nicht im Total/Ergebnis`
                       : `Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
                   >
-                    {m}{isExcluded ? ' *' : ''}
+                    {m}{isExcluded ? ' *' : isIncomplete ? ' †' : ''}
                   </th>
                   {pctMode !== 'off' && (
                     <th
@@ -673,6 +684,7 @@ const YearView = ({
               pctMode={pctMode}
               revenueTotal={revenueTotal}
               excludeMonthIdx={excludeMonthIdx}
+              incompleteIdxs={incompleteIdxs}
             />
           ))}
         </tbody>
@@ -711,6 +723,8 @@ export interface BPLRow {
   isAutoHidden?: boolean;
   /** Persistenter Sichtbarkeits-Status des Budget-Items (isForceVisible, pro Mandant gespeichert) */
   itemForceVisible?: boolean;
+  /** Nachrichtliche Zeile (Personal Aushilfe 5004/5005/5011): sichtbar, zählt aber nicht in die Summen. */
+  isMemo?: boolean;
 }
 
 export interface BPLRowWithValues extends BPLRow {
@@ -776,7 +790,8 @@ function sumCatFromCategories(
   cats: { categoryId?: string; amount?: number }[] | undefined,
 ): number {
   return (cats ?? [])
-    .filter(c => bplCatForAccount(c.categoryId ?? '') === catId)
+    // Nachrichtliche Konten (5004/5005/5011) zählen nie in Kategorie-Summen
+    .filter(c => !isNachrichtlichAccount(c.categoryId) && bplCatForAccount(c.categoryId ?? '') === catId)
     .reduce((s, c) => s + (c.amount ?? 0), 0);
 }
 
@@ -906,8 +921,10 @@ export function computeBPLRows(
 
   for (const cat of cats) {
     if (cat.type === 'items') {
-      // Interne und ausgeblendete Positionen werden aus den Kategorie-Summen ausgeschlossen
-      const its = items.filter(i => i.categoryId === cat.id && !i.isInternal && !i.isHidden);
+      // Interne, ausgeblendete und nachrichtliche Positionen (Personal Aushilfe
+      // 5004/5005/5011 — nicht im Infoniqa-Export) werden aus den Kategorie-Summen ausgeschlossen
+      const its = items.filter(i =>
+        i.categoryId === cat.id && !i.isInternal && !i.isHidden && !isNachrichtlichAccount(i.accountNumber));
       catB[cat.id] = its.reduce((s, i) => s + (i.monthlyValues[mIdx] ?? 0), 0);
       catA[cat.id] = getCatActual(cat.id, rec);
       catP[cat.id] = getCatPY(cat.id, rec, prevRec);
@@ -989,6 +1006,7 @@ export function computeBPLRows(
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
           isInternal: item.isInternal,
+          isMemo: isNachrichtlichAccount(item.accountNumber) ? true : undefined,
           isAutoHidden: !alwaysShow && isEmpty ? true : undefined,
           itemForceVisible: item.isForceVisible === true,
           values: makeCell(iA, iB, iP, cat.isExpense),
@@ -1013,6 +1031,7 @@ export function computeBPLRows(
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: `actual_${ar.accountNum}`, itemLabel: ar.label, itemAccountNumber: ar.accountNum,
+          isMemo: isNachrichtlichAccount(ar.accountNum) ? true : undefined,
           values: makeCell(ar.amount, 0, iP, cat.isExpense),
         });
       }
@@ -1038,8 +1057,8 @@ export function computeBPLRows(
           // Leere Gruppe → Block UND Zwischentotal weglassen (fehlend ≠ 0)
           if (groupRows.length === 0) return;
           rows.push(...groupRows);
-          // Interne Positionen zählen (wie beim Kategorie-Total) nicht mit
-          const rel = groupRows.filter(r => !r.isInternal);
+          // Interne und nachrichtliche Positionen zählen (wie beim Kategorie-Total) nicht mit
+          const rel = groupRows.filter(r => !r.isInternal && !r.isMemo);
           rows.push({
             catId: cat.id, catLabel: cat.label, catType: 'items',
             isExpense: cat.isExpense, isCategory: false, isGroupSubtotal: true,
@@ -1417,6 +1436,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
       className={cn(
         'hover:bg-muted/30 border-b border-slate-100 dark:border-slate-800 transition-colors group',
         row.isInternal && !isVarianceHighlighted && 'opacity-75 bg-violet-50/40 dark:bg-violet-950/10',
+        row.isMemo && !isVarianceHighlighted && 'opacity-75 bg-slate-50/60 dark:bg-slate-900/30',
         row.isAutoHidden && 'opacity-60 bg-muted/20 text-muted-foreground',
         varBgClass,
       )}
@@ -1428,6 +1448,14 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         {row.isInternal && (
           <span className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
             INTERN
+          </span>
+        )}
+        {row.isMemo && (
+          <span
+            className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+            title="Nachrichtlich: nicht im Infoniqa-Export — zählt nicht in die Summen (Personalaufwand/Ergebnis)"
+          >
+            NACHRICHTLICH
           </span>
         )}
         {isBudgetItem && onToggleVisibility && (
@@ -2933,6 +2961,20 @@ const PLViewPage = () => {
     [effectiveAllRecords, month],
   );
 
+  // ── Monats-Vollständigkeit (Umsatz UND importierte Kosten) ───────────────
+  // «partial» = nur eine Seite vorhanden (z. B. Umsatz ohne Kosten-Import) →
+  // Monat wird grau als «unvollständig» markiert und aus Jahres-/Perioden-
+  // summen, Budget-Vergleich und Betriebsergebnis ausgeklammert.
+  const monthCompletenessArr = useMemo(
+    () => effectiveAllRecords.map(r => monthCompleteness(r)),
+    [effectiveAllRecords],
+  );
+  const incompleteMonthIdxs = useMemo(
+    () => monthCompletenessArr.flatMap((c, i) => (c.partial ? [i] : [])),
+    [monthCompletenessArr],
+  );
+  const selectedMonthIncomplete = monthCompletenessArr[month - 1]?.partial ?? false;
+
   // Pro-Monat Overrides (Budget + Vorjahr) für alle 12 Monate — zentral für Klassisch & Jahresansicht
   const allMonthOverrides = useMemo((): PLMonthOverrides[] => {
     return Array.from({ length: 12 }, (_, idx) => {
@@ -3022,11 +3064,18 @@ const PLViewPage = () => {
     const monthIdxs = period === 'quarter'
       ? [0, 1, 2].map(i => (quarter - 1) * 3 + i)
       : Array.from({ length: 12 }, (_, i) => i);
-    const rowsPerMonth = monthIdxs.map(i =>
+    // Unvollständige Monate (nur eine Seite vorhanden) komplett ausklammern —
+    // weder Ist noch Budget/VJ dieser Monate fliessen in die Periodensummen.
+    const includedIdxs = monthIdxs.filter(i => !(monthCompletenessArr[i]?.partial));
+    const rowsPerMonth = includedIdxs.map(i =>
       computeBPLRows(budgetData, effectiveAllRecords[i], i, prevYearRecords[i], { showHidden: showHiddenAccounts }));
-    const hasDataFlags = monthIdxs.map(i => yearResult.months[i]?.hasData ?? false);
-    return aggregateBPLRows(rowsPerMonth, hasDataFlags);
-  }, [mode, period, quarter, budgetData, effectiveAllRecords, prevYearRecords, yearResult, showHiddenAccounts]);
+    const hasDataFlags = includedIdxs.map(i => yearResult.months[i]?.hasData ?? false);
+    const agg = aggregateBPLRows(rowsPerMonth, hasDataFlags);
+    const excludedLabels = monthIdxs
+      .filter(i => monthCompletenessArr[i]?.partial)
+      .map(i => MONTH_NAMES_SHORT_DE[i + 1] ?? `M${i + 1}`);
+    return { ...agg, monthsTotal: monthIdxs.length, excludedLabels };
+  }, [mode, period, quarter, budgetData, effectiveAllRecords, prevYearRecords, yearResult, showHiddenAccounts, monthCompletenessArr]);
 
   // Anzeige-Zeilen: Monat = effectiveBplRows (inkl. Monat-vs-Monat-Injektion);
   // Quartal/Jahr = aggregierte Zeilen (Monat-vs-Monat dort nicht verfügbar).
@@ -3193,11 +3242,15 @@ const PLViewPage = () => {
 
   const registryKpis = useMemo(() => {
     if (mode !== 'monthly' && mode !== 'budget_pl') return null;
+    // Unvollständige Monate (Umsatz ohne Kosten o. umgekehrt) auch in den
+    // KPI-Karten der Periodenansicht ausklammern (gleiche Regel wie periodAgg).
+    const completeOnly = (months: typeof yearResult.months, offset: number) =>
+      months.filter((_, i) => !(monthCompletenessArr[offset + i]?.partial));
     const periodPls =
       mode === 'budget_pl' && period === 'quarter'
-        ? yearResult.months.slice((quarter - 1) * 3, (quarter - 1) * 3 + 3)
+        ? completeOnly(yearResult.months.slice((quarter - 1) * 3, (quarter - 1) * 3 + 3), (quarter - 1) * 3)
         : mode === 'budget_pl' && period === 'year'
-          ? yearResult.months
+          ? completeOnly(yearResult.months, 0)
           : null;
     return PLVIEW_KPI_METRIC_IDS.map(id => ({
       def: getFinancialMetricDefinition(id),
@@ -3205,7 +3258,7 @@ const PLViewPage = () => {
         ? aggregateFinancialMetricValues(id, periodPls)
         : getFinancialMetricValues(id, { pl: monthResult }),
     }));
-  }, [mode, period, quarter, monthResult, yearResult]);
+  }, [mode, period, quarter, monthResult, yearResult, monthCompletenessArr]);
 
   const renderRegistryKpiCard = (k: { def: FinancialMetricDefinition; values: FinancialMetricValues }) => (
     <KpiCard
@@ -3263,10 +3316,9 @@ const PLViewPage = () => {
   // excludeMonthIdx: 0-basiert (currentMonth - 1); -1 = kein Ausschluss
   const excludeMonthIdx = (excludeCurrentMonth && year === currentYear) ? currentMonth - 1 : -1;
   const yearEffectiveMonths = useMemo(
-    () => excludeMonthIdx >= 0
-      ? yearResult.months.filter((_, i) => i !== excludeMonthIdx)
-      : yearResult.months,
-    [yearResult, excludeMonthIdx],
+    () => yearResult.months.filter((_, i) =>
+      i !== excludeMonthIdx && !(monthCompletenessArr[i]?.partial)),
+    [yearResult, excludeMonthIdx, monthCompletenessArr],
   );
   const yearNetRevTotal      = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
   const yearGP1Total         = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
@@ -3962,6 +4014,23 @@ const PLViewPage = () => {
           />
         )}
 
+        {/* Unvollständiger Monat: Umsatz ohne importierte Kosten (o. umgekehrt) */}
+        {(mode === 'budget_pl' && period === 'month' || mode === 'monthly') && selectedMonthIncomplete && (
+          <div
+            className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/60 px-4 py-2.5 text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2"
+            data-testid="banner-month-incomplete"
+          >
+            <Database className="h-4 w-4 shrink-0 opacity-60" />
+            <span>
+              <span className="font-semibold">{MONTH_NAMES_DE[month]} {year} ist unvollständig:</span>{' '}
+              {monthCompletenessArr[month - 1]?.hasRevenue
+                ? 'Umsatz vorhanden, aber noch keine importierten Kosten.'
+                : 'Kosten vorhanden, aber kein Umsatz.'}{' '}
+              Der Monat wird in Jahres-/Periodensummen, Budget-Vergleich und Betriebsergebnis nicht mitgerechnet.
+            </span>
+          </div>
+        )}
+
         {/* P&L-Tabelle */}
         {mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor' && (
         <div className="rounded-lg border border-border overflow-hidden shadow-sm">
@@ -3994,9 +4063,21 @@ const PLViewPage = () => {
             </div>
             <div className="text-[10px] text-slate-400">
               {mode === 'budget_pl' && period !== 'month' && periodAgg ? (
-                <span className="flex items-center gap-1" data-testid="bpl-period-coverage">
-                  <Database className="h-3 w-3 text-emerald-400" />
-                  Ist-Daten in {periodAgg.monthsWithData} von {periodAgg.monthsTotal} Monaten
+                <span className="flex flex-col items-end gap-0.5" data-testid="bpl-period-coverage">
+                  <span className="flex items-center gap-1">
+                    <Database className="h-3 w-3 text-emerald-400" />
+                    Ist-Daten in {periodAgg.monthsWithData} von {periodAgg.monthsTotal} Monaten
+                  </span>
+                  {periodAgg.excludedLabels.length > 0 && (
+                    <span className="text-slate-400 italic" data-testid="bpl-period-incomplete">
+                      Unvollständig ausgeklammert: {periodAgg.excludedLabels.join(', ')}
+                    </span>
+                  )}
+                </span>
+              ) : (mode === 'monthly' || mode === 'budget_pl') && selectedMonthIncomplete ? (
+                <span className="flex items-center gap-1 text-slate-400 italic" data-testid="bpl-month-incomplete">
+                  <Database className="h-3 w-3 opacity-60" />
+                  Unvollständiger Monat — nicht im Jahresergebnis
                 </span>
               ) : (mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (
                 <span className="flex items-center gap-1">
@@ -4062,7 +4143,7 @@ const PLViewPage = () => {
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
-            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} excludeMonthIdx={excludeMonthIdx} />
+            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} excludeMonthIdx={excludeMonthIdx} incompleteIdxs={new Set(incompleteMonthIdxs)} />
           }
         </div>
         )}

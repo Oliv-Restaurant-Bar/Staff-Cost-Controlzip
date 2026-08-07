@@ -32,6 +32,7 @@ import {
 import { lookupAccount } from '@/lib/account-mapping-store';
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { classifyWarenaufwandKonto } from '@/lib/warenaufwand-gruppierung';
+import { isNachrichtlichAccount } from '@/lib/month-completeness';
 import type { BudgetPLLineItem, BudgetPLCategory } from '@/types/budget';
 
 /**
@@ -395,6 +396,8 @@ export function buildBudgetByRowForMonth(
   const budgetByRow = new Map<string, number>();
   for (const item of items) {
     if (item.isInternal) continue;
+    // Nachrichtliche Konten (Personal Aushilfe 5004/5005/5011) zählen nicht in die Summen
+    if (isNachrichtlichAccount(item.accountNumber)) continue;
     const val = item.monthlyValues[monthIdx] ?? 0;
     if (val === 0) continue;
     let rowId: string | null = null;
@@ -486,6 +489,8 @@ export function buildPrevYearByRowForMonth(
   const addAccountCategories = (cats: { categoryId?: string; amount?: number }[]) => {
     for (const cat of cats) {
       if (!cat.categoryId || !cat.amount) continue;
+      // Nachrichtliche Konten (5004/5005/5011) zählen nicht in die VJ-Summen
+      if (isNachrichtlichAccount(cat.categoryId)) continue;
       if (/^\d{3,5}$/.test(cat.categoryId)) {
         const res = lookupFn(cat.categoryId);
         if (res.mapping) {
@@ -758,19 +763,17 @@ export function computePLForMonth(
 
   // B) Numerische Kontonummern (CSV-Import): via resolveRowId zuordnen
   for (const cat of numericActual) {
+    // Nachrichtliche Konten (Personal Aushilfe 5004/5005/5011 — nicht im
+    // Infoniqa-Export): zählen NIE in die Summen (Befehl 08/2026; ersetzt die
+    // frühere additive Sonderbehandlung von 5004/5005).
+    if (isNachrichtlichAccount(cat.categoryId)) continue;
     const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
     // Umsatzkonten (revenue_total): nur überspringen wenn revenueActual NICHT über individuelle Konten gesetzt
     // → hasIndividualRevenueAccounts=true: individuelle Konten verarbeiten (kein Skip)
     // → hasIndividualRevenueAccounts=false: revenueActual ist direkt gesetzt, also Skip
     if (rowId === 'revenue_total' && !hasIndividualRevenueAccounts && record.revenueActual !== undefined) continue;
     // Personalkonten (personnel_wages) überspringen – bereits via personnelCostActual gesetzt.
-    // Ausnahme: Konten die NICHT im Dienstplan erfasst werden (z.B. 5004/5005 Personal-Karate)
-    // sollen immer additiv dazugezählt werden → kein Skip für diese Konten.
-    if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) {
-      const acctKey = (cat.categoryId?.trim() ?? '').slice(0, 4);
-      const ADDITIVE_WAGE_ACCOUNTS = new Set(['5004', '5005']);
-      if (!ADDITIVE_WAGE_ACCOUNTS.has(acctKey)) continue;
-    }
+    if (rowId === 'personnel_wages' && record.personnelCostActual !== undefined) continue;
 
     const pyMatch = numericPY.find(p => p.categoryId === cat.categoryId);
     const cogsGroup = COGS_ROW_GROUP[rowId];
@@ -780,6 +783,7 @@ export function computePLForMonth(
 
   // PY-only numerische Konten (kein Actual-Gegenstück)
   for (const cat of numericPY) {
+    if (isNachrichtlichAccount(cat.categoryId)) continue;
     const hasActualCounterpart = numericActual.some(a => a.categoryId === cat.categoryId);
     if (hasActualCounterpart) continue;
     const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
