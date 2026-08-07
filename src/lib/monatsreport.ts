@@ -20,6 +20,7 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@/lib/umsatz';
+import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import {
@@ -2174,6 +2175,15 @@ export async function ladeJahresvergleich(
   // Umsatz aktuell + gepaarte Umsatz/Gäste-Tage.
   let gross = 0, net = 0, ta = 0, food = 0, bev = 0, hatUmsatz = false;
   let pairedNet = 0, pairedGaeste = 0;
+  // «Ø-Verkauf pro Gast» (ersetzt die Ø-Bon-Kachel) — mandantenspezifischer
+  // Zähler über GEPAARTE Tage (Umsatz UND Gäste vorhanden):
+  //   Beaulieu: Netto (inkl. Marketing/Maison — Nennwert = netto, SSOT-Regel)
+  //   Oliv:     Netto − Take-Away-Netto (TA-brutto ÷ 1.026); Maison bleibt drin.
+  // Der maisonExclude-Anzeige-Toggle greift hier bewusst NICHT (reine
+  // Betriebsertrags-Darstellung, nicht diese Kennzahl).
+  let pairedVerkauf = 0, vjPairedVerkauf = 0;
+  const verkaufTagCur = (netto: number, taBrutto: number): number =>
+    tenantId === 'oliv' ? netto - taBrutto / mwstDivisorTakeaway() : netto;
   // Brutto je Tag für die Bon-Ableitung (Anzahl Bons = Brutto ÷ Ø-Bon).
   const curBruttoByDate: Record<string, number> = {};
   // TA-Umsatz je Tag («Take Away»-Zeile) — für Ø-Bon Restaurant (ohne TA).
@@ -2188,7 +2198,10 @@ export async function ladeJahresvergleich(
     food += split.food; bev += split.beverage; hatUmsatz = true;
     curBruttoByDate[date] = tag.gesamtBrutto;
     const g = gaesteDaily[date] ?? 0;
-    if (g > 0) { pairedNet += netto; pairedGaeste += g; }
+    if (g > 0) {
+      pairedNet += netto; pairedGaeste += g;
+      pairedVerkauf += verkaufTagCur(netto, tag.takeAwayBrutto);
+    }
   }
 
   // Fallback GEWÄHLTES Jahr: hat der Ist-Store (dailyBudgets) im Zeitraum
@@ -2213,7 +2226,11 @@ export async function ladeJahresvergleich(
       }
       if ((rec.takeawayRevenue ?? 0) > 0) { ta += rec.takeawayRevenue!; curTaByDate[date] = rec.takeawayRevenue!; }
       const g = gaesteDaily[date] ?? 0;
-      if (w && g > 0) { pairedNet += w.netto; pairedGaeste += g; }
+      if (w && g > 0) {
+        pairedNet += w.netto; pairedGaeste += g;
+        // vj_daily kennt kein Marketing — Netto ist ohne Maison (bekannte Grenze).
+        pairedVerkauf += verkaufTagCur(w.netto, Number(rec.takeawayRevenue ?? 0));
+      }
     }
   }
 
@@ -2277,6 +2294,7 @@ export async function ladeJahresvergleich(
     const gVj = gaesteDaily[date] ?? 0;
     if (w && gVj > 0) {
       vjPairedNet += w.netto; vjPairedGaeste += gVj;
+      vjPairedVerkauf += verkaufTagCur(w.netto, Number(rec.takeawayRevenue ?? 0));
     }
   }
   // Gäste VJ (volle Summe im VJ-Zeitraum).
@@ -2345,8 +2363,13 @@ export async function ladeJahresvergleich(
     { label: 'Anzahl Bons', fmt: 'count',
       cur: bonCur.bons > 0 ? bonCur.bons : null,
       vj: bonVj.bons > 0 ? bonVj.bons : null },
-    { label: 'Ø-Bon (gewichtet)', fmt: 'chf',
-      cur: bonCur.avgBon, vj: bonVj.avgBon },
+    // Ø-Verkauf pro Gast (ersetzt «Ø-Bon (gewichtet)»): mandantenspezifisch —
+    // Beaulieu Netto÷Gäste, Oliv (Netto−TA-Netto)÷Gäste; Maison immer im
+    // Zähler (unabhängig vom maisonExclude-Toggle). Nur gepaarte Tage,
+    // keine Gäste → leer (nie ÷ 0).
+    { label: 'Ø-Verkauf pro Gast', fmt: 'chf',
+      cur: pairedGaeste > 0 ? r2(pairedVerkauf / pairedGaeste) : null,
+      vj: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null },
     // Restaurant-Ø ohne TA = (Σ Gesamt − Σ TA-Umsatz) ÷ (Σ Bons − Σ TA-Artikel),
     // gewichtet — nur Oliv (Beaulieu ohne TA).
     ...(tenantId === 'oliv'
