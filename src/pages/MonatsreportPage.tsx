@@ -240,7 +240,7 @@ function ReportTable({
 }) {
   // Spaltenzahl für Trenner-/Colspan-Zeilen: Kennzahl+Δ%+Δabs+Ist+Budget (5)
   // + optional Vorjahr + optional Ziehgriff.
-  const colCount = 5 + (showVj ? 1 : 0) + (editMode ? 1 : 0);
+  const colCount = 4 + (showVj ? 1 : 0) + (editMode ? 1 : 0);
   const pick = (row: MrRow) => granularity === 'monat'
     ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget,
         vjPax: row.vjMonthPax, istPax: row.monthPax,
@@ -291,8 +291,7 @@ function ReportTable({
           <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
             {editMode ? <th className="px-2 py-2 w-16" /> : null}
             <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-            <th className="px-3 py-2 text-right font-semibold">Δ %</th>
-            <th className="px-3 py-2 text-right font-semibold">Δ abs</th>
+            <th className="px-3 py-2 text-right font-semibold">Δ</th>
             <th className="px-3 py-2 text-right font-semibold">
               {istHeader}
               {istSub ? <span className="block normal-case font-normal">{istSub}</span> : null}
@@ -444,15 +443,20 @@ function ReportTable({
                     </span>
                   ) : null}
                 </td>
+                {/* EINE Δ-Spalte: Hauptwert = absolute Veränderung (CHF bzw. PP
+                    bei Quoten-Zeilen), darunter dezent der Prozentwert. Farb-/
+                    Ampellogik unverändert (Kosten-Zeilen invertiert); leer statt 0. */}
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>
-                  {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
-                  {(row.deltaVsVj || row.sharePct) && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
-                </td>
-                {/* Δ abs (Ist − Budget): Farbe wie Δ%; leer ohne Budget. */}
-                <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
-                  devAbs === null ? undefined
-                    : (inverted ? devAbs <= 0 : devAbs >= 0) ? 'text-emerald-600' : 'text-red-600')}>
-                  {devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
+                  {row.deltaPp
+                    ? fmtDevPp(dev)
+                    : row.fmt === 'pct'
+                      ? fmtDevPp(devAbs) // Quoten-Zeilen: Δ in Prozentpunkten
+                      : devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
+                  {!row.deltaPp && row.fmt !== 'pct' && dev !== null ? (
+                    <span className="block text-[9px] font-normal text-muted-foreground">
+                      {fmtDev(dev)}{(row.deltaVsVj || row.sharePct) ? ' vs. VJ' : ''}
+                    </span>
+                  ) : null}
                 </td>
                 {/* Ist-Zelle: Zahl gross; bei Anteil-Zeilen der Anteil als dezente
                     Unterzeile («18.3 % Anteil Gäste IN»). Ohne Basis kein Anteil. */}
@@ -547,7 +551,7 @@ function ReportTable({
                   return (
                     <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row-${child.id}`}>
                       <td className="px-3 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
-                      <td className="px-3 py-1" />
+                      {/* EINE leere Δ-Zelle (zusammengelegte Δ-Spalte). */}
                       <td className="px-3 py-1" />
                       <td className="px-3 py-1 text-right tabular-nums text-xs">
                         {fmtCell(cp.ist, child.fmt)}
@@ -722,6 +726,29 @@ export default function MonatsreportPage() {
   useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
 
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
+  /** Wochen-Navigation: springt genau eine ISO-KW weiter/zurück (auch über
+   *  Monats-/Jahresgrenzen); der Report-Monat folgt dem Montag der neuen
+   *  Woche. Basis = konkrete KW der Auswahl bzw. der geladene Wochenstart. */
+  const shiftWeek = (dir: 1 | -1) => {
+    let base: Date | null = null;
+    const sel = parseWeekValue(weekValue);
+    if (sel.kind === 'kw') {
+      // Montag der ISO-KW (Woche 1 enthält den 4. Januar).
+      const jan4 = new Date(sel.kwYear ?? year, 0, 4);
+      jan4.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (sel.kw - 1) * 7);
+      base = jan4;
+    } else if (daten?.weekFrom) {
+      base = parseIso(daten.weekFrom);
+      base.setDate(base.getDate() - ((base.getDay() + 6) % 7)); // Montag
+    }
+    if (!base) return;
+    base.setDate(base.getDate() + dir * 7);
+    const { week, year: kwYear } = isoWeekOf(base);
+    setWeekValue(`${kwYear}-W${String(week).padStart(2, '0')}`);
+    // Report-Monat folgt dem Montag (KW 31 = 27.07.–02.08. → Juli-Sicht).
+    if (base.getFullYear() !== year) setYear(base.getFullYear());
+    if (base.getMonth() + 1 !== month) setMonth(base.getMonth() + 1);
+  };
   const next = () => { if (month === 12) { setYear(y => y + 1); setMonth(1); } else setMonth(m => m + 1); };
 
   // Vorjahr-Spalte: nur per Toggle (Default AUS) — Budget-Vergleich im Fokus.
@@ -1098,8 +1125,18 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month-woche">
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              <Button variant="outline" size="icon" className="h-8 w-8 ml-2"
+                onClick={() => shiftWeek(-1)} title="Eine Woche zurück"
+                data-testid="button-prev-week">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" className="h-8 w-8"
+                onClick={() => shiftWeek(1)} title="Eine Woche vor"
+                data-testid="button-next-week">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
               <Select value={weekValue} onValueChange={setWeekValue}>
-                <SelectTrigger className="h-8 w-[210px] text-xs ml-2" data-testid="select-week">
+                <SelectTrigger className="h-8 w-[210px] text-xs" data-testid="select-week">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1158,9 +1195,14 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             )}
 
             <p className="pdf-footnote text-xs text-muted-foreground">
-              Woche = gewählter Zeitraum ({daten?.weekLabel ?? '—'}
-              {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Budget =
-              Budget-Wochenanteil dieses Zeitraums · Vorjahr = gleiche Kalenderwoche im Vorjahr
+              Woche = volle ISO-Woche ({daten?.weekLabel ?? '—'}
+              {wocheRange ? `, ${wocheRange}` : ''}), auch über Monatsgrenzen — jeder Tag zieht
+              Ist und Budget aus seinem eigenen Monat; nur die laufende Woche ist auf die Ist-Tage
+              bis heute geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · Warenkosten total:
+              Ist = erfasste Lieferantenrechnungen (netto), Soll = WEQ × Ist-Netto-Umsatz — die
+              Ist-Warenkosten sind wochenweise sprunghaft (Lieferungen fallen in einzelne Wochen);
+              aussagekräftig ist der Monatsvergleich, der Wochen-Δ schwankt naturgemäss ·
+              Vorjahr = gleiche Kalenderwoche im Vorjahr
               (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · Δ% = Woche-Ist vs. Budget-Woche ·
               Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast,
               Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Ø-Verkauf pro Gast =
@@ -1604,7 +1646,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
 /** Kennzahlen (Reihenfolge) fürs Grafik-Grid — ohne Produktive Stunden/Produktivität. */
 const CHART_METRICS = [
   'Brutto Umsatz', 'Netto Umsatz', 'Gäste IN', 'Durchschnittsverkauf',
-  'Take Away Anteil', 'Food', 'Beverage',
+  'Take Away Anteil',
 ];
 
 /** Kompaktes Achsen-Label: 60'000 → «60k», 1'250'000 → «1.25M». */
@@ -1961,8 +2003,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
                 <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.curYear)}</th>
                 <th className="px-3 py-2 text-right font-semibold">Budget<span className="block normal-case font-normal">pro rata</span></th>
-                <th className="px-3 py-2 text-right font-semibold">Δ abs</th>
-                <th className="px-3 py-2 text-right font-semibold">Δ %<span className="block normal-case font-normal">vs. Budget</span></th>
+                <th className="px-3 py-2 text-right font-semibold">Δ<span className="block normal-case font-normal">vs. Budget</span></th>
                 {showVj && <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.vjYear)}</th>}
                 {showVj && <th className="px-3 py-2 text-right font-semibold">Δ %<span className="block normal-case font-normal">vs. VJ</span></th>}
               </tr>
@@ -1988,15 +2029,19 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
                     <td className="px-3 py-1.5 text-right tabular-nums">
                       {budget === null ? <span className="text-muted-foreground">—</span> : fmtCell(budget, row.fmt)}
                     </td>
+                    {/* EINE Δ-Spalte vs. Budget: abs (CHF bzw. PP bei Quoten)
+                        gross, Prozent dezent darunter; Ampellogik unverändert. */}
                     <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
                       devAbs !== null && (gut(devAbs) ? 'text-emerald-600' : 'text-red-600'))}>
-                      {devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
-                    </td>
-                    <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
-                      devPct !== null && (gut(devPct) ? 'text-emerald-600' : 'text-red-600'))}>
-                      {row.fmt === 'pct'
-                        ? (devAbs === null ? '' : `${devAbs >= 0 ? '+' : ''}${devAbs.toFixed(1)} PP`)
-                        : (devPct === null ? '' : `${devPct >= 0 ? '+' : ''}${devPct.toFixed(1)} %`)}
+                      {devAbs === null ? ''
+                        : row.fmt === 'pct'
+                          ? `${devAbs >= 0 ? '+' : ''}${devAbs.toFixed(1)} PP`
+                          : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
+                      {devAbs !== null && row.fmt !== 'pct' && devPct !== null ? (
+                        <span className="block text-[9px] font-normal text-muted-foreground">
+                          {devPct >= 0 ? '+' : ''}{devPct.toFixed(1)} %
+                        </span>
+                      ) : null}
                     </td>
                     {showVj && (
                       <td className="px-3 py-1.5 text-right tabular-nums">

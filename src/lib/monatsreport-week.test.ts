@@ -86,11 +86,10 @@ describe('computeWeekRange — lastComplete bei anderem Monat', () => {
 });
 
 describe('computeWeekRange — kw (ganze Woche, vergangener Monat)', () => {
-  it('KW 27 2025 = 30.06.–06.07., auf Juli geklemmt (01.–06.07.)', () => {
-    // Vergangener Monat → istTo = Monatsende (voller Monat).
+  it('KW 27 2025 = VOLLE Woche 30.06.–06.07. (monatsübergreifend, KEINE Monats-Klemmung)', () => {
+    // Vergangener Monat → Ist-Obergrenze weit genug (z.B. Monatsende).
     const r = computeWeekRange({ kind: 'kw', kw: 27 }, 2025, '2025-07-01', '2025-07-31', '2025-07-31', heute);
-    // KW27 Montag = 30.06.2025; auf fromIso geklemmt.
-    expect(r).toEqual({ weekFrom: '2025-07-01', weekTo: '2025-07-06' });
+    expect(r).toEqual({ weekFrom: '2025-06-30', weekTo: '2025-07-06' });
   });
 
   it('KW 30 2025 = 21.–27.07. (voll im Monat)', () => {
@@ -113,24 +112,26 @@ describe('computeWeekRange — Jahreswechsel (kwYear)', () => {
       { kind: 'kw', kw: 1 }, // kwYear fehlt → nutzt Report-Jahr 2025
       2025, '2025-12-01', '2025-12-31', '2025-12-31', heute,
     );
-    // KW1/2025 = 30.12.2024–05.01.2025, überschneidet Dez 2025 NICHT.
-    expect(r).toEqual({ weekFrom: null, weekTo: null });
+    // KW1/2025 = 30.12.2024–05.01.2025: seit der monatsübergreifenden
+    // Wochenanzeige wird die VOLLE Woche geliefert (keine Monats-Klemmung) —
+    // sie liegt aber im falschen Jahr; das UI übergibt kwYear immer.
+    expect(r).toEqual({ weekFrom: '2024-12-30', weekTo: '2025-01-05' });
   });
 
-  it('Januar-Report 2021 mit KW 53/2020 = 28.12.2020–03.01.2021, geklemmt auf 01.–03.01.2021', () => {
+  it('Januar-Report 2021 mit KW 53/2020 = VOLLE Woche 28.12.2020–03.01.2021', () => {
     const r = computeWeekRange(
       { kind: 'kw', kw: 53, kwYear: 2020 },
       2021, '2021-01-01', '2021-01-31', '2021-01-31', heute,
     );
-    expect(r).toEqual({ weekFrom: '2021-01-01', weekTo: '2021-01-03' });
+    expect(r).toEqual({ weekFrom: '2020-12-28', weekTo: '2021-01-03' });
   });
 
-  it('Januar-Report 2025 mit KW 52/2024 = 23.–29.12.2024, geklemmt → leer (liegt vor Januar)', () => {
+  it('Januar-Report 2025 mit KW 52/2024 = VOLLE Woche 23.–29.12.2024 (monatsübergreifend)', () => {
     const r = computeWeekRange(
       { kind: 'kw', kw: 52, kwYear: 2024 },
       2025, '2025-01-01', '2025-01-31', '2025-01-31', heute,
     );
-    expect(r).toEqual({ weekFrom: null, weekTo: null });
+    expect(r).toEqual({ weekFrom: '2024-12-23', weekTo: '2024-12-29' });
   });
 });
 
@@ -146,12 +147,12 @@ describe('computeWeekRange — leere Bereiche', () => {
     expect(r).toEqual({ weekFrom: null, weekTo: null });
   });
 
-  it('lastComplete im laufenden Monat, wenn Vorwoche vor Monatsanfang liegt → geklemmt', () => {
+  it('lastComplete im laufenden Monat, wenn Vorwoche vor Monatsanfang liegt → VOLLE Vorwoche (monatsübergreifend)', () => {
     // heute = 02.07.2025 (Mittwoch) → Vorwoche 23.–29.06. liegt vor dem 01.07.
     const early = new Date(2025, 6, 2);
     const r = computeWeekRange({ kind: 'lastComplete' }, 2025, '2025-07-01', '2025-07-31', '2025-07-02', early);
-    // Vorwoche komplett vor fromIso → leer.
-    expect(r).toEqual({ weekFrom: null, weekTo: null });
+    // Seit der monatsübergreifenden Wochenanzeige wird die volle Woche gezeigt.
+    expect(r).toEqual({ weekFrom: '2025-06-23', weekTo: '2025-06-29' });
   });
 });
 

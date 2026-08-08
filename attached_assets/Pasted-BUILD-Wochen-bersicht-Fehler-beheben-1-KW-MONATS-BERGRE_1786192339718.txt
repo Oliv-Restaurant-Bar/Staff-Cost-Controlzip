@@ -1,0 +1,35 @@
+BUILD — Wochenübersicht: Fehler beheben
+
+1. KW MONATSÜBERGREIFEND anzeigen: die volle ISO-Woche zeigen, auch über
+   Monatsgrenzen (KW 31 = 27.07.–02.08., NICHT auf 27.07.–31.07. beschneiden).
+   Ist- und Budget-Wert der Woche = Summe der Tageswerte über beide Monate (jeder
+   Tag zieht sein Budget aus seinem eigenen Monat). Nur die LAUFENDE Woche wird für
+   den fairen Vergleich auf die Ist-Tage bis heute geklemmt.
+
+2. WOCHEN-NAVIGATION: zusätzlich zu den Monatspfeilen echte Wochen-Pfeile
+   (< > springt genau eine ISO-KW weiter/zurück, auch über Monats-/Jahresgrenzen)
+   UND das KW-Dropdown behalten. Pfeile = Woche wechseln, Dropdown = Woche direkt wählen.
+
+3. WARENKOSTEN & WARENEINSATZ auf EINE Vergleichszeile zusammenlegen:
+   - Ist = "Warenkosten total" (erfasste Lieferantenrechnungen netto) = 38'007.43.
+   - Soll = WEQ (monatliche Oliv-WEQ bzw. manueller %, z.B. 22 %) × IST-Netto-Umsatz
+     des Zeitraums.
+   - Beide auf DERSELBEN Zeile gegenübergestellt: Ist vs. Soll, Δ CHF + Δ pp (WKQ).
+   - Die separate Zeile "Wareneinsatz" (9'395.16) entfällt.
+   - Hinweis in der Fussnote: Ist-Warenkosten (Rechnungen) sind wochenweise
+     sprunghaft (Lieferungen fallen in einzelne Wochen) — aussagekräftig ist der
+     Monatsvergleich; die Wochenzeile zeigt es, der Δ schwankt naturgemäss.
+
+4. "Betriebskosten (Waren-Lieferanten)" (1'579.85) ENTFERNEN — gehört nicht in
+   diese Cockpit-Zeilenliste.
+
+5. BUDGET-SPALTE korrekt verdrahten: alle Zeilen lesen ihr Budget ausschliesslich
+   aus dem cockpit-budget-Store (eine Quelle) — auch Personalkosten/PKQ (40 %, NICHT
+   die alte 35.5 % aus dem Personal-Modul) und die abgeleiteten (Wareneinsatz, Gäste,
+   Ø-Verkauf, Produktivität). Ohne gespeichertes Budget bleibt die Zelle leer (nie 0).
+
+6. Regeln unverändert: netto, leer statt 0, nie ÷ 0, mandantengetrennt, pro Jahr.
+
+Kontrolle: KW 31 zeigt 27.07.–02.08.; Wochen-Pfeil springt auf KW 32; Warenkosten-
+Zeile zeigt Ist 38'007.43 vs. Soll (22 % × Ist-Netto); keine "Betriebskosten
+(Waren-Lieferanten)"-Zeile mehr.

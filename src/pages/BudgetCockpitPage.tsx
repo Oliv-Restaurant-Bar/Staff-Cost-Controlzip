@@ -133,6 +133,46 @@ export default function BudgetCockpitPage() {
     [year, tenantKey, loading],
   );
 
+  // Kontext-Wache für async Aktionen: Mandant/Jahr-Wechsel invalidiert
+  // laufende Resets (nie einen alten Kontext zurückschreiben).
+  const ctxRef = useRef('');
+  ctxRef.current = tenantKey(String(year));
+
+  /**
+   * Einzelmonat «Zurück auf abgeleitet»: hebt den manuellen Override auf.
+   * %-Positionen (unit 'pct') → null (Resolver leitet wieder ab) ·
+   * CHF-Positionen im %-Modus → Quote × ER-Netto (Wareneinsatz: hinterlegte
+   * Netto-WEQ des Monats vor Positions-Quote) · CHF-Modus → null (frei).
+   * Race-sicher: die (nur für Wareneinsatz nötige) Quote wird ZUERST geladen,
+   * dann funktional gegen den AKTUELLEN Blob-Stand angewendet — nie ein vor
+   * dem await eingefrorener Positions-Snapshot zurückgeschrieben.
+   */
+  const monatReset = useCallback(async (def: CockpitBudgetKpiDef, i: number) => {
+    const ctx = ctxRef.current;
+    let weqQuote: number | null = null;
+    if (def.id === 'wareneinsatz') {
+      const wb = await loadWeqKalk(tenantKey, year).catch(() => null);
+      weqQuote = wb?.weqNettoMonate?.[i] ?? null;
+    }
+    if (ctxRef.current !== ctx) return; // Mandant/Jahr gewechselt → verwerfen
+    const erN = erNetto[i];
+    setBlob(b => {
+      if (!b) return b;
+      const cur = b.positions[def.id] ?? leereCockpitBudgetPosition(def.id, def.unit);
+      const mv = cur.monthlyValues.slice();
+      const me = cur.monthlyExplicit.slice();
+      if (def.unit === 'pct' || (cur.inputMode ?? 'chf') !== 'pct') {
+        mv[i] = null; // leer statt 0 — Ableitung/Verteilung übernimmt wieder
+      } else {
+        const q = weqQuote ?? cur.pctValue ?? null;
+        mv[i] = q !== null && typeof erN === 'number' ? r2(erN * (q / 100)) : null;
+      }
+      me[i] = false;
+      return { ...b, positions: { ...b.positions, [def.id]: { ...cur, monthlyValues: mv, monthlyExplicit: me } } };
+    });
+    setDirty(true);
+  }, [tenantKey, year, erNetto]);
+
   const setPos = useCallback((id: string, next: CockpitBudgetPosition) => {
     setBlob(b => b ? { ...b, positions: { ...b.positions, [id]: next } } : b);
     setDirty(true);
@@ -202,6 +242,31 @@ export default function BudgetCockpitPage() {
       //    Kassenquote 1:1.
       const importBlob = await loadWeqKalk(tenantKey, year)
         .catch(e => { console.error('[CK-BUDGET] WEQ-Import-Blob laden fehlgeschlagen:', e); return null; });
+      // 0) Direkt hinterlegte NETTO-WEQ-Quoten je Monat (höchste Präzedenz):
+      //    Budget = Quote × ER-Netto-Budget des Monats (leer statt 0, nie ÷0).
+      const weqQuoten = importBlob?.weqNettoMonate;
+      if (weqQuoten?.some(v => v !== null)) {
+        const naeherung = importBlob?.naeherungMonate ?? Array(12).fill(false);
+        const mv = erNetto.map((n, i) =>
+          typeof n === 'number' && weqQuoten[i] !== null
+            ? r2(n * (weqQuoten[i]! / 100)) : null);
+        const belegt = weqQuoten.filter((v): v is number => v !== null);
+        const avg = belegt.length ? r2(belegt.reduce((a, b) => a + b, 0) / belegt.length) : r2(ziel);
+        setPos('wareneinsatz', {
+          ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+          inputMode: 'pct', pctValue: avg,
+          yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+        });
+        const liste = weqQuoten
+          .map((q, i) => (q !== null ? `${MONATE_KURZ[i]} ${q}%${naeherung[i] ? '*' : ''}` : null))
+          .filter(Boolean);
+        toast({
+          title: 'Wareneinsatz-Budget aus hinterlegter Netto-WEQ',
+          description: `${liste.join(', ')} — × ER-Netto je Monat (* = Näherung), editierbar.`,
+        });
+        meldeLeereErMonate(mv);
+        return;
+      }
       const kalkChf = importBlob?.chfMonate ?? Array(12).fill(null) as (number | null)[];
       if (kalkChf.some(v => v !== null)) {
         const nettoIst = await ladeSaisonGewichte(tenantId as TenantId, tenantKey, year, 'netto_umsatz', rates ?? null)
@@ -809,31 +874,78 @@ export default function BudgetCockpitPage() {
                     </div>
                   )}
 
-                  {/* 12 Monats-Eingaben; Tippen ⇒ expliziter Monat (fett markiert).
-                      Im %-Modus sind die Monate materialisierte CHF — Editieren
-                      schaltet die Position zurück auf CHF-Direkteingabe. */}
+                  {/* 12 Monats-Eingaben; Tippen ⇒ expliziter Monat («manuell»).
+                      CHF-Position im %-Modus: die Felder sind PROZENT-Eingaben —
+                      der Monats-CHF wird sofort = % × ER-Netto-Budget des Monats
+                      gerechnet (nur dieser Monat, Modus bleibt %).
+                      %-Positionen (Quoten): Felder sind direkt %-Werte.
+                      CHF-Direktmodus: unverändert CHF; Editieren im %-Modus
+                      findet nicht mehr statt (kein Rückfall auf CHF). */}
+                  {(() => {
+                    const pctProMonat = imPctModus && def.unit !== 'pct' && !readOnly;
+                    const pctVonChf = (i: number): number | null => {
+                      const n = erNetto[i]; const v = pos.monthlyValues[i];
+                      return typeof n === 'number' && n > 0 && v !== null ? r2((v / n) * 100) : null;
+                    };
+                    return (
+                  <div className="space-y-1">
+                    {pctProMonat && (
+                      <p className="text-[10px] text-muted-foreground">
+                        %-Modus: Monatsfelder = <b>% vom Netto-Umsatz-Budget</b> des Monats (CHF wird automatisch gerechnet).
+                      </p>
+                    )}
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
                     {MONATE_KURZ.map((m, i) => (
                       <div key={m} className="space-y-0.5">
-                        <label className={cn('block text-[10px]',
+                        <label className={cn('flex items-center gap-1 text-[10px]',
                           pos.monthlyExplicit[i] ? 'font-bold' : 'text-muted-foreground')}>
-                          {m}{pos.monthlyExplicit[i] ? ' ·fix' : ''}
+                          {m}{pos.monthlyExplicit[i] ? ' ·manuell' : ''}
+                          {pos.monthlyExplicit[i] && !readOnly && (
+                            <button
+                              type="button" className="text-muted-foreground hover:text-foreground"
+                              title="Zurück auf abgeleitet/importiert"
+                              onClick={() => monatReset(def, i)}
+                              data-testid={`button-monat-reset-${def.id}-${i + 1}`}
+                            >
+                              <RotateCcw className="h-2.5 w-2.5" />
+                            </button>
+                          )}
                         </label>
                         <Input
                           type="number" inputMode="decimal" className="h-8 text-right text-xs"
-                          value={fmtNum(pos.monthlyValues[i])}
+                          value={pctProMonat ? fmtNum(pctVonChf(i)) : fmtNum(pos.monthlyValues[i])}
                           disabled={readOnly}
+                          placeholder={pctProMonat ? '%' : undefined}
                           onChange={e => {
                             if (readOnly) return;
                             const raw = e.target.value;
                             const v = raw === '' ? null : Number(raw);
+                            if (v !== null && !isFinite(v)) return;
                             const mv = pos.monthlyValues.slice();
                             const me = pos.monthlyExplicit.slice();
-                            mv[i] = v !== null && isFinite(v) ? v : null;
+                            if (pctProMonat) {
+                              // %-Eingabe → CHF dieses Monats = % × ER-Netto (nie ÷0).
+                              const n = erNetto[i];
+                              if (v !== null && typeof n !== 'number') {
+                                toast({
+                                  title: 'ER-Netto-Budget fehlt',
+                                  description: `${MONATE_KURZ[i]} ${year}: ohne Netto-Umsatz-Budget kann kein %-Wert gerechnet werden.`,
+                                  variant: 'destructive',
+                                });
+                                return;
+                              }
+                              mv[i] = v !== null ? r2((n as number) * (v / 100)) : null;
+                              me[i] = v !== null;
+                              setPos(def.id, { ...pos, monthlyValues: mv, monthlyExplicit: me });
+                              return;
+                            }
+                            mv[i] = v;
                             me[i] = mv[i] !== null; // löschen ⇒ wieder frei für Verteilung
                             setPos(def.id, {
                               ...pos, monthlyValues: mv, monthlyExplicit: me,
-                              inputMode: 'chf', // manuelle Monats-Eingabe verlässt den %-Modus
+                              // CHF-Tipperei verlässt den %-Modus nur bei CHF-Positionen;
+                              // Quoten-Positionen (unit 'pct') bleiben Quoten.
+                              inputMode: def.unit === 'pct' ? pos.inputMode : 'chf',
                             });
                           }}
                           data-testid={`input-monat-${def.id}-${i + 1}`}
@@ -841,6 +953,9 @@ export default function BudgetCockpitPage() {
                       </div>
                     ))}
                   </div>
+                  </div>
+                    );
+                  })()}
 
                   {/* Wochen-Overrides (ISO-KW). Für %-Positionen gilt der Wert ungekürzt.
                       Read-only-Zeilen (TA-CHF): keine Overrides — die Wochen-

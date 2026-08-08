@@ -26,6 +26,14 @@ export interface WeqKalkBlob {
   chfMonate: (number | null)[];
   /** Erfasste Tage je Monat (Transparenz/Diagnose). */
   tageMonate: number[];
+  /**
+   * Direkt hinterlegte NETTO-WEQ je Monat in % (kalkulierter Wareneinsatz-CHF
+   * ÷ Netto-Umsatz — NIE die Brutto-Kassenquote). Wenn gesetzt, hat sie
+   * VORRANG vor chfMonate: Budget = Quote × ER-Netto-Budget des Monats.
+   */
+  weqNettoMonate?: (number | null)[];
+  /** true = Monat ist eine Näherung (z.B. Ø der belegten Monate). */
+  naeherungMonate?: boolean[];
   quelleDateien: string[];
   updatedAt: string;
 }
@@ -45,6 +53,10 @@ export async function loadWeqKalk(
     chfMonate: b.chfMonate.map(v => (typeof v === 'number' ? v : null)),
     tageMonate: Array.isArray(b.tageMonate) && b.tageMonate.length === 12
       ? b.tageMonate.map(v => (typeof v === 'number' ? v : 0)) : Array(12).fill(0),
+    weqNettoMonate: Array.isArray(b.weqNettoMonate) && b.weqNettoMonate.length === 12
+      ? b.weqNettoMonate.map(v => (typeof v === 'number' ? v : null)) : undefined,
+    naeherungMonate: Array.isArray(b.naeherungMonate) && b.naeherungMonate.length === 12
+      ? b.naeherungMonate.map(v => v === true) : undefined,
     quelleDateien: Array.isArray(b.quelleDateien) ? b.quelleDateien.map(String) : [],
     updatedAt: String(b.updatedAt ?? ''),
   };

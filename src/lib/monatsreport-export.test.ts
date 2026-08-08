@@ -43,8 +43,8 @@ describe('buildMonatsreportWorkbook — Granularität', () => {
     expect(r.getCell(2).value).toBe(30000); // Budget = Monatsbudget
     expect(r.getCell(3).value).toBe(28000); // Vorjahr = vjMonth
     expect(r.getCell(4).value).toBe(24000); // Ist = month
-    // Δ% = (24000-30000)/30000 = -20 %
-    expect(r.getCell(5).value).toBeCloseTo(-20, 6);
+    // Kombinierte Δ-Zelle: abs gross, % darunter (−6'000.00 / −20.0 %).
+    expect(r.getCell(5).value).toBe('−6’000.00\n-20.0 %');
     // Umsatz unter Budget = rot (nicht invertiert).
     expect((r.getCell(5).font as any).color.argb).toBe(RED);
   });
@@ -58,8 +58,8 @@ describe('buildMonatsreportWorkbook — Granularität', () => {
     expect(r.getCell(2).value).toBe(7000);  // Budget = Woche
     expect(r.getCell(3).value).toBe(6500);  // Vorjahr = vj-Woche
     expect(r.getCell(4).value).toBe(7350);  // Ist = week
-    // Δ% = (7350-7000)/7000 = +5 %
-    expect(r.getCell(5).value).toBeCloseTo(5, 6);
+    // Kombinierte Δ-Zelle: abs gross, % darunter.
+    expect(r.getCell(5).value).toBe('+350.00\n+5.0 %');
     // Umsatz über Budget = grün.
     expect((r.getCell(5).font as any).color.argb).toBe(GREEN);
   });
@@ -103,12 +103,12 @@ describe('buildMonatsreportWorkbook — Personal (Kosten-Invertierung & Schwelle
 
   it('Kosten über Budget → Δ% rot (invertiert), Woche & Monat', () => {
     const wMonat = buildMonatsreportWorkbook([pkKosten], 7, 'monat').worksheets[0].getRow(2);
-    // Δ% = (123961-99400)/99400 ≈ +24.7 %, aber Kosten drüber = rot.
-    expect(wMonat.getCell(5).value as number).toBeGreaterThan(0);
+    // Kombinierte Δ-Zelle: abs positiv (über Budget), Kosten drüber = rot.
+    expect(String(wMonat.getCell(5).value)).toMatch(/^\+24’561\.00\n\+24\.7 %$/);
     expect((wMonat.getCell(5).font as any).color.argb).toBe(RED);
 
     const wWoche = buildMonatsreportWorkbook([pkKosten], 7, 'woche').worksheets[0].getRow(2);
-    expect(wWoche.getCell(5).value as number).toBeGreaterThan(0);
+    expect(String(wWoche.getCell(5).value)).toMatch(/^\+900\.00\n\+12\.7 %$/);
     expect((wWoche.getCell(5).font as any).color.argb).toBe(RED);
   });
 
@@ -166,8 +166,7 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
     expect(r.getCell(4).value).toBe('8 (255 Pers.)\n1.8 % Anteil Gäste IN'); // Pax in Klammern, Anteil Unterzeile
     expect(r.getCell(3).value).toBe('2 (45 Pers.)\n2.4 %');                  // VJ-Anteil als Unterzeile
-    expect(r.getCell(5).value).toBeCloseTo(((8 - 2) / 2) * 100);             // Δ% = Veränderung vs. VJ
-    expect(r.getCell(5).numFmt).toBe('+0.0" %";-0.0" %"');                   // mit Vorzeichen wie übrige Zeilen
+    expect(r.getCell(5).value).toBe('+6\n+300.0 %'); // Δ abs + % (vs. VJ) kombiniert
   });
 
   it('count MIT sharePct: Anteil als Unterzeile (Ist mit Hinweis, VJ nur %); Δ% = vs. VJ', () => {
@@ -179,7 +178,7 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     const r = buildMonatsreportWorkbook([res], 7, 'monat').worksheets[0].getRow(2);
     expect(r.getCell(4).value).toBe('2’396\n17.2 % Anteil Gäste IN'); // de-CH U+2019
     expect(r.getCell(3).value).toBe('2’100\n25.9 %');
-    expect(r.getCell(5).value).toBeCloseTo(((2396 - 2100) / 2100) * 100);
+    expect(r.getCell(5).value).toBe('+296\n+14.1 %');
   });
 
   it('sharePct ohne Gäste-IN-Basis (null): keine Anteil-Unterzeile, Zellen bleiben numerisch', () => {
@@ -191,8 +190,8 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     const r = buildMonatsreportWorkbook([res], 7, 'monat').worksheets[0].getRow(2);
     expect(r.getCell(4).value).toBe(2396);
     expect(r.getCell(3).value).toBe(2100); // kein Anteil → Zahl bleibt Zahl
-    // Δ% = Veränderung vs. VJ gibt es weiterhin (unabhängig vom Anteil).
-    expect(r.getCell(5).value).toBeCloseTo(((2396 - 2100) / 2100) * 100);
+    // Δ (abs + %) vs. VJ gibt es weiterhin (unabhängig vom Anteil).
+    expect(r.getCell(5).value).toBe('+296\n+14.1 %');
   });
 
   it('countPax zieht in der Wochensicht week/weekPax (Vorjahr-Woche leer)', () => {

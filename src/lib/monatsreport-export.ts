@@ -27,6 +27,8 @@ export interface ExportCell {
   ist: number | null;
   /** Δ% (Ist vs. Budget der jeweiligen Granularität), null wenn nicht bestimmbar. */
   dev: number | null;
+  /** Δ absolut (gleiche Basis wie dev); CHF bzw. PP bei Quoten. */
+  devAbs: number | null;
   /** true → Ist-Wert rot (warnAbove überschritten). */
   istWarn: boolean;
   /** true → Δ% grün, false → rot (berücksichtigt deltaInverted). */
@@ -48,12 +50,13 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const vj = granularity === 'monat' ? row.vjMonth : row.vj;
   const ist = granularity === 'monat' ? row.month : row.week;
   const devBudget = granularity === 'monat' ? row.monthBudget : row.weekBudget;
-  // Anteil-Zeilen (sharePct): Δ% = Veränderung Ist vs. Vorjahr (wie Bildschirm);
-  // übrige Zeilen: Δ% gegen das Budget. Nie durch 0 teilen.
-  const dev = row.sharePct
-    ? (ist !== null && vj !== null && vj > 0 ? ((ist - vj) / vj) * 100 : null)
-    : (ist !== null && devBudget !== null && devBudget > 0
-        ? ((ist - devBudget) / devBudget) * 100 : null);
+  // Δ-Basis wie die Bildschirmtabelle: Zeilen mit VJ-Vergleich (deltaVsVj/
+  // sharePct) rechnen Ist − Vorjahr, alle übrigen Ist − Budget. Nie ÷ 0.
+  const vsVj = !!(row.deltaVsVj || row.sharePct);
+  const devBase = vsVj ? vj : devBudget;
+  const devAbs = ist !== null && devBase !== null ? ist - devBase : null;
+  const dev = ist !== null && devBase !== null && devBase > 0
+    ? ((ist - devBase) / devBase) * 100 : null;
   const istWarn = row.warnAbove != null && ist !== null && ist > row.warnAbove;
   // Kosten-Zeilen (deltaInverted): über Budget (dev>0) = schlecht/rot.
   const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
@@ -62,7 +65,7 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   // Anteile an Gäste IN — identische Feldwahl wie die Bildschirmtabelle.
   const istShare = (granularity === 'monat' ? row.sharePct?.month : row.sharePct?.week) ?? null;
   const vjShare = (granularity === 'monat' ? row.sharePct?.vjMonth : row.sharePct?.vj) ?? null;
-  return { budget, vj, ist, dev, istWarn, devGut, vjPax, istPax, vjShare, istShare };
+  return { budget, vj, ist, dev, devAbs, istWarn, devGut, vjPax, istPax, vjShare, istShare };
 }
 
 /**
@@ -113,13 +116,13 @@ export function buildMonatsreportWorkbook(
   const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
 
   ws.columns = [
-    { width: 34 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 10 },
+    { width: 34 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 13 },
   ];
 
   // Kopfzeile
   const head = ws.addRow([
     `${granularity === 'monat' ? 'Monat' : 'Woche'} ${MONATE[month - 1]}`,
-    'Budget', vjHeader, istHeader, 'Δ %',
+    'Budget', vjHeader, istHeader, 'Δ',
   ]);
   head.font = { bold: true };
   head.eachCell(c => {
@@ -158,7 +161,18 @@ export function buildMonatsreportWorkbook(
       : vjIsShareText ? `${vjBase}${shareLineVj}` : c.vj;
     const istOut = isCountPax ? `${istBase}${shareLineIst}`
       : istIsShareText ? `${istBase}${shareLineIst}` : c.ist;
-    const devOut = c.dev;
+    // Kombinierte Δ-Zelle wie am Bildschirm: Hauptwert = absolute Veränderung
+    // (CHF, bzw. PP bei Quoten-Zeilen), darunter der Prozentwert (nicht bei
+    // Quoten — dort IST der PP-Wert die Aussage). Leer statt 0.
+    const isPctRow = row.fmt === 'pct' || !!row.deltaPp;
+    const fmtAbs = (v: number): string => row.fmt === 'count' || row.fmt === 'hours' || row.fmt === 'countPax'
+      ? Math.round(Math.abs(v)).toLocaleString('de-CH')
+      : Math.abs(v).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const devOut = c.devAbs === null ? null
+      : isPctRow
+        ? `${c.devAbs >= 0 ? '+' : ''}${c.devAbs.toFixed(1)} PP`
+        : `${c.devAbs >= 0 ? '+' : '−'}${fmtAbs(c.devAbs)}`
+          + (c.dev !== null ? `\n${c.dev >= 0 ? '+' : ''}${c.dev.toFixed(1)} %` : '');
 
     const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, devOut]);
 
@@ -182,8 +196,7 @@ export function buildMonatsreportWorkbook(
     // Δ%-Spalte (5): Kosten-Zeilen (deltaInverted) → über Budget (>0) = rot.
     // Anteil-Zeilen: Veränderung Ist vs. Vorjahr — grün/rot wie übrige Zeilen.
     const devCell = r.getCell(5);
-    devCell.numFmt = '+0.0" %";-0.0" %"';
-    devCell.alignment = { horizontal: 'right' };
+    devCell.alignment = { horizontal: 'right', wrapText: true };
     if (c.devGut !== null) {
       devCell.font = { color: { argb: c.devGut ? 'FF196B24' : 'FFC00000' } };
     }
@@ -250,14 +263,6 @@ export function addWarenkostenSheet(
     total.getCell(3).font = { bold: true, color: { argb: wkq <= zielWkq ? 'FF196B24' : 'FFC00000' } };
   }
 
-  // Betriebskosten-Anteile (Konten über der Warenkosten-Grenze) — separat,
-  // ausserhalb von Total/WKQ (keine Doppelzählung, verfälscht die Quote nicht).
-  if (waren.betrieb != null && waren.betrieb > 0) {
-    const b = ws.addRow(['Betriebskosten (Waren-Lieferanten)', waren.betrieb, null, null]);
-    b.getCell(2).numFmt = FMT_CHF;
-    b.getCell(2).alignment = { horizontal: 'right' };
-    b.font = { italic: true };
-  }
 
   const foot = ws.addRow(['WKQ = Warenkosten ÷ Netto-Umsatz der Periode'
     + (rev != null ? ` (CHF ${rev.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ' — kein Umsatz importiert')
