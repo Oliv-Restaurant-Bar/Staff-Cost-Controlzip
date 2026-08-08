@@ -207,26 +207,40 @@ export default function BudgetCockpitPage() {
   // ── Auto-Befüllung: Ist-Werte des gewählten Jahres («Stand der Dinge») ───
 
   /**
-   * Eine Position aus vorab geladenen Ist-Monatswerten befüllen: abgeschlossene
-   * Monate mit Daten = echter Ist-Wert; alle übrigen Monate (unvollständig/
-   * zukünftig/ohne Daten) = Durchschnitt der befüllten abgeschlossenen Monate.
-   * Liefert eine Meldung bei fehlender Quelle, sonst null.
+   * Eine Position aus vorab geladenen Ist-Monatswerten befüllen:
+   *  - abgeschlossene Monate mit Daten → echter Ist-Wert des Jahres;
+   *  - alle übrigen Monate (laufender Teilmonat/zukünftig/ohne Daten) →
+   *    der echte VORJAHRESWERT desselben Monats (saisonal, KEIN Schnitt;
+   *    der laufende Teilmonat nimmt den vollen Vorjahresmonat statt des
+   *    Teilwerts);
+   *  - fehlt auch das Vorjahr → Monat bleibt LEER (nie 0) mit Hinweis.
+   * Liefert eine Meldung (fehlende Quelle/Lücken), sonst null.
    */
   const fuellePosition = useCallback((
-    def: CockpitBudgetKpiDef, ist: (number | null)[] | null,
+    def: CockpitBudgetKpiDef,
+    ist: (number | null)[] | null,
+    vj: (number | null)[] | null,
   ): string | null => {
-    if (!ist) return `Keine ${year}-Ist-Daten für «${def.label}».`;
+    // BEWUSST kein setPos, wenn GAR keine Quelle lieferte: eine still
+    // fehlgeschlagene Ladung (istMonatswerteAlle → null) darf bestehende
+    // Budgetwerte nie mit Leere überschreiben (Fehler ≠ «keine Daten»).
+    if (!ist && !vj) return `Keine ${year}- oder ${year - 1}-Ist-Daten für «${def.label}» — bestehende Werte unverändert.`;
     const closed = new Set(abgeschlosseneMonate(year));
-    const basisWerte = Array.from({ length: 12 }, (_, i) => i)
-      .filter(i => closed.has(i + 1) && ist[i] !== null)
-      .map(i => ist[i] as number);
-    if (basisWerte.length === 0) return `Keine abgeschlossenen ${year}-Ist-Monate für «${def.label}».`;
-    const schnitt = basisWerte.reduce((s, v) => s + v, 0) / basisWerte.length;
     const runde = def.unit === 'count'
       ? (v: number) => Math.round(v)
       : (v: number) => r2(v);
-    const mv = Array.from({ length: 12 }, (_, i) =>
-      runde(closed.has(i + 1) && ist[i] !== null ? (ist[i] as number) : schnitt));
+    const luecken: number[] = [];
+    const mv = Array.from({ length: 12 }, (_, i) => {
+      const eig = closed.has(i + 1) ? ist?.[i] ?? null : null; // Teilmonat zählt NICHT
+      if (eig !== null) return runde(eig);
+      const vw = vj?.[i] ?? null;                              // Vorjahresmonat
+      if (vw !== null) return runde(vw);
+      luecken.push(i + 1);
+      return null;                                             // leer statt 0
+    });
+    if (!mv.some(v => v !== null)) {
+      return `Keine ${year}-Ist- und keine ${year - 1}-Vorjahreswerte für «${def.label}» — bestehende Werte unverändert.`;
+    }
     const pos = getPos(def);
     setPos(def.id, {
       ...pos, monthlyValues: mv,
@@ -234,18 +248,23 @@ export default function BudgetCockpitPage() {
       inputMode: 'chf', pctValue: null,
       yearValue: def.unit === 'pct' ? null : r2(mv.reduce((s, v) => s + (v ?? 0), 0)),
     });
-    return null;
+    return luecken.length
+      ? `«${def.label}»: Monat(e) ${luecken.join(', ')} ohne ${year}-Ist und ohne ${year - 1}-Vorjahreswert — leer gelassen.`
+      : null;
   }, [year, getPos, setPos]);
 
   const autofillEine = useCallback(async (def: CockpitBudgetKpiDef) => {
     setBusy(def.id);
     try {
-      const alle = await istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates);
-      const msg = fuellePosition(def, alle[def.id] ?? null);
+      const [alle, vjAlle] = await Promise.all([
+        istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates),
+        istMonatswerteAlle(tenantId as TenantId, tenantKey, year - 1, rates),
+      ]);
+      const msg = fuellePosition(def, alle[def.id] ?? null, vjAlle[def.id] ?? null);
       if (msg) toast({ title: 'Autofill', description: msg });
       else toast({
         title: 'Ist-Werte übernommen',
-        description: `«${def.label}»: abgeschlossene ${year}-Monate = Ist, Rest = Schnitt — editierbar.`,
+        description: `«${def.label}»: abgeschlossene ${year}-Monate = Ist, Rest = Vorjahr ${year - 1} — editierbar.`,
       });
     } catch (e) {
       console.error('[CK-AUTOFILL] fehlgeschlagen:', e);
@@ -257,17 +276,20 @@ export default function BudgetCockpitPage() {
   const autofillAlle = useCallback(async () => {
     setBusy('*');
     try {
-      const alle = await istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates);
+      const [alle, vjAlle] = await Promise.all([
+        istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates),
+        istMonatswerteAlle(tenantId as TenantId, tenantKey, year - 1, rates),
+      ]);
       const meldungen: string[] = [];
       for (const def of COCKPIT_BUDGET_KPIS) {
-        const msg = fuellePosition(def, alle[def.id] ?? null);
+        const msg = fuellePosition(def, alle[def.id] ?? null, vjAlle[def.id] ?? null);
         if (msg) meldungen.push(msg);
       }
       toast({
         title: 'Autofill abgeschlossen',
         description: meldungen.length
           ? meldungen.slice(0, 3).join(' ')
-          : `Alle Positionen mit ${year}-Ist-Werten vorbefüllt (abgeschlossene Monate = Ist, Rest = Schnitt).`,
+          : `Alle Positionen vorbefüllt: abgeschlossene ${year}-Monate = Ist, übrige Monate = Vorjahr ${year - 1} (saisonal).`,
       });
     } catch (e) {
       console.error('[CK-AUTOFILL] fehlgeschlagen:', e);
@@ -428,7 +450,7 @@ export default function BudgetCockpitPage() {
             {busy === '*' ? 'Befüllt …' : `Alle aus ${year}-Ist befüllen`}
           </Button>
           <span className="text-[10px] text-muted-foreground">
-            alle Positionen · abgeschlossene Monate = Ist, Rest = Schnitt · überschreibt (Rückgängig möglich)
+            alle Positionen · abgeschlossene Monate = {year}-Ist, übrige = Vorjahr {year - 1} (saisonal) · überschreibt (Rückgängig möglich)
           </span>
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={!dirty || saving}
@@ -671,9 +693,12 @@ export default function BudgetCockpitPage() {
           Monat geklemmten Wochen anteilig (Tage ÷ 7) gerechnet, %-Werte ungekürzt ·
           Cockpit kappt Monats-/Jahresbudgets pro rata bis zum Stichtag ·
           Umsatz-Budget = ER-/P&amp;L-Budget (Budget-Modul) — %-Eingaben rechnen
-          auf dessen Netto-Monatswerten (auch Take Away, netto) · Autofill =
-          {year}-Ist-Werte (abgeschlossene Monate = Ist, unvollständige =
-          Schnitt), immer editierbar; Steigerung nur manuell per Button ·
+          auf dessen Netto-Monatswerten (auch Take Away, netto) · Autofill:
+          abgeschlossene Monate = {year}-Ist, übrige (inkl. laufender
+          Teilmonat) = voller Vorjahresmonat {year - 1} (saisonal, kein
+          Schnitt; Vorjahres-Personalkosten mit den aktuellen AG-Soz.-Sätzen
+          gerechnet), fehlt auch das Vorjahr → leer; immer editierbar;
+          Steigerung nur manuell per Button ·
           leere Felder = kein Budget (nie 0)
           · Mandanten getrennt (aktuell:
           {tenantId === 'oliv' ? ' Oliv' : ' Beaulieu'}).
