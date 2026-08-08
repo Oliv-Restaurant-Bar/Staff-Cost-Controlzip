@@ -35,6 +35,17 @@ export interface CockpitPdfOptions {
   fileName: string;
   /** Optionaler Erklärtext, wird als sauberer PDF-Text unter das Bild gesetzt. */
   footnote?: string;
+  /**
+   * Feste Seiten-Orientierung (z.B. Wochenverlauf: ≤2 Wochen Hochformat,
+   * ≥3 Wochen Querformat). Ohne Angabe: automatisch nach Seitenverhältnis.
+   */
+  orientation?: 'portrait' | 'landscape';
+  /**
+   * Renderbreite des Klons in px (Default 1400). Schmaler = relativ grössere
+   * Schrift auf der Seite (Hochformat mit wenigen Spalten), breiter = mehr
+   * Spalten nebeneinander ohne Umbruch (Querformat mit vielen Wochen).
+   */
+  cloneWidthPx?: number;
 }
 
 /** Wartet zwei Animationsframes ab → Recharts/Layout sicher fertig gerendert. */
@@ -66,7 +77,7 @@ function ermittleHintergrund(el: HTMLElement): string {
  *  - feste Breite, kein max-width, kein Clipping → keine Umbrüche/Abschnitte
  *  - Tabellen-Header: white-space:nowrap
  */
-function bereiteKlonAuf(clonedRoot: HTMLElement): void {
+function bereiteKlonAuf(clonedRoot: HTMLElement, cloneWidth: number): void {
   clonedRoot.querySelectorAll<HTMLElement>('.pdf-hide').forEach(el => { el.style.display = 'none'; });
   clonedRoot.querySelectorAll<HTMLElement>('.pdf-footnote').forEach(el => { el.style.display = 'none'; });
   clonedRoot.querySelectorAll<HTMLElement>('.pdf-only').forEach(el => {
@@ -75,7 +86,7 @@ function bereiteKlonAuf(clonedRoot: HTMLElement): void {
   });
 
   // Feste Renderbreite, kein Clipping, aufs Inhaltsmass ausrichten.
-  clonedRoot.style.width = `${CLONE_WIDTH_PX}px`;
+  clonedRoot.style.width = `${cloneWidth}px`;
   clonedRoot.style.maxWidth = 'none';
   clonedRoot.style.overflow = 'visible';
   clonedRoot.style.padding = '8px';
@@ -106,6 +117,7 @@ export async function exportCockpitPanelPDF(
   ]);
 
   const background = ermittleHintergrund(element);
+  const cloneWidth = opts.cloneWidthPx ?? CLONE_WIDTH_PX;
 
   const canvas = await html2canvas(element, {
     scale: 2,
@@ -113,15 +125,18 @@ export async function exportCockpitPanelPDF(
     allowTaint: true,
     backgroundColor: background,
     logging: false,
-    width: CLONE_WIDTH_PX,
-    windowWidth: CLONE_WIDTH_PX,
-    onclone: (_doc, clonedEl) => bereiteKlonAuf(clonedEl as HTMLElement),
+    width: cloneWidth,
+    windowWidth: cloneWidth,
+    onclone: (_doc, clonedEl) => bereiteKlonAuf(clonedEl as HTMLElement, cloneWidth),
   });
 
   const imgData = canvas.toDataURL('image/png');
 
-  // Orientierung nach Seitenverhältnis des Captures wählen.
-  const landscape = canvas.width >= canvas.height;
+  // Orientierung: explizit (z.B. Wochenverlauf nach Wochen-Anzahl), sonst
+  // automatisch nach Seitenverhältnis des Captures.
+  const landscape = opts.orientation
+    ? opts.orientation === 'landscape'
+    : canvas.width >= canvas.height;
   const pageW = landscape ? MM_PER_PAGE.a4w : MM_PER_PAGE.a4h;
   const pageH = landscape ? MM_PER_PAGE.a4h : MM_PER_PAGE.a4w;
 

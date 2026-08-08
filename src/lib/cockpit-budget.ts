@@ -24,7 +24,8 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { loadGaesteDaily } from '@/lib/gaeste-store';
 import { ladePersonalkostenDaten, personalkosten } from '@/lib/personalkosten';
-import { mwstDivisorTakeaway } from '@/lib/mwst';
+import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
+import { mwstDivisorTakeaway, mwstDivisorStandard } from '@/lib/mwst';
 import type { SocialCostRates } from '@/lib/social-costs';
 
 export type TenantId = 'oliv' | 'beaulieu';
@@ -47,8 +48,6 @@ export interface CockpitBudgetKpiDef {
 }
 
 export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
-  { id: 'brutto_umsatz',    label: 'Brutto Umsatz',        unit: 'chf',   kind: 'base' },
-  { id: 'netto_umsatz',     label: 'Netto Umsatz',         unit: 'chf',   kind: 'base' },
   // Wareneinsatz ERSETZT die alte Food/Beverage-Budgetaufteilung (eine
   // Position, typischerweise als WKQ-% vom Netto-Umsatz-Budget erfasst).
   { id: 'wareneinsatz',     label: 'Wareneinsatz (netto)', unit: 'chf',   kind: 'base',
@@ -104,22 +103,28 @@ function normalisierePosition(p: unknown, id: string, unit: CockpitBudgetUnit): 
 }
 
 /**
- * Basis-Position für den %-Eingabemodus: IMMER das Netto-Umsatz-Budget
- * (Spec «Überall nur Netto» — auch Take Away wird netto budgetiert).
+ * NETTO-Umsatz-BUDGET je Monat aus dem ER-/P&L-Budget (budget_v1, pl_revenue —
+ * dieselbe Quelle wie die Budget-Spalte im Cockpit/Monatsreport). Die Umsatz-
+ * Positionen wurden aus der Cockpit-Budget-Eingabe ENTFERNT: das Umsatz-Budget
+ * wird ausschliesslich im Budget-Modul (ER) erfasst; alle %-Rechnungen und
+ * Ableitungen hier rechnen gegen diese Monatswerte. ≤ 0 → null («leer statt 0»).
  */
-export function pctBasisId(_kpiId: string): 'netto_umsatz' {
-  return 'netto_umsatz';
+export function erNettoBudgetMonate(year: number, budgetStoreKey: string): (number | null)[] {
+  return Array.from({ length: 12 }, (_, i) => {
+    const v = getMonthlyBudgetRevenue(year, i, budgetStoreKey);
+    return v > 0 ? r2(v) : null;
+  });
 }
 
 /**
- * Materialisiert Monats-CHF aus einem %-Satz: je Monat % × Basis-Monatsbudget
- * (Basis-Monat leer → Monat leer, «leer statt 0»).
+ * Materialisiert Monats-CHF aus einem %-Satz: je Monat % × ER-Netto-Monats-
+ * budget (Basis-Monat leer → Monat leer, «leer statt 0»).
  */
 export function pctAufMonate(
-  pct: number, basis: CockpitBudgetPosition | undefined,
+  pct: number, basisMonate: (number | null)[],
 ): (number | null)[] {
   return Array.from({ length: 12 }, (_, i) => {
-    const b = basis?.monthlyValues[i];
+    const b = basisMonate[i];
     return typeof b === 'number' ? r2(b * pct / 100) : null;
   });
 }
@@ -309,19 +314,34 @@ async function warenIstMonate(tenantId: TenantId, year: number): Promise<number[
 }
 
 /**
- * Ist-MONATSWERTE einer Budget-Position im gewählten Jahr (Basis des neuen
- * Autofills «Ist-Werte übernehmen»): je Monat der echte Ist-Wert, null wo
- * keine Daten («leer statt 0» — 0-Summen gelten als fehlende Daten, die
- * Quellen können echte 0 nicht unterscheiden). Quoten-/Verhältnis-Zeilen
- * liefern die ECHTE Monatsquote (Zähler ÷ Nenner desselben Monats).
- * take_away_umsatz ist NETTO. null insgesamt = Position ohne Ist-Quelle.
+ * Ist-MONATSWERTE ALLER Budget-Positionen eines Jahres in EINEM Durchlauf
+ * (Basis des Autofills «Ist-Werte übernehmen»): jede Quelle wird genau EINMAL
+ * geladen; die Quoten-Zeilen rechnen auf denselben Arrays wie die absoluten
+ * Zeilen (Zähler ÷ Nenner desselben Monats) — damit ist strukturell
+ * ausgeschlossen, dass eine Basis-Position füllt, ihre Quote aber leer bleibt
+ * (der alte Pfad lud jede Quelle pro Quote erneut; die parallelen Mehrfach-
+ * Läufe der teuren Personalkosten-Ladung schlugen still fehl → Quoten leer).
+ * Fehlerpfade werden geloggt statt still geschluckt.
+ *
+ * Werte: je Monat der echte Ist-Wert, null wo keine Daten («leer statt 0» —
+ * 0-Summen gelten als fehlende Daten, die Quellen können echte 0 nicht
+ * unterscheiden). take_away_umsatz ist NETTO. Position ohne Quelle → null.
  */
-export async function istMonatswerte(
-  tenantId: TenantId, tenantKey: KeyFn, year: number, kpiId: string,
+export async function istMonatswerteAlle(
+  tenantId: TenantId, tenantKey: KeyFn, year: number,
   rates?: SocialCostRates | null,
-): Promise<(number | null)[] | null> {
+): Promise<Record<string, (number | null)[] | null>> {
   const lade = (id: string) =>
-    ladeSaisonGewichte(tenantId, tenantKey, year, id, rates ?? null).catch(() => null);
+    ladeSaisonGewichte(tenantId, tenantKey, year, id, rates ?? null)
+      .catch(e => { console.error(`[CK-AUTOFILL] Ist-Quelle «${id}» (${year}) fehlgeschlagen:`, e); return null; });
+  // Quellen EINMAL laden (netto/brutto sind keine Positionen mehr, aber
+  // Nenner/Zähler der Quoten und der Ø-Verkauf-Rechnung).
+  const [netto, brutto, ta, gaeste, stunden, pk, waren] = await Promise.all([
+    lade('netto_umsatz'), lade('brutto_umsatz'), lade('take_away_umsatz'),
+    lade('gaeste_in'), lade('prod_stunden'), lade('personalkosten'),
+    warenIstMonate(tenantId, year)
+      .catch(e => { console.error(`[CK-AUTOFILL] Waren-Ist (${year}) fehlgeschlagen:`, e); return null; }),
+  ]);
   const zuMonaten = (arr: number[] | null): (number | null)[] | null =>
     arr ? arr.map(v => (v > 0 ? r2(v) : null)) : null;
   const quote = (
@@ -332,40 +352,28 @@ export async function istMonatswerte(
       z[i] > 0 && n[i] > 0 ? r2(map(z[i], n[i])) : null);
     return out.some(v => v !== null) ? out : null;
   };
-  switch (kpiId) {
-    case 'brutto_umsatz': case 'netto_umsatz': case 'take_away_umsatz':
-    case 'gaeste_in': case 'prod_stunden': case 'personalkosten':
-      return zuMonaten(await lade(kpiId));
-    case 'wareneinsatz':
-      return zuMonaten(await warenIstMonate(tenantId, year));
-    case 'personalquote': {
-      const [pk, netto] = await Promise.all([lade('personalkosten'), lade('netto_umsatz')]);
-      return quote(pk, netto, (z, n) => (z / n) * 100);
-    }
-    case 'produktivitaet': {
-      const [netto, std] = await Promise.all([lade('netto_umsatz'), lade('prod_stunden')]);
-      return quote(netto, std, (z, n) => z / n);
-    }
-    case 'take_away_anteil': {
-      // Ist-Anteil wie die Cockpit-Ist-Seite: TA-BRUTTO ÷ Brutto-Umsatz × 100.
-      // lade('take_away_umsatz') liefert netto → zurückrechnen (× Divisor).
-      const [taNetto, brutto] = await Promise.all([lade('take_away_umsatz'), lade('brutto_umsatz')]);
-      return quote(taNetto, brutto, (z, n) => (z * mwstDivisorTakeaway() / n) * 100);
-    }
-    case 'avg_verkauf_gast': {
-      const [netto, ta, gaeste] = await Promise.all([
-        lade('netto_umsatz'), lade('take_away_umsatz'), lade('gaeste_in')]);
-      if (!netto || !gaeste) return null;
-      const out = Array.from({ length: 12 }, (_, i) => {
-        if (!(netto[i] > 0) || !(gaeste[i] > 0)) return null;
-        const z = tenantId === 'oliv' ? netto[i] - (ta?.[i] ?? 0) : netto[i]; // ta bereits netto
-        return z > 0 ? r2(z / gaeste[i]) : null;
-      });
-      return out.some(v => v !== null) ? out : null;
-    }
-    default:
-      return null;
-  }
+  const avg = (() => {
+    if (!netto || !gaeste) return null;
+    const out = Array.from({ length: 12 }, (_, i) => {
+      if (!(netto[i] > 0) || !(gaeste[i] > 0)) return null;
+      const z = tenantId === 'oliv' ? netto[i] - (ta?.[i] ?? 0) : netto[i]; // ta bereits netto
+      return z > 0 ? r2(z / gaeste[i]) : null;
+    });
+    return out.some(v => v !== null) ? out : null;
+  })();
+  return {
+    take_away_umsatz: zuMonaten(ta),
+    gaeste_in: zuMonaten(gaeste),
+    prod_stunden: zuMonaten(stunden),
+    personalkosten: zuMonaten(pk),
+    wareneinsatz: zuMonaten(waren),
+    personalquote: quote(pk, netto, (z, n) => (z / n) * 100),
+    produktivitaet: quote(netto, stunden, (n, st) => n / st),
+    // Ist-Anteil wie die Cockpit-Ist-Seite: TA-BRUTTO ÷ Brutto-Umsatz × 100
+    // (ta ist netto → zurückrechnen).
+    take_away_anteil: quote(ta, brutto, (z, n) => (z * mwstDivisorTakeaway() / n) * 100),
+    avg_verkauf_gast: avg,
+  };
 }
 
 // ── Auflösung (Monat / Woche / Periode) ──────────────────────────────────────
@@ -444,7 +452,8 @@ export function wochenBudget(
 // ── Abgeleitete (Verhältnis-)Budgets ─────────────────────────────────────────
 
 export interface BasisBudgets {
-  brutto: number | null; netto: number | null; ta: number | null;
+  /** ER-Netto-Umsatz-Budget der Periode (Quelle: Budget-Modul/ER, budget_v1). */
+  netto: number | null; ta: number | null;
   gaeste: number | null; stunden: number | null; pk: number | null;
 }
 
@@ -473,11 +482,14 @@ export function ratioBudget(kpiId: string, tenantId: TenantId, b: BasisBudgets):
     case 'produktivitaet':
       return b.netto !== null && b.stunden !== null && b.stunden > 0
         ? r2(b.netto / b.stunden) : null;
-    case 'take_away_anteil':
-      // TA-Budget ist netto, der Ist-Anteil rechnet brutto ÷ brutto —
-      // fürs konsistente Δ das Netto-Budget auf brutto zurückrechnen.
-      return b.ta !== null && b.brutto !== null && b.brutto > 0
-        ? r2((b.ta * mwstDivisorTakeaway() / b.brutto) * 100) : null;
+    case 'take_away_anteil': {
+      // TA-Budget ist netto, der Ist-Anteil rechnet brutto ÷ brutto. Das
+      // Brutto-Budget wird EXAKT nach der App-Netto-Split-Regel aus dem
+      // ER-Netto-Budget rekonstruiert: brutto = (netto−ta)×divStd + ta×divTA.
+      if (b.ta === null || b.netto === null) return null;
+      const bruttoRek = (b.netto - b.ta) * mwstDivisorStandard() + b.ta * mwstDivisorTakeaway();
+      return bruttoRek > 0 ? r2((b.ta * mwstDivisorTakeaway() / bruttoRek) * 100) : null;
+    }
     default:
       return null;
   }
@@ -494,6 +506,11 @@ export function resolveCockpitBudgets(
   fromIso: string,
   toIso: string,
   weekDays?: string[],
+  /** ER-Netto-Monatsbudgets (erNettoBudgetMonate) des Jahres von fromIso —
+   *  Nenner der Verhältnis-Budgets (die Umsatz-Positionen wurden aus dem
+   *  Cockpit-Budget entfernt; Umsatz-Budget = ER-/P&L-Budget). Ohne Angabe
+   *  bleiben die Ratio-Budgets ohne direkten Override null. */
+  erNettoMonate?: (number | null)[] | null,
 ): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   const get = (id: string) => blob?.positions[id];
@@ -501,8 +518,25 @@ export function resolveCockpitBudgets(
     ? wochenBudget(get(id), weekDays)
     : periodenBudget(get(id), fromIso, toIso);
   for (const def of COCKPIT_BUDGET_KPIS) if (def.kind === 'base') out[def.id] = val(def.id);
+  // Pseudo-Position fürs ER-Netto: identische Pro-rata-/Wochenauflösung wie
+  // echte Positionen (Wochen über den Jahreswechsel teilen die bekannte
+  // Jahres-Blob-Grenze aller Cockpit-Positionen).
+  const nettoPos: CockpitBudgetPosition | undefined = erNettoMonate
+    ? { ...leereCockpitBudgetPosition('er_netto', 'chf'), monthlyValues: erNettoMonate }
+    : undefined;
+  const nettoVal = nettoPos
+    ? (weekDays ? wochenBudget(nettoPos, weekDays) : periodenBudget(nettoPos, fromIso, toIso))
+    : null;
+  // Umsatz-Budgets fürs Reporting mit ausgeben (die Positionen existieren
+  // nicht mehr — Quelle ist das ER-Budget): netto = ER pro rata; brutto exakt
+  // nach der App-Netto-Split-Regel rekonstruiert (TA-Anteil mit TA-Satz).
+  out['netto_umsatz'] = nettoVal !== null ? r2(nettoVal) : null;
+  out['brutto_umsatz'] = nettoVal !== null
+    ? r2((nettoVal - (out['take_away_umsatz'] ?? 0)) * mwstDivisorStandard()
+        + (out['take_away_umsatz'] ?? 0) * mwstDivisorTakeaway())
+    : null;
   const basis: BasisBudgets = {
-    brutto: out['brutto_umsatz'], netto: out['netto_umsatz'],
+    netto: nettoVal,
     ta: out['take_away_umsatz'], gaeste: out['gaeste_in'],
     stunden: out['prod_stunden'], pk: out['personalkosten'],
   };

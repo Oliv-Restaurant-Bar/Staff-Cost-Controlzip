@@ -54,6 +54,10 @@ export interface CockpitPdfMeta {
   subtitle: string;
   fileName: string;
   footnote?: string;
+  /** Feste PDF-Orientierung (Wochenverlauf: ≤2 Wochen hoch, ≥3 quer). */
+  orientation?: 'portrait' | 'landscape';
+  /** Renderbreite des Export-Klons in px (schmaler = grössere Schrift). */
+  cloneWidthPx?: number;
 }
 
 /** Die vier Cockpit-Zeitebenen (gross → klein). */
@@ -1094,9 +1098,18 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
       title: 'Wochenverlauf',
       subtitle: einstellungText,
       fileName: `cockpit-wochenverlauf-${jahr}-${anzahl}w-${ans}`,
+      // Orientierung nach Wochen-Anzahl: ≤2 Wochen Hochformat, ≥3 Querformat —
+      // immer 1 Seite, ganze Tabelle auf Seitenbreite. Klonbreite passend zur
+      // Spaltenzahl (schmaler = grössere Schrift, nichts abgeschnitten).
+      orientation: ans === 'tabelle' ? (anzahl <= 2 ? 'portrait' : 'landscape') : undefined,
+      cloneWidthPx: ans === 'tabelle'
+        ? (anzahl <= 2 ? 1000 : anzahl <= 4 ? 1400 : 1700)
+        : undefined,
       footnote: 'Wochenverlauf = ISO-Kalenderwochen inkl. laufender Woche (Mo–So, älteste links, aktuelle Woche ganz rechts) · '
         + 'laufende Woche = partiell bis heute; Trend/VJ-Δ/Verlauf nur über volle Wochen · Trend ▲/▼ = Veränderung zur Vorwoche · '
         + 'Verlauf = Mini-Trend über alle Wochen · gleiche Quellen & Berechnung wie die Monatsübersicht · '
+        + 'B = Cockpit-Budget der KW (Monatsbudget pro rata über die Tagesanteile, KW-Override falls gesetzt; laufende Woche bis heute geklemmt) '
+        + 'mit Δ Ist−Budget absolut und in % · '
         + 'leere Felder (—) = keine Datenquelle, nie 0 · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen'
         + (mitVorjahr ? ' · Vorjahr = kleine Zeile darunter + Δ%; Produktive Stunden/Produktivität haben keine VJ-Quelle.' : '.'),
     });
@@ -1275,6 +1288,31 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                               : (wkqV == null ? '—' : `${wkqV.toFixed(1)} %`)}
                           </span>
                         )}
+                        {/* Budget-Subzeile: «B <Wochenbudget> Δabs (Δ%)» — pro-rata-
+                            KW-Budget (laufende Woche bis heute geklemmt). Kein
+                            Budget → keine Subzeile (leer statt 0, nie ÷ 0). */}
+                        {(() => {
+                          const bv = row.budgetValues?.[ci] ?? null;
+                          if (bv === null) return null;
+                          const dAbs = v !== null ? v - bv : null;
+                          const dPct = dAbs !== null && bv !== 0 ? (dAbs / bv) * 100 : null;
+                          const gut = dAbs !== null
+                            ? (row.budgetInverted ? dAbs <= 0 : dAbs >= 0) : null;
+                          return (
+                            <span className="block text-[10px] font-normal text-muted-foreground"
+                              data-testid={`budget-sub-${ri}-${ci}`}>
+                              {'B '}{fmtCell(bv, row.fmt)}
+                              {dAbs !== null && (
+                                <span className={cn('ml-1',
+                                  gut ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-red-600 dark:text-red-400')}>
+                                  {dAbs >= 0 ? '+' : '−'}{fmtCell(Math.abs(dAbs), row.fmt)}
+                                  {dPct !== null && ` (${dPct >= 0 ? '+' : ''}${dPct.toFixed(0)}%)`}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
                         {showVj && (
                           <span className="block text-[10px] font-normal text-muted-foreground">
                             {vjV === null ? '—' : fmtCell(vjV, row.fmt)}

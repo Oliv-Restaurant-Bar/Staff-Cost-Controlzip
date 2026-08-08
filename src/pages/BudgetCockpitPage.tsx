@@ -8,16 +8,18 @@
  * Monats-Ableitung. Regeln: leer statt 0 · nie ÷ 0 · mandantengetrennt.
  *
  * Zusätzlich (Budget-Autofill-Spec):
- *  - CHF/%-Umschalter je Position: %-Eingabe = % vom Umsatz-Budget (TA auf
- *    Brutto, sonst Netto); Monats-CHF werden materialisiert, beide Richtungen
+ *  - Die UMSATZ-Positionen (Brutto/Netto) wurden ENTFERNT: das Umsatz-Budget
+ *    kommt aus dem ER-/P&L-Budget (budget_v1) und wird dort erfasst.
+ *  - CHF/%-Umschalter je Position: %-Eingabe = % vom ER-NETTO-Umsatz-Budget
+ *    des Monats; Monats-CHF werden materialisiert, beide Richtungen
  *    umschaltbar (CHF→%: Σ Monate ÷ Σ Basis).
  *  - Auto-Befüllung «Ist-Werte übernehmen» (Startpunkt «Stand der Dinge»):
  *    abgeschlossene Monate = ECHTER Ist-Monatswert, unvollständige/zukünftige
- *    Monate = Durchschnitt der abgeschlossenen. Gilt für JEDE Position, auch
- *    Brutto/Netto. KEIN automatisches ±10 % — Steigerung nur per separatem
- *    Button (+X % / +X CHF, manuell).
- *  - Ableitungen: Gäste IN = Restaurant-Netto-Budget ÷ Ø-Verkauf-Ziel;
- *    Produktive Stunden = Netto-Budget ÷ Ziel-Produktivität.
+ *    Monate = Durchschnitt der abgeschlossenen. Gilt für JEDE Position.
+ *    KEIN automatisches ±10 % — Steigerung nur per separatem Button
+ *    (+X % / +X CHF, manuell).
+ *  - Ableitungen: Gäste IN = (ER-Netto − TA-Budget) ÷ Ø-Verkauf-Ziel;
+ *    Produktive Stunden = ER-Netto-Budget ÷ Ziel-Produktivität.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
@@ -32,8 +34,8 @@ import { useToast } from '@/hooks/use-toast';
 import {
   COCKPIT_BUDGET_KPIS, leereCockpitBudgetPosition,
   loadCockpitBudget, saveCockpitBudget, kalendertagGewichte, verteileJahreswert,
-  ladeSaisonGewichte, istMonatswerte, abgeschlosseneMonate,
-  pctBasisId, pctAufMonate, type CockpitBudgetKpiDef, type TenantId,
+  ladeSaisonGewichte, istMonatswerteAlle, abgeschlosseneMonate,
+  erNettoBudgetMonate, pctAufMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
 
@@ -119,6 +121,14 @@ export default function BudgetCockpitPage() {
   const getPosById = useCallback((id: string): CockpitBudgetPosition | undefined =>
     blob?.positions[id], [blob]);
 
+  /** ER-Netto-Umsatz-Budget je Monat (budget_v1 — Basis aller %-Rechnungen
+   *  und Ableitungen; die Umsatz-Positionen wurden hier entfernt). */
+  const erNetto = useMemo(
+    () => erNettoBudgetMonate(year, tenantKey('budget_v1')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [year, tenantKey, loading],
+  );
+
   const setPos = useCallback((id: string, next: CockpitBudgetPosition) => {
     setBlob(b => b ? { ...b, positions: { ...b.positions, [id]: next } } : b);
     setDirty(true);
@@ -146,19 +156,17 @@ export default function BudgetCockpitPage() {
 
   // ── CHF/%-Umschalter ───────────────────────────────────────────────────────
 
-  /** %-Satz auf die Basis-Monatsbudgets anwenden (Monate materialisieren). */
+  /** %-Satz auf die ER-Netto-Monatsbudgets anwenden (Monate materialisieren). */
   const pctAnwenden = useCallback((def: CockpitBudgetKpiDef, pct: number) => {
-    const basisId = pctBasisId(def.id);
-    const basis = getPosById(basisId);
-    if (!basis || !basis.monthlyValues.some(v => v !== null)) {
+    if (!erNetto.some(v => v !== null)) {
       toast({
-        title: 'Kein Umsatz-Budget',
-        description: 'Netto-Umsatz-Budget fehlt — bitte zuerst «Netto Umsatz» budgetieren (z.B. per «Alle aus Ist befüllen»); die %-Eingabe rechnet darauf.',
+        title: 'Kein ER-Netto-Budget',
+        description: `Für ${year} ist im Budget-Modul (ER) kein Netto-Umsatz-Budget erfasst — die %-Eingabe rechnet auf dessen Monatswerten.`,
       });
       return false;
     }
     const pos = getPos(def);
-    const mv = pctAufMonate(pct, basis);
+    const mv = pctAufMonate(pct, erNetto);
     setPos(def.id, {
       ...pos, inputMode: 'pct', pctValue: pct,
       monthlyValues: mv,
@@ -168,12 +176,12 @@ export default function BudgetCockpitPage() {
     const fehlend = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
     if (fehlend.length > 0) {
       toast({
-        title: 'Netto-Umsatz-Budget fehlt teilweise',
-        description: `${fehlend.join(', ')} ohne Netto-Budget — diese Monate bleiben leer.`,
+        title: 'ER-Netto-Budget fehlt teilweise',
+        description: `${fehlend.join(', ')}: kein Netto-Umsatz-Budget im Budget-Modul (ER) — diese Monate bleiben leer.`,
       });
     }
     return true;
-  }, [getPos, getPosById, setPos, toast]);
+  }, [erNetto, year, getPos, setPos, toast]);
 
   /** Modus umschalten: CHF→% rechnet den konsistenten %-Satz aus den Monaten. */
   const modusWechseln = useCallback((def: CockpitBudgetKpiDef, modus: 'chf' | 'pct') => {
@@ -183,31 +191,30 @@ export default function BudgetCockpitPage() {
       setPos(def.id, { ...pos, inputMode: 'chf' }); // Monats-CHF bleiben stehen
       return;
     }
-    const basis = getPosById(pctBasisId(def.id));
     let pct: number | null = pos.pctValue ?? null;
-    if (basis) {
+    {
       let sumV = 0, sumB = 0;
       pos.monthlyValues.forEach((v, i) => {
-        const b = basis.monthlyValues[i];
+        const b = erNetto[i];
         if (v !== null && typeof b === 'number' && b > 0) { sumV += v; sumB += b; }
       });
       if (sumB > 0) pct = r2((sumV / sumB) * 100);
     }
     setPos(def.id, { ...pos, inputMode: 'pct', pctValue: pct });
     if (pct !== null) setPctInput(s => ({ ...s, [def.id]: String(pct) }));
-  }, [getPos, getPosById, setPos]);
+  }, [getPos, erNetto, setPos]);
 
   // ── Auto-Befüllung: Ist-Werte des gewählten Jahres («Stand der Dinge») ───
 
   /**
-   * Eine Position mit Ist-Monatswerten befüllen: abgeschlossene Monate mit
-   * Daten = echter Ist-Wert; alle übrigen Monate (unvollständig/zukünftig/ohne
-   * Daten) = Durchschnitt der befüllten abgeschlossenen Monate. Liefert eine
-   * Meldung bei fehlender Quelle, sonst null; wirft nie.
+   * Eine Position aus vorab geladenen Ist-Monatswerten befüllen: abgeschlossene
+   * Monate mit Daten = echter Ist-Wert; alle übrigen Monate (unvollständig/
+   * zukünftig/ohne Daten) = Durchschnitt der befüllten abgeschlossenen Monate.
+   * Liefert eine Meldung bei fehlender Quelle, sonst null.
    */
-  const autofillPosition = useCallback(async (def: CockpitBudgetKpiDef): Promise<string | null> => {
-    const ist = await istMonatswerte(tenantId as TenantId, tenantKey, year, def.id, rates)
-      .catch(() => null);
+  const fuellePosition = useCallback((
+    def: CockpitBudgetKpiDef, ist: (number | null)[] | null,
+  ): string | null => {
     if (!ist) return `Keine ${year}-Ist-Daten für «${def.label}».`;
     const closed = new Set(abgeschlosseneMonate(year));
     const basisWerte = Array.from({ length: 12 }, (_, i) => i)
@@ -228,27 +235,32 @@ export default function BudgetCockpitPage() {
       yearValue: def.unit === 'pct' ? null : r2(mv.reduce((s, v) => s + (v ?? 0), 0)),
     });
     return null;
-  }, [tenantId, tenantKey, year, rates, getPos, setPos]);
+  }, [year, getPos, setPos]);
 
   const autofillEine = useCallback(async (def: CockpitBudgetKpiDef) => {
     setBusy(def.id);
     try {
-      const msg = await autofillPosition(def);
+      const alle = await istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates);
+      const msg = fuellePosition(def, alle[def.id] ?? null);
       if (msg) toast({ title: 'Autofill', description: msg });
       else toast({
         title: 'Ist-Werte übernommen',
         description: `«${def.label}»: abgeschlossene ${year}-Monate = Ist, Rest = Schnitt — editierbar.`,
       });
+    } catch (e) {
+      console.error('[CK-AUTOFILL] fehlgeschlagen:', e);
+      toast({ title: 'Autofill fehlgeschlagen', description: String((e as Error)?.message ?? e), variant: 'destructive' });
     } finally { setBusy(null); }
-  }, [autofillPosition, year, toast]);
+  }, [tenantId, tenantKey, year, rates, fuellePosition, toast]);
 
-  /** Gesamt-Befüllung: JEDE Position (auch Brutto/Netto) aus den Ist-Werten. */
+  /** Gesamt-Befüllung: JEDE Position aus den Ist-Werten (Quellen 1× geladen). */
   const autofillAlle = useCallback(async () => {
     setBusy('*');
     try {
+      const alle = await istMonatswerteAlle(tenantId as TenantId, tenantKey, year, rates);
       const meldungen: string[] = [];
       for (const def of COCKPIT_BUDGET_KPIS) {
-        const msg = await autofillPosition(def);
+        const msg = fuellePosition(def, alle[def.id] ?? null);
         if (msg) meldungen.push(msg);
       }
       toast({
@@ -257,8 +269,11 @@ export default function BudgetCockpitPage() {
           ? meldungen.slice(0, 3).join(' ')
           : `Alle Positionen mit ${year}-Ist-Werten vorbefüllt (abgeschlossene Monate = Ist, Rest = Schnitt).`,
       });
+    } catch (e) {
+      console.error('[CK-AUTOFILL] fehlgeschlagen:', e);
+      toast({ title: 'Autofill fehlgeschlagen', description: String((e as Error)?.message ?? e), variant: 'destructive' });
     } finally { setBusy(null); }
-  }, [autofillPosition, year, toast]);
+  }, [tenantId, tenantKey, year, rates, fuellePosition, toast]);
 
   /**
    * Manuelle Steigerung (+X % oder +X CHF) auf die BEFÜLLTEN Monate einer
@@ -291,15 +306,15 @@ export default function BudgetCockpitPage() {
 
   // ── Ableitungen (Gäste aus Ø-Verkauf-Ziel · Stunden aus Ziel-Produktivität) ─
 
-  /** Restaurant-Netto-Budget je Monat: Netto − TA (TA-Budget ist bereits
+  /** Restaurant-Netto-Budget je Monat: ER-Netto − TA-Budget (TA ist bereits
    *  NETTO; Oliv — Beaulieu ohne TA). */
   const restaurantNettoMonat = useCallback((i: number): number | null => {
-    const netto = getPosById('netto_umsatz')?.monthlyValues[i];
+    const netto = erNetto[i];
     if (typeof netto !== 'number') return null;
     if (tenantId !== 'oliv') return netto;
     const ta = getPosById('take_away_umsatz')?.monthlyValues[i];
     return netto - (typeof ta === 'number' ? ta : 0);
-  }, [getPosById, tenantId]);
+  }, [erNetto, getPosById, tenantId]);
 
   const gaesteAbleiten = useCallback(() => {
     const avg = getPosById('avg_verkauf_gast');
@@ -315,7 +330,7 @@ export default function BudgetCockpitPage() {
       return rn !== null && typeof z === 'number' && z > 0 ? Math.round(rn / z) : null;
     });
     if (!mv.some(v => v !== null)) {
-      toast({ title: 'Netto-Budget fehlt', description: 'Gäste-Ableitung braucht das Netto-Umsatz-Budget der Monate.' });
+      toast({ title: 'ER-Netto-Budget fehlt', description: `Gäste-Ableitung braucht das Netto-Umsatz-Budget ${year} aus dem Budget-Modul (ER).` });
       return;
     }
     setPos('gaeste_in', {
@@ -323,7 +338,7 @@ export default function BudgetCockpitPage() {
       yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
     });
     toast({ title: 'Gäste-Budget abgeleitet', description: 'Restaurant-Netto-Budget ÷ Ø-Verkauf-Ziel, je Monat (editierbar).' });
-  }, [getPos, getPosById, restaurantNettoMonat, setPos, toast]);
+  }, [getPos, getPosById, restaurantNettoMonat, year, setPos, toast]);
 
   /** Vorschlag Ziel-Produktivität: Mittel der budgetierten Produktivitäts-Monate. */
   const zielProdVorschlag = useMemo(() => {
@@ -338,20 +353,19 @@ export default function BudgetCockpitPage() {
       toast({ title: 'Ziel-Produktivität fehlt', description: 'Bitte Umsatz/Std erfassen (oder zuerst «Produktivität» budgetieren).' });
       return;
     }
-    const netto = getPosById('netto_umsatz');
-    if (!netto || !netto.monthlyValues.some(v => v !== null)) {
-      toast({ title: 'Netto-Budget fehlt', description: 'Stunden-Ableitung braucht das Netto-Umsatz-Budget der Monate.' });
+    if (!erNetto.some(v => v !== null)) {
+      toast({ title: 'ER-Netto-Budget fehlt', description: `Stunden-Ableitung braucht das Netto-Umsatz-Budget ${year} aus dem Budget-Modul (ER).` });
       return;
     }
     const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'prod_stunden')!;
     const pos = getPos(def);
-    const mv = netto.monthlyValues.map(v => (typeof v === 'number' ? r2(v / ziel) : null));
+    const mv = erNetto.map(v => (typeof v === 'number' ? r2(v / ziel) : null));
     setPos('prod_stunden', {
       ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
       yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
     });
     toast({ title: 'Planstunden abgeleitet', description: `Netto-Budget ÷ ${ziel} CHF/Std, je Monat (editierbar).` });
-  }, [zielProd, zielProdVorschlag, getPos, getPosById, setPos, toast]);
+  }, [zielProd, zielProdVorschlag, erNetto, year, getPos, setPos, toast]);
 
   // ── Speichern / Rückgängig ────────────────────────────────────────────────
 
@@ -414,7 +428,7 @@ export default function BudgetCockpitPage() {
             {busy === '*' ? 'Befüllt …' : `Alle aus ${year}-Ist befüllen`}
           </Button>
           <span className="text-[10px] text-muted-foreground">
-            alle Positionen inkl. Brutto/Netto · abgeschlossene Monate = Ist, Rest = Schnitt · überschreibt (Rückgängig möglich)
+            alle Positionen · abgeschlossene Monate = Ist, Rest = Schnitt · überschreibt (Rückgängig möglich)
           </span>
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={!dirty || saving}
@@ -524,7 +538,7 @@ export default function BudgetCockpitPage() {
                               % anwenden
                             </Button>
                             <span className="text-[10px] text-muted-foreground">
-                              % vom Netto-Umsatz-Budget je Monat
+                              % vom ER-Netto-Umsatz-Budget je Monat
                             </span>
                           </>
                         )}
@@ -656,10 +670,11 @@ export default function BudgetCockpitPage() {
           Kalendertage, über Monatsgrenzen) · Wochen-Override wird bei auf den
           Monat geklemmten Wochen anteilig (Tage ÷ 7) gerechnet, %-Werte ungekürzt ·
           Cockpit kappt Monats-/Jahresbudgets pro rata bis zum Stichtag ·
-          %-Eingaben rechnen auf dem NETTO-Umsatz-Budget je Monat (auch Take
-          Away — netto) · Autofill = {year}-Ist-Werte (abgeschlossene Monate =
-          Ist, unvollständige = Schnitt), immer editierbar; Steigerung nur
-          manuell per Button · leere Felder = kein Budget (nie 0)
+          Umsatz-Budget = ER-/P&amp;L-Budget (Budget-Modul) — %-Eingaben rechnen
+          auf dessen Netto-Monatswerten (auch Take Away, netto) · Autofill =
+          {year}-Ist-Werte (abgeschlossene Monate = Ist, unvollständige =
+          Schnitt), immer editierbar; Steigerung nur manuell per Button ·
+          leere Felder = kein Budget (nie 0)
           · Mandanten getrennt (aktuell:
           {tenantId === 'oliv' ? ' Oliv' : ' Beaulieu'}).
         </p>

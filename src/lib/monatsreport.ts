@@ -23,7 +23,7 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@
 import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { loadCockpitBudget, resolveCockpitBudgets } from '@/lib/cockpit-budget';
+import { loadCockpitBudget, resolveCockpitBudgets, erNettoBudgetMonate } from '@/lib/cockpit-budget';
 import {
   ladeWochentagsGewichte, ladePersonalkostenDaten,
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
@@ -1107,9 +1107,18 @@ export async function ladeMonatsreport(
   // Cockpit-Budgets haben VORRANG vor den bisherigen Quellen (budget_v1-Umsatz,
   // PK-Ziel); fehlen sie, bleibt alles beim bestehenden Verhalten.
   const ckBlob = await loadCockpitBudget(tenantKey, year).catch(() => null);
-  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, istToIso || toIso);
+  // ER-Netto-Monatsbudgets als Ratio-Nenner (die Umsatz-Positionen wurden aus
+  // dem Cockpit-Budget entfernt; Umsatz-Budget = budget_v1/ER — dieselbe
+  // Quelle wie budgetNet oben). Wochen im Nachbarjahr: Monate des Wochen-
+  // Startjahres laden.
+  const erMonate = erNettoBudgetMonate(year, tenantKey('budget_v1'));
+  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, istToIso || toIso, undefined, erMonate);
   const ckW: Record<string, number | null> = weekFrom && weekTo
-    ? resolveCockpitBudgets(ckBlob, tenantId, weekFrom, weekTo, wocheTage)
+    ? resolveCockpitBudgets(
+        ckBlob, tenantId, weekFrom, weekTo, wocheTage,
+        weekFrom.slice(0, 4) === String(year)
+          ? erMonate
+          : erNettoBudgetMonate(Number(weekFrom.slice(0, 4)), tenantKey('budget_v1')))
     : {};
   const ckMk = (id: string): number | null => ckM[id] ?? null;
   const ckWk = (id: string): number | null => ckW[id] ?? null;
@@ -1716,6 +1725,14 @@ export interface WochenverlaufRow {
   wkqValues?: (number | null)[];
   /** Ziel-WKQ in % für die Ampel der `wkqValues`. */
   wkqZiel?: number;
+  /**
+   * Cockpit-Budget je Woche (pro rata auf die KW-Tage; KW-Override falls
+   * gesetzt; laufende Woche auf die Ist-Tage geklemmt). null = kein Budget
+   * («leer statt 0») — die UI zeigt dann keine Budget-Subzeile.
+   */
+  budgetValues?: (number | null)[];
+  /** Δ-Färbung invertiert (Kostenzeilen: über Budget = rot). */
+  budgetInverted?: boolean;
 }
 
 export interface WochenverlaufDaten {
@@ -1865,6 +1882,8 @@ function baueWochenverlaufRows(
   mainAggs: WeekAgg[] | (VjWeekAgg | null)[],
   mainAus: 'ist' | 'vj',
   vjAggs: (VjWeekAgg | null)[] | undefined,
+  /** Aufgelöste Cockpit-Budgets je Woche (resolveCockpitBudgets). */
+  budgets?: Record<string, number | null>[],
 ): WochenverlaufRow[] {
   const vjCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] | undefined =>
     vjAggs ? vjAggs.map(a => (a ? fn(a) : null)) : undefined;
@@ -1881,28 +1900,31 @@ function baueWochenverlaufRows(
     label: string; fmt: MrFormat; bold?: boolean;
     ist: (a: WeekAgg) => number | null;
     vj: (a: VjWeekAgg) => number | null;
+    /** Cockpit-Budget-KPI dieser Zeile (Subzeile «B …» je Woche). */
+    budgetId?: string;
+    budgetInverted?: boolean;
   };
   const defs: Def[] = [
-    { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
+    { label: 'Brutto Umsatz', fmt: 'chf', bold: true, budgetId: 'brutto_umsatz',
       ist: a => a.hatUmsatz ? r2(a.gross) : null, vj: a => a.hatUmsatz ? r2(a.gross) : null },
-    { label: 'Netto Umsatz', fmt: 'chf', bold: true,
+    { label: 'Netto Umsatz', fmt: 'chf', bold: true, budgetId: 'netto_umsatz',
       ist: a => a.hatUmsatz ? r2(a.net) : null, vj: a => a.hatUmsatz ? r2(a.net) : null },
-    { label: 'Gäste IN', fmt: 'count',
+    { label: 'Gäste IN', fmt: 'count', budgetId: 'gaeste_in',
       ist: a => a.hatGaeste ? r2(a.gaeste) : null, vj: a => a.hatGaeste ? r2(a.gaeste) : null },
     { label: 'Durchschnittsverkauf', fmt: 'chf',
       ist: a => a.avgW, vj: a => a.avgCount > 0 ? r2(a.avgSum / a.avgCount) : null },
-    { label: 'Take Away Anteil', fmt: 'pct',
+    { label: 'Take Away Anteil', fmt: 'pct', budgetId: 'take_away_anteil',
       ist: a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null,
       vj: a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null },
     { label: 'Food', fmt: 'chf',
       ist: a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null, vj: a => a.hatFood ? r2(a.food) : null },
     { label: 'Beverage', fmt: 'chf',
       ist: a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null, vj: a => a.hatBev ? r2(a.bev) : null },
-    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
+    { label: 'Produktive Stunden (Ist)', fmt: 'hours', budgetId: 'prod_stunden', budgetInverted: true,
       ist: a => a.hatIst ? r2(a.istStd) : null, vj: () => null },       // keine vj-Quelle
     { label: 'Produktive Stunden geplant', fmt: 'hours',
       ist: a => a.hatPlan ? r2(a.planStd) : null, vj: () => null },      // keine vj-Quelle
-    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
+    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf', budgetId: 'produktivitaet',
       ist: a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null, vj: () => null },
     // «Umsatz pro Gast» konsolidiert (es bleibt «Ø-Verkauf pro Gast» in den
     // Monats-/Wochen-/Jahres-Ansichten; hier keine TA-Netto-Quelle je Woche).
@@ -1912,6 +1934,9 @@ function baueWochenverlaufRows(
     label: d.label, fmt: d.fmt, bold: d.bold,
     values: mainAus === 'ist' ? istCol(d.ist) : vjMainCol(d.vj),
     vjValues: vjCol(d.vj),
+    budgetValues: budgets && d.budgetId
+      ? budgets.map(b => b[d.budgetId!] ?? null) : undefined,
+    budgetInverted: d.budgetInverted,
   }));
 }
 
@@ -2061,7 +2086,35 @@ export async function ladeWochenverlauf(
     ? await aggregiereVjWochen(vjWeeks, tenantId, gaesteDaily, avgDaily)
     : undefined;
 
-  const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
+  // ── Cockpit-Budget je Woche (mandantengetrennt, pro Jahr) ─────────────────
+  // Wochenbudget = KW-Override falls gesetzt, sonst Monatsbudget pro rata über
+  // die Tagesanteile (auch über Monatsgrenzen). Laufende Woche: auf die
+  // Ist-Tage bis heute geklemmt (gemeinsamer Stichtag mit dem Ist). Blob und
+  // ER-Netto-Basis je Jahr des Wochenstarts (Jahreswechsel-Fenster).
+  const wochenBudgets: Record<string, number | null>[] = await (async () => {
+    try {
+      const years = [...new Set(weeks.map(w => Number(w.from.slice(0, 4))))];
+      const blobs = new Map(await Promise.all(years.map(async y =>
+        [y, await loadCockpitBudget(tenantKey, y).catch(() => null)] as const)));
+      const erM = new Map(years.map(y =>
+        [y, erNettoBudgetMonate(y, tenantKey('budget_v1'))] as const));
+      return weeks.map((w, i) => {
+        const to = partialWeekIndex === i && todayIso < w.to ? todayIso : w.to;
+        const days: string[] = [];
+        for (let d = new Date(`${w.from}T00:00:00`); iso(d) <= to; d.setDate(d.getDate() + 1)) {
+          days.push(iso(d));
+        }
+        const y = Number(w.from.slice(0, 4));
+        return resolveCockpitBudgets(
+          blobs.get(y) ?? null, tenantId, w.from, to, days, erM.get(y) ?? null);
+      });
+    } catch (e) {
+      console.error('[WOCHENVERLAUF] Budget-Auflösung fehlgeschlagen:', e);
+      return weeks.map(() => ({} as Record<string, number | null>));
+    }
+  })();
+
+  const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs, wochenBudgets);
 
   // ── Reservationen je Woche (Foratable-CSV = ALLEINIGE Quelle) ─────────────
   // «Reservierte Gäste» (Σ Personen gezählter Reservationen) und «Gruppen ab
@@ -2145,6 +2198,8 @@ export async function ladeWochenverlauf(
     rows.push({
       id: 'warenkosten_total',
       label: 'Warenkosten total', fmt: 'chf', bold: true,
+      budgetValues: wochenBudgets.map(b => b['wareneinsatz'] ?? null),
+      budgetInverted: true,
       values: weekInv.map(list => (list.length > 0 ? r2(sumInvoicesNet(list)) : null)),
       wkqValues: weekInv.map((list, i) => {
         const net = netOf(i);
@@ -2392,7 +2447,9 @@ export async function ladeJahresvergleich(
   // Fenster = exakt der Ist-Zeitraum [curFrom..curTo] (bei YTD/Ganzjahr bereits
   // bis heute gekappt) → periodenBudget kappt pro rata über Tagesanteile.
   const jvBudget = await loadCockpitBudget(tenantKey, curYear)
-    .then(b => resolveCockpitBudgets(b, tenantId, curFrom, curTo))
+    .then(b => resolveCockpitBudgets(
+      b, tenantId, curFrom, curTo, undefined,
+      erNettoBudgetMonate(curYear, tenantKey('budget_v1'))))
     .catch(() => ({} as Record<string, number | null>));
   const jb = (id: string): number | null => jvBudget[id] ?? null;
 
