@@ -376,6 +376,76 @@ export async function istMonatswerteAlle(
   };
 }
 
+// ── Ziel-/Ableitungs-Quellen (Budget-Eingabe) ────────────────────────────────
+
+/**
+ * KALKULIERTE Wareneinsatzquote je Monat aus den Gastronovi-Verkaufsdaten:
+ * je Monat Σ(Menge × WES-Stückkosten) ÷ Σ Umsatz der Produkte MIT bekanntem
+ * WES × 100 (umsatzgewichtete Produkt-WES-Q; product_sales × produkte_kosten).
+ * Monate ohne zuordenbare Verkäufe → null («leer statt 0»). Paginiert wegen
+ * PostgREST-Zeilen-Cap; deterministische Ordnung für stabile Seiten.
+ */
+export async function kalkulierteWeqMonate(
+  tenantId: TenantId, year: number,
+): Promise<(number | null)[]> {
+  const [{ supabase }, { loadProductWesMap }] = await Promise.all([
+    import('@/integrations/supabase/client'), import('@/lib/sales-db')]);
+  const wes = await loadProductWesMap();
+  if (wes.size === 0) return Array(12).fill(null);
+  const cost = Array(12).fill(0) as number[];
+  const rev = Array(12).fill(0) as number[];
+  const PAGE = 1000;
+  for (let off = 0; ; off += PAGE) {
+    const { data, error } = await (supabase as any)
+      .from('product_sales')
+      .select('product_name, quantity, revenue, sale_date')
+      .eq('restaurant_id', tenantId)
+      .gte('sale_date', `${year}-01-01`).lte('sale_date', `${year}-12-31`)
+      .order('sale_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(off, off + PAGE - 1);
+    if (error) throw new Error(`product_sales: ${error.message}`);
+    const rows = (data ?? []) as Array<{ product_name: string | null; quantity: number | null; revenue: number | null; sale_date: string | null }>;
+    for (const r of rows) {
+      const w = wes.get(String(r.product_name ?? '').trim().toLowerCase());
+      if (w === undefined || !(w > 0)) continue; // nur Produkte mit bekanntem WES
+      const m = Number(String(r.sale_date ?? '').slice(5, 7));
+      const rv = Number(r.revenue ?? 0);
+      if (!(m >= 1 && m <= 12) || !(rv > 0)) continue;
+      cost[m - 1] += Number(r.quantity ?? 0) * w;
+      rev[m - 1] += rv;
+    }
+    if (rows.length < PAGE) break;
+  }
+  return Array.from({ length: 12 }, (_, i) =>
+    rev[i] > 0 ? r2((cost[i] / rev[i]) * 100) : null);
+}
+
+/**
+ * Personalbedarf-SOLL-Stunden je Monat (netto, mit ArG-Pausenabzug): Summe
+ * bedarfNettoHoursForDate über alle Kalendertage des Monats (Saison-Profil
+ * je Datum). Kein Personalbedarf hinterlegt → alle Monate null (nie 0).
+ */
+export async function bedarfSollStundenMonate(
+  tenantId: TenantId, year: number,
+): Promise<(number | null)[]> {
+  const [{ loadStaffingRequirements }, { loadStaffingProfilesConfig },
+    { loadPositions }, { bedarfNettoHoursForDates }] = await Promise.all([
+    import('@/lib/staffing-requirements-db'), import('@/lib/staffing-profiles-db'),
+    import('@/lib/positions-db'), import('@/lib/bedarf-stunden-utils')]);
+  const [requirements, config, positions] = await Promise.all([
+    loadStaffingRequirements(tenantId), loadStaffingProfilesConfig(tenantId),
+    loadPositions(tenantId)]);
+  if (!config || requirements.length === 0 || positions.length === 0) {
+    return Array(12).fill(null);
+  }
+  return Array.from({ length: 12 }, (_, i) => {
+    const dim = daysInMonth(year, i + 1);
+    const dates = Array.from({ length: dim }, (_, d) => `${year}-${pad2(i + 1)}-${pad2(d + 1)}`);
+    return bedarfNettoHoursForDates({ positions, requirements, config, dates });
+  });
+}
+
 // ── Auflösung (Monat / Woche / Periode) ──────────────────────────────────────
 
 /** ISO-Wochen-Schlüssel 'GGGG-Www' eines Datums (ISO-Wochenjahr!). */

@@ -638,6 +638,20 @@ export interface MrRow {
   /** Spalte «Monat» (Ist bis heute; Personalkosten = Hochrechnung) */
   month: number | null;
   /**
+   * Cockpit-Budget-Positions-ID: gesetzt = das MONATS-Budget dieser Zeile ist
+   * im Cockpit inline editierbar (schreibt in DENSELBEN Store wie die
+   * Budget-Eingabe, cockpit-budget:<jahr>). Wochen-/Jahressicht bleiben read-only.
+   */
+  ckId?: string;
+  /** true = Monatswert im Cockpit-Store manuell überschrieben (monthlyExplicit). */
+  monthBudgetManuell?: boolean;
+  /**
+   * VOLLER Monats-Budgetwert (ohne Stichtag-Klemmung) — Editier-Basis der
+   * Inline-Korrektur. Kann von `monthBudget` abweichen (laufender Monat ist
+   * in der Anzeige pro rata bis heute gekappt).
+   */
+  monthBudgetVoll?: number | null;
+  /**
    * true = KOSTEN-Zeile: bei der Δ%-Färbung ist MEHR schlecht (über Budget = rot).
    * Kehrt die Vorzeichen-Färbung gegenüber Umsatz-/Ertragszeilen um.
    */
@@ -1113,6 +1127,10 @@ export async function ladeMonatsreport(
   // Startjahres laden.
   const erMonate = erNettoBudgetMonate(year, tenantKey('budget_v1'));
   const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, istToIso || toIso, undefined, erMonate);
+  // VOLLER Monatswert (ohne pro-rata-Klemmung bis Stichtag) — Basis der
+  // Inline-Budget-Bearbeitung: der Editor zeigt/schreibt IMMER den ganzen
+  // Monat, nie den anteiligen Anzeigwert des laufenden Monats.
+  const ckMFull = resolveCockpitBudgets(ckBlob, tenantId, fromIso, toIso, undefined, erMonate);
   const ckW: Record<string, number | null> = weekFrom && weekTo
     ? resolveCockpitBudgets(
         ckBlob, tenantId, weekFrom, weekTo, wocheTage,
@@ -1122,6 +1140,10 @@ export async function ladeMonatsreport(
     : {};
   const ckMk = (id: string): number | null => ckM[id] ?? null;
   const ckWk = (id: string): number | null => ckW[id] ?? null;
+  const ckMFullK = (id: string): number | null => ckMFull[id] ?? null;
+  /** «manuell»-Marker: Monatswert der Position wurde direkt überschrieben. */
+  const ckManuell = (id: string): boolean =>
+    ckBlob?.positions?.[id]?.monthlyExplicit?.[month - 1] === true;
 
   // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
   let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
@@ -1295,9 +1317,12 @@ export async function ladeMonatsreport(
       week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null;
       monthPax?: number | null; weekPax?: number | null; vjMonthPax?: number | null;
     },
-    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean; tint?: 'green' | 'red' } = {},
+    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean; tint?: 'green' | 'red'; ckId?: string } = {},
   ): MrRow => ({
     type: 'data', id, label,
+    ckId: opts.ckId,
+    monthBudgetManuell: opts.ckId ? ckManuell(opts.ckId) : undefined,
+    monthBudgetVoll: opts.ckId ? ckMFullK(opts.ckId) : undefined,
     budget: vals.budget ?? null, vj: vals.vj ?? null, vjMonth: vals.vjMonth ?? null,
     week: vals.week ?? null, weekBudget: vals.weekBudget ?? null,
     monthBudget: vals.monthBudget ?? null,
@@ -1495,7 +1520,7 @@ export async function ladeMonatsreport(
     d('gaeste_in', 'Gäste IN', {
       month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV,
       monthBudget: ckMk('gaeste_in'), weekBudget: ckWk('gaeste_in'), budget: ckWk('gaeste_in'),
-    }, { fmt: 'count' }),
+    }, { fmt: 'count', ckId: 'gaeste_in' }),
     // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
     // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
     // KW-genaue VJ-Zuordnung); VJ-Monat = gleicher Monat Vorjahr.
@@ -1563,7 +1588,7 @@ export async function ladeMonatsreport(
       vj: vwTaAnteil, vjMonth: vjTaAnteilM,
       monthBudget: ckMk('take_away_anteil'), weekBudget: ckWk('take_away_anteil'),
       budget: ckWk('take_away_anteil'),
-    }, { fmt: 'pct' }),
+    }, { fmt: 'pct', ckId: 'take_away_anteil' }),
     // Take Away Umsatz (CHF NETTO): gleiche Quelle wie der TA-Anteil, aber
     // netto ausgewiesen (÷ TA-MwSt-Divisor) — konsistent zum netto budgetierten
     // Cockpit-Budget. Woche = gewählte Woche, Monat = ganzer Monat; VJ analog.
@@ -1575,7 +1600,7 @@ export async function ladeMonatsreport(
       monthBudget: ckMk('take_away_umsatz'), weekBudget: ckWk('take_away_umsatz'),
       budget: ckWk('take_away_umsatz'),
       // Mit erfasstem Cockpit-Budget Δ% gegen das Budget, sonst gegen das VJ.
-    }, { deltaVsVj: ckMk('take_away_umsatz') == null }),
+    }, { deltaVsVj: ckMk('take_away_umsatz') == null, ckId: 'take_away_umsatz' }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
     // Food/Beverage: nur noch Ist + VJ — das BUDGET läuft konsolidiert über die
@@ -1597,7 +1622,7 @@ export async function ladeMonatsreport(
       month: null, week: null,
       monthBudget: ckMk('wareneinsatz'), weekBudget: ckWk('wareneinsatz'),
       budget: ckWk('wareneinsatz'),
-    }, { deltaInverted: true }),
+    }, { deltaInverted: true, ckId: 'wareneinsatz' }),
     e(),
     // ── Block Produktivität ──
     // Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (Budget-Spalte der
@@ -1616,14 +1641,14 @@ export async function ladeMonatsreport(
       monthBudget: ckMk('prod_stunden') ?? bedarfStdM,
       budget: ckWk('prod_stunden') ?? bedarfStdW,
       weekBudget: ckWk('prod_stunden') ?? bedarfStdW,
-    }, { fmt: 'hours', deltaInverted: true }),
+    }, { fmt: 'hours', deltaInverted: true, ckId: 'prod_stunden' }),
     d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
       // vj_daily hat keine Personalstunden → keine VJ-Produktivität.
       monthBudget: ckMk('produktivitaet'), weekBudget: ckWk('produktivitaet'),
       budget: ckWk('produktivitaet'),
-    }),
+    }, { ckId: 'produktivitaet' }),
     // «Umsatz pro Gast» wurde konsolidiert — es bleibt NUR «Ø-Verkauf pro Gast».
     // Ø-Verkauf pro Gast (wie Jahresvergleich): Oliv (Netto − TA-Netto) ÷ Gäste,
     // Beaulieu Netto ÷ Gäste — NUR gepaarte Tage, «leer statt 0», nie ÷ 0.
@@ -1635,7 +1660,7 @@ export async function ladeMonatsreport(
       vjMonth: vjPairedGaeste > 0 ? r2(vjPairedVerkauf / vjPairedGaeste) : null,
       monthBudget: ckMk('avg_verkauf_gast'), weekBudget: ckWk('avg_verkauf_gast'),
       budget: ckWk('avg_verkauf_gast'),
-    }),
+    }, { ckId: 'avg_verkauf_gast' }),
     e(),
     // ── Block Personal (ALLE Werte aus dem Kern personalkosten.ts) ─────────────
     // Kosten-Zeile: deltaInverted → über Budget = rot. MONAT = Hochrechnung
@@ -1650,7 +1675,7 @@ export async function ladeMonatsreport(
       // ausschliesslich Jahre < 2026 ohne Dienstplan-Berechnung).
       // KEINE Verteilung auf Wochen → vj (Woche) bleibt leer.
       vj: null, vjMonth: pkVjEff ? r2(pkVjEff.chf) : null,
-    }, { bold: true, deltaInverted: true }),
+    }, { bold: true, deltaInverted: true, ckId: 'personalkosten' }),
     // PKQ: Budget = Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz, aus dem
     // Kern budgetZielQuote) in BEIDEN Sichten; Δ = Ist − Ziel in PROZENTPUNKTEN
     // (deltaPp, über Ziel = rot); zusätzlich rot über harter Obergrenze.
@@ -1666,7 +1691,7 @@ export async function ladeMonatsreport(
       // desselben VJ-Monats (vj_daily, Standard-MwSt-Netto).
       vj: null,
       vjMonth: pkVjEff && vjNetV != null && vjNetV > 0 ? r2((pkVjEff.chf / vjNetV) * 100) : null,
-    }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true }),
+    }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true, ckId: 'personalquote' }),
     e(),
     // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────
     // Eine Zeile pro Lieferant (Top-Betrag des Monats zuerst) + Total + WKQ.

@@ -1,0 +1,35 @@
+BUILD — Budget-Positionen auf Ziel-/Ableitungslogik umstellen
+
+1. WARENEINSATZ (netto): Budget = kalkulierte Wareneinsatzquote % × Netto-Umsatz-
+   Budget je Monat. Quelle der Quote: Gastronovi-WEQ-Import (kalkuliert) pro Monat,
+   wo vorhanden (Beaulieu 07/08 2026). Wo kein WEQ-Import: einstellbarer Ziel-%
+   (Default 22 %), auf alle Monate anwendbar. KEIN Ist-CHF-Autofill mehr für diese
+   Zeile. "% anwenden" materialisiert die Monats-CHF.
+
+2. TAKE-AWAY: nur EINE Eingabe = der %-Anteil. Der CHF-Betrag (TA-Umsatz netto)
+   wird daraus abgeleitet (%-Anteil × Umsatz-Budget) und ist read-only. Die
+   separate CHF-Eingabeposition "Take Away Umsatz (netto)" entfällt als eigene
+   Erfassung — nur der Anteil % wird erfasst.
+
+3. GÄSTE IN: abgeleitet (nicht Ist-Autofill) = budgetierter Restaurant-Netto-Umsatz
+   (Netto − TA-netto + Maison) ÷ Ziel-Ø-Verkauf pro Gast, je Monat; dann pro rata
+   auf Woche und aufs Jahr summiert.
+
+4. PRODUKTIVE STUNDEN: Budget = Personalbedarf (Soll-Stunden, pro Tag definiert),
+   aggregiert auf Woche / Monat / Jahr. Nicht Ist-Autofill. Ist der Personalbedarf
+   für einen Zeitraum nicht hinterlegt → leer mit Hinweis (nie 0).
+
+5. PERSONALKOSTEN: Budget = 40 % × Netto-Umsatz-Budget je Monat, dann pro rata auf
+   jede Woche heruntergebrochen. Zielquote 40 % als Default, überschreibbar.
+
+6. PERSONALQUOTE: dieselbe 40 %-Quote wie unter 5 — mit Personalkosten
+   ZUSAMMENGELEGT: eine Eingabe (die Quote, Default 40 %) steuert beide; die
+   Personalkosten-CHF ergeben sich daraus. Keine doppelte, widersprüchliche Eingabe.
+
+Regeln unverändert: leer statt 0, nie ÷ 0, mandantengetrennt, pro Jahr, jede
+abgeleitete Zeile überschreibbar, Budget pro rata bis Stichtag, Vorschau + Rückgängig.
+
+Kontrolle (Oliv 2026): Personalkosten Januar = 0.40 × 240'000 (ER-Netto Jan)
+= 96'000; Personalquote Januar = 40.0 %. Wareneinsatz Januar bei Ziel-22 %
+= 0.22 × 240'000 = 52'800. Gäste-IN Januar = Restaurant-Netto-Budget ÷
+Ø-Verkauf-Ziel. Bitte nach dem Bau je einen Monatswert nennen, dann rechne ich gegen.

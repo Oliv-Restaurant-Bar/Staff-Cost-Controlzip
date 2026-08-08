@@ -21,12 +21,13 @@
  *  - Ableitungen: Gäste IN = (ER-Netto − TA-Budget) ÷ Ø-Verkauf-Ziel;
  *    Produktive Stunden = ER-Netto-Budget ÷ Ziel-Produktivität.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Target, RotateCcw, Save, ChevronDown, ChevronRight, Trash2, Wand2 } from 'lucide-react';
+import { Target, RotateCcw, Save, ChevronDown, ChevronRight, Trash2, Wand2, Upload } from 'lucide-react';
+import { loadWeqKalk, saveWeqKalk, parseWeqExport } from '@/lib/weq-kalkuliert';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
@@ -35,7 +36,8 @@ import {
   COCKPIT_BUDGET_KPIS, leereCockpitBudgetPosition,
   loadCockpitBudget, saveCockpitBudget, kalendertagGewichte, verteileJahreswert,
   ladeSaisonGewichte, istMonatswerteAlle, abgeschlosseneMonate,
-  erNettoBudgetMonate, pctAufMonate, type CockpitBudgetKpiDef, type TenantId,
+  kalkulierteWeqMonate, bedarfSollStundenMonate,
+  erNettoBudgetMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
 
@@ -44,12 +46,15 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 const EINHEIT: Record<string, string> = { chf: 'CHF', count: 'Anzahl', hours: 'Std', pct: '%' };
 
-/** Positionen mit CHF/%-Umschalter (% vom NETTO-Umsatz-Budget — auch TA, netto). Brutto/Netto sind
- *  die BASIS der %-Rechnung und bleiben reine CHF-Eingaben. BEWUSST nur die
- *  CHF-Kostenzeilen: für Anzahl- (Gäste), Stunden- und Quoten-Zeilen ist
- *  «% vom Netto» semantisch sinnlos — die Spec sieht dort Direkteingabe bzw.
- *  eigene Ableitungen vor (Gäste via Ø-Verkauf-Ziel, Stunden via Ziel-Produktivität). */
-const PCT_TOGGLE_IDS = new Set(['wareneinsatz', 'take_away_umsatz', 'personalkosten']);
+/** Positionen mit Ist-Autofill (Ziel-Quoten, die aus dem Ist geseedet werden).
+ *  Alle übrigen Zeilen sind ZIEL-/ABLEITUNGS-Zeilen (Spec 08/2026):
+ *  Wareneinsatz = kalkulierte WEQ (Gastronovi) bzw. Ziel-% × ER-Netto ·
+ *  TA-CHF = TA-Anteil-% × ER-Netto (read-only) · Gäste = Restaurant-Netto ÷
+ *  Ø-Verkauf-Ziel · Prod. Stunden = Personalbedarf-Soll · Personalkosten &
+ *  Personalquote = EINE Zielquote (Default 40 %). */
+const AUTOFILL_IDS = new Set(['take_away_anteil', 'avg_verkauf_gast', 'produktivitaet']);
+/** TA-CHF wird aus dem Anteil abgeleitet — keine eigene Erfassung mehr. */
+const READONLY_IDS = new Set(['take_away_umsatz']);
 
 function fmtNum(v: number | null | undefined): string {
   if (v === null || v === undefined) return '';
@@ -87,8 +92,7 @@ export default function BudgetCockpitPage() {
   /** Ø-Verkauf-Steigerung: '+X %' oder '+X CHF' auf die Run-Rate (Default +10 %). */
   const [steigArt, setSteigArt] = useState<'pct' | 'chf'>('pct');
   const [steigWert, setSteigWert] = useState('10');
-  /** Ziel-Produktivität (Umsatz/Std) für die Stunden-Ableitung. */
-  const [zielProd, setZielProd] = useState('');
+
 
   useEffect(() => {
     let alive = true;
@@ -154,25 +158,19 @@ export default function BudgetCockpitPage() {
     if (hinweis) toast({ title: 'Saisonal nicht möglich', description: hinweis });
   }, [getPos, setPos, tenantId, tenantKey, year, rates, toast]);
 
-  // ── CHF/%-Umschalter ───────────────────────────────────────────────────────
+  // ── Ziel-/Ableitungslogik (Spec 08/2026) ──────────────────────────────────
 
-  /** %-Satz auf die ER-Netto-Monatsbudgets anwenden (Monate materialisieren). */
-  const pctAnwenden = useCallback((def: CockpitBudgetKpiDef, pct: number) => {
-    if (!erNetto.some(v => v !== null)) {
-      toast({
-        title: 'Kein ER-Netto-Budget',
-        description: `Für ${year} ist im Budget-Modul (ER) kein Netto-Umsatz-Budget erfasst — die %-Eingabe rechnet auf dessen Monatswerten.`,
-      });
-      return false;
-    }
-    const pos = getPos(def);
-    const mv = pctAufMonate(pct, erNetto);
-    setPos(def.id, {
-      ...pos, inputMode: 'pct', pctValue: pct,
-      monthlyValues: mv,
-      monthlyExplicit: Array(12).fill(false),
-      yearValue: null,
+  const erNettoFehlt = useCallback((zweck: string): boolean => {
+    if (erNetto.some(v => v !== null)) return false;
+    toast({
+      title: 'Kein ER-Netto-Budget',
+      description: `Für ${year} ist im Budget-Modul (ER) kein Netto-Umsatz-Budget erfasst — ${zweck} rechnet auf dessen Monatswerten.`,
     });
+    return true;
+  }, [erNetto, year, toast]);
+
+  /** Fehlende ER-Monate als Toast melden (diese Monate bleiben leer). */
+  const meldeLeereErMonate = useCallback((mv: (number | null)[]) => {
     const fehlend = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
     if (fehlend.length > 0) {
       toast({
@@ -180,29 +178,224 @@ export default function BudgetCockpitPage() {
         description: `${fehlend.join(', ')}: kein Netto-Umsatz-Budget im Budget-Modul (ER) — diese Monate bleiben leer.`,
       });
     }
-    return true;
-  }, [erNetto, year, getPos, setPos, toast]);
+  }, [toast]);
 
-  /** Modus umschalten: CHF→% rechnet den konsistenten %-Satz aus den Monaten. */
-  const modusWechseln = useCallback((def: CockpitBudgetKpiDef, modus: 'chf' | 'pct') => {
-    const pos = getPos(def);
-    if (modus === (pos.inputMode ?? 'chf')) return;
-    if (modus === 'chf') {
-      setPos(def.id, { ...pos, inputMode: 'chf' }); // Monats-CHF bleiben stehen
+  /**
+   * WARENEINSATZ: je Monat kalkulierte WEQ aus dem Gastronovi-Verkaufsdaten-
+   * Import (wo vorhanden), sonst Ziel-% (Default 22) — × ER-Netto-Monat.
+   */
+  const weqAnwenden = useCallback(async () => {
+    const ziel = Number(pctInput['wareneinsatz'] ?? '22');
+    if (!isFinite(ziel) || ziel <= 0) {
+      toast({ title: 'Ziel-Quote', description: 'Bitte eine Wareneinsatzquote > 0 % erfassen.' });
       return;
     }
-    let pct: number | null = pos.pctValue ?? null;
-    {
-      let sumV = 0, sumB = 0;
-      pos.monthlyValues.forEach((v, i) => {
-        const b = erNetto[i];
-        if (v !== null && typeof b === 'number' && b > 0) { sumV += v; sumB += b; }
+    if (erNettoFehlt('die Wareneinsatz-Ableitung')) return;
+    setBusy('wareneinsatz');
+    try {
+      const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'wareneinsatz')!;
+      const pos = getPos(def);
+      // 1) Importierte WEQ-Quelle (Kassen-Export, kalkulierter Wareneinsatz
+      //    CHF je Monat) hat VORRANG: Monate mit Daten = CHF direkt als
+      //    Budget; Netto-WEQ (CHF ÷ Netto-Ist, umsatz-SSOT) nur informativ
+      //    bzw. als Ø-Näherung für die übrigen Monate — NIE die Brutto-
+      //    Kassenquote 1:1.
+      const importBlob = await loadWeqKalk(tenantKey, year)
+        .catch(e => { console.error('[CK-BUDGET] WEQ-Import-Blob laden fehlgeschlagen:', e); return null; });
+      const kalkChf = importBlob?.chfMonate ?? Array(12).fill(null) as (number | null)[];
+      if (kalkChf.some(v => v !== null)) {
+        const nettoIst = await ladeSaisonGewichte(tenantId as TenantId, tenantKey, year, 'netto_umsatz', rates ?? null)
+          .catch(e => { console.error('[CK-BUDGET] Netto-Ist für WEQ fehlgeschlagen:', e); return null; });
+        const weqNetto = kalkChf.map((chf, i) =>
+          chf !== null && nettoIst && nettoIst[i] > 0 ? r2((chf / nettoIst[i]) * 100) : null);
+        const vorhanden = weqNetto.filter((v): v is number => v !== null);
+        const avg = vorhanden.length
+          ? r2(vorhanden.reduce((a, b) => a + b, 0) / vorhanden.length) : r2(ziel);
+        const mv = erNetto.map((n, i) =>
+          kalkChf[i] !== null
+            ? r2(kalkChf[i]!)
+            : (typeof n === 'number' ? r2(n * (avg / 100)) : null));
+        setPos('wareneinsatz', {
+          ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+          inputMode: 'pct', pctValue: avg,
+          yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+        });
+        const mitDaten = kalkChf
+          .map((v, i) => (v !== null ? `${MONATE_KURZ[i]}${weqNetto[i] !== null ? ` ${weqNetto[i]}%` : ''}` : null))
+          .filter(Boolean);
+        const naeherung = kalkChf.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
+        toast({
+          title: 'Wareneinsatz-Budget aus WEQ-Import',
+          description: `Kalkulierter Wareneinsatz übernommen (Netto-WEQ): ${mitDaten.join(', ')}`
+            + (naeherung.length ? ` · Näherung Ø ${avg} % × ER-Netto: ${naeherung.join(', ')}` : '') + ' — editierbar.',
+        });
+        meldeLeereErMonate(mv);
+        return;
+      }
+      // 2) Fallback: kalkulierte WEQ aus Verkaufsdaten (product_sales), sonst Ziel-%.
+      const weq = await kalkulierteWeqMonate(tenantId as TenantId, year)
+        .catch(e => { console.error('[CK-BUDGET] kalkulierte WEQ fehlgeschlagen:', e); return Array(12).fill(null) as (number | null)[]; });
+      const mv = erNetto.map((n, i) =>
+        typeof n === 'number' ? r2(n * ((weq[i] ?? ziel) / 100)) : null);
+      setPos('wareneinsatz', {
+        ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+        inputMode: 'pct', pctValue: r2(ziel),
+        yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
       });
-      if (sumB > 0) pct = r2((sumV / sumB) * 100);
+      const kalk = weq.map((w, i) => (w !== null && erNetto[i] !== null ? `${MONATE_KURZ[i]} ${w}%` : null))
+        .filter(Boolean);
+      toast({
+        title: 'Wareneinsatz-Budget abgeleitet',
+        description: kalk.length
+          ? `Kalkulierte WEQ aus Verkaufsdaten: ${kalk.join(', ')} · übrige Monate Ziel ${ziel} % — × ER-Netto, editierbar.`
+          : `Keine kalkulierte WEQ aus Verkaufsdaten — alle Monate Ziel ${ziel} % × ER-Netto (editierbar).`,
+      });
+      meldeLeereErMonate(mv);
+    } finally { setBusy(null); }
+  }, [pctInput, erNettoFehlt, tenantId, tenantKey, rates, year, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
+
+  // ── WEQ-Quelle importieren (Kassen-Exporte: CHF-Datei + optionale %-Datei) ──
+  const weqImportRef = useRef<HTMLInputElement | null>(null);
+  const weqDateienImportieren = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBusy('wareneinsatz');
+    try {
+      let chf: (number | null)[] | null = null;
+      let tage: number[] = Array(12).fill(0);
+      const namen: string[] = [];
+      const meldungen: string[] = [];
+      for (const f of Array.from(files)) {
+        const erg = parseWeqExport(await f.arrayBuffer(), f.name);
+        meldungen.push(erg.debug);
+        if (erg.typ === 'chf') { chf = erg.chfMonate; tage = erg.tageMonate; namen.push(f.name); }
+      }
+      if (!chf || !chf.some(v => v !== null)) {
+        toast({
+          title: 'Keine WEQ-Datenbasis erkannt',
+          description: `Es braucht die CHF-Datei (Zeile «Gesamt» mit Tageswerten). ${meldungen.join(' · ')}`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      await saveWeqKalk(tenantKey, { year, chfMonate: chf, tageMonate: tage, quelleDateien: namen, updatedAt: '' });
+      const monate = chf.map((v, i) => (v !== null ? `${MONATE_KURZ[i]} ${v!.toLocaleString('de-CH')}` : null)).filter(Boolean);
+      toast({
+        title: `WEQ-Quelle importiert (${year})`,
+        description: `${meldungen.join(' · ')} — ${monate.join(', ')}. Jetzt «Quote anwenden» drücken, um das Budget abzuleiten.`,
+      });
+    } catch (e) {
+      toast({ title: 'WEQ-Import fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
+    } finally {
+      setBusy(null);
+      if (weqImportRef.current) weqImportRef.current.value = '';
     }
-    setPos(def.id, { ...pos, inputMode: 'pct', pctValue: pct });
-    if (pct !== null) setPctInput(s => ({ ...s, [def.id]: String(pct) }));
-  }, [getPos, erNetto, setPos]);
+  }, [tenantKey, year, toast]);
+
+  /**
+   * TAKE-AWAY: EINE Eingabe = Anteil-%. Materialisiert die Anteil-Monate UND
+   * das (read-only) TA-Umsatz-netto-Budget = Anteil × ER-Netto je Monat.
+   */
+  const taAnteilAnwenden = useCallback(() => {
+    const anteil = Number(pctInput['take_away_anteil'] ?? '');
+    if (!isFinite(anteil) || anteil <= 0 || anteil >= 100) {
+      toast({ title: 'TA-Anteil', description: 'Bitte einen Anteil zwischen 0 und 100 % erfassen.' });
+      return;
+    }
+    if (erNettoFehlt('die Take-Away-Ableitung')) return;
+    const pq = r2(anteil);
+    const anteilDef = COCKPIT_BUDGET_KPIS.find(d => d.id === 'take_away_anteil')!;
+    const anteilPos = getPos(anteilDef);
+    const anteilMv = erNetto.map(n => (typeof n === 'number' ? pq : null));
+    const taDef = COCKPIT_BUDGET_KPIS.find(d => d.id === 'take_away_umsatz')!;
+    const taPos = getPos(taDef);
+    const taMv = erNetto.map(n => (typeof n === 'number' ? r2(n * pq / 100) : null));
+    setPos('take_away_anteil', {
+      ...anteilPos, monthlyValues: anteilMv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'pct', pctValue: pq, yearValue: null,
+    });
+    setPos('take_away_umsatz', {
+      ...taPos, monthlyValues: taMv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'pct', pctValue: pq,
+      yearValue: r2(taMv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+      // read-only-Zeile: alte Wochen-Overrides würden die Anteil-Ableitung
+      // in der Wochenauflösung übersteuern → beim Anwenden entfernen.
+      weekOverrides: {},
+    });
+    toast({
+      title: 'Take-Away abgeleitet',
+      description: `Anteil ${pq} % auf alle ER-Monate; TA-Umsatz (netto) = Anteil × ER-Netto (read-only).`,
+    });
+    meldeLeereErMonate(taMv);
+  }, [pctInput, erNettoFehlt, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
+
+  /**
+   * PERSONALKOSTEN + PERSONALQUOTE zusammengelegt: EINE Zielquote (Default
+   * 40 %) setzt beide — PK-CHF = Quote × ER-Netto je Monat, Quote-Zeile = Quote.
+   */
+  const pkQuoteAnwenden = useCallback(() => {
+    const q = Number(pctInput['personalquote'] ?? '40');
+    if (!isFinite(q) || q <= 0 || q >= 100) {
+      toast({ title: 'Personal-Zielquote', description: 'Bitte eine Quote zwischen 0 und 100 % erfassen.' });
+      return;
+    }
+    if (erNettoFehlt('die Personalkosten-Ableitung')) return;
+    const pq = r2(q);
+    const pkDef = COCKPIT_BUDGET_KPIS.find(d => d.id === 'personalkosten')!;
+    const pkPos = getPos(pkDef);
+    const pkMv = erNetto.map(n => (typeof n === 'number' ? r2(n * pq / 100) : null));
+    const pqDef = COCKPIT_BUDGET_KPIS.find(d => d.id === 'personalquote')!;
+    const pqPos = getPos(pqDef);
+    setPos('personalkosten', {
+      ...pkPos, monthlyValues: pkMv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'pct', pctValue: pq,
+      yearValue: r2(pkMv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+    });
+    setPos('personalquote', {
+      ...pqPos, monthlyValues: erNetto.map(n => (typeof n === 'number' ? pq : null)),
+      monthlyExplicit: Array(12).fill(false), inputMode: 'pct', pctValue: pq, yearValue: null,
+    });
+    setPctInput(s => ({ ...s, personalquote: String(pq) }));
+    toast({
+      title: 'Personal-Budget abgeleitet',
+      description: `Zielquote ${pq} %: Personalkosten = ${pq} % × ER-Netto je Monat, Personalquote = ${pq} % (beide editierbar).`,
+    });
+    meldeLeereErMonate(pkMv);
+  }, [pctInput, erNettoFehlt, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
+
+  /**
+   * PRODUKTIVE STUNDEN: Budget = Personalbedarf-SOLL (netto, pro Tag definiert),
+   * je Monat aggregiert. Kein Bedarf hinterlegt → leer + Hinweis (nie 0).
+   */
+  const stundenAusBedarf = useCallback(async () => {
+    setBusy('prod_stunden');
+    try {
+      const mv = await bedarfSollStundenMonate(tenantId as TenantId, year);
+      if (!mv.some(v => v !== null)) {
+        toast({
+          title: 'Kein Personalbedarf hinterlegt',
+          description: `Für ${tenantId === 'oliv' ? 'Oliv' : 'Beaulieu'} sind keine Soll-Schichten (Personalbedarf) erfasst — das Stunden-Budget bleibt leer (nie 0).`,
+        });
+        return;
+      }
+      const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'prod_stunden')!;
+      const pos = getPos(def);
+      setPos('prod_stunden', {
+        ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+        inputMode: 'chf', pctValue: null,
+        yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+      });
+      const leer = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
+      toast({
+        title: 'Planstunden aus Personalbedarf',
+        description: leer.length
+          ? `Soll-Stunden je Monat übernommen; ohne Bedarf: ${leer.join(', ')} (leer).`
+          : 'Soll-Stunden des Personalbedarfs je Monat übernommen (editierbar).',
+      });
+    } catch (e) {
+      console.error('[CK-BUDGET] Personalbedarf-Ladung fehlgeschlagen:', e);
+      toast({ title: 'Personalbedarf nicht ladbar', description: String((e as Error)?.message ?? e), variant: 'destructive' });
+    } finally { setBusy(null); }
+  }, [tenantId, year, getPos, setPos, toast]);
 
   // ── Auto-Befüllung: Ist-Werte des gewählten Jahres («Stand der Dinge») ───
 
@@ -281,7 +474,7 @@ export default function BudgetCockpitPage() {
         istMonatswerteAlle(tenantId as TenantId, tenantKey, year - 1, rates),
       ]);
       const meldungen: string[] = [];
-      for (const def of COCKPIT_BUDGET_KPIS) {
+      for (const def of COCKPIT_BUDGET_KPIS.filter(d => AUTOFILL_IDS.has(d.id))) {
         const msg = fuellePosition(def, alle[def.id] ?? null, vjAlle[def.id] ?? null);
         if (msg) meldungen.push(msg);
       }
@@ -289,7 +482,7 @@ export default function BudgetCockpitPage() {
         title: 'Autofill abgeschlossen',
         description: meldungen.length
           ? meldungen.slice(0, 3).join(' ')
-          : `Alle Positionen vorbefüllt: abgeschlossene ${year}-Monate = Ist, übrige Monate = Vorjahr ${year - 1} (saisonal).`,
+          : `Ziel-Quoten (TA-Anteil, Ø-Verkauf, Produktivität) aus Ist geseedet: abgeschlossene ${year}-Monate = Ist, übrige = Vorjahr ${year - 1} (saisonal). Kosten/Stunden/Gäste per Ableitung.`,
       });
     } catch (e) {
       console.error('[CK-AUTOFILL] fehlgeschlagen:', e);
@@ -362,33 +555,6 @@ export default function BudgetCockpitPage() {
     toast({ title: 'Gäste-Budget abgeleitet', description: 'Restaurant-Netto-Budget ÷ Ø-Verkauf-Ziel, je Monat (editierbar).' });
   }, [getPos, getPosById, restaurantNettoMonat, year, setPos, toast]);
 
-  /** Vorschlag Ziel-Produktivität: Mittel der budgetierten Produktivitäts-Monate. */
-  const zielProdVorschlag = useMemo(() => {
-    const p = getPosById('produktivitaet');
-    const vals = (p?.monthlyValues ?? []).filter((v): v is number => typeof v === 'number' && v > 0);
-    return vals.length ? r2(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
-  }, [getPosById]);
-
-  const stundenAbleiten = useCallback(() => {
-    const ziel = zielProd !== '' ? Number(zielProd) : zielProdVorschlag;
-    if (!ziel || !isFinite(ziel) || ziel <= 0) {
-      toast({ title: 'Ziel-Produktivität fehlt', description: 'Bitte Umsatz/Std erfassen (oder zuerst «Produktivität» budgetieren).' });
-      return;
-    }
-    if (!erNetto.some(v => v !== null)) {
-      toast({ title: 'ER-Netto-Budget fehlt', description: `Stunden-Ableitung braucht das Netto-Umsatz-Budget ${year} aus dem Budget-Modul (ER).` });
-      return;
-    }
-    const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'prod_stunden')!;
-    const pos = getPos(def);
-    const mv = erNetto.map(v => (typeof v === 'number' ? r2(v / ziel) : null));
-    setPos('prod_stunden', {
-      ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
-      yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
-    });
-    toast({ title: 'Planstunden abgeleitet', description: `Netto-Budget ÷ ${ziel} CHF/Std, je Monat (editierbar).` });
-  }, [zielProd, zielProdVorschlag, erNetto, year, getPos, setPos, toast]);
-
   // ── Speichern / Rückgängig ────────────────────────────────────────────────
 
   const speichern = useCallback(async () => {
@@ -447,10 +613,10 @@ export default function BudgetCockpitPage() {
             disabled={busy !== null || loading}
             onClick={autofillAlle} data-testid="button-autofill-alle">
             <Wand2 className="h-4 w-4" />
-            {busy === '*' ? 'Befüllt …' : `Alle aus ${year}-Ist befüllen`}
+            {busy === '*' ? 'Befüllt …' : `Ziel-Quoten aus ${year}-Ist seeden`}
           </Button>
           <span className="text-[10px] text-muted-foreground">
-            alle Positionen · abgeschlossene Monate = {year}-Ist, übrige = Vorjahr {year - 1} (saisonal) · überschreibt (Rückgängig möglich)
+            nur Ziel-Quoten (TA-Anteil, Ø-Verkauf/Gast, Produktivität) · abgeschlossene Monate = {year}-Ist, übrige = Vorjahr {year - 1} · überschreibt (Rückgängig möglich)
           </span>
           <div className="flex-1" />
           <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled={!dirty || saving}
@@ -470,8 +636,9 @@ export default function BudgetCockpitPage() {
           const istOffen = open[def.id] ?? false;
           const summe = pos.monthlyValues.reduce<number>((s, v) => s + (v ?? 0), 0);
           const hatWerte = pos.monthlyValues.some(v => v !== null);
-          const imPctModus = PCT_TOGGLE_IDS.has(def.id) && (pos.inputMode ?? 'chf') === 'pct';
-          const hatAutofill = true; // jede Position hat eine Ist-Quelle
+          const imPctModus = (pos.inputMode ?? 'chf') === 'pct';
+          const hatAutofill = AUTOFILL_IDS.has(def.id);
+          const readOnly = READONLY_IDS.has(def.id);
           return (
             <div key={def.id} className="rounded-xl border bg-card shadow-sm" data-testid={`budget-pos-${def.id}`}>
               <button
@@ -487,6 +654,9 @@ export default function BudgetCockpitPage() {
                 <span className="text-[10px] uppercase text-muted-foreground">{EINHEIT[def.unit]}</span>
                 {def.kind === 'ratio' && (
                   <span className="text-[10px] text-muted-foreground">· abgeleitet, überschreibbar</span>
+                )}
+                {readOnly && (
+                  <span className="text-[10px] text-muted-foreground">· abgeleitet aus TA-Anteil % (read-only)</span>
                 )}
                 {imPctModus && pos.pctValue != null && (
                   <span className="text-[10px] text-muted-foreground">· {pos.pctValue} % vom Umsatz-Budget</span>
@@ -513,7 +683,7 @@ export default function BudgetCockpitPage() {
                       </Button>
                     )}
                     {/* Manuelle Steigerung — bewusst separater Schritt (kein Auto-±10 %). */}
-                    <div className="flex items-center gap-1.5 text-xs">
+                    {!readOnly && <div className="flex items-center gap-1.5 text-xs">
                       <Input type="number" className="h-7 w-16 text-right text-xs" value={steigWert}
                         onChange={e => setSteigWert(e.target.value)} data-testid={`input-steigerung-wert-${def.id}`} />
                       <Select value={steigArt} onValueChange={v => setSteigArt(v as 'pct' | 'chf')}>
@@ -530,40 +700,63 @@ export default function BudgetCockpitPage() {
                         data-testid={`button-steigerung-${def.id}`}>
                         Steigerung anwenden
                       </Button>
-                    </div>
-                    {PCT_TOGGLE_IDS.has(def.id) && (
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex overflow-hidden rounded-md border">
-                          {(['chf', 'pct'] as const).map(m => (
-                            <button key={m} type="button"
-                              className={cn('px-2 py-1 text-[11px]',
-                                (pos.inputMode ?? 'chf') === m ? 'bg-primary text-primary-foreground' : 'bg-background')}
-                              onClick={() => modusWechseln(def, m)}
-                              data-testid={`button-modus-${m}-${def.id}`}>
-                              {m === 'chf' ? 'CHF' : '%'}
-                            </button>
-                          ))}
-                        </div>
-                        {imPctModus && (
-                          <>
-                            <Input type="number" inputMode="decimal" placeholder="%"
-                              className="h-7 w-20 text-right text-xs"
-                              value={pctInput[def.id] ?? ''}
-                              onChange={e => setPctInput(s => ({ ...s, [def.id]: e.target.value }))}
-                              data-testid={`input-pct-${def.id}`} />
-                            <Button variant="outline" size="sm" className="h-7 text-xs"
-                              onClick={() => {
-                                const p = Number(pctInput[def.id]);
-                                if (isFinite(p)) pctAnwenden(def, r2(p));
-                              }}
-                              data-testid={`button-pct-anwenden-${def.id}`}>
-                              % anwenden
-                            </Button>
-                            <span className="text-[10px] text-muted-foreground">
-                              % vom ER-Netto-Umsatz-Budget je Monat
-                            </span>
-                          </>
-                        )}
+                    </div>}
+                    {def.id === 'wareneinsatz' && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Ziel-WEQ %:</span>
+                        <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
+                          value={pctInput['wareneinsatz'] ?? '22'}
+                          onChange={e => setPctInput(s => ({ ...s, wareneinsatz: e.target.value }))}
+                          data-testid="input-pct-wareneinsatz" />
+                        <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy !== null}
+                          onClick={weqAnwenden} data-testid="button-weq-anwenden">
+                          {busy === 'wareneinsatz' ? 'Leitet ab …' : 'Quote anwenden'}
+                        </Button>
+                        <input
+                          ref={weqImportRef} type="file" multiple accept=".xlsx,.xls" className="hidden"
+                          onChange={e => weqDateienImportieren(e.target.files)}
+                          data-testid="input-weq-import-files"
+                        />
+                        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" disabled={busy !== null}
+                          onClick={() => weqImportRef.current?.click()} data-testid="button-weq-import">
+                          <Upload className="h-3.5 w-3.5" /> WEQ-Dateien importieren
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          Import (kalk. Wareneinsatz CHF) vor Verkaufsdaten vor Ziel-% — Näherungs-Monate Ø der vorhandenen
+                        </span>
+                      </div>
+                    )}
+                    {def.id === 'take_away_anteil' && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Anteil %:</span>
+                        <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
+                          value={pctInput['take_away_anteil'] ?? ''}
+                          onChange={e => setPctInput(s => ({ ...s, take_away_anteil: e.target.value }))}
+                          placeholder="z.B. 8"
+                          data-testid="input-pct-take_away_anteil" />
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={taAnteilAnwenden} data-testid="button-ta-anteil-anwenden">
+                          Anteil anwenden
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          setzt Anteil-Monate UND das TA-Umsatz-Budget (netto, read-only)
+                        </span>
+                      </div>
+                    )}
+                    {(def.id === 'personalkosten' || def.id === 'personalquote') && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Zielquote %:</span>
+                        <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
+                          value={pctInput['personalquote'] ?? '40'}
+                          onChange={e => setPctInput(s => ({ ...s, personalquote: e.target.value }))}
+                          data-testid={`input-pct-personal-${def.id}`} />
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={pkQuoteAnwenden} data-testid={`button-pk-quote-${def.id}`}>
+                          Zielquote anwenden
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          EINE Quote steuert Personalkosten-CHF UND Personalquote (Default 40 %)
+                        </span>
                       </div>
                     )}
                     {def.id === 'gaeste_in' && (
@@ -573,22 +766,15 @@ export default function BudgetCockpitPage() {
                       </Button>
                     )}
                     {def.id === 'prod_stunden' && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <span className="text-muted-foreground">Ziel-Produktivität (Umsatz/Std):</span>
-                        <Input type="number" inputMode="decimal" className="h-7 w-24 text-right text-xs"
-                          value={zielProd} onChange={e => setZielProd(e.target.value)}
-                          placeholder={zielProdVorschlag != null ? String(zielProdVorschlag) : 'z.B. 95'}
-                          data-testid="input-ziel-produktivitaet" />
-                        <Button variant="outline" size="sm" className="h-7 text-xs"
-                          onClick={stundenAbleiten} data-testid="button-stunden-ableiten">
-                          Planstunden ableiten
-                        </Button>
-                      </div>
+                      <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy !== null}
+                        onClick={stundenAusBedarf} data-testid="button-stunden-bedarf">
+                        {busy === 'prod_stunden' ? 'Leitet ab …' : 'Aus Personalbedarf (Soll) übernehmen'}
+                      </Button>
                     )}
                   </div>
 
                   {/* Jahreswert + Verteilung (für %-Positionen wenig sinnvoll → nur Monatseingabe) */}
-                  {def.unit !== 'pct' && !imPctModus && (
+                  {def.unit !== 'pct' && !imPctModus && !readOnly && (
                     <div className="flex flex-wrap items-center gap-2">
                       <label className="text-xs font-medium">Jahreswert</label>
                       <Input
@@ -636,7 +822,9 @@ export default function BudgetCockpitPage() {
                         <Input
                           type="number" inputMode="decimal" className="h-8 text-right text-xs"
                           value={fmtNum(pos.monthlyValues[i])}
+                          disabled={readOnly}
                           onChange={e => {
+                            if (readOnly) return;
                             const raw = e.target.value;
                             const v = raw === '' ? null : Number(raw);
                             const mv = pos.monthlyValues.slice();
@@ -654,8 +842,10 @@ export default function BudgetCockpitPage() {
                     ))}
                   </div>
 
-                  {/* Wochen-Overrides (ISO-KW). Für %-Positionen gilt der Wert ungekürzt. */}
-                  <div className="space-y-1.5">
+                  {/* Wochen-Overrides (ISO-KW). Für %-Positionen gilt der Wert ungekürzt.
+                      Read-only-Zeilen (TA-CHF): keine Overrides — die Wochen-
+                      Auflösung folgt der Anteil-Ableitung (Override hätte Vorrang). */}
+                  {!readOnly && <div className="space-y-1.5">
                     <p className="text-xs font-medium">Wochen-Overrides (ISO-KW, Vorrang vor Monatsableitung)</p>
                     {Object.entries(pos.weekOverrides).sort(([a], [b]) => a.localeCompare(b)).map(([wk, v]) => (
                       <div key={wk} className="flex items-center gap-2 text-xs">
@@ -679,7 +869,7 @@ export default function BudgetCockpitPage() {
                         setPos(def.id, { ...pos, weekOverrides: { ...pos.weekOverrides, [wk]: v } })}
                       testid={def.id}
                     />
-                  </div>
+                  </div>}
                 </div>
               )}
             </div>
@@ -692,12 +882,15 @@ export default function BudgetCockpitPage() {
           Kalendertage, über Monatsgrenzen) · Wochen-Override wird bei auf den
           Monat geklemmten Wochen anteilig (Tage ÷ 7) gerechnet, %-Werte ungekürzt ·
           Cockpit kappt Monats-/Jahresbudgets pro rata bis zum Stichtag ·
-          Umsatz-Budget = ER-/P&amp;L-Budget (Budget-Modul) — %-Eingaben rechnen
-          auf dessen Netto-Monatswerten (auch Take Away, netto) · Autofill:
-          abgeschlossene Monate = {year}-Ist, übrige (inkl. laufender
-          Teilmonat) = voller Vorjahresmonat {year - 1} (saisonal, kein
-          Schnitt; Vorjahres-Personalkosten mit den aktuellen AG-Soz.-Sätzen
-          gerechnet), fehlt auch das Vorjahr → leer; immer editierbar;
+          Umsatz-Budget = ER-/P&amp;L-Budget (Budget-Modul) — alle Ableitungen
+          rechnen auf dessen Netto-Monatswerten · Ziel-/Ableitungslogik:
+          Wareneinsatz = kalkulierte WEQ (Verkaufsdaten) bzw. Ziel-% × ER-Netto ·
+          Take-Away: nur der Anteil-% wird erfasst, TA-CHF (netto) = Anteil ×
+          ER-Netto (read-only) · Gäste = Restaurant-Netto ÷ Ø-Verkauf-Ziel ·
+          Produktive Stunden = Personalbedarf-Soll je Monat · Personalkosten &amp;
+          Personalquote = EINE Zielquote (Default 40 %) · Autofill seedet nur
+          die Ziel-Quoten (abgeschlossene Monate = {year}-Ist, übrige = Vorjahr
+          {year - 1}); jede abgeleitete Zeile bleibt editierbar;
           Steigerung nur manuell per Button ·
           leere Felder = kein Budget (nie 0)
           · Mandanten getrennt (aktuell:

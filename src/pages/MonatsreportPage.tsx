@@ -6,7 +6,7 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, GripVertical, ListOrdered, RotateCcw, Check, Info } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, GripVertical, ListOrdered, RotateCcw, Check, Info, PencilLine, Undo2 } from 'lucide-react';
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, type DragEndEvent,
@@ -34,6 +34,11 @@ import {
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
   type WochenverlaufRow, type JahresvergleichDaten, type VergleichsModus,
 } from '@/lib/monatsreport';
+import {
+  loadCockpitBudget, saveCockpitBudget, leereCockpitBudgetPosition,
+  isoWeekKey, erNettoBudgetMonate, COCKPIT_BUDGET_KPIS,
+} from '@/lib/cockpit-budget';
+import type { CockpitBudgetPosition } from '@/types/budget';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
 import { useToast } from '@/hooks/use-toast';
@@ -207,6 +212,7 @@ function SortableDataRow({ id, bold, children }: {
 function ReportTable({
   rows, granularity, budgetSub, vjHeader = 'Vorjahr', vjSub, istHeader, istSub, testid,
   editMode = false, onReorder, onDrill, showVj = false,
+  budgetEdit = false, onBudgetEdit, onBudgetReset,
 }: {
   rows: MrRow[];
   granularity: ReportGranularity;
@@ -225,6 +231,12 @@ function ReportTable({
   onDrill?: (id: string) => void;
   /** Vorjahr-Spalte anzeigen (Toggle, Default AUS — Budget-Vergleich im Fokus). */
   showVj?: boolean;
+  /** «Budget bearbeiten»: Monats-Budgets der Cockpit-Positionen (row.ckId)
+   *  inline editierbar — NUR Monatssicht, Woche/Jahr bleiben read-only. */
+  budgetEdit?: boolean;
+  onBudgetEdit?: (ckId: string, value: number | null) => void;
+  /** «Zurück auf abgeleitet/Ist» für manuell überschriebene Monate. */
+  onBudgetReset?: (ckId: string) => void;
 }) {
   // Spaltenzahl für Trenner-/Colspan-Zeilen: Kennzahl+Δ%+Δabs+Ist+Budget (5)
   // + optional Vorjahr + optional Ziehgriff.
@@ -452,7 +464,57 @@ function ReportTable({
                     </span>
                   ) : null}
                 </td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {granularity === 'monat' && budgetEdit && row.ckId && onBudgetEdit && !editMode ? (
+                    <span className="inline-flex items-center justify-end gap-1">
+                      {row.monthBudgetManuell && onBudgetReset ? (
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          title="Zurück auf abgeleitet/Ist"
+                          onClick={() => onBudgetReset(row.ckId!)}
+                          data-testid={`button-budget-reset-${row.id}`}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                      {/* Editier-Basis = VOLLER Monatswert (monthBudgetVoll) — die
+                          Anzeige des laufenden Monats ist pro rata bis heute gekappt
+                          und darf NIE als Monatswert zurückgeschrieben werden. */}
+                      <input
+                        type="number" inputMode="decimal"
+                        // key: bei neuem Store-Wert neu initialisieren (unkontrolliert).
+                        key={`${row.ckId}-${row.monthBudgetVoll ?? 'leer'}`}
+                        defaultValue={row.monthBudgetVoll ?? ''}
+                        title="Voller Monatswert (nicht der pro-rata-Anzeigewert)"
+                        className="h-7 w-24 rounded border bg-background px-1.5 text-right text-xs tabular-nums"
+                        data-testid={`input-budget-${row.id}`}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                        onBlur={e => {
+                          const raw = e.target.value.trim().replace(',', '.');
+                          const v = raw === '' ? null : Number(raw);
+                          if (v !== null && !isFinite(v)) return; // ungültig: ignorieren
+                          if ((v ?? null) === (row.monthBudgetVoll ?? null)) return; // unverändert
+                          onBudgetEdit(row.ckId!, v);
+                        }}
+                      />
+                      {(row.monthBudgetVoll ?? null) !== (p.budget ?? null) ? (
+                        <span className="text-[9px] text-muted-foreground">voller Monat</span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <>
+                      {fmtCell(p.budget, row.fmt)}
+                      {granularity === 'monat' && row.monthBudgetManuell ? (
+                        <span
+                          className="ml-1 inline-block rounded bg-amber-100 px-1 align-middle text-[9px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                          title="Monatswert manuell überschrieben (Budget bearbeiten → Reset stellt die Ableitung wieder her)"
+                          data-testid={`badge-manuell-${row.id}`}
+                        >manuell</span>
+                      ) : null}
+                    </>
+                  )}
+                </td>
                 {showVj && (
                   <td className="px-3 py-1.5 text-right tabular-nums">
                     {fmtCell(p.vj, row.fmt, p.vjPax)}
@@ -634,6 +696,17 @@ export default function MonatsreportPage() {
     saveOrder(next);
   }, [currentIds, saveOrder]);
 
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetBusy, setBudgetBusy] = useState(false);
+  // Ein-Schritt-Rückgängig: Positions-Snapshot VOR der letzten Änderung.
+  const [budgetUndo, setBudgetUndo] = useState<{
+    ckId: string; year: number; prev: CockpitBudgetPosition | null; label: string;
+    /** Positions-Stand NACH unserer Änderung — Undo nur, wenn er noch gilt
+     *  (sonst hat inzwischen jemand anderes geändert → Konflikt, kein Write). */
+    expectedAfter: CockpitBudgetPosition;
+  } | null>(null);
+  const [budgetReloadTick, setBudgetReloadTick] = useState(0);
+
   useEffect(() => {
     if (ratesLoading || !rates) return;
     let alive = true;
@@ -644,13 +717,151 @@ export default function MonatsreportPage() {
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection]);
+  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick]);
+
+  useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
 
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
   const next = () => { if (month === 12) { setYear(y => y + 1); setMonth(1); } else setMonth(m => m + 1); };
 
   // Vorjahr-Spalte: nur per Toggle (Default AUS) — Budget-Vergleich im Fokus.
   const [showVj, setShowVj] = useState(false);
+
+  // ── Inline-Budget-Korrektur (NUR Monatsebene, top-down) ────────────────────
+  // Schreibt in DENSELBEN Store wie die Budget-Eingabe (cockpit-budget:<jahr>,
+  // tenant-präfixiert) — eine einzige Quelle der Wahrheit. Der Monatswert
+  // bricht wie bisher pro rata auf die Wochen herunter (resolveCockpitBudgets);
+  // Wochen-/Jahressicht bleiben read-only, KEIN Hochrechnen Woche → Monat.
+
+  /** ISO-Wochen-Keys, die Tage dieses Monats enthalten (für Override-Warnung). */
+  const wochenKeysDesMonats = useCallback((): Set<string> => {
+    const dim = new Date(year, month, 0).getDate();
+    const keys = new Set<string>();
+    for (let d = 1; d <= dim; d++) {
+      keys.add(isoWeekKey(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`));
+    }
+    return keys;
+  }, [year, month]);
+
+  /** Blob laden (oder leeres Jahres-Blob) + Position der ID (oder leer). */
+  const ladePosition = useCallback(async (ckId: string) => {
+    const def = COCKPIT_BUDGET_KPIS.find(k => k.id === ckId);
+    if (!def) throw new Error(`Unbekannte Budget-Position: ${ckId}`);
+    const blob = (await loadCockpitBudget(tenantKey, year))
+      ?? { year, positions: {}, updatedAt: '', taNetto: true as const };
+    const pos = blob.positions[ckId] ?? leereCockpitBudgetPosition(ckId, def.unit);
+    return { def, blob, pos };
+  }, [tenantKey, year]);
+
+  /** Monats-Edit: überschreibt den Monatswert dieser Position (explicit). */
+  const budgetMonatSetzen = useCallback(async (ckId: string, value: number | null) => {
+    if (budgetBusy) return;
+    setBudgetBusy(true);
+    try {
+      const { def, blob, pos } = await ladePosition(ckId);
+      const prev: CockpitBudgetPosition = JSON.parse(JSON.stringify(pos));
+      // Bestehende KW-Overrides in DIESEM Monat: warnen und nur nach
+      // Bestätigung ersetzen — sonst bleiben sie stehen (Präzedenz Woche > Monat).
+      const monatsKeys = wochenKeysDesMonats();
+      const betroffen = Object.keys(pos.weekOverrides).filter(k => monatsKeys.has(k));
+      let weekOverrides = pos.weekOverrides;
+      if (betroffen.length > 0) {
+        const ersetzen = window.confirm(
+          `${betroffen.length} Wochen-Override${betroffen.length === 1 ? '' : 's'} in ${MONATE[month - 1]} ${year} (${betroffen.join(', ')}) `
+          + `werden durch den neuen Monatswert ersetzt.
+
+OK = Overrides entfernen (Monatswert gilt voll) · `
+          + `Abbrechen = Overrides bleiben stehen (Präzedenz Woche > Monat gilt weiter).`);
+        if (ersetzen) {
+          weekOverrides = Object.fromEntries(
+            Object.entries(pos.weekOverrides).filter(([k]) => !monatsKeys.has(k)));
+        }
+      }
+      const mv = pos.monthlyValues.slice();
+      const me = pos.monthlyExplicit.slice();
+      mv[month - 1] = value; // null = bewusst leer (nie 0 erfinden)
+      me[month - 1] = value !== null;
+      const neu = { ...pos, monthlyValues: mv, monthlyExplicit: me, weekOverrides };
+      blob.positions[ckId] = neu;
+      await saveCockpitBudget(tenantKey, blob);
+      setBudgetUndo({ ckId, year, prev, label: def.label, expectedAfter: neu });
+      setBudgetReloadTick(t => t + 1);
+      toast({
+        title: 'Monats-Budget überschrieben',
+        description: `${def.label} · ${MONATE[month - 1]} ${year}: `
+          + (value === null ? 'geleert' : value.toLocaleString('de-CH'))
+          + ' — Wochen dieses Monats skalieren pro rata mit. «Rückgängig» oben verfügbar.',
+      });
+    } catch (e) {
+      toast({ title: 'Budget-Korrektur fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
+    } finally { setBudgetBusy(false); }
+  }, [budgetBusy, ladePosition, wochenKeysDesMonats, month, year, tenantKey, toast]);
+
+  /** «Zurück auf abgeleitet/Ist»: hebt den manuellen Monats-Override auf.
+   *  %-Positionen (pctValue) erhalten den abgeleiteten Wert zurück (Quote ×
+   *  ER-Netto-Monat); Ratio-Zeilen fallen auf die Ableitung zurück (null);
+   *  sonst leer («leer statt 0»). */
+  const budgetMonatReset = useCallback(async (ckId: string) => {
+    if (budgetBusy) return;
+    setBudgetBusy(true);
+    try {
+      const { def, blob, pos } = await ladePosition(ckId);
+      const prev: CockpitBudgetPosition = JSON.parse(JSON.stringify(pos));
+      const mv = pos.monthlyValues.slice();
+      const me = pos.monthlyExplicit.slice();
+      let abgeleitet: number | null = null;
+      if (def.kind === 'base' && (pos.inputMode ?? 'chf') === 'pct' && pos.pctValue !== null) {
+        const er = erNettoBudgetMonate(year, tenantKey('budget_v1'))[month - 1];
+        abgeleitet = typeof er === 'number'
+          ? Math.round(er * pos.pctValue / 100 * 100) / 100 : null;
+      }
+      mv[month - 1] = abgeleitet;
+      me[month - 1] = false;
+      const neu = { ...pos, monthlyValues: mv, monthlyExplicit: me };
+      blob.positions[ckId] = neu;
+      await saveCockpitBudget(tenantKey, blob);
+      setBudgetUndo({ ckId, year, prev, label: def.label, expectedAfter: neu });
+      setBudgetReloadTick(t => t + 1);
+      toast({
+        title: 'Zurück auf abgeleitet/Ist',
+        description: `${def.label} · ${MONATE[month - 1]} ${year}: manueller Monatswert entfernt`
+          + (abgeleitet !== null ? ` — abgeleiteter Wert ${abgeleitet.toLocaleString('de-CH')} wiederhergestellt.` : ' — Zeile folgt wieder der Ableitung bzw. bleibt leer.'),
+      });
+    } catch (e) {
+      toast({ title: 'Reset fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
+    } finally { setBudgetBusy(false); }
+  }, [budgetBusy, ladePosition, month, year, tenantKey, toast]);
+
+  /** Ein-Schritt-Rückgängig: stellt den Positions-Stand VOR der letzten Änderung wieder her. */
+  const budgetUndoAusfuehren = useCallback(async () => {
+    if (!budgetUndo || budgetBusy) return;
+    setBudgetBusy(true);
+    try {
+      const blob = (await loadCockpitBudget(tenantKey, budgetUndo.year))
+        ?? { year: budgetUndo.year, positions: {}, updatedAt: '', taNetto: true as const };
+      // Konfliktwache: nur rückgängig machen, wenn die Position noch exakt
+      // unserem Nach-Zustand entspricht (kein CAS im KV — Stale-Undo würde
+      // sonst eine fremde Zwischenänderung stillschweigend löschen).
+      const aktuell = blob.positions[budgetUndo.ckId] ?? null;
+      if (JSON.stringify(aktuell) !== JSON.stringify(budgetUndo.expectedAfter)) {
+        setBudgetUndo(null);
+        toast({
+          title: 'Rückgängig nicht möglich',
+          description: `${budgetUndo.label}: Position wurde inzwischen anderweitig geändert (z.B. Budget-Eingabe) — nichts überschrieben.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (budgetUndo.prev) blob.positions[budgetUndo.ckId] = budgetUndo.prev;
+      else delete blob.positions[budgetUndo.ckId];
+      await saveCockpitBudget(tenantKey, blob);
+      setBudgetUndo(null);
+      setBudgetReloadTick(t => t + 1);
+      toast({ title: 'Rückgängig', description: `${budgetUndo.label}: vorheriger Stand wiederhergestellt.` });
+    } catch (e) {
+      toast({ title: 'Rückgängig fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
+    } finally { setBudgetBusy(false); }
+  }, [budgetUndo, budgetBusy, tenantKey, toast]);
 
   const wocheRange = daten?.weekFrom && daten?.weekTo
     ? `${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
@@ -791,6 +1002,24 @@ export default function MonatsreportPage() {
               >
                 Vorjahr {showVj ? 'ein' : 'aus'}
               </Button>
+              <Button
+                variant={budgetEdit ? 'default' : 'outline'} size="sm" className="h-8 gap-1.5"
+                onClick={() => setBudgetEdit(v => !v)}
+                disabled={!daten || loading || budgetBusy}
+                data-testid="button-toggle-budget-edit"
+              >
+                {budgetEdit ? <Check className="h-4 w-4" /> : <PencilLine className="h-4 w-4" />}
+                {budgetEdit ? 'Fertig' : 'Budget bearbeiten'}
+              </Button>
+              {budgetUndo && (
+                <Button
+                  variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
+                  onClick={budgetUndoAusfuehren} disabled={budgetBusy}
+                  data-testid="button-budget-undo"
+                >
+                  <Undo2 className="h-4 w-4" /> Rückgängig
+                </Button>
+              )}
               <RowOrderControls
                 editMode={editRows}
                 onToggle={() => setEditRows(v => !v)}
@@ -827,6 +1056,9 @@ export default function MonatsreportPage() {
                 onReorder={reorderRows}
                 onDrill={(id) => openDrill(id, 'monat')}
                 showVj={showVj}
+                budgetEdit={budgetEdit}
+                onBudgetEdit={budgetMonatSetzen}
+                onBudgetReset={budgetMonatReset}
               />
             )}
 
@@ -1071,6 +1303,17 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
     return out;
   }, [heute]);
   const istAktuellesJahr = jahr === heute.getFullYear();
+
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetBusy, setBudgetBusy] = useState(false);
+  // Ein-Schritt-Rückgängig: Positions-Snapshot VOR der letzten Änderung.
+  const [budgetUndo, setBudgetUndo] = useState<{
+    ckId: string; year: number; prev: CockpitBudgetPosition | null; label: string;
+    /** Positions-Stand NACH unserer Änderung — Undo nur, wenn er noch gilt
+     *  (sonst hat inzwischen jemand anderes geändert → Konflikt, kein Write). */
+    expectedAfter: CockpitBudgetPosition;
+  } | null>(null);
+  const [budgetReloadTick, setBudgetReloadTick] = useState(0);
 
   useEffect(() => {
     if (ratesLoading || !rates) return;
@@ -1523,6 +1766,17 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
   const [fehler, setFehler] = useState<string | null>(null);
 
   // Lazy: erst beim Öffnen des Tabs (Mount) laden; Reload bei Modus-/Zeitraumwechsel.
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetBusy, setBudgetBusy] = useState(false);
+  // Ein-Schritt-Rückgängig: Positions-Snapshot VOR der letzten Änderung.
+  const [budgetUndo, setBudgetUndo] = useState<{
+    ckId: string; year: number; prev: CockpitBudgetPosition | null; label: string;
+    /** Positions-Stand NACH unserer Änderung — Undo nur, wenn er noch gilt
+     *  (sonst hat inzwischen jemand anderes geändert → Konflikt, kein Write). */
+    expectedAfter: CockpitBudgetPosition;
+  } | null>(null);
+  const [budgetReloadTick, setBudgetReloadTick] = useState(0);
+
   useEffect(() => {
     if (ratesLoading || !rates) return;
     if (!customValid) { setDaten(null); setLoading(false); return; }
