@@ -45,6 +45,11 @@ export interface CockpitBudgetKpiDef {
   kind: 'base' | 'ratio';
   /** Kurzbeschreibung der Ableitung (nur ratio; UI-Hinweis). */
   hint?: string;
+  /** Position existiert nur bei diesem Mandanten (z.B. TripAdvisor = Oliv). */
+  onlyTenant?: TenantId;
+  /** Interne Eingabe-/Treiber-Position (z.B. Anteil-%): NUR Budget-Eingabe —
+   *  wird von resolveCockpitBudgets NICHT emittiert (kein Report-Leck). */
+  internal?: boolean;
 }
 
 export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
@@ -54,7 +59,23 @@ export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
     hint: 'Empfohlen: als Wareneinsatzquote % vom Netto-Umsatz-Budget erfassen' },
   { id: 'take_away_umsatz', label: 'Take Away Umsatz (netto)', unit: 'chf', kind: 'base' },
   { id: 'gaeste_in',        label: 'Gäste IN',             unit: 'count', kind: 'base' },
+  // Gäste-Kette (Spec 08/2026, Anteils-Logik): Gäste-IN-Budget →
+  // Reservierungs-Anteil → reservierte Gäste → Gruppen-Anteil → Gruppen.
+  // Beide Anteile sind je Monat überschreibbar (historische Defaults je Mandant).
+  { id: 'reservierungs_anteil', label: 'Reservierungs-Anteil (% der Gäste IN)', unit: 'pct', kind: 'base',
+    internal: true,
+    hint: 'Historischer Monats-Anteil reservierter Gäste an den Gästen IN — treibt «Reservierte Gäste»' },
+  { id: 'reservierte_gaeste', label: 'Reservierte Gäste',  unit: 'count', kind: 'base',
+    hint: 'Reservierungs-Anteil-% × Gäste-IN-Budget, je Monat' },
+  { id: 'gruppen_anteil',   label: 'Gruppen-Anteil ab 20 Pax (% der Reservierten)', unit: 'pct', kind: 'base',
+    internal: true,
+    hint: 'Historischer Monats-Anteil der Gruppen-Personen an den reservierten Gästen — treibt «Gruppen ab 20 Pax»' },
+  { id: 'gruppen_20pax',    label: 'Gruppen ab 20 Pax (Personen)', unit: 'count', kind: 'base',
+    hint: 'Gruppen-Anteil-% × reservierte-Gäste-Budget — Budget in PERSONEN' },
   { id: 'prod_stunden',     label: 'Produktive Stunden',   unit: 'hours', kind: 'base' },
+  // EIGENER Wert aus dem Dienstplan — bewusst NICHT die Bedarf-Leitplanke.
+  { id: 'dienstplan_stunden', label: 'Dienstplan-Stunden (Plan)', unit: 'hours', kind: 'base',
+    hint: 'Eigener Wert aus dem Dienstplan (nicht = Bedarf-Stunden)' },
   { id: 'personalkosten',   label: 'Personalkosten',       unit: 'chf',   kind: 'base' },
   { id: 'avg_verkauf_gast', label: 'Ø-Verkauf pro Gast',   unit: 'chf',   kind: 'ratio',
     hint: 'Oliv: (Netto − TA-Netto) ÷ Gäste · Beaulieu: Netto ÷ Gäste' },
@@ -64,7 +85,50 @@ export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
     hint: 'Netto Umsatz ÷ Produktive Stunden' },
   { id: 'take_away_anteil', label: 'Take Away Anteil',     unit: 'pct',   kind: 'ratio',
     hint: 'TA brutto ÷ Brutto Umsatz × 100 (TA-Budget netto wird umgerechnet)' },
+  // Bewertungs-Ziele (Anzahl je Monat): ohne Eingabe gelten die Standard-Ziele
+  // (5-Sterne = 5/Woche, 1- und 3-Stern = 0) — hier je Monat überschreibbar.
+  { id: 'google_5_sterne',  label: 'Google 5 Sterne (Ziel)', unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 5 pro Woche' },
+  { id: 'google_3_sterne',  label: 'Google 3 Sterne (Ziel)', unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 0' },
+  { id: 'google_1_stern',   label: 'Google 1 Stern (Ziel)',  unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 0' },
+  { id: 'tripadvisor_5_sterne', label: 'TripAdvisor 5 Sterne (Ziel)', unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 5 pro Woche', onlyTenant: 'oliv' },
+  { id: 'tripadvisor_3_sterne', label: 'TripAdvisor 3 Sterne (Ziel)', unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 0', onlyTenant: 'oliv' },
+  { id: 'tripadvisor_1_stern',  label: 'TripAdvisor 1 Stern (Ziel)',  unit: 'count', kind: 'base',
+    hint: 'Standard-Ziel ohne Eingabe: 0', onlyTenant: 'oliv' },
 ];
+
+/**
+ * Standard-Bewertungsziel OHNE Cockpit-Budget-Eintrag: 5-Sterne = 5 pro Woche
+ * (Monat = 5 × Kalendertage ÷ 7, gerundet; Perioden analog über die Tageszahl),
+ * 1- und 3-Stern = 0 (Zielwert — bewusst eine echte 0, kein «leer statt 0»:
+ * das Ziel IST null neue schlechte Bewertungen). 2/4 Sterne: kein Ziel (null).
+ */
+export function reviewZielBudget(star: number, tage: number): number | null {
+  if (!(tage > 0)) return null;
+  if (star === 5) return Math.round(5 * tage / 7);
+  if (star === 3 || star === 1) return 0;
+  return null;
+}
+
+/**
+ * Historische Standard-Anteile je Mandant (Spec 08/2026): Reservierungs-Anteil
+ * (% der Gäste IN, Ø 2025+2026 Jan–Jul bzw. 2025 Aug–Dez) und Gruppen-Anteil
+ * ab 20 Pax (% der reservierten Gäste). Sie greifen bei den Ableitungen als
+ * Vorbelegung, wenn die jeweilige Anteil-Position (noch) leer ist — im Store
+ * bleibt der Anteil je Monat überschreibbar.
+ */
+export const RESERVIERUNGS_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
+  oliv:     [39.7, 38.4, 38.6, 28.1, 25.5, 23.2, 14.7, 19.1, 24.1, 31.4, 42.2, 40.5],
+  beaulieu: [27.5, 30.3, 30.7, 26.2, 31.3, 28.9, 21.1, 27.8, 29.5, 31.4, 36.2, 43.2],
+};
+export const GRUPPEN_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
+  oliv:     [11.9, 4.6, 7.0, 6.5, 11.8, 15.1, 2.6, 1.3, 6.0, 10.3, 16.2, 15.3],
+  beaulieu: [13.0, 15.3, 13.5, 14.6, 20.7, 19.9, 6.6, 12.4, 16.9, 20.3, 16.2, 17.4],
+};
 
 // ── Store (KV, tenant-präfixiert, pro Jahr) ──────────────────────────────────
 
@@ -446,6 +510,53 @@ export async function bedarfSollStundenMonate(
   });
 }
 
+/**
+ * DIENSTPLAN-Stunden je Monat (netto, ArG-Pausenabzug): EIGENER Wert aus dem
+ * tatsächlichen Dienstplan (planNettoHoursForDates) — bewusst NICHT der
+ * Personalbedarf. Monate ohne Dienstplan-Einträge → null (nie 0).
+ */
+export async function dienstplanStundenMonate(
+  tenantId: TenantId, year: number,
+): Promise<(number | null)[]> {
+  const [{ loadEmployees, loadScheduleForMonth }, { loadPositions },
+    { planNettoHoursForDates }] = await Promise.all([
+    import('@/lib/supabase-db'), import('@/lib/positions-db'),
+    import('@/lib/bedarf-stunden-utils')]);
+  const [employees, positions] = await Promise.all([
+    loadEmployees(tenantId), loadPositions(tenantId)]);
+  if (!employees || employees.length === 0) return Array(12).fill(null);
+  return Promise.all(Array.from({ length: 12 }, async (_, i) => {
+    const scheduleData = await loadScheduleForMonth(new Date(year, i, 1), tenantId)
+      .catch(() => null);
+    if (!scheduleData) return null;
+    const dim = daysInMonth(year, i + 1);
+    const dates = Array.from({ length: dim }, (_, d) => `${year}-${pad2(i + 1)}-${pad2(d + 1)}`);
+    return planNettoHoursForDates({ employees, scheduleData, positions, dates });
+  }));
+}
+
+/**
+ * IST-Reservationskette je Monat eines Jahres (Foratable-Quelle, zentrale
+ * Zählregel): reservierte Gäste (Σ Personen gezählter Reservationen).
+ * Monate ohne Daten → null.
+ */
+export async function reservierteGaesteIstMonate(
+  tenantId: TenantId, tenantKey: KeyFn, year: number,
+): Promise<(number | null)[]> {
+  const [{ loadReservationCounting, DEFAULT_RESERVATION_COUNTING },
+    { loadReservationMetrics }] = await Promise.all([
+    import('@/lib/reservation-cockpit-settings'), import('@/lib/reservation-cockpit-metrics')]);
+  const counting = (await loadReservationCounting(tenantKey).catch(() => null))
+    ?? DEFAULT_RESERVATION_COUNTING;
+  return Promise.all(Array.from({ length: 12 }, async (_, i) => {
+    const from = `${year}-${pad2(i + 1)}-01`;
+    const to = `${year}-${pad2(i + 1)}-${pad2(daysInMonth(year, i + 1))}`;
+    const m = await loadReservationMetrics(tenantId, from, to, counting)
+      .catch(() => ({ reservedGuests: null }));
+    return m.reservedGuests ?? null;
+  }));
+}
+
 // ── Auflösung (Monat / Woche / Periode) ──────────────────────────────────────
 
 /** ISO-Wochen-Schlüssel 'GGGG-Www' eines Datums (ISO-Wochenjahr!). */
@@ -587,7 +698,9 @@ export function resolveCockpitBudgets(
   const val = (id: string) => weekDays
     ? wochenBudget(get(id), weekDays)
     : periodenBudget(get(id), fromIso, toIso);
-  for (const def of COCKPIT_BUDGET_KPIS) if (def.kind === 'base') out[def.id] = val(def.id);
+  for (const def of COCKPIT_BUDGET_KPIS) {
+    if (def.kind === 'base' && !def.internal) out[def.id] = val(def.id);
+  }
   // Pseudo-Position fürs ER-Netto: identische Pro-rata-/Wochenauflösung wie
   // echte Positionen (Wochen über den Jahreswechsel teilen die bekannte
   // Jahres-Blob-Grenze aller Cockpit-Positionen).

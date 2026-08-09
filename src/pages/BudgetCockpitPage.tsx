@@ -37,6 +37,8 @@ import {
   loadCockpitBudget, saveCockpitBudget, kalendertagGewichte, verteileJahreswert,
   ladeSaisonGewichte, istMonatswerteAlle, abgeschlosseneMonate,
   kalkulierteWeqMonate, bedarfSollStundenMonate,
+  dienstplanStundenMonate, reservierteGaesteIstMonate,
+  RESERVIERUNGS_ANTEIL_DEFAULT, GRUPPEN_ANTEIL_DEFAULT,
   erNettoBudgetMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
@@ -87,6 +89,17 @@ export default function BudgetCockpitPage() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   /** Laufende Auto-Aktion (Positions-ID oder '*' für «alle»). */
   const [busy, setBusy] = useState<string | null>(null);
+  /** Vorjahres-Ist «reservierte Gäste» je Monat — NUR informative Klammer
+   *  hinter dem Budget (treibt die Rechnung nicht). null = (noch) nicht geladen. */
+  const [vjResIst, setVjResIst] = useState<(number | null)[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setVjResIst(null);
+    reservierteGaesteIstMonate(tenantId as TenantId, tenantKey, year - 1)
+      .then(m => { if (alive) setVjResIst(m); })
+      .catch(() => { /* Klammer bleibt einfach weg — nie 0 erfinden */ });
+    return () => { alive = false; };
+  }, [tenantId, tenantKey, year]);
   /** %-Eingabefelder je Position (nur Anzeige-State; massgeblich sind Monate). */
   const [pctInput, setPctInput] = useState<Record<string, string>>({});
   /** Ø-Verkauf-Steigerung: '+X %' oder '+X CHF' auf die Run-Rate (Default +10 %). */
@@ -361,7 +374,8 @@ export default function BudgetCockpitPage() {
    * das (read-only) TA-Umsatz-netto-Budget = Anteil × ER-Netto je Monat.
    */
   const taAnteilAnwenden = useCallback(() => {
-    const anteil = Number(pctInput['take_away_anteil'] ?? '');
+    // Spec 08/2026: Standard-Zielwert 12 % — je Monat später überschreibbar.
+    const anteil = Number(pctInput['take_away_anteil'] ?? '12');
     if (!isFinite(anteil) || anteil <= 0 || anteil >= 100) {
       toast({ title: 'TA-Anteil', description: 'Bitte einen Anteil zwischen 0 und 100 % erfassen.' });
       return;
@@ -620,6 +634,150 @@ export default function BudgetCockpitPage() {
     toast({ title: 'Gäste-Budget abgeleitet', description: 'Restaurant-Netto-Budget ÷ Ø-Verkauf-Ziel, je Monat (editierbar).' });
   }, [getPos, getPosById, restaurantNettoMonat, year, setPos, toast]);
 
+  /**
+   * Ø-VERKAUF-ZIEL: EIN Zielwert (Default 29 CHF) auf alle ER-Monate —
+   * treibt anschliessend die Gäste-Ableitung. Je Monat überschreibbar.
+   */
+  const avgZielAnwenden = useCallback(() => {
+    const ziel = Number(pctInput['avg_verkauf_gast'] ?? '29');
+    if (!isFinite(ziel) || ziel <= 0) {
+      toast({ title: 'Ø-Verkauf-Ziel', description: 'Bitte einen Zielwert > 0 CHF erfassen.' });
+      return;
+    }
+    if (erNettoFehlt('das Ø-Verkauf-Ziel')) return;
+    const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'avg_verkauf_gast')!;
+    const pos = getPos(def);
+    const mv = erNetto.map(n => (typeof n === 'number' ? r2(ziel) : null));
+    setPos('avg_verkauf_gast', {
+      ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'chf', pctValue: null, yearValue: null,
+    });
+    toast({ title: 'Ø-Verkauf-Ziel gesetzt', description: `${r2(ziel)} CHF auf alle ER-Monate (je Monat editierbar).` });
+    meldeLeereErMonate(mv);
+  }, [pctInput, erNettoFehlt, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
+
+  /**
+   * Monats-Anteile einer %-Position: gespeicherter Monatswert, sonst der
+   * historische Mandanten-Default. Ist die Position komplett leer, wird sie
+   * mit den Defaults materialisiert (sichtbar + je Monat editierbar).
+   */
+  const anteilMonate = useCallback((anteilId: string, defaults: number[]): (number | null)[] => {
+    const pos = getPosById(anteilId);
+    const hatWerte = pos?.monthlyValues.some(v => v !== null) ?? false;
+    if (!hatWerte) {
+      const def = COCKPIT_BUDGET_KPIS.find(d => d.id === anteilId)!;
+      const leer = getPos(def);
+      setPos(anteilId, {
+        ...leer, monthlyValues: defaults.map(r2),
+        monthlyExplicit: Array(12).fill(false), yearValue: null,
+      });
+      return defaults.map(r2);
+    }
+    return Array.from({ length: 12 }, (_, i) => {
+      const v = pos!.monthlyValues[i];
+      return typeof v === 'number' ? v : defaults[i] ?? null;
+    });
+  }, [getPos, getPosById, setPos]);
+
+  /**
+   * RESERVIERTE GÄSTE (Anteils-Logik, Spec 08/2026): Budget = Reservierungs-
+   * Anteil-% (Position «reservierungs_anteil», je Monat, historische Defaults)
+   * × Gäste-IN-Budget des Monats — NICHT als fixer Absolutwert. Leer statt 0,
+   * nie ÷0; der VJ-Absolutwert erscheint nur informativ in Klammern.
+   */
+  const reservierteAbleiten = useCallback(() => {
+    const gaestePos = getPosById('gaeste_in');
+    if (!gaestePos || !gaestePos.monthlyValues.some(v => v !== null && v > 0)) {
+      toast({ title: 'Gäste-IN-Budget fehlt', description: 'Bitte zuerst das Gäste-IN-Budget ableiten — es trägt das Reservations-Budget.' });
+      return;
+    }
+    const anteile = anteilMonate('reservierungs_anteil',
+      RESERVIERUNGS_ANTEIL_DEFAULT[tenantId as TenantId] ?? []);
+    const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'reservierte_gaeste')!;
+    const pos = getPos(def);
+    const mv = Array.from({ length: 12 }, (_, i) => {
+      const gb = gaestePos.monthlyValues[i];
+      const a = anteile[i];
+      if (typeof gb !== 'number' || !(gb > 0) || typeof a !== 'number' || !(a > 0)) return null;
+      return Math.round(gb * a / 100);
+    });
+    if (!mv.some(v => v !== null)) {
+      toast({ title: 'Keine Basis', description: 'Kein Monat hat Gäste-IN-Budget UND Reservierungs-Anteil — Budget bleibt leer (nie 0).' });
+      return;
+    }
+    setPos('reservierte_gaeste', {
+      ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'chf', pctValue: null,
+      yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+    });
+    toast({
+      title: 'Reservierte Gäste abgeleitet',
+      description: 'Reservierungs-Anteil-% × Gäste-IN-Budget, je Monat (Anteil & Ergebnis editierbar).',
+    });
+  }, [anteilMonate, getPos, getPosById, tenantId, setPos, toast]);
+
+  /**
+   * GRUPPEN AB 20 PAX (Personen): Budget = Gruppen-Anteil-% (Position
+   * «gruppen_anteil», je Monat, historische Defaults) × reservierte-Gäste-
+   * Budget je Monat.
+   */
+  const gruppenAbleiten = useCallback(() => {
+    const resPos = getPosById('reservierte_gaeste');
+    if (!resPos || !resPos.monthlyValues.some(v => v !== null && v > 0)) {
+      toast({ title: 'Reservierte-Gäste-Budget fehlt', description: 'Bitte zuerst «Reservierte Gäste» ableiten — es trägt das Gruppen-Budget.' });
+      return;
+    }
+    const anteile = anteilMonate('gruppen_anteil',
+      GRUPPEN_ANTEIL_DEFAULT[tenantId as TenantId] ?? []);
+    const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'gruppen_20pax')!;
+    const pos = getPos(def);
+    const mv = Array.from({ length: 12 }, (_, i) => {
+      const v = resPos.monthlyValues[i];
+      const a = anteile[i];
+      return typeof v === 'number' && v > 0 && typeof a === 'number' && a > 0
+        ? Math.round(v * a / 100) : null;
+    });
+    setPos('gruppen_20pax', {
+      ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+      inputMode: 'chf', pctValue: null,
+      yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+    });
+    toast({ title: 'Gruppen-Budget abgeleitet', description: 'Gruppen-Anteil-% × reservierte-Gäste-Budget (Personen), je Monat (Anteil & Ergebnis editierbar).' });
+  }, [anteilMonate, getPos, getPosById, tenantId, setPos, toast]);
+
+  /**
+   * DIENSTPLAN-STUNDEN: EIGENES Budget aus dem tatsächlichen Dienstplan
+   * (netto je Monat) — bewusst nicht die Bedarf-Stunden.
+   */
+  const dienstplanUebernehmen = useCallback(async () => {
+    setBusy('dienstplan_stunden');
+    try {
+      const mv = (await dienstplanStundenMonate(tenantId as TenantId, year))
+        .map(v => (v !== null ? r2(v) : null));
+      if (!mv.some(v => v !== null)) {
+        toast({ title: 'Kein Dienstplan vorhanden', description: `Für ${year} sind keine Dienstplan-Einträge erfasst — das Budget bleibt leer (nie 0).` });
+        return;
+      }
+      const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'dienstplan_stunden')!;
+      const pos = getPos(def);
+      setPos('dienstplan_stunden', {
+        ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
+        inputMode: 'chf', pctValue: null,
+        yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+      });
+      const leer = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
+      toast({
+        title: 'Dienstplan-Stunden übernommen',
+        description: leer.length
+          ? `Plan-Stunden je Monat übernommen; ohne Dienstplan: ${leer.join(', ')} (leer).`
+          : 'Plan-Stunden des Dienstplans je Monat übernommen (editierbar).',
+      });
+    } catch (e) {
+      console.error('[CK-BUDGET] Dienstplan-Ladung fehlgeschlagen:', e);
+      toast({ title: 'Dienstplan nicht ladbar', description: String((e as Error)?.message ?? e), variant: 'destructive' });
+    } finally { setBusy(null); }
+  }, [tenantId, year, getPos, setPos, toast]);
+
   // ── Speichern / Rückgängig ────────────────────────────────────────────────
 
   const speichern = useCallback(async () => {
@@ -696,7 +854,9 @@ export default function BudgetCockpitPage() {
 
         {loading && <p className="text-sm text-muted-foreground py-8">Lade Budget …</p>}
 
-        {!loading && blob && COCKPIT_BUDGET_KPIS.map(def => {
+        {!loading && blob && COCKPIT_BUDGET_KPIS
+          .filter(def => !def.onlyTenant || def.onlyTenant === tenantId)
+          .map(def => {
           const pos = getPos(def);
           const istOffen = open[def.id] ?? false;
           const summe = pos.monthlyValues.reduce<number>((s, v) => s + (v ?? 0), 0);
@@ -795,9 +955,9 @@ export default function BudgetCockpitPage() {
                       <div className="flex items-center gap-1.5 text-xs">
                         <span className="text-muted-foreground">Anteil %:</span>
                         <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
-                          value={pctInput['take_away_anteil'] ?? ''}
+                          value={pctInput['take_away_anteil'] ?? '12'}
                           onChange={e => setPctInput(s => ({ ...s, take_away_anteil: e.target.value }))}
-                          placeholder="z.B. 8"
+                          placeholder="12"
                           data-testid="input-pct-take_away_anteil" />
                         <Button variant="outline" size="sm" className="h-7 text-xs"
                           onClick={taAnteilAnwenden} data-testid="button-ta-anteil-anwenden">
@@ -830,10 +990,54 @@ export default function BudgetCockpitPage() {
                         Aus Ø-Verkauf-Ziel ableiten
                       </Button>
                     )}
+                    {def.id === 'avg_verkauf_gast' && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Ziel CHF:</span>
+                        <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
+                          value={pctInput['avg_verkauf_gast'] ?? '29'}
+                          onChange={e => setPctInput(s => ({ ...s, avg_verkauf_gast: e.target.value }))}
+                          data-testid="input-avg-ziel" />
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={avgZielAnwenden} data-testid="button-avg-ziel-anwenden">
+                          Ziel anwenden
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          Zielwert auf alle ER-Monate (Default 29) — treibt die Gäste-Ableitung
+                        </span>
+                      </div>
+                    )}
+                    {def.id === 'reservierte_gaeste' && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={reservierteAbleiten} data-testid="button-reservierte-ableiten">
+                          Aus Reservierungs-Anteil × Gäste-Budget ableiten
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          Anteil je Monat in «Reservierungs-Anteil» editierbar · (VJ …) = Vorjahres-Ist, nur Richtwert
+                        </span>
+                      </div>
+                    )}
+                    {def.id === 'gruppen_20pax' && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={gruppenAbleiten} data-testid="button-gruppen-ableiten">
+                          Aus Gruppen-Anteil × Reservierte ableiten
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">
+                          Anteil je Monat in «Gruppen-Anteil ab 20 Pax» editierbar (Personen)
+                        </span>
+                      </div>
+                    )}
                     {def.id === 'prod_stunden' && (
                       <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy !== null}
                         onClick={stundenAusBedarf} data-testid="button-stunden-bedarf">
                         {busy === 'prod_stunden' ? 'Leitet ab …' : 'Aus Personalbedarf (Soll) übernehmen'}
+                      </Button>
+                    )}
+                    {def.id === 'dienstplan_stunden' && (
+                      <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy !== null}
+                        onClick={dienstplanUebernehmen} data-testid="button-dienstplan-stunden">
+                        {busy === 'dienstplan_stunden' ? 'Übernimmt …' : 'Aus Dienstplan übernehmen'}
                       </Button>
                     )}
                   </div>
@@ -950,6 +1154,14 @@ export default function BudgetCockpitPage() {
                           }}
                           data-testid={`input-monat-${def.id}-${i + 1}`}
                         />
+                        {/* Dezenter Vorjahres-Richtwert (Ist reservierte Gäste, gleicher
+                            Monat) — rein informativ, treibt die Rechnung nicht. */}
+                        {def.id === 'reservierte_gaeste' && vjResIst?.[i] != null && (
+                          <p className="text-right text-[10px] text-muted-foreground"
+                            data-testid={`text-vj-reservierte-${i + 1}`}>
+                            (VJ {vjResIst[i]!.toLocaleString('de-CH')})
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

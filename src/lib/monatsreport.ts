@@ -23,7 +23,7 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@
 import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { loadCockpitBudget, resolveCockpitBudgets, erNettoBudgetMonate, COCKPIT_BUDGET_KPIS } from '@/lib/cockpit-budget';
+import { loadCockpitBudget, resolveCockpitBudgets, erNettoBudgetMonate, COCKPIT_BUDGET_KPIS, reviewZielBudget } from '@/lib/cockpit-budget';
 import {
   ladeWochentagsGewichte, ladePersonalkostenDaten,
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
@@ -65,9 +65,12 @@ import { FEEDBACK_PLATFORM } from '@/lib/feedback-import';
  */
 export function reviewStarRowDefs(tenantId: TenantId): Array<{
   platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined;
+  /** 2/4 Sterne: standardmässig eingeklappt (Kind der 5-Sterne-Zeile). */
+  collapsed: boolean; parentId: string;
 }> {
-  const defs: Array<{ platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined }> = [];
-  const platforms = tenantId === 'beaulieu' ? ['Google', FEEDBACK_PLATFORM] : ['Google'];
+  const defs: Array<{ platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined; collapsed: boolean; parentId: string }> = [];
+  // Oliv: Google + TripAdvisor (Spec 08/2026); Beaulieu: Google + Lunchgate.
+  const platforms = tenantId === 'beaulieu' ? ['Google', FEEDBACK_PLATFORM] : ['Google', 'TripAdvisor'];
   for (const platform of platforms) {
     const slug = platform.toLowerCase();
     for (const star of [5, 4, 3, 2, 1]) {
@@ -76,6 +79,8 @@ export function reviewStarRowDefs(tenantId: TenantId): Array<{
         id: `${slug}_${star}_${star === 1 ? 'stern' : 'sterne'}`,
         label: `${platform} ${star} ${star === 1 ? 'Stern' : 'Sterne'}`,
         tint: star === 5 ? 'green' : star === 1 ? 'red' : undefined,
+        collapsed: star === 2 || star === 4,
+        parentId: `${slug}_5_sterne`,
       });
     }
   }
@@ -1681,7 +1686,11 @@ export async function ladeMonatsreport(
       ...d('reservierte_gaeste', 'Reservierte Gäste', {
         month: resMonth.reservedGuests, week: resWeek.reservedGuests,
         vj: null, vjMonth: resVjMonth.reservedGuests,
-      }, { fmt: 'count' }),
+        // Budget = Cockpit-Position (Ist-Reservationsanteil × Gäste-IN-Budget,
+        // je Monat überschreibbar); Δ bleibt VJ-basiert (sharePct-Zeile).
+        monthBudget: ckMk('reservierte_gaeste'), weekBudget: ckWk('reservierte_gaeste'),
+        budget: ckWk('reservierte_gaeste'),
+      }, { fmt: 'count', ckId: 'reservierte_gaeste' }),
       // Anteil an «Gäste IN» (Basis = 100 %); ohne Gäste-IN-Basis null (nie ÷ 0).
       sharePct: {
         month: anteilPct(resMonth.reservedGuests, mGaesteV),
@@ -1698,7 +1707,11 @@ export async function ladeMonatsreport(
         vj: null, vjMonth: resVjMonth.largeGroupCount,
         monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
         vjMonthPax: resVjMonth.largeGroupPersons,
-      }, { fmt: 'countPax' }),
+        // Budget in PERSONEN (Gruppen-Anteil-% × reservierte-Gäste-Budget) —
+        // vergleichbar mit den Σ-Personen in Klammern, nicht mit der Anzahl.
+        monthBudget: ckMk('gruppen_20pax'), weekBudget: ckWk('gruppen_20pax'),
+        budget: ckWk('gruppen_20pax'),
+      }, { fmt: 'countPax', ckId: 'gruppen_20pax' }),
       // Anteil = Σ PERSONEN der Gruppen ÷ Gäste IN (nicht Anzahl Gruppen).
       sharePct: {
         month: anteilPct(resMonth.largeGroupPersons, mGaesteV),
@@ -1727,13 +1740,8 @@ export async function ladeMonatsreport(
     },
     e(),
     // ── Block Durchschnitt ──
-    // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
-    // NICHT berechnet — die berechnete Grösse ist «Umsatz pro Gast».
-    d('durchschnittsverkauf', 'Durchschnittsverkauf', {
-      month: avgMonat,
-      week: avgWoche,
-      vj: vwAvg, vjMonth: avgVj,
-    }),
+    // Zeile «Durchschnittsverkauf» bewusst ENTFERNT (Spec 08/2026: kein Budget,
+    // keine Anzeige mehr) — die berechnete Grösse bleibt «Ø-Verkauf pro Gast».
     d('take_away_anteil', 'Take Away Anteil', {
       month: taM != null && mGross > 0 ? r2((mTa / mGross) * 100) : null,
       week: taW != null && wGross > 0 ? r2((wTa / wGross) * 100) : null,
@@ -1764,10 +1772,14 @@ export async function ladeMonatsreport(
     d('bedarf_stunden', 'Bedarf-Stunden (Soll)', {
       month: bedarfStdM, week: bedarfStdW,
     }, { fmt: 'hours', bold: true }),
+    // Dienstplan-Stunden haben ein EIGENES Cockpit-Budget (aus dem Dienstplan,
+    // je Monat überschreibbar) — bewusst NICHT mehr die Bedarf-Stunden als
+    // Budget-Fallback (Spec 08/2026); ohne Budget bleibt die Zelle leer.
     d('prod_stunden_plan', 'Dienstplan-Stunden (Plan)', {
       month: planStd, week: wPlanStd,
-      monthBudget: bedarfStdM, budget: bedarfStdW, weekBudget: bedarfStdW,
-    }, { fmt: 'hours', deltaInverted: true }),
+      monthBudget: ckMk('dienstplan_stunden'), budget: ckWk('dienstplan_stunden'),
+      weekBudget: ckWk('dienstplan_stunden'),
+    }, { fmt: 'hours', deltaInverted: true, ckId: 'dienstplan_stunden' }),
     // Ist-Stunden: Cockpit-Budget «Produktive Stunden» (falls erfasst) hat
     // Vorrang vor der Bedarf-Leitplanke als Budget-Basis.
     d('prod_stunden_ist', 'Ist-Stunden (MIRUS)', {
@@ -1839,18 +1851,35 @@ export async function ladeMonatsreport(
     // (über Ziel = rot, wie PKQ).
     ...buildWarenRows(),
     e(),
-    // ── Block Rezensionen (Google-Erfassung + Lunchgate-Feedback-Import) ────
-    // Pro Plattform ALLE fünf Sternstufen (5/4/3/2/1): Monat = ganzer Monat,
-    // Woche = gewählte Woche. Kein Budget/Vorjahr (Quelle existiert erst seit
-    // der Einzelerfassung) → Felder leer. Farbe: 5 grün, 1 rot, sonst neutral.
-    // Google und Lunchgate strikt getrennt (Plattform-Filter, nie vermischt).
-    ...reviewStarRowDefs(tenantId).map(({ platform, star, id, label, tint }) =>
-      d(id, label, {
-        month: reviewSingles ? countReviewsByStar(reviewSingles, platform, fromIso, toIso, star) : null,
-        week: reviewSingles && weekFrom && weekTo
-          ? countReviewsByStar(reviewSingles, platform, weekFrom, weekTo, star) : null,
-      }, { fmt: 'count', tint }),
-    ),
+    // ── Block Rezensionen (Google/TripAdvisor-Erfassung + Lunchgate-Import) ─
+    // Pro Plattform alle fünf Sternstufen: Monat = ganzer Monat, Woche =
+    // gewählte Woche. 2/4 Sterne standardmässig eingeklappt (Kind der
+    // 5-Sterne-Zeile, per Klick sichtbar). Budgets (Spec 08/2026): 5 Sterne
+    // Ziel 5/Woche, 1/3 Sterne Ziel 0 (echte Ziel-0, kein «leer statt 0»),
+    // je Monat via Cockpit-Budget überschreibbar; 2/4 Sterne ohne Budget.
+    // Plattformen strikt getrennt (Plattform-Filter, nie vermischt).
+    ...reviewStarRowDefs(tenantId).map(({ platform, star, id, label, tint, collapsed, parentId }) => {
+      const hatCk = COCKPIT_BUDGET_KPIS.some(k => k.id === id);
+      const mTage = new Date(year, month, 0).getDate();
+      const wTage = weekFrom && weekTo
+        ? Math.round((Date.parse(weekTo) - Date.parse(weekFrom)) / 86_400_000) + 1 : 0;
+      const mBud = collapsed ? null : (hatCk ? ckMk(id) : null) ?? reviewZielBudget(star, mTage);
+      const wBud = collapsed ? null : (hatCk ? ckWk(id) : null) ?? reviewZielBudget(star, wTage);
+      return {
+        ...d(id, label, {
+          month: reviewSingles ? countReviewsByStar(reviewSingles, platform, fromIso, toIso, star) : null,
+          week: reviewSingles && weekFrom && weekTo
+            ? countReviewsByStar(reviewSingles, platform, weekFrom, weekTo, star) : null,
+          monthBudget: mBud, weekBudget: wBud, budget: wBud,
+        }, {
+          fmt: 'count', tint,
+          // 1/3 Sterne: mehr als das Ziel (0) ist schlecht → Kosten-Ampel.
+          deltaInverted: star === 1 || star === 3,
+          ...(hatCk ? { ckId: id } : {}),
+        }),
+        ...(collapsed ? { childOf: parentId } : {}),
+      };
+    }),
   ];
 
   // Take-Away-Zeilen entfernen, wenn der Betrieb kein Take Away anbietet.
@@ -2075,14 +2104,14 @@ function baueWochenverlaufRows(
       ist: a => a.hatUmsatz ? r2(a.net) : null, vj: a => a.hatUmsatz ? r2(a.net) : null },
     { label: 'Gäste IN', fmt: 'count', budgetId: 'gaeste_in',
       ist: a => a.hatGaeste ? r2(a.gaeste) : null, vj: a => a.hatGaeste ? r2(a.gaeste) : null },
-    { label: 'Durchschnittsverkauf', fmt: 'chf',
-      ist: a => a.avgW, vj: a => a.avgCount > 0 ? r2(a.avgSum / a.avgCount) : null },
+    // «Durchschnittsverkauf» bewusst entfernt (Spec 08/2026).
     { label: 'Take Away Anteil', fmt: 'pct', budgetId: 'take_away_anteil',
       ist: a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null,
       vj: a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null },
     { label: 'Produktive Stunden (Ist)', fmt: 'hours', budgetId: 'prod_stunden', budgetInverted: true,
       ist: a => a.hatIst ? r2(a.istStd) : null, vj: () => null },       // keine vj-Quelle
-    { label: 'Produktive Stunden geplant', fmt: 'hours',
+    // Budget = EIGENES Dienstplan-Stunden-Budget (Spec 08/2026, kein Bedarf-Fallback).
+    { label: 'Produktive Stunden geplant', fmt: 'hours', budgetId: 'dienstplan_stunden',
       ist: a => a.hatPlan ? r2(a.planStd) : null, vj: () => null },      // keine vj-Quelle
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf', budgetId: 'produktivitaet',
       ist: a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null, vj: () => null },
@@ -2294,11 +2323,15 @@ export async function ladeWochenverlauf(
     label: 'Reservierte Gäste', fmt: 'count', id: 'reservierte_gaeste',
     values: wvResMetrics.map(m => m.reservedGuests),
     vjValues: wvResVj ? wvResVj.map(m => m.reservedGuests) : undefined,
+    budgetValues: wochenBudgets.map(b => b['reservierte_gaeste'] ?? null),
   });
+  // Gruppen: Ist = Σ PERSONEN (Einheitengleichheit mit dem gruppen_20pax-Budget,
+  // das ausdrücklich in Personen definiert ist — nicht Anzahl Gruppen).
   rows.push({
-    label: `Gruppen ab ${wvCounting.groupThreshold} Pax`, fmt: 'count', id: 'gruppen_ab_20',
-    values: wvResMetrics.map(m => m.largeGroupCount),
-    vjValues: wvResVj ? wvResVj.map(m => m.largeGroupCount) : undefined,
+    label: `Gruppen ab ${wvCounting.groupThreshold} Pax (Personen)`, fmt: 'count', id: 'gruppen_ab_20',
+    values: wvResMetrics.map(m => m.largeGroupPersons),
+    vjValues: wvResVj ? wvResVj.map(m => m.largeGroupPersons) : undefined,
+    budgetValues: wochenBudgets.map(b => b['gruppen_20pax'] ?? null),
   });
 
   // ── Rezensionen je Woche (ALLE Sternstufen 5–1, Google + Lunchgate) ────────
@@ -2307,9 +2340,19 @@ export async function ladeWochenverlauf(
   // erfasst sind (>0) — die Quelle existiert erst seit der Einzelerfassung.
   const reviewSingles: SingleReview[] | null =
     await fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null);
-  for (const { platform, star, label, tint } of reviewStarRowDefs(tenantId)) {
+  // 2/4 Sterne sind im Wochenverlauf ausgeblendet (kein Aufklapp-Mechanismus).
+  for (const { platform, star, id, label, tint } of reviewStarRowDefs(tenantId).filter(r => !r.collapsed)) {
     rows.push({
       label, fmt: 'count', tint,
+      // Budget: Cockpit-Override der Woche, sonst Standardziel (5★ = 5/Woche,
+      // 1/3★ = 0) — Tage wie beim Budget auf «bis heute» geklemmt.
+      budgetValues: weeks.map((w, i) => {
+        const ck = wochenBudgets[i]?.[id];
+        if (ck != null) return ck;
+        const to = partialWeekIndex === i && todayIso < w.to ? todayIso : w.to;
+        const tage = Math.round((Date.parse(to) - Date.parse(w.from)) / 86_400_000) + 1;
+        return reviewZielBudget(star, tage);
+      }),
       values: weeks.map(w =>
         reviewSingles ? countReviewsByStar(reviewSingles, platform, w.from, w.to, star) : null),
       vjValues: vjWeeks
@@ -2617,7 +2660,7 @@ export async function ladeJahresvergleich(
     { label: 'Gäste IN', fmt: 'count',
       cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null,
       budget: jb('gaeste_in') },
-    { label: 'Durchschnittsverkauf', fmt: 'chf', cur: avgCur, vj: avgVj },
+    // «Durchschnittsverkauf» bewusst entfernt (Spec 08/2026).
     // Ø-Verkauf pro Gast (ersetzt die alten Bon-Zeilen): mandantenspezifisch —
     // Beaulieu Netto÷Gäste, Oliv (Netto−TA-Netto)÷Gäste; Maison immer im
     // Zähler (unabhängig vom maisonExclude-Toggle). Nur gepaarte Tage,
@@ -2636,25 +2679,38 @@ export async function ladeJahresvergleich(
     { label: 'Produktive Stunden (Ist)', fmt: 'hours',
       cur: hatIst ? r2(istStd) : null, vj: null,   // keine VJ-Quelle
       budget: jb('prod_stunden'), deltaInverted: true },
+    // Budget = EIGENES Dienstplan-Stunden-Budget (Spec 08/2026, kein Bedarf-Fallback).
     { label: 'Produktive Stunden geplant', fmt: 'hours',
-      cur: hatPlan ? r2(planStd) : null, vj: null }, // keine VJ-Quelle
+      cur: hatPlan ? r2(planStd) : null, vj: null, // keine VJ-Quelle
+      budget: jb('dienstplan_stunden'), deltaInverted: true },
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
       cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null, // keine VJ-Quelle
       budget: jb('produktivitaet') },
     { label: 'Reservierte Gäste', fmt: 'count',
-      cur: resCur.reservedGuests, vj: resVj.reservedGuests },
-    { label: `Gruppen ab ${jvCounting.groupThreshold} Pax`, fmt: 'count',
-      cur: resCur.largeGroupCount, vj: resVj.largeGroupCount },
+      cur: resCur.reservedGuests, vj: resVj.reservedGuests,
+      budget: jb('reservierte_gaeste') },
+    // Gruppen: Ist = Σ PERSONEN (Einheitengleichheit mit dem gruppen_20pax-
+    // Budget, das ausdrücklich in Personen definiert ist).
+    { label: `Gruppen ab ${jvCounting.groupThreshold} Pax (Personen)`, fmt: 'count',
+      cur: resCur.largeGroupPersons, vj: resVj.largeGroupPersons,
+      budget: jb('gruppen_20pax') },
     // Rezensionen (ALLE Sternstufen 5–1, Google + Lunchgate). Ladefehler → leer;
     // VJ nur wenn dort wirklich erfasst (>0) — Quelle existiert erst seit der
     // Einzelerfassung, ein «0» im VJ wäre erfunden.
-    ...reviewStarRowDefs(tenantId).map(({ platform, star, label, tint }): JahresvergleichRow => {
-      const cur = reviewSingles
-        ? countReviewsByStar(reviewSingles, platform, curFrom, curTo, star) : null;
-      const vjN = reviewSingles
-        ? countReviewsByStar(reviewSingles, platform, vjFrom, vjTo, star) : 0;
-      return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null };
-    }),
+    // 2/4 Sterne ausgeblendet (kein Aufklapp-Mechanismus im Jahresvergleich).
+    // Budget: Cockpit-Override (0 bleibt echter Zielwert), sonst Standardziel
+    // über die Periodentage (5★ = 5/Woche, 1/3★ = 0).
+    ...reviewStarRowDefs(tenantId).filter(r => !r.collapsed)
+      .map(({ platform, star, id, label, tint }): JahresvergleichRow => {
+        const cur = reviewSingles
+          ? countReviewsByStar(reviewSingles, platform, curFrom, curTo, star) : null;
+        const vjN = reviewSingles
+          ? countReviewsByStar(reviewSingles, platform, vjFrom, vjTo, star) : 0;
+        const pTage = Math.round((Date.parse(curTo) - Date.parse(curFrom)) / 86_400_000) + 1;
+        return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null,
+          budget: jb(id) ?? reviewZielBudget(star, pTage),
+          deltaInverted: star === 1 || star === 3 };
+      }),
   ];
 
   return { ...win, rows, modus };

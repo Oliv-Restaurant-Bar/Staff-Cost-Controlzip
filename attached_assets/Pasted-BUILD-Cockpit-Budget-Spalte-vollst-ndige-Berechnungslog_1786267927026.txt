@@ -1,0 +1,48 @@
+BUILD — Cockpit Budget-Spalte: vollständige Berechnungslogik
+
+BASIS
+- Netto-Umsatz-Budget = aus dem ER-/P&L-Budget (Quelle der Wahrheit). Brutto analog.
+
+UMSATZ / TAKE-AWAY
+- Take-Away-Anteil (Budget) = 12 % (Zielwert, je Monat überschreibbar).
+- Take-Away-Umsatz (netto) = 12 % × Netto-Umsatz-Budget (abgeleitet, read-only).
+- Restaurant-Netto = Netto-Umsatz-Budget × (1 − 12 %) = Netto × 0.88.
+
+GÄSTE-KETTE
+- Ø-Verkauf pro Gast (Budget) = Zielwert (Default 29, überschreibbar).
+- Gäste IN (Budget) = Restaurant-Netto ÷ Ø-Verkauf-Ziel.
+- Reservierte Gäste (Budget) = (Ist: reservierte Gäste ÷ Gäste IN) × Gäste-IN-Budget.
+- Gruppen ab 20 Pax (Budget) = 36 % (historischer Anteil Juli, editierbar)
+  × reservierte-Gäste-Budget.
+- Gäste Take Away: KEIN eigenes Budget (steckt im Take-Away-Anteil).
+
+STUNDEN / PERSONAL
+- Bedarf-Stunden (Soll) + Produktive Stunden (Budget) = aus Personalbedarf (pro Tag,
+  aggregiert auf Woche/Monat/Jahr).
+- Dienstplan-Stunden (Plan) (Budget) = EIGENER Wert aus dem Dienstplan (nicht = Bedarf).
+- Personalquote (Budget) = 40 %.
+- Personalkosten (Budget) = 40 % × Netto-Umsatz-Budget (mit PKQ zusammengelegt).
+- Produktivität (Budget) = Netto-Umsatz-Budget ÷ Plan-/Produktivstunden-Budget.
+
+WAREN
+- Wareneinsatz/Warenkosten (Budget = Soll) = monatliche WEQ × Netto; gegen Ist.
+
+BEWERTUNGEN
+- Durchschnittsverkauf (Ø pro Bon): Zeile WEGLASSEN (kein Budget).
+- Google-Bewertungen (Budget): 5-Sterne = 5 pro Woche; 1-Stern und 3-Stern = 0 (Ziel).
+- TripAdvisor NEU im Oliv-Cockpit aufführen (gleiche Stern-Logik). Ist-Quelle für
+  TripAdvisor bitte definieren (manuelle Eingabe oder Import) — falls keine Quelle,
+  Ist leer lassen, Budget trotzdem anzeigbar.
+- Cockpit-Anzeige der Bewertungen: nur 1-Stern, 3-Stern, 5-Stern standardmässig
+  sichtbar; 2- und 4-Stern nur auf Klick/„mehr anzeigen" (gilt für Google UND
+  TripAdvisor).
+
+REGELN
+- leer statt 0, nie ÷ 0, mandantengetrennt, pro Jahr; jede abgeleitete/Ziel-Zeile
+  je Monat überschreibbar; Vorschau + Rückgängig; Budget-Spalte nur aus cockpit-budget-Store.
+
+KONTROLLE (Oliv 2026, wenn Netto-Budget Jan 240'000, Ø-Verkauf 29, TA 12 %):
+- Restaurant-Netto Jan = 211'200; Gäste IN Budget = 211'200 ÷ 29 = 7'283.
+- Reservierte Gäste Budget = (Ist-Reserv.-Anteil) × 7'283.
+- Gruppen ab 20 Pax Budget = 36 % × reservierte-Gäste-Budget.
+- Personalkosten Jan = 96'000 (40 %); Wareneinsatz Jan = 20.8 % × 240'000 = 49'920.

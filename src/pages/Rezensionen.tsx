@@ -41,8 +41,10 @@ import {
 import { cn } from '@/lib/utils';
 
 const PLATFORM = 'Google';
-/** Wählbare Plattformen der manuellen Erfassung (Import setzt Lunchgate fix). */
-const PLATFORMS = [PLATFORM, FEEDBACK_PLATFORM] as const;
+/** Wählbare Plattformen der manuellen Erfassung (Import setzt Lunchgate fix):
+ *  Oliv = Google + TripAdvisor (Spec 08/2026), Beaulieu = Google + Lunchgate. */
+const platformsForTenant = (tenantId: string): string[] =>
+  tenantId === 'beaulieu' ? [PLATFORM, FEEDBACK_PLATFORM] : [PLATFORM, 'TripAdvisor'];
 
 /** Anklickbare Sterne-Auswahl (1–5). */
 function StarPicker({ value, onChange, disabled }: {
@@ -311,7 +313,7 @@ export default function Rezensionen() {
                     <div className="space-y-1">
                       <span className="text-xs font-medium text-muted-foreground block">Plattform</span>
                       <div className="flex rounded-md border border-border overflow-hidden">
-                        {PLATFORMS.map(p => (
+                        {platformsForTenant(tenantId).map(p => (
                           <button key={p} type="button" disabled={saving}
                             onClick={() => setForm(f => ({ ...f, platform: p }))}
                             data-testid={`platform-${p.toLowerCase()}`}
@@ -502,7 +504,7 @@ export default function Rezensionen() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
                   Erfasste Rezensionen
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">{sorted.length} Einträge · Google + {FEEDBACK_PLATFORM}</span>
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">{sorted.length} Einträge · {platformsForTenant(tenantId).join(' + ')}</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">

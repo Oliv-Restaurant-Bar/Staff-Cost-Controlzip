@@ -916,7 +916,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         subtitle: `${MONATE[month - 1]} ${year}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
         footnote: 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
-          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
+          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
           + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
           + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
@@ -932,7 +932,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
         footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
           + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
-          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, '
+          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, '
           + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
           + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
@@ -1092,7 +1092,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             <p className="pdf-footnote text-xs text-muted-foreground">
               Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) ·
               Ist (Monat) = Ist bis heute · Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen
-              (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) werden als Quote
+              (Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) werden als Quote
               über den Monat gebildet, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit
               beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
               Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, Budget =
@@ -1204,7 +1204,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               aussagekräftig ist der Monatsvergleich, der Wochen-Δ schwankt naturgemäss ·
               Vorjahr = gleiche Kalenderwoche im Vorjahr
               (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · Δ% = Woche-Ist vs. Budget-Woche ·
-              Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Ø-Verkauf pro Gast,
+              Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast,
               Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Ø-Verkauf pro Gast =
               Netto ÷ Gäste nur über Tage mit beiden Quellen · Personalkosten = FIX pro-rata der Wochentage
               + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · PKQ =
@@ -1645,7 +1645,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
 
 /** Kennzahlen (Reihenfolge) fürs Grafik-Grid — ohne Produktive Stunden/Produktivität. */
 const CHART_METRICS = [
-  'Brutto Umsatz', 'Netto Umsatz', 'Gäste IN', 'Durchschnittsverkauf',
+  'Brutto Umsatz', 'Netto Umsatz', 'Gäste IN',
   'Take Away Anteil',
 ];
 
