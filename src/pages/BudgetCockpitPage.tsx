@@ -38,7 +38,7 @@ import {
   ladeSaisonGewichte, istMonatswerteAlle, abgeschlosseneMonate,
   kalkulierteWeqMonate, bedarfSollStundenMonate,
   dienstplanStundenMonate, reservierteGaesteIstMonate,
-  RESERVIERUNGS_ANTEIL_DEFAULT, GRUPPEN_ANTEIL_DEFAULT,
+  RESERVIERUNGS_ANTEIL_DEFAULT, GRUPPEN_ANTEIL_DEFAULT, AVG_VERKAUF_ZIEL_DEFAULT,
   erNettoBudgetMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
@@ -635,26 +635,41 @@ export default function BudgetCockpitPage() {
   }, [getPos, getPosById, restaurantNettoMonat, year, setPos, toast]);
 
   /**
-   * Ø-VERKAUF-ZIEL: EIN Zielwert (Default 29 CHF) auf alle ER-Monate —
-   * treibt anschliessend die Gäste-Ableitung. Je Monat überschreibbar.
+   * Ø-VERKAUF-ZIEL: Ohne Eingabe die MANDANTEN-eigenen Ist-Monatswerte
+   * (AVG_VERKAUF_ZIEL_DEFAULT — Oliv ~29, Beaulieu ~17.8, monatlich
+   * schwankend); mit Eingabe EIN Zielwert auf alle ER-Monate. Treibt
+   * anschliessend die Gäste-Ableitung. Je Monat überschreibbar.
    */
   const avgZielAnwenden = useCallback(() => {
-    const ziel = Number(pctInput['avg_verkauf_gast'] ?? '29');
-    if (!isFinite(ziel) || ziel <= 0) {
-      toast({ title: 'Ø-Verkauf-Ziel', description: 'Bitte einen Zielwert > 0 CHF erfassen.' });
-      return;
+    const raw = String(pctInput['avg_verkauf_gast'] ?? '').trim();
+    const defaults = AVG_VERKAUF_ZIEL_DEFAULT[tenantId as TenantId];
+    let ziele: number[];
+    if (raw === '') {
+      ziele = defaults;
+    } else {
+      const ziel = Number(raw);
+      if (!isFinite(ziel) || ziel <= 0) {
+        toast({ title: 'Ø-Verkauf-Ziel', description: 'Bitte einen Zielwert > 0 CHF erfassen (oder leer lassen für die Mandanten-Ist-Werte).' });
+        return;
+      }
+      ziele = Array(12).fill(ziel);
     }
     if (erNettoFehlt('das Ø-Verkauf-Ziel')) return;
     const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'avg_verkauf_gast')!;
     const pos = getPos(def);
-    const mv = erNetto.map(n => (typeof n === 'number' ? r2(ziel) : null));
+    const mv = erNetto.map((n, i) => (typeof n === 'number' ? r2(ziele[i]) : null));
     setPos('avg_verkauf_gast', {
       ...pos, monthlyValues: mv, monthlyExplicit: Array(12).fill(false),
       inputMode: 'chf', pctValue: null, yearValue: null,
     });
-    toast({ title: 'Ø-Verkauf-Ziel gesetzt', description: `${r2(ziel)} CHF auf alle ER-Monate (je Monat editierbar).` });
+    toast({
+      title: 'Ø-Verkauf-Ziel gesetzt',
+      description: raw === ''
+        ? 'Mandanten-Ist-Werte je Monat auf alle ER-Monate (je Monat editierbar).'
+        : `${r2(Number(raw))} CHF auf alle ER-Monate (je Monat editierbar).`,
+    });
     meldeLeereErMonate(mv);
-  }, [pctInput, erNettoFehlt, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
+  }, [pctInput, tenantId, erNettoFehlt, erNetto, getPos, setPos, meldeLeereErMonate, toast]);
 
   /**
    * Monats-Anteile einer %-Position: gespeicherter Monatswert, sonst der
@@ -994,7 +1009,8 @@ export default function BudgetCockpitPage() {
                       <div className="flex items-center gap-1.5 text-xs">
                         <span className="text-muted-foreground">Ziel CHF:</span>
                         <Input type="number" inputMode="decimal" className="h-7 w-20 text-right text-xs"
-                          value={pctInput['avg_verkauf_gast'] ?? '29'}
+                          value={pctInput['avg_verkauf_gast'] ?? ''}
+                          placeholder="Ist-Ø"
                           onChange={e => setPctInput(s => ({ ...s, avg_verkauf_gast: e.target.value }))}
                           data-testid="input-avg-ziel" />
                         <Button variant="outline" size="sm" className="h-7 text-xs"
@@ -1002,7 +1018,7 @@ export default function BudgetCockpitPage() {
                           Ziel anwenden
                         </Button>
                         <span className="text-[10px] text-muted-foreground">
-                          Zielwert auf alle ER-Monate (Default 29) — treibt die Gäste-Ableitung
+                          Leer = eigene Ist-Monatswerte des Mandanten; sonst Zielwert auf alle ER-Monate — treibt die Gäste-Ableitung
                         </span>
                       </div>
                     )}

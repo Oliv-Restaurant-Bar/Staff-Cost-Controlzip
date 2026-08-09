@@ -125,6 +125,15 @@ export const RESERVIERUNGS_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
   oliv:     [39.7, 38.4, 38.6, 28.1, 25.5, 23.2, 14.7, 19.1, 24.1, 31.4, 42.2, 40.5],
   beaulieu: [27.5, 30.3, 30.7, 26.2, 31.3, 28.9, 21.1, 27.8, 29.5, 31.4, 36.2, 43.2],
 };
+/** Ø-Verkauf-pro-Gast-Ziel-Default je Mandant (CHF, 12 Monatswerte) — aus dem
+ *  EIGENEN Ist des Mandanten (2025), NIE mandantenübergreifend: Oliv ~29,
+ *  Beaulieu ~17.8 (netto ÷ Gäste, monatlich schwankend). Nur Vorbelegung fürs
+ *  «Ziel anwenden» — je Monat überschreibbar. */
+export const AVG_VERKAUF_ZIEL_DEFAULT: Record<TenantId, number[]> = {
+  oliv: Array(12).fill(29),
+  beaulieu: [14.71, 17.25, 18.02, 14.27, 16.75, 16.86, 18.09, 16.12, 19.11, 17.99, 19.36, 25.68],
+};
+
 export const GRUPPEN_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
   oliv:     [11.9, 4.6, 7.0, 6.5, 11.8, 15.1, 2.6, 1.3, 6.0, 10.3, 16.2, 15.3],
   beaulieu: [13.0, 15.3, 13.5, 14.6, 20.7, 19.9, 6.6, 12.4, 16.9, 20.3, 16.2, 17.4],
