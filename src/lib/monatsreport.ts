@@ -40,7 +40,7 @@ import { loadTaGaesteDaily, sumTaGaesteRange } from '@/lib/ta-gaeste-store';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
-import { ladeUeberstundenTotals } from '@/lib/ueberstunden';
+import { ladeUeberstundenPeriode } from '@/lib/ueberstunden';
 import { computePLForMonth } from '@/lib/pl-engine';
 import { loadMonth as loadReportingMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
@@ -1400,14 +1400,16 @@ export async function ladeMonatsreport(
 
   // ── Überstunden total (Fix-MA, laufendes Konto ab Juli 2026 bis heute) ─────
   // Fehler → leer (Cockpit darf nicht am Überstunden-Lader scheitern).
-  let ueberstundenTotal: number | null = null;
-  let ueberstundenKosten: number | null = null;
+  // Perioden-Werte (NICHT das kumulierte Konto): Monat = Saldo dieses Monats,
+  // Woche = Saldo genau der gewählten ISO-Woche. Kosten = Σ max(0, Perioden-
+  // Saldo) × AG-Satz je MA. Das laufende Konto bleibt der Überstunden-Ansicht
+  // («Laufend») vorbehalten.
+  let uePeriode: { monat: { stunden: number | null; kosten: number | null }; woche: { stunden: number | null; kosten: number | null } } | null = null;
   try {
-    const ueTotals = await ladeUeberstundenTotals(tenantId, tenantKey, todayIso);
-    ueberstundenTotal = ueTotals.stunden;
-    ueberstundenKosten = ueTotals.kosten;
+    uePeriode = await ladeUeberstundenPeriode(
+      tenantId, tenantKey, { year, month, weekMonday: weekFrom }, todayIso);
   } catch (err) {
-    console.error('[monatsreport] Überstunden total nicht ladbar:', err);
+    console.error('[monatsreport] Überstunden (Periode) nicht ladbar:', err);
   }
 
   // ── Personal-Block: ALLE Zahlen aus dem Kern (personalkosten.ts) ───────────
@@ -1991,13 +1993,14 @@ export async function ladeMonatsreport(
     // Überstunden total: Σ laufender Saldo aller FIX-MA ab Juli 2026 bis HEUTE
     // (je Mandant; unabhängig vom gewählten Monat — Konto-Stand, kein
     // Periodenwert). leer statt 0 wenn keine Datenbasis. Kein Budget/VJ.
-    d('ueberstunden_total', 'Überstunden total (Fix-MA, Stand heute)', {
-      month: ueberstundenTotal != null ? r2(ueberstundenTotal) : null,
+    d('ueberstunden_total', 'Überstunden (Fix-MA)', {
+      month: uePeriode?.monat.stunden != null ? r2(uePeriode.monat.stunden) : null,
+      week: uePeriode?.woche.stunden != null ? r2(uePeriode.woche.stunden) : null,
     }, { fmt: 'hours', deltaInverted: true }),
-    // Überstunden-Kosten: Σ POSITIVE laufende Konten × AG-Stundensatz (CHF);
-    // negative Konten zählen 0. Gleiche Konto-Logik (Stand heute, je Mandant).
-    d('ueberstunden_kosten_total', 'Überstunden-Kosten total (Fix-MA, Stand heute)', {
-      month: ueberstundenKosten != null ? r2(ueberstundenKosten) : null,
+    // Überstunden-Kosten: Σ max(0, Perioden-Saldo) × AG-Stundensatz je MA.
+    d('ueberstunden_kosten_total', 'Überstunden-Kosten (Fix-MA)', {
+      month: uePeriode?.monat.kosten != null ? r2(uePeriode.monat.kosten) : null,
+      week: uePeriode?.woche.kosten != null ? r2(uePeriode.woche.kosten) : null,
     }, { fmt: 'chf', deltaInverted: true }),
     e(),
     // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────

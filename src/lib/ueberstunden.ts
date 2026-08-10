@@ -475,7 +475,92 @@ export interface UeTotals {
 }
 
 const totalCache = new Map<string, { at: number; value: UeTotals }>();
-export function ueberstundenTotalCacheLeeren(): void { totalCache.clear(); }
+const jahrCache = new Map<string, { at: number; daten: UeJahresDaten | null }>();
+export function ueberstundenTotalCacheLeeren(): void { totalCache.clear(); jahrCache.clear(); }
+
+/** Jahresdaten mit Kurzzeit-Cache (gleiche TTL wie das Total). */
+async function ladeUeberstundenJahrCached(
+  tenantId: TenantId,
+  tenantKey: (k: string) => string,
+  year: number,
+  heute: string,
+): Promise<UeJahresDaten | null> {
+  const key = `${tenantId}|${year}|${heute}`;
+  const hit = jahrCache.get(key);
+  if (hit && Date.now() - hit.at < TOTAL_CACHE_TTL_MS) return hit.daten;
+  const daten = await ladeUeberstundenJahr(tenantId, tenantKey, year, heute);
+  jahrCache.set(key, { at: Date.now(), daten });
+  return daten;
+}
+
+export interface UePeriodenWerte {
+  /** Σ Perioden-Saldo (h) aller Fix-MA; null = keine Datenbasis in der Periode. */
+  stunden: number | null;
+  /** Σ max(0, Perioden-Saldo) × AG-Satz je MA; null = keine Datenbasis/kein Satz. */
+  kosten: number | null;
+}
+
+function bewertePeriode(
+  saldi: Array<{ saldo: number | null; satz: number | null }>,
+): UePeriodenWerte {
+  let stunden: number | null = null;
+  let kosten: number | null = null;
+  for (const { saldo, satz } of saldi) {
+    if (saldo === null) continue;
+    stunden = (stunden ?? 0) + saldo;
+    if (satz !== null) {
+      const k = saldo > 0 ? Math.round(saldo * satz * 100) / 100 : 0;
+      kosten = Math.round(((kosten ?? 0) + k) * 100) / 100;
+    }
+  }
+  if (stunden !== null) stunden = Math.round(stunden * 100) / 100;
+  return { stunden, kosten };
+}
+
+/**
+ * Perioden-Werte für das Cockpit: Saldo/Kosten NUR der angezeigten Periode
+ * (Woche = Saldo genau dieser ISO-Woche, Monat = Monats-Saldo, Jahr =
+ * laufendes Saldo des Jahres) — NICHT das kumulierte Konto. Kosten = Σ
+ * max(0, Perioden-Saldo) × AG-Satz je MA. Nicht importierte Wochen zählen
+ * nicht (Saldo null). null = keine Datenbasis, nie stille 0.
+ */
+export async function ladeUeberstundenPeriode(
+  tenantId: TenantId,
+  tenantKey: (k: string) => string,
+  opts: { year: number; month: number; weekMonday: string | null },
+  heute: string = iso(new Date()),
+): Promise<{ monat: UePeriodenWerte; woche: UePeriodenWerte; jahr: UePeriodenWerte }> {
+  const leer: UePeriodenWerte = { stunden: null, kosten: null };
+  const jahrDaten = await ladeUeberstundenJahrCached(tenantId, tenantKey, opts.year, heute);
+  const mas = jahrDaten?.ergebnis.mitarbeiter ?? [];
+  const monat = bewertePeriode(mas.map(m => ({ saldo: m.monatsSaldo[opts.month - 1] ?? null, satz: m.stundensatz })));
+  const jahr = bewertePeriode(mas.map(m => ({ saldo: m.laufend, satz: m.stundensatz })));
+  let woche = leer;
+  if (opts.weekMonday) {
+    // Auf den ISO-Montag normalisieren (z.B. «letzte 7 Tage» liefert einen
+    // rollierenden Starttag, keinen Montag).
+    const monday = mondayOf(opts.weekMonday);
+    const sonntag = addDays(monday, 6);
+    // Dez/Jan-Wochen liegen in ZWEI Kalenderjahren: berechneUeberstundenJahr
+    // schneidet am Jahresende ab, daher beide Jahres-Teilsaldi derselben
+    // Woche (gleicher Montag) je MA aufsummieren.
+    const jahre = [...new Set([Number(monday.slice(0, 4)), Number(sonntag.slice(0, 4))])];
+    const proMa = new Map<string, { saldo: number | null; satz: number | null }>();
+    for (const y of jahre) {
+      const daten = y === opts.year ? jahrDaten
+        : await ladeUeberstundenJahrCached(tenantId, tenantKey, y, heute);
+      for (const m of daten?.ergebnis.mitarbeiter ?? []) {
+        const s = m.wochen.find(w => w.monday === monday)?.saldo ?? null;
+        const cur = proMa.get(m.id) ?? { saldo: null, satz: null };
+        if (s !== null) cur.saldo = (cur.saldo ?? 0) + s;
+        if (m.stundensatz !== null) cur.satz = m.stundensatz;
+        proMa.set(m.id, cur);
+      }
+    }
+    woche = bewertePeriode([...proMa.values()]);
+  }
+  return { monat, woche, jahr };
+}
 
 export async function ladeUeberstundenTotals(
   tenantId: TenantId,

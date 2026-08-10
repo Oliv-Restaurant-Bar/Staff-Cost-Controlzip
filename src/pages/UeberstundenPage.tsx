@@ -70,17 +70,27 @@ export default function UeberstundenPage() {
     }
   }, [tenantId, tenantKey, year, heute]);
 
-  useEffect(() => { void reload(); setStaged({}); setSelEmp(null); setSelWeek(null); }, [reload]);
+  useEffect(() => { void reload(); setStaged({}); setSelEmp(null); setSelWeek(null); setWochenOffset(0); }, [reload]);
 
   const erg = daten?.ergebnis ?? null;
   /** Gerechnete MA (mit Eintrittsdatum) vs. Hinweis-Liste (ohne Eintritt). */
   const gerechnet = useMemo(() => (erg?.mitarbeiter ?? []).filter(m => !m.ohneEintritt), [erg]);
   const ohneEintritt = useMemo(() => (erg?.mitarbeiter ?? []).filter(m => m.ohneEintritt), [erg]);
-  /** Wochen-Spalten (alle MA haben identische Wochenliste): nur bis heute. */
-  const wochenSpalten = useMemo(
+  /** Alle Wochen-Spalten (KW27 … aktuelle KW): Basis für das Fenster. */
+  const alleWochenSpalten = useMemo(
     () => (gerechnet[0]?.wochen ?? []).filter(w => w.monday <= heute).map(w => ({ label: w.label, monday: w.monday })),
     [gerechnet, heute],
   );
+  /** Sichtbares Fenster: N Wochen, per ‹ › um eine KW verschiebbar.
+   *  offset = Anzahl KW, die das Fenster vom rechten Rand (aktuelle KW) entfernt ist. */
+  const FENSTER_N = 8;
+  const [wochenOffset, setWochenOffset] = useState(0);
+  const maxOffset = Math.max(0, alleWochenSpalten.length - FENSTER_N);
+  const offset = Math.min(wochenOffset, maxOffset);
+  const wochenSpalten = useMemo(() => {
+    const end = alleWochenSpalten.length - offset;
+    return alleWochenSpalten.slice(Math.max(0, end - FENSTER_N), end);
+  }, [alleWochenSpalten, offset]);
   /** Monats-Spalten: ab Konto-Start (2026 → Jul–Dez), sonst ganzes Jahr. */
   const startMonatIdx = year === Number(UEBERSTUNDEN_START.slice(0, 4)) ? Number(UEBERSTUNDEN_START.slice(5, 7)) - 1 : 0;
   const sel = erg?.mitarbeiter.find(m => m.id === selEmp) ?? null;
@@ -238,6 +248,27 @@ export default function UeberstundenPage() {
               {gerechnet.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Keine Fix-Mitarbeiter im gewählten Jahr.</p>
               ) : ansicht === 'woche' ? (
+                <>
+                <div className="flex items-center gap-2 mb-1">
+                  <button
+                    className="border rounded px-2 py-0.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted"
+                    onClick={() => setWochenOffset(o => Math.min(maxOffset, Math.min(o, maxOffset) + 1))}
+                    disabled={offset >= maxOffset}
+                    title="Frühere Wochen"
+                    data-testid="button-wochen-zurueck"
+                  >‹</button>
+                  <button
+                    className="border rounded px-2 py-0.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted"
+                    onClick={() => setWochenOffset(o => Math.max(0, Math.min(o, maxOffset) - 1))}
+                    disabled={offset <= 0}
+                    title="Neuere Wochen"
+                    data-testid="button-wochen-vor"
+                  >›</button>
+                  <span className="text-[11px] text-muted-foreground">
+                    {wochenSpalten[0]?.label}–{wochenSpalten[wochenSpalten.length - 1]?.label}
+                    {offset > 0 ? ' (ältere Ansicht)' : ''}
+                  </span>
+                </div>
                 <table className="text-xs w-full">
                   <thead>
                     <tr className="text-muted-foreground">
@@ -264,8 +295,8 @@ export default function UeberstundenPage() {
                           </th>
                         );
                       })}
-                      <th className="text-right pl-2 font-semibold">Laufend</th>
-                      <th className="text-right pl-2 font-semibold">ÜStd-Kosten</th>
+                      <th className="text-right pl-2 font-semibold sticky right-24 bg-background w-20 min-w-20">Laufend</th>
+                      <th className="text-right pl-2 font-semibold sticky right-0 bg-background w-24 min-w-24">ÜStd-Kosten</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -294,10 +325,10 @@ export default function UeberstundenPage() {
                               </td>
                             );
                           })}
-                          <td className={`text-right pl-2 tabular-nums font-semibold ${saldoClass(m.laufend)}`}>
+                          <td className={`text-right pl-2 tabular-nums font-semibold sticky right-24 bg-background ${saldoClass(m.laufend)}`}>
                             {fmtH(m.laufend)}
                           </td>
-                          <td className="text-right pl-2 tabular-nums" data-testid={`kosten-${m.id}`}>
+                          <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid={`kosten-${m.id}`}>
                             {m.kosten === null ? '–' : `${m.kosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                           </td>
                         </tr>
@@ -315,13 +346,14 @@ export default function UeberstundenPage() {
                           </td>
                         );
                       })}
-                      <td className={`text-right pl-2 tabular-nums ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
-                      <td className="text-right pl-2 tabular-nums" data-testid="text-total-kosten">
+                      <td className={`text-right pl-2 tabular-nums sticky right-24 bg-background ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
+                      <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid="text-total-kosten">
                         {erg.totalKosten === null ? '–' : erg.totalKosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                     </tr>
                   </tbody>
                 </table>
+                </>
               ) : (
                 <table className="text-xs w-full">
                   <thead>
