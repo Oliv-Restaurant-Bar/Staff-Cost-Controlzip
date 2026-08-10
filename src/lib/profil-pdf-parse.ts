@@ -213,7 +213,10 @@ function parseSpahniLieferungen(lines: string[], profil: LieferantenProfil, mwst
     const iso = datum ? parseDatumCH(datum[1]) : null;
     if (ls && iso) bloecke = [{ nr: ls[1], datum: iso, zeilen: lines }];
   }
-  const zeileRe = /^\s*([A-Z]?\d{4,6})\s+(.+?)\s+(-?[\d’'.,]+)\s+(KG|STK?|PC|LT)\b\s+([\d’'.,]+)\s+(?:([\d’'.,]+)\s+)?(-?[\d’'.,]+)\s+(\d)\s*$/i;
+  // Optionale Spalten zwischen Preis und Totalpreis: Rabatt-BETRAG (Zahl)
+  // und/oder Rabatt-KÜRZEL (einzelner Buchstabe, z.B. «A») — beide zulassen,
+  // sonst werden Rabatt-Positionen verschluckt (Σ Positionen ≠ Netto).
+  const zeileRe = /^\s*([A-Z]?\d{4,6})\s+(.+?)\s+(-?[\d’'.,]+)\s+(KG|STK?|PC|LT)\b\s+([\d’'.,]+)\s+(?:([\d’'.,]+)\s+)?(?:[A-Z]\s+)?(-?[\d’'.,]+)\s+(\d)\s*$/i;
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
     for (const z of b.zeilen) {
@@ -386,33 +389,7 @@ function parseTransgourmetLieferungen(lines: string[], profil: LieferantenProfil
   }).filter(l => l.positionen.length > 0);
 }
 
-/**
- * Bohnenblust: Blöcke «Lieferschein Nr. <nr> vom <dd.mm.yyyy>  Total <x>»;
- * Positionszeile «90  Brioches Hamburger 80gr  [mit]  BW.90.04  1.54  138.60».
- */
-function parseBohnenblustLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
-  const { bloecke } = teileInBloecke(lines, /(?:Lieferschein|Nachlieferung)\s+Nr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
-  return bloecke.map(b => {
-    const positionen: WarenPosition[] = [];
-    for (const z of b.zeilen) {
-      if (/Zwischentotal|MwSt|Total inkl/i.test(z)) break;
-      const c = zellen(z);
-      if (c.length < 4 || !/^\d{1,4}$/.test(c[0])) continue;
-      if (!istBetragZelle(c[c.length - 1]) || !istBetragZelle(c[c.length - 2])) continue;
-      // Artikel-Nr = Zelle mit Punkt-Code (z.B. BW.90.04) vor den Beträgen.
-      const artIdx = c.length - 3;
-      const artNr = /^[A-Z]{1,4}[.\d][\w.]*$/i.test(c[artIdx] ?? '') ? c[artIdx] : '';
-      const bezZellen = c.slice(1, artNr ? artIdx : c.length - 2).filter(x => /[A-Za-zÄÖÜäöü]/.test(x));
-      positionen.push(position(profil.kategorie, mwstSatz, {
-        artNr, bezeichnung: bezZellen.join(' ') || artNr,
-        menge: parseBetrag(c[0]) ?? 0, einheit: '',
-        preis: parseBetrag(c[c.length - 2]) ?? 0,
-        positionspreis: parseBetrag(c[c.length - 1]) ?? 0,
-      }));
-    }
-    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
-  }).filter(l => l.positionen.length > 0);
-}
+// Bohnenblust-Parser entfernt (Aug 2026): wird ausschliesslich MANUELL erfasst.
 
 // ─── Kopf-Erkennung pro Profil ───────────────────────────────────────────────
 
@@ -504,9 +481,11 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     return {
       ...g,
       rechnungsNr: suche(text, [/RECHNUNG\s*:?\s*(\d{4,10})/i]) ?? (ls ? ls[1] : null),
-      // Belegdatum-Zeile «Zollikofen , 31.07.26  Seite 1».
-      rechnungsdatum: g.rechnungsdatum
-        ?? parseDatumCH(suche(text, [/,\s*(\d{1,2}\.\d{1,2}\.\d{2,4})\s+Seite/i]) ?? ''),
+      // Belegdatum-Zeile «Zollikofen , 15.01.26 …» — NUR das Datum direkt nach
+      // dem Ort lesen, alles danach ignorieren («/ 500», «/ SAST», «Seite 1»).
+      rechnungsdatum:
+        parseDatumCH(suche(text, [/Zollikofen\s*,?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '')
+        ?? g.rechnungsdatum,
       lieferdatum: lieferdatum ?? g.lieferdatum,
       // «Total CHF 3'796.25» (netto) und «1 MWST 2.60 % 98.70»
       netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
@@ -538,25 +517,6 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     mwst: sucheBetrag(text, [new RegExp(`MwSt\\.\\s+[\\d.]+\\s*%\\s*von\\s+[\\d’'.,]+\\s+CHF\\s+(${BETRAG_RE.source})`, 'i')]),
     mwstSatz: 2.6,
   }),
-  bohnenblust: (text) => {
-    const g = generischerKopf(text);
-    // Nettobetrags-Rechnung: Summe der «Lieferschein/Nachlieferung … Total x.xx»-Blöcke = netto.
-    let netto = 0, gefunden = false;
-    const re = /(?:Lieferschein|Nachlieferung)\s+Nr\.\s*\d+\s+vom\s+\d{1,2}\.\d{1,2}\.\d{2,4}\s+Total\s+([\d’'.,]+)/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) { netto += parseBetrag(m[1]) ?? 0; gefunden = true; }
-    // «2.6% MwSt. aus Betrag von CHF 823.37   CHF 21.41»
-    const zeile = /([\d.,]+)\s*%\s*MwSt\.?\s+aus\s+Betrag\s+von\s+CHF\s+([\d’'.,]+)\s+CHF\s+([\d’'.,]+)/i.exec(text);
-    const expl = zeile ? parseBetrag(zeile[2]) : null;
-    const mwst = zeile ? parseBetrag(zeile[3]) : null;
-    return {
-      ...g,
-      rechnungsNr: suche(text, [/Rechnungsnummer\s*:?\s*(\d{3,10})/i]),
-      netto: expl ?? (gefunden ? rundung2(netto) : g.netto),
-      mwst: mwst ?? g.mwst,
-      mwstSatz: 2.6,
-    };
-  },
   gasser: (text) => {
     const g = generischerKopf(text);
     // Totalzeile unter «MwSt-Satz  Belegbetrag  Porto  MwSt CHF  Total»:
@@ -637,7 +597,6 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   terravigna: parseTerravignaLieferungen,
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
-  bohnenblust: parseBohnenblustLieferungen,
 };
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
@@ -702,7 +661,15 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
     netto, mwst, mwstSatz,
     brutto: netto !== null && mwst !== null ? rundung2(netto + mwst) : null,
     lieferungen, positionenErkannt, belegart,
-    dokumenttyp: erkenneDokumenttyp(text, belegart),
+    dokumenttyp: (() => {
+      const dt = erkenneDokumenttyp(text, belegart);
+      // Spahni: RECHNUNGEN sind IMMER finale Monatsrechnungen — auch mit nur
+      // EINER Lieferung. Einzel-Lieferscheine (ohne «RECHNUNG»-Kopf, Nr aus
+      // «Liefersch./Kd.-Nr.») bleiben provisorisch (dt bleibt null/lieferschein).
+      if (dt === null && profil?.id === 'spahni' && belegart === 'rechnung'
+        && /RECHNUNG\s*:\s*\d{4,10}/.test(kopfzone(text))) return 'monatsrechnung';
+      return dt;
+    })(),
     hinweise,
   };
 }

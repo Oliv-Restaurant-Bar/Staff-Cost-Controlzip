@@ -1,6 +1,6 @@
 /**
  * Monatsrechnungs-Abgleich für Dual-Lieferanten (Feldschlösschen, Fideco,
- * Spahni, Gasser, Bohnenblust, Terravigna).
+ * Spahni, Gasser, Terravigna).
  *
  * RANGORDNUNG: Monatsrechnung (final) > Lieferschein/Auftragsbestätigung
  * (provisorisch). Die Monatsrechnung ist die MASSGEBLICHE Quelle: sie

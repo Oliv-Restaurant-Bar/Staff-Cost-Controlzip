@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'bohnenblust';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet';
 
 /**
  * Belegtyp des Lieferanten:
@@ -63,7 +63,8 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual' },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
-  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Backwaren',        konto: '4060', mwstSatz: 2.6, parser: 'bohnenblust', belegtyp: 'dual' },
+  // Bäckerei Bohnenblust bewusst KEIN Profil: wird ausschliesslich MANUELL
+  // erfasst (freie Mandantenwahl) — siehe BOHNENBLUST_AUSGESCHLOSSEN.
   // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).
   { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet' },
   { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'monatsrechnung' },
@@ -72,6 +73,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'hofamstutz',  name: 'Hof am Stutz',            mwstNr: '',          kategorie: 'Eier',             konto: '4060', mwstSatz: 0,
     erkennungTokens: ['hof am stutz'], iban: 'CH3830129016376058001' },
 ];
+
+/** Vom Automatik-Import AUSGESCHLOSSEN (nur manuelle Erfassung): früher
+ *  gespeicherte KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
+const BOHNENBLUST_AUSGESCHLOSSEN = { ids: ['bohnenblust'], mwstNrn: ['472136586'] };
 
 function profileKey(tenantId: TenantId): string {
   return tenantKey(tenantId, 'waren_lieferanten_profile_v1');
@@ -110,7 +115,9 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
       abAlsLieferschein: def?.abAlsLieferschein,
     });
   }
-  return [...proId.values()];
+  return [...proId.values()].filter(p =>
+    !BOHNENBLUST_AUSGESCHLOSSEN.ids.includes(p.id)
+    && !BOHNENBLUST_AUSGESCHLOSSEN.mwstNrn.includes(normalisiereMwstNr(p.mwstNr)));
 }
 
 export async function saveLieferantenProfile(tenantId: TenantId, profile: LieferantenProfil[]): Promise<void> {
@@ -165,28 +172,18 @@ export async function lerneProfil(
   return next;
 }
 
-/** Bohnenblust-Kunden-Nrn → Mandant (Beleg-Adresse ist dort IMMER
- *  «Restaurant Beaulieu AG», auch für Oliv-Lieferungen). */
-const BOHNENBLUST_KUNDEN_NRN: Record<string, 'oliv' | 'beaulieu'> = {
-  '1422004': 'oliv',
-  '9865.2': 'beaulieu',
-};
-
 /**
  * Mandant aus der BELEG-Adresse erkennen: «Oliv Gastro AG»/«Restaurant & Bar
  * Oliv»/«Oliv Restaurant & Bar» → oliv; «Restaurant Beaulieu AG» → beaulieu.
  * Beide oder keines gefunden → null (nie raten). Dient als Gegenprobe beim
  * Import: eine Rechnung des FALSCHEN Mandanten wird blockiert, nie umgebucht.
  *
- * AUSNAHME Bohnenblust: die Adresse ist immer Beaulieu — dort entscheidet die
- * Kunden-Nr (1422004 = Oliv, 9865.2 = Beaulieu); unbekannte Kunden-Nr → null
- * (Mandant offen + Warn-Hinweis beim Aufrufer, nie raten).
+ * AUSNAHME Bohnenblust: wird ausschliesslich MANUELL erfasst — die Beleg-
+ * Adresse ist dort immer Beaulieu (auch für Oliv-Lieferungen), deshalb greift
+ * hier KEINE adressbasierte Sperre (→ null).
  */
 export function erkenneMandantImText(text: string): 'oliv' | 'beaulieu' | null {
-  if (/Bohnenblust/i.test(text)) {
-    const kd = /Kunden-?\s?Nr\.?\s*:?\s*([\d.]+)/i.exec(text);
-    return kd ? (BOHNENBLUST_KUNDEN_NRN[kd[1]] ?? null) : null;
-  }
+  if (/Bohnenblust/i.test(text)) return null;
   const oliv = /Oliv\s+Gastro\s+AG|Restaurant\s*&?\s*Bar\s+Oliv|Oliv\s+Restaurant\s*&\s*Bar/i.test(text);
   const beaulieu = /Restaurant\s+Beaulieu(?:\s+AG)?/i.test(text);
   if (oliv && !beaulieu) return 'oliv';

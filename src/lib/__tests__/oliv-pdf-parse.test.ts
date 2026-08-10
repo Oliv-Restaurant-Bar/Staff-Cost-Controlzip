@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * Kontrollwerte aus den Beispiel-PDFs (Mandant OLIV) — Transgourmet, Ambro,
- * Spahni, Blaser + Bohnenblust-Mandanten-Gegenprobe (Beleg gehört zu Beaulieu).
+ * Spahni, Blaser (Bohnenblust: nur manuell — keine Sperre, kein Profil).
  * Fixtures = produktive Zeilenrekonstruktion (reconstructGnPdfLines).
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -31,14 +31,15 @@ describe('Mandanten-Erkennung nach Beleg-Adresse', () => {
     expect(erkenneMandantImText(fx('transgourmet-64104237.txt'))).toBe('oliv');
     expect(erkenneMandantImText(fx('ambro-26210060.txt'))).toBe('oliv');
   });
-  it('Bohnenblust: Kunden-Nr entscheidet (Adresse ist immer Beaulieu)', () => {
-    // 49300 trägt Kunden-Nr 1422004 → OLIV (trotz Beaulieu-Adresse).
-    expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBe('oliv');
-    // Beaulieu-Rechnung: Kunden-Nr 9865.2 → beaulieu.
-    const bea = readFileSync(join(__dirname, 'fixtures', 'beaulieu-pdf', 'bohnenblust-49415.txt'), 'utf8');
-    expect(erkenneMandantImText(bea)).toBe('beaulieu');
-    // Unbekannte Kunden-Nr → offen (null), nie raten.
-    expect(erkenneMandantImText('Bäckerei Bohnenblust AG\nRestaurant Beaulieu AG\nKunden-Nr. 555555')).toBeNull();
+  it('Bohnenblust: KEINE adressbasierte Sperre (wird nur manuell erfasst)', () => {
+    expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBeNull();
+  });
+});
+
+describe('Bohnenblust ist vom Automatik-Import ausgeschlossen', () => {
+  it('49300 wird keinem Profil zugeordnet (nur manuelle Erfassung)', () => {
+    const e = parse('bohnenblust-49300.txt');
+    expect(e.profil).toBeNull();
   });
 });
 
@@ -119,6 +120,56 @@ describe('Spahni OLIV Rechnung 8649975', () => {
     expect(e.lieferungen.map(l => l.datum)).toEqual(['2026-07-22', '2026-07-28', '2026-07-31']);
     expect(e.hinweise).toHaveLength(0);
   });
+  it('Spahni-RECHNUNG ist immer finale Monatsrechnung (auch mit 1 Lieferung)', () => {
+    expect(e.dokumenttyp).toBe('monatsrechnung');
+  });
+});
+
+describe('Spahni Rabatt-Kürzel + Datum (synthetische Kontrolle)', () => {
+  // Minimal-Rechnung im Spahni-Layout: Position MIT Rabatt-Kürzel «A»
+  // zwischen Preis und Totalpreis + Belegdatum-Zeile «Zollikofen , … / 500».
+  const text = [
+    'Metzgerei Spahni AG  CHE-106.963.475 MWST',
+    'Zollikofen , 15.01.26 / 500',
+    'RECHNUNG : 8628734',
+    'LS-Nr. 5942001 vom 12.01.26',
+    '01410  Rindshackfleisch  30.000 KG  5.79  A  173.70  1',
+    '01250  Rindsentrecôte  6.000 KG  43.10  258.60  1',
+    'Total CHF  432.30',
+    '1  MWST 2.60 %  11.24',
+  ].join('\n');
+  const e = parseProfilPdf(text, P);
+  it('Rabatt-Position wird NICHT verschluckt; Σ Positionen = Netto', () => {
+    expect(e.lieferungen).toHaveLength(1);
+    const pos = e.lieferungen[0].positionen;
+    expect(pos.map(p => p.artNr)).toEqual(['01410', '01250']);
+    expect(pos[0].positionspreis).toBe(173.7);
+    expect(pos[0].menge).toBe(30);
+    expect(pos[0].preis).toBe(5.79);
+    expect(e.lieferungen[0].nettoTotal).toBe(432.3);
+    expect(e.hinweise).toHaveLength(0); // keine Σ-Abweichung
+  });
+  it('Rechnungsdatum aus «Zollikofen , 15.01.26 / 500» (Rest ignoriert)', () => {
+    expect(e.rechnungsdatum).toBe('2026-01-15');
+  });
+  it('RECHNUNG-Kopf ⇒ finale Monatsrechnung trotz nur 1 Lieferung', () => {
+    expect(e.dokumenttyp).toBe('monatsrechnung');
+  });
+  it('Einzel-Lieferschein bleibt provisorisch — auch mit «RECHNUNG : n» im Fusstext', () => {
+    const kopf = [
+      'Metzgerei Spahni AG  CHE-106.963.475 MWST',
+      'Liefersch./Kd.-Nr. : 5210999 / XOLI',
+      'Lieferdatum : 04.08.26',
+      'Zollikofen , 04.08.26  Seite 1',
+      '01250  Rindsentrecôte  6.000 KG  43.10  258.60  1',
+      'Total CHF  258.60',
+      '1  MWST 2.60 %  6.72',
+    ];
+    // Fusstext-Referenz weit unten (ausserhalb der Kopfzone) darf NICHT zählen.
+    const fuss = [...Array(30).fill('—'), 'RECHNUNG : 9999999 folgt per Monatsende'];
+    const ls = parseProfilPdf([...kopf, ...fuss].join('\n'), P);
+    expect(ls.dokumenttyp).not.toBe('monatsrechnung');
+  });
 });
 
 describe('Blaser Rechnung 1091031', () => {
@@ -129,20 +180,5 @@ describe('Blaser Rechnung 1091031', () => {
     expect(e.netto).toBe(731.5);
     expect(e.brutto).toBe(750.5);
     expect(e.lieferdatum).toBe('2026-07-29');
-  });
-});
-
-describe('Bohnenblust Rechnung 49300 (Beaulieu)', () => {
-  const e = parse('bohnenblust-49300.txt');
-  it('2 Lieferungen 10.07./31.07, Netto 277.20, Brutto 284.40', () => {
-    expect(e.profil?.id).toBe('bohnenblust');
-    expect(e.rechnungsNr).toBe('49300');
-    expect(e.netto).toBe(277.2);
-    expect(e.mwst).toBe(7.21);
-    expect(e.lieferungen.map(l => ({ nr: l.rechnungsNr, datum: l.datum, netto: l.nettoTotal })))
-      .toEqual([
-        { nr: '497498', datum: '2026-07-10', netto: 138.6 },
-        { nr: '499342', datum: '2026-07-31', netto: 138.6 },
-      ]);
   });
 });
