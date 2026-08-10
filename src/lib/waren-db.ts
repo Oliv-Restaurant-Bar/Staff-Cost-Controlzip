@@ -97,6 +97,14 @@ export interface InvoiceEntry {
   /** true = durch die massgebliche Monatsrechnung finalisiert; spätere
    *  Lieferschein-/AB-Uploads dürfen diese Werte NICHT mehr verschlechtern. */
   final?: boolean;
+  /**
+   * Lieferschein↔Monatsrechnungs-Abgleich (waren-monatsabgleich.ts):
+   * 'abgeglichen' = durch eine Monatsrechnung ersetzt/bestätigt;
+   * 'differenz_offen' = User hat die Monatsrechnungs-Differenz NICHT
+   * übernommen — Lieferscheine bleiben massgeblich, Differenz sichtbar offen.
+   * Fehlt das Feld: Status ergibt sich aus quelle/final (provisorisch).
+   */
+  abgleichStatus?: 'abgeglichen' | 'differenz_offen';
   createdAt: string;
   updatedAt: string;
 }
@@ -147,14 +155,19 @@ export async function deleteInvoiceReceipt(tenantId: TenantId, path: string): Pr
 
 // ─── Warenkonto Schnellauswahl ────────────────────────────────────────────────
 
+// Echter Kontenplan (Oliv/FIBU-Schema — deckungsgleich mit account-mapping-store):
+// 4020 Wein · 4030 Bier · 4040 Spirituosen · 4050 Mineral · 4060 Küche ·
+// 4070 Kaffee/Tee. Betriebsmaterial = 4701; Gebinde (4090) ist NICHT Wareneinsatz.
 export const WARENKONTO_LIST: { value: string; label: string }[] = [
   { value: '4000', label: '4000 – Warenaufwand Lebensmittel' },
-  { value: '4020', label: '4020 – Warenaufwand Getränke' },
-  { value: '4030', label: '4030 – Warenaufwand Tiefkühl' },
-  { value: '4040', label: '4040 – Warenaufwand Tabakwaren' },
-  { value: '4050', label: '4050 – Warenaufwand Reinigung' },
-  { value: '4060', label: '4060 – Warenaufwand Diverses' },
+  { value: '4020', label: '4020 – Wein Warenaufwand' },
+  { value: '4030', label: '4030 – Bier Warenaufwand' },
+  { value: '4040', label: '4040 – Spirituosen Warenaufwand' },
+  { value: '4050', label: '4050 – Mineral Warenaufwand' },
+  { value: '4060', label: '4060 – Küche Warenaufwand' },
+  { value: '4070', label: '4070 – Kaffee/Tee Warenaufwand' },
   { value: '4071', label: '4071 – Eigenverbrauch' },
+  { value: '4701', label: '4701 – Betriebsmaterial' },
   { value: '6040', label: '6040 – Betriebsaufwand' },
 ];
 

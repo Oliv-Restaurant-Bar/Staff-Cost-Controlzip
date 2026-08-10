@@ -228,3 +228,38 @@ describe('Invariante: relevantNet == sumWarenNet (nach nurWarenAnteil)', () => {
     expect(t.beverageNet).toBeCloseTo(11000, 6);
   });
 });
+
+// ── expandKontoSplits: Split-Rechnungen korrekt Food/Beverage klassifizieren ──
+import { expandKontoSplits } from './warenkosten-quote';
+import { nurWarenAnteil } from './waren-klassen';
+import type { InvoiceEntry } from './waren-db';
+
+describe('expandKontoSplits', () => {
+  it('4020/4060/4701-Split: Beverage/Food getrennt, 4701 raus, relevantNet = food+bev', () => {
+    const inv = [{
+      id: 'x1', date: '2026-07-10', supplierName: 'Misch AG',
+      amountNet: 300, amountGross: 324, kategorie: 'Food',
+      kontoSplits: [
+        { warenkonto: '4020', amountNet: 100, amountGross: 108 },
+        { warenkonto: '4060', amountNet: 150, amountGross: 162 },
+        { warenkonto: '4701', amountNet: 50, amountGross: 54 },
+      ],
+    }] as unknown as InvoiceEntry[];
+    const waren = nurWarenAnteil(inv, 4089); // 4701 fällt raus, amountNet → 250
+    const t = computeWarenkostenTotals(expandKontoSplits(waren), 4089);
+    expect(t.beverageNet).toBe(100);
+    expect(t.foodNet).toBe(150);
+    expect(t.relevantNet).toBe(250);
+    expect(t.sonstigeNet).toBe(0);
+    expect(t.foodNet + t.beverageNet).toBe(t.relevantNet);
+  });
+
+  it('Eintrag ohne Splits bleibt unverändert (kategorie/konto-Pfad)', () => {
+    const t = computeWarenkostenTotals(expandKontoSplits([
+      { id: 'a', amountNet: 80, warenkonto: '4030' },
+      { id: 'b', amountNet: 20, kategorie: 'Food' },
+    ]));
+    expect(t.beverageNet).toBe(80);
+    expect(t.foodNet).toBe(20);
+  });
+});

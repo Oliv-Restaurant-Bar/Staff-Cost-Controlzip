@@ -97,4 +97,5 @@
 - [ER Umsatz vergangener Hauptjahre](plview-past-year-revenue.md) — canonicalRevenue/vj_daily-State {year,tenant}-taggen; Vergangenheitsjahr liest vj_daily:<jahr> via vjTagWerte, nie Fremdjahr behalten.
 - [Cockpit-KPI-Budget](cockpit-kpi-budget.md) — separater KV-Store cockpit-budget:<jahr> (budget_v1 unangetastet); Ratio-Budgets bewusst als Perioden-Totale-Ratio wie das Ist; Nav-Gate = Route-Gate.
 - [Überstunden-Konto Fix-MA](ueberstunden-konto.md) — leer-statt-0 via Wochen-Datenbasis, Start 2026-07-01, KV-Blob mit updatedAt-Stale-Wache (kein CAS), Total gecacht wegen Monatsreport-Pfad.
+- [Lieferschein→Monatsrechnung](lieferschein-monatsabgleich.md) — Monatsrechnung ERSETZT Lieferscheine (nie addieren); Entscheid pro Lieferant, fail-closed, Aliasse Pflicht.
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.

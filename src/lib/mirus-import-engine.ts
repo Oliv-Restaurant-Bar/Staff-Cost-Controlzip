@@ -462,6 +462,65 @@ export function resolvePlanToWrites(plan: MirusReconcilePlan): MirusWriteOp[] {
   return ops;
 }
 
+// ─── Dateiwert übernehmen (Report: hängende «behalten»-Werte lösen) ─────────
+
+/**
+ * Stundenwert aus einem Report-Anzeigestring («8.40 h», «8.40 h + K», «K»,
+ * «leer», «0») — für Alt-Reports ohne numerische Felder. Codes/leer = 0.
+ */
+export function hoursFromReportVal(val: string | undefined): number {
+  if (!val) return 0;
+  const m = /^(\d+(?:\.\d+)?)\s*h/.exec(val.trim());
+  return m ? parseFloat(m[1]) : 0;
+}
+
+export interface AdoptFileDay {
+  date: string;
+  /** MIRUS-Dateiwert des Tages */
+  fileHours: number;
+  /** aktuell gespeicherte Ist-Stunden */
+  savedHours: number;
+  /** aktuell gespeicherte Absenz-Marke (K/U/FE …), falls vorhanden */
+  savedAbsence?: string | null;
+}
+
+export interface AdoptFileWrite {
+  date: string;
+  /** null = Zelle leeren (Eintrag löschen) */
+  entry: { hours: number; absenceType?: string } | null;
+}
+
+/**
+ * «Dateiwert übernehmen»: ersetzt hängende «behalten»-Werte durch die
+ * MIRUS-Dateiwerte — pro Tag, minimal-invasiv:
+ *  - |gespeichert − Datei| ≤ epsilon → nichts (schon deckungsgleich).
+ *  - Datei > 0 → Stunden = Dateiwert; eine vorhandene Absenz-Marke bleibt
+ *    als Marke erhalten (Loader-Regel: Stunden gewinnen, K/U reitet mit).
+ *  - Datei = 0 + Marke + Stunden > 0 → Stunden auf 0, Marke BEHALTEN
+ *    (Altstand-Fall: 8.40 h + K aus plan_sync — nur die Stunden sind falsch).
+ *  - Datei = 0 + Marke + Stunden = 0 → unangetastet (reine Absenz bleibt).
+ *  - Datei = 0 ohne Marke → Zelle leeren.
+ * Reine pure Planung — der Aufrufer schreibt (Backup + awaited Writes).
+ */
+export function planAdoptFileWrites(days: AdoptFileDay[], epsilon = 0.005): AdoptFileWrite[] {
+  const out: AdoptFileWrite[] = [];
+  for (const d of days) {
+    if (Math.abs(d.savedHours - d.fileHours) <= epsilon) continue;
+    if (d.fileHours > 0) {
+      out.push({
+        date: d.date,
+        entry: { hours: d.fileHours, ...(d.savedAbsence ? { absenceType: d.savedAbsence } : {}) },
+      });
+    } else if (d.savedAbsence) {
+      if (d.savedHours > 0) out.push({ date: d.date, entry: { hours: 0, absenceType: d.savedAbsence } });
+      // reine Absenz (0 h + Marke) bleibt unangetastet
+    } else if (d.savedHours > 0) {
+      out.push({ date: d.date, entry: null });
+    }
+  }
+  return out;
+}
+
 /**
  * Erwartetes gespeichertes Total je MA nach Anwendung des Plans —
  * für die Gegenprüfung «gespeichert = Datei (± Tagesrundung)».

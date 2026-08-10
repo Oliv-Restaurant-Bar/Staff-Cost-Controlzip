@@ -202,13 +202,18 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const gebuchtMap = new Map<string, { sum: number; entries: SageJournalEntry[] }>();
   const nichtZugeordnet: SageJournalEntry[] = [];
   // Buchungstexte auch gegen die Gruppen-Aliasse matchen (Buchhaltungs-Namen
-  // wie «Frigemo» existieren u.U. nicht als erfasste Lieferanten).
+  // wie «Frigemo» existieren u.U. nicht als erfasste Lieferanten) UND gegen
+  // die Lieferanten-Namen der ERFASSTEN Rechnungen des Monats (Übernahmen/
+  // Alt-Erfassungen tragen oft exakt den Buchhaltungs-Namen wie «Obrist SA»,
+  // der im Stammdaten-Lieferantenverzeichnis fehlt — sonst stünde die Buchung
+  // «ohne Zuordnung», obwohl dieselbe Rechnung erfasst ist).
   const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
-  const matchNamen = [...new Set([...input.supplierNames, ...gruppenAliasNamen])];
+  const erfassteNamen = input.invoices.map(inv => inv.supplierName);
+  const matchNamen = [...new Set([...input.supplierNames, ...gruppenAliasNamen, ...erfassteNamen])];
   for (const e of warenBuchungen) {
     // Barausgaben («Barausgabe(n) <Laden>») haben Vorrang vor dem Volltext-
     // Matching: sie werden IMMER als eigener Lieferant pro Laden geführt.
-    const hit = barausgabenLieferant(e.text) ?? findSupplierInText(e.text ?? '', matchNamen, input.aliases);
+    const hit = barausgabenLieferant(e.text) ?? findSupplierInText(e.text ?? '', matchNamen, input.aliases, resolve);
     if (hit) {
       const canon = resolve(hit);
       const cur = gebuchtMap.get(canon) ?? { sum: 0, entries: [] };

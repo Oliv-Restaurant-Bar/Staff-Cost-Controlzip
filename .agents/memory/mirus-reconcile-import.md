@@ -66,3 +66,8 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - ALLE Aufrufer müssen exitDates übergeben: MirusReconcileImportButton UND OpenHoursSection (geparkte Stunden) — neuer Konsument = neue Lücke.
 - Manuelle Erfassung gesperrt in ActualHoursCell.handleCellClick (Desktop inkl. Quick-Entry) und MobileDayView (Ist-Badge-Klick); ISO-String-Vergleich `date > employmentEndDate`.
 - Alt-Bestand bereinigt 05.08.2026: 17 Oliv-Zeilen/138.09 h nach Austritt gelöscht, Backup dienstplan_ist_backup 62972876.
+
+## «Dateiwert übernehmen» (Report, hängende behalten-Werte)
+- Rote Report-Zeilen (Gegenprüfung) lassen sich per Button auf die Dateiwerte auflösen; Logik pure in der Engine (`planAdoptFileWrites`): Datei>0 → Stunden=Dateiwert (Absenz-Marke reitet mit); Datei=0 + Marke + Stunden>0 → Stunden 0, Marke BEHALTEN (Altstand «8.40 h + K» aus plan_sync); reine Absenz bleibt; Datei=0 ohne Marke → Zelle leeren.
+- Adoptionspfad braucht dieselbe Disziplin wie der Import: Backup vorher, awaited Writes mit {ok}-Check, UND die KV-Absenz-Bereinigung (absence-ist-*) für erfolgreiche >0h-Writes — sonst reanimiert eine alte Marke die Zelle beim Reload.
+- Alt-Reports ohne employeeId/fileHours: ID per exaktem Namensabgleich, Stunden aus Anzeigestrings parsen (`hoursFromReportVal`).

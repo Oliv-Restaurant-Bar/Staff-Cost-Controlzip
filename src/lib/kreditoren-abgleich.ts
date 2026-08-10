@@ -206,12 +206,8 @@ const DATUM_FENSTER_TAGE = 10;
  * Texte hängen z.T. Zusätze an: «63908169, Transgourmet 04.20»), trailing
  * Satzzeichen weg, lowercase, führende Nullen weg.
  */
-export function normRef(ref: string | null | undefined): string | null {
-  const t = (ref ?? '').trim().split(/[,\s]+/)[0]
-    .replace(/[^\p{L}\p{N}]+$/u, '')
-    .toLowerCase().replace(/^0+(?=\d)/, '');
-  return t.length > 0 ? t : null;
-}
+import { normRef } from './waren-ref';
+export { normRef };
 
 /**
  * Gleich einen geparsten Kreditoren-Auszug gegen die erfassten Warenrechnungen

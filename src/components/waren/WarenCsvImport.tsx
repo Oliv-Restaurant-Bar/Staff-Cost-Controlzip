@@ -382,6 +382,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
       let ersetzt = 0, neu = 0, finalisiert = 0;
       const warnungen: string[] = [];
       const hinweiseProMonat = new Map<string, Record<string, PreisAenderung[]>>();
+      // Preis-Historie/Hinweise werden im Lauf mit dem EFFEKTIVEN Lieferanten
+      // gerechnet (Bestands-Name gewinnt, z. B. umgehängte TG-Bar-Rechnungen)
+      // — die Vorschau nutzt den Markt-Default und ist nur Anzeige.
+      let histLauf: PreisHistorie = historie ?? {};
       const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
       for (const r of zuImportieren) {
         const lieferant = lieferantFuer(r.markt)!; // oben gefiltert
@@ -442,7 +446,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         const entry: InvoiceEntry = {
           id,
           date: r.datum,
-          supplierName: lieferant.trim(),
+          // Bestands-Name gewinnt: innerhalb der TG/Prodega-Familie umgehängte
+          // Rechnungen (z. B. Bar-Nummernkreis → Transgourmet) bleiben beim
+          // Re-Import umgehängt, statt auf den Markt-Default zurückzufallen.
+          supplierName: (vorhanden?.supplierName ?? lieferant).trim(),
           amountGross: r.bruttoTotal,
           amountNet: r.nettoTotal,
           vatIncluded: false,
@@ -458,7 +465,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         };
         await saveInvoiceEntry(tenantId, entry);
         if (vorhanden && vorhanden.quelle !== 'kreditoren_uebernahme') ersetzt++; else if (!vorhanden) neu++;
-        const aen = vorschau.proRechnung.get(r.docKey) ?? [];
+        // Preisvergleich/Historie mit dem tatsächlich persistierten Lieferanten.
+        const effLieferant = entry.supplierName;
+        const aen = berechnePreisAenderungen(r, effLieferant, histLauf, schwelle);
+        histLauf = aktualisierePreisHistorie(histLauf, [r], effLieferant);
         const monat = hinweiseProMonat.get(month) ?? {};
         if (aen.length > 0) monat[id] = aen; else delete monat[id];
         hinweiseProMonat.set(month, monat);
@@ -476,8 +486,8 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         const bestehend = await loadPreisHinweise(tenantId, month);
         await savePreisHinweise(tenantId, month, { ...bestehend, ...neue });
       }
-      await savePreisHistorie(tenantId, vorschau.histNachImport);
-      setHistorie(vorschau.histNachImport);
+      await savePreisHistorie(tenantId, histLauf);
+      setHistorie(histLauf);
       // Undo-Datensatz (nur der letzte Import ist rückgängig machbar).
       const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
       await saveWarenImportUndo(tenantId, {

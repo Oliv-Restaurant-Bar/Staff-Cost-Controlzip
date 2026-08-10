@@ -89,6 +89,14 @@ export function findSupplierInText(
   text: string,
   supplierNames: string[],
   aliases: SupplierAliasMap,
+  /**
+   * Optionale Kanonisierung (Alias-Gruppen-Resolver): Gleichstand zweier
+   * Treffer, die auf DENSELBEN kanonischen Lieferanten auflösen («Terravigna»
+   * und Gruppen-Alias «Terravigna AG» → beide Kern-Token «terravigna»), ist
+   * KEINE Mehrdeutigkeit — ohne diesen Parameter blieben solche Buchungstexte
+   * fälschlich unzugeordnet.
+   */
+  canonicalize?: (name: string) => string,
 ): string | null {
   const norm = ' ' + normalizeSupplierKey(text) + ' ';
   const hits: { name: string; len: number }[] = [];
@@ -113,6 +121,13 @@ export function findSupplierInText(
   hits.sort((a, b) => b.len - a.len);
   // Eindeutig, wenn der beste Treffer klar länger ist ODER es nur einen gibt.
   if (hits.length === 1 || hits[0].len > hits[1].len) return hits[0].name;
+  // Gleichstand: lösen ALLE gleichlangen Top-Treffer auf denselben kanonischen
+  // Namen auf (Alias-Gruppe), ist es faktisch EIN Lieferant → bester Treffer.
+  if (canonicalize) {
+    const top = hits.filter(h => h.len === hits[0].len);
+    const canons = new Set(top.map(h => canonicalize(h.name)));
+    if (canons.size === 1) return hits[0].name;
+  }
   return null;
 }
 

@@ -80,6 +80,7 @@ import {
   normalizeSupplierKey, type ErkannteRechnung,
 } from '@/lib/waren-pdf-erkennung';
 import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
+import { findeDublettenGruppen, type DublettenGruppe } from '@/lib/waren-dubletten';
 import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import {
   buchungKeysMitIndex, buchungBetrag, fmtDatumCH, matchAmpel, lieferantMatchStat,
@@ -108,6 +109,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -515,6 +517,34 @@ export default function WarenrechnungenPage() {
     () => buildAliasResolver(abgleich?.effektiveAliasGruppen ?? aliasGruppen),
     [abgleich, aliasGruppen],
   );
+
+  // ─── Doppel-Bereinigung: doppelt erfasste Rechnungen (Vorschau + Löschen) ──
+  const [dublettenGruppen, setDublettenGruppen] = useState<DublettenGruppe[] | null>(null);
+  const [dublettenAusgewaehlt, setDublettenAusgewaehlt] = useState<Set<string>>(new Set());
+  const [dublettenBusy, setDublettenBusy] = useState(false);
+  const oeffneDubletten = () => {
+    const gruppen = findeDublettenGruppen(entries, abgleich?.effektiveAliasGruppen ?? aliasGruppen);
+    setDublettenGruppen(gruppen);
+    setDublettenAusgewaehlt(new Set(gruppen.flatMap(g => g.loeschen.map(e => e.id))));
+  };
+  const bereinigeDubletten = async () => {
+    if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
+    if (!dublettenGruppen) return;
+    const zuLoeschen = dublettenGruppen.flatMap(g => g.loeschen).filter(e => dublettenAusgewaehlt.has(e.id));
+    if (zuLoeschen.length === 0) { setDublettenGruppen(null); return; }
+    setDublettenBusy(true);
+    let geloescht = 0; // Teilfehler: bereits Gelöschtes ist persistent → immer neu laden
+    try {
+      for (const e of zuLoeschen) { await deleteInvoiceEntry(tenantId, e.id, e.date); geloescht++; }
+      toast.success(`${geloescht} doppelt erfasste Rechnung${geloescht === 1 ? '' : 'en'} entfernt (CHF ${fmtChf(zuLoeschen.reduce((a, x) => a + x.amountNet, 0))}).`);
+    } catch (err) {
+      toast.error(`Bereinigung nach ${geloescht} von ${zuLoeschen.length} Löschungen abgebrochen: ${err instanceof Error ? err.message : String(err)} — Ansicht wird neu geladen.`);
+    } finally {
+      setDublettenGruppen(null);
+      await loadData().catch(() => { /* Anzeige-Reload best effort */ });
+      setDublettenBusy(false);
+    }
+  };
 
   // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
   // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
@@ -3686,6 +3716,17 @@ export default function WarenrechnungenPage() {
                           <p className="mt-1">Tipp: Lieferant im Stamm anlegen oder eine PDF-Rechnung zuordnen — der Alias wirkt auch hier.</p>
                         </div>
                       )}
+
+                      {/* Doppel-Bereinigung: doppelt erfasste Rechnungen finden */}
+                      {canDelete && (
+                        <div className="border-t border-border/50 pt-3 flex items-center gap-2">
+                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                            onClick={oeffneDubletten} data-testid="button-dubletten-pruefen">
+                            Doppelt erfasste Rechnungen prüfen…
+                          </Button>
+                          <InfoTip text={<span>Findet Rechnungen, die MEHRFACH erfasst wurden (z.B. Kreditoren-Übernahme + FIBU-Übernahme oder Sammelrechnung neben den Einzelrechnungen). Vorschau mit Auswahl — gelöscht wird erst nach Bestätigung; behalten wird immer der detaillierteste Beleg.</span>} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </section>
@@ -3730,7 +3771,7 @@ export default function WarenrechnungenPage() {
                           <tbody>
                             {uebernahmeKandidaten.map(k => {
                               const dublette = findeFibuDublette(
-                                { date: k.datumIso ?? '', supplierName: k.lieferant ?? k.text, betrag: k.betrag }, entries);
+                                { date: k.datumIso ?? '', supplierName: k.lieferant ?? k.text, betrag: k.betrag, reference: k.belegNr ?? '' }, entries);
                               return (
                                 <tr key={k.key} className="border-b border-border/30 hover:bg-muted/20">
                                   <td className="px-4 py-2 tabular-nums whitespace-nowrap">{k.datum}</td>
@@ -4006,6 +4047,67 @@ export default function WarenrechnungenPage() {
       </Dialog>
 
       {/* ── Dialog: FIBU-Übernahme Vorschau (vor dem Schreiben) ────────────── */}
+      {/* ── Doppel-Bereinigung: Vorschau-Dialog ─────────────────────────── */}
+      <Dialog open={dublettenGruppen !== null} onOpenChange={o => { if (!o && !dublettenBusy) setDublettenGruppen(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="dialog-dubletten">
+          <DialogHeader>
+            <DialogTitle>Doppelt erfasste Rechnungen — {month}.{year}</DialogTitle>
+            <DialogDescription>
+              Behalten wird immer der detaillierteste Beleg (Einzelrechnung/PDF vor FIBU-Übernahme vor Kreditoren-Übernahme).
+              Angehakte Einträge werden gelöscht — erst nach Bestätigung.
+            </DialogDescription>
+          </DialogHeader>
+          {dublettenGruppen !== null && dublettenGruppen.length === 0 && (
+            <p className="text-sm text-muted-foreground" data-testid="text-dubletten-leer">Keine doppelt erfassten Rechnungen gefunden.</p>
+          )}
+          <div className="space-y-4">
+            {(dublettenGruppen ?? []).map((g, gi) => (
+              <div key={gi} className="border border-border rounded-lg p-3 text-sm" data-testid={`dubletten-gruppe-${gi}`}>
+                <p className="font-medium">
+                  {g.lieferant} · {g.grund === 'sammelrechnung' ? g.schluessel : g.grund === 'referenz' ? `Rechnungs-Nr. ${g.schluessel}` : `gleicher Betrag/Tag (${g.schluessel})`}
+                </p>
+                <div className="mt-2 space-y-1">
+                  {g.behalten.map(e => (
+                    <p key={e.id} className="text-xs text-muted-foreground tabular-nums">
+                      ✓ behalten — {e.date} · {e.supplierName} · CHF {fmtChf(e.amountNet)}{e.reference ? ` · Ref ${e.reference}` : ''}{e.quelle ? ` · ${e.quelle}` : ''}
+                    </p>
+                  ))}
+                  {g.loeschen.map(e => (
+                    <label key={e.id} className="flex items-center gap-2 text-xs tabular-nums cursor-pointer">
+                      <input type="checkbox" className="h-3.5 w-3.5 accent-red-600 shrink-0"
+                        checked={dublettenAusgewaehlt.has(e.id)}
+                        onChange={ev => setDublettenAusgewaehlt(prev => {
+                          const next = new Set(prev);
+                          if (ev.target.checked) next.add(e.id); else next.delete(e.id);
+                          return next;
+                        })}
+                        data-testid={`check-dublette-${e.id}`} />
+                      <span className="text-red-700 dark:text-red-400">
+                        löschen — {e.date} · {e.supplierName} · CHF {fmtChf(e.amountNet)}{e.reference ? ` · Ref ${e.reference}` : ''}{e.quelle ? ` · ${e.quelle}` : ''}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {dublettenGruppen !== null && dublettenGruppen.length > 0 && (
+            <p className="text-sm font-medium tabular-nums" data-testid="text-dubletten-summe">
+              Ausgewählt: {[...dublettenAusgewaehlt].length} Einträge · CHF {fmtChf(dublettenGruppen.flatMap(g => g.loeschen).filter(e => dublettenAusgewaehlt.has(e.id)).reduce((a, e) => a + e.amountNet, 0))}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={dublettenBusy} onClick={() => setDublettenGruppen(null)} data-testid="button-dubletten-abbrechen">Abbrechen</Button>
+            {dublettenGruppen !== null && dublettenGruppen.length > 0 && (
+              <Button variant="destructive" disabled={dublettenBusy || dublettenAusgewaehlt.size === 0}
+                onClick={bereinigeDubletten} data-testid="button-dubletten-loeschen">
+                {dublettenBusy ? 'Lösche…' : `${dublettenAusgewaehlt.size} Einträge löschen`}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={uebernahmeDrafts !== null} onOpenChange={o => { if (!o && !uebernahmeSaving) setUebernahmeDrafts(null); }}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="fibu-uebernahme-dialog">
           <DialogHeader>

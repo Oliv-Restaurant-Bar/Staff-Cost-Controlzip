@@ -621,6 +621,20 @@ export function normalizeMarktLieferantenMapping(raw: unknown): MarktLieferanten
  * Alt-Einträge OHNE markt werden tolerant gematcht (bekommen den Markt beim
  * Update gesetzt — der zweite Markt desselben Tags legt danach neu an).
  */
+/**
+ * Transgourmet und Prodega sind EIN Firmenverbund: Bar-Rechnungen aus einem
+ * Prodega-Markt können in der FIBU als Transgourmet laufen (Nummernkreis
+ * 2607…) und werden im Bestand entsprechend umgehängt. Für die Bestands-
+ * Erkennung beim Re-Import zählen beide Namen als derselbe Lieferant —
+ * die Dokument-Identität bleibt Nr+Datum+Markt.
+ */
+const TG_FAMILIE = /^(transgourmet|prodega)$/i;
+function lieferantPasst(a: string, b: string): boolean {
+  const an = a.trim().toLowerCase(), bn = b.trim().toLowerCase();
+  if (an === bn) return true;
+  return TG_FAMILIE.test(an) && TG_FAMILIE.test(bn);
+}
+
 export function findeCsvBestandsTreffer<T extends {
   reference?: string; date: string; supplierName: string; markt?: string;
 }>(
@@ -629,11 +643,17 @@ export function findeCsvBestandsTreffer<T extends {
   lieferant: string,
 ): T | undefined {
   const marktNorm = r.markt.trim().toLowerCase();
-  return bestand.find(e =>
-    (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-    && e.date === r.datum // Portal-Nummern werden über Monate wiederverwendet
-    && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase()
-    && (e.markt == null || e.markt.trim().toLowerCase() === marktNorm));
+  return bestand.find(e => {
+    if ((e.reference ?? '').trim().toLowerCase() !== r.rechnungsNr.toLowerCase()) return false;
+    if (e.date !== r.datum) return false; // Portal-Nummern werden über Monate wiederverwendet
+    const marktExakt = e.markt != null && e.markt.trim().toLowerCase() === marktNorm;
+    // Familien-Toleranz NUR bei exakt gleichem Markt — Alt-Einträge ohne Markt
+    // brauchen den exakten Lieferanten (Cross-Markt-Kollisionsschutz).
+    const lieferantOk = marktExakt
+      ? lieferantPasst(e.supplierName, lieferant)
+      : e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase();
+    return lieferantOk && (e.markt == null || marktExakt);
+  });
 }
 
 /** Lieferant für einen Markt-Wert; null = nicht zugeordnet («Lieferant offen»). */

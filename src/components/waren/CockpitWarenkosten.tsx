@@ -20,10 +20,12 @@ import { Input } from '@/components/ui/input';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { loadMonthInvoices, loadAliasGruppen, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
-import { nurWarenAnteil, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
-import { zaehleUnkontierte } from '@/lib/warenkosten-quote';
+import { nurWarenAnteil, sumBetriebNet, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { zaehleUnkontierte, computeWarenkostenTotals, expandKontoSplits, warenkostenQuote, wkqFarbklasse } from '@/lib/warenkosten-quote';
+import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
-import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange } from '@/lib/waren-cockpit';
+import { lieferantStatus, type LieferantAbgleichStatus } from '@/lib/waren-monatsabgleich';
+import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, monthDateRange } from '@/lib/waren-cockpit';
 import {
   loadZielWarenquote, saveZielWarenquote, normalizeZielWarenquotePct,
   DEFAULT_ZIEL_WARENQUOTE_PCT,
@@ -38,6 +40,59 @@ const fmtChf = (v: number) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtPct = (v: number) =>
   `${v.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+
+
+const WKQ_TEXT: Record<'green' | 'yellow' | 'red', string> = {
+  green: 'text-emerald-600 dark:text-emerald-400',
+  yellow: 'text-amber-600 dark:text-amber-400',
+  red: 'text-red-600 dark:text-red-400',
+};
+const WKQ_DOT: Record<'green' | 'yellow' | 'red', string> = {
+  green: 'bg-emerald-500', yellow: 'bg-amber-500', red: 'bg-red-500',
+};
+
+/** Eine Zeile im Ist/Soll-Block: Δ nur wenn beide Seiten vorhanden, WKQ nur bei Umsatz. */
+function IstSollZeile({ label, ist, soll, umsatzNet, testId, indent }: {
+  label: string; ist: number; soll: number | null; umsatzNet: number | null;
+  testId: string; indent?: boolean;
+}) {
+  const delta = soll != null ? ist - soll : null;
+  const deltaPct = delta != null && soll != null && soll > 0 ? (delta / soll) * 100 : null;
+  const wkq = warenkostenQuote(ist, umsatzNet);
+  const farbe = wkq != null ? wkqFarbklasse(wkq) : null;
+  return (
+    <tr className="border-b border-border/40" data-testid={testId}>
+      <td className={cn('py-2 font-medium', indent && 'pl-4 text-muted-foreground')}>{label}</td>
+      <td className="py-2 text-right tabular-nums font-semibold">{fmtChf(ist)}</td>
+      <td className="py-2 text-right tabular-nums text-muted-foreground">
+        {soll != null ? fmtChf(soll) : <span title="Kein Wareneinsatz-Budget erfasst">—</span>}
+      </td>
+      <td className="py-2 text-right">
+        {delta != null ? (
+          <span className="inline-flex flex-col items-end leading-tight">
+            <span className={cn('tabular-nums font-semibold',
+              delta > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
+              {delta >= 0 ? '+' : ''}{fmtChf(delta)}
+            </span>
+            {deltaPct != null && (
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {deltaPct >= 0 ? '+' : ''}{deltaPct.toLocaleString('de-CH', { maximumFractionDigits: 1 })} %
+              </span>
+            )}
+          </span>
+        ) : <span className="text-muted-foreground">—</span>}
+      </td>
+      <td className="py-2 text-right">
+        {wkq != null && farbe != null ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className={cn('h-2 w-2 rounded-full inline-block', WKQ_DOT[farbe])} />
+            <span className={cn('tabular-nums font-semibold', WKQ_TEXT[farbe])}>{fmtPct(wkq)}</span>
+          </span>
+        ) : <span className="text-muted-foreground" title="Kein Netto-Umsatz für den Monat importiert">—</span>}
+      </td>
+    </tr>
+  );
+}
 
 /** Buchhaltungs-Warenaufwand (total_cogs, Ist) eines Monats; null wenn keine Daten. */
 function buchhaltungCogs(tenantId: TenantId, year: number, month: number): number | null {
@@ -124,6 +179,23 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     [invoices, warenGrenze],
   );
   const totalNet = useMemo(() => (warenInvoices ? sumInvoicesNet(warenInvoices) : 0), [warenInvoices]);
+  // Food/Beverage-Split NUR über relevanten Wareneinsatz: Betriebskosten-Anteile
+  // (z.B. 4701 Betriebsmaterial) und Depot/Pfand sind bereits durch nurWarenAnteil
+  // draussen; verbleibende «Sonstiges»-Einträge zählen ebenfalls NICHT in die Quote.
+  const totals = useMemo(
+    () => (warenInvoices ? computeWarenkostenTotals(expandKontoSplits(warenInvoices), warenGrenze) : null),
+    [warenInvoices, warenGrenze],
+  );
+  // Hinweis-Betrag: alles ausserhalb der Quote (Betriebskosten-Anteile + Sonstiges).
+  const betriebsNet = useMemo(
+    () => (invoices ? sumBetriebNet(invoices, warenGrenze) + (totals?.sonstigeNet ?? 0) : 0),
+    [invoices, warenGrenze, totals],
+  );
+  // Soll = Wareneinsatz-Budget (Budget-Eingabe, CHF aufgelöst); 0 = nicht erfasst → leer.
+  const budget = useBudgetMonth(year, month);
+  const sollFood = budget.foodCostBudget > 0 ? budget.foodCostBudget : null;
+  const sollBev = budget.beverageCostBudget > 0 ? budget.beverageCostBudget : null;
+  const sollTotal = sollFood == null && sollBev == null ? null : (sollFood ?? 0) + (sollBev ?? 0);
   // Transparenz: unkontierte Einträge/Splits zählen als Warenkosten mit —
   // solange N > 0 ist die WKQ unscharf und wird sichtbar gekennzeichnet.
   const unkontiert = useMemo(() => (invoices ? zaehleUnkontierte(invoices) : 0), [invoices]);
@@ -131,8 +203,19 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     () => (warenInvoices ? aggregateBySupplier(applyAliasGruppen(warenInvoices, aliasGruppen)) : []),
     [warenInvoices, aliasGruppen],
   );
+  // Lieferschein↔Monatsrechnungs-Status pro Lieferant (provisorisch /
+  // abgeglichen / Differenz offen) — auf Alias-Namen aggregiert wie supplierRows.
+  const supplierStatus = useMemo(() => {
+    const map = new Map<string, InvoiceEntry[]>();
+    for (const e of applyAliasGruppen(warenInvoices ?? [], aliasGruppen)) {
+      const key = (e.supplierName || '—').trim() || '—';
+      map.set(key, [...(map.get(key) ?? []), e]);
+    }
+    const out = new Map<string, LieferantAbgleichStatus>();
+    for (const [k, v] of map) out.set(k, lieferantStatus(v));
+    return out;
+  }, [warenInvoices, aliasGruppen]);
   const wkq = warenkostenquote(totalNet, umsatzNet ?? 0);
-  const ampel = wkqAmpel(wkq, zielPct);
   const buchhaltung = useMemo(() => buchhaltungCogs(tenantId, year, month), [tenantId, year, month]);
   const wkqVorjahr = useMemo(() => vorjahrWkq(tenantId, year, month), [tenantId, year, month]);
   const buchhaltungAbs = buchhaltung != null ? Math.abs(buchhaltung) : null;
@@ -146,39 +229,20 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm" data-testid="cockpit-warenkosten">
-      {/* Kopf + KPI */}
+      {/* Kopf */}
       <div className="px-4 py-3 border-b border-border flex flex-wrap items-center gap-x-6 gap-y-2">
         <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           <ShoppingCart className="h-3.5 w-3.5 text-primary" /> Warenkosten
         </span>
-        <span className="inline-flex items-baseline gap-1.5" data-testid="wk-total">
-          <span className="text-xs text-muted-foreground">CHF</span>
-          <span className="text-lg font-bold tabular-nums">{invoices ? fmtChf(totalNet) : '…'}</span>
+        <span className="text-[11px] text-muted-foreground" data-testid="wk-kontext">
+          netto · nur Wareneinsatz · Monat {String(month).padStart(2, '0')}/{year}
         </span>
-        <span className="inline-flex items-center gap-1.5" data-testid="wk-quote">
-          <span className="text-xs text-muted-foreground">WKQ</span>
-          {wkq != null ? (
-            <>
-              <span className={cn('h-2.5 w-2.5 rounded-full inline-block',
-                ampel === 'green' ? 'bg-emerald-500' : 'bg-red-500')} />
-              <span className={cn('text-lg font-bold tabular-nums',
-                ampel === 'green' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                {fmtPct(wkq)}
-              </span>
-              <span className="text-[11px] text-muted-foreground tabular-nums">
-                ({wkq - zielPct >= 0 ? '+' : ''}{(wkq - zielPct).toLocaleString('de-CH', { maximumFractionDigits: 1 })} pp)
-              </span>
-            </>
-          ) : (
-            <span className="text-sm text-muted-foreground" title="Kein Netto-Umsatz für den Monat importiert">—</span>
-          )}
-          {unkontiert > 0 && (
-            <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="wk-unkontiert-hinweis"
-              title="Positionen ohne Warenkonto zählen bis zur Kontierung als Warenkosten — die Quote ist entsprechend unscharf.">
-              enthält {unkontiert} unkontierte Position{unkontiert === 1 ? '' : 'en'}
-            </span>
-          )}
-        </span>
+        {unkontiert > 0 && (
+          <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="wk-unkontiert-hinweis"
+            title="Positionen ohne Warenkonto zählen bis zur Kontierung als Warenkosten — die Quote ist entsprechend unscharf.">
+            enthält {unkontiert} unkontierte Position{unkontiert === 1 ? '' : 'en'}
+          </span>
+        )}
         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="wk-ziel">
           Ziel
           {zielEdit != null ? (
@@ -208,6 +272,40 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
         )}
       </div>
 
+      {/* Ist vs. Wareneinsatz-Soll (Budget-Eingabe), Food/Beverage getrennt */}
+      <div className="px-4 py-3 border-b border-border" data-testid="wk-ist-soll-block">
+        {invoices == null || totals == null ? (
+          <p className="text-sm text-muted-foreground">…</p>
+        ) : (
+          <>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-b border-border">
+                  <th className="text-left py-1.5 font-medium"></th>
+                  <th className="text-right py-1.5 font-medium">Ist (CHF)</th>
+                  <th className="text-right py-1.5 font-medium" title="Wareneinsatz-Budget aus der Budget-Eingabe (Umsatz-Budget × Ziel-WKQ)">Soll (CHF)</th>
+                  <th className="text-right py-1.5 font-medium">Δ</th>
+                  <th className="text-right py-1.5 font-medium" title="Ist ÷ Netto-Umsatz · ≤30 % grün, 30–35 % gelb, >35 % rot">WKQ</th>
+                </tr>
+              </thead>
+              <tbody>
+                <IstSollZeile label="Warenkosten total" ist={totals.relevantNet} soll={sollTotal}
+                  umsatzNet={umsatzNet} testId="wk-zeile-total" />
+                <IstSollZeile label="davon Food (Küche)" ist={totals.foodNet} soll={sollFood}
+                  umsatzNet={umsatzNet} testId="wk-zeile-food" indent />
+                <IstSollZeile label="davon Beverage (Bar)" ist={totals.beverageNet} soll={sollBev}
+                  umsatzNet={umsatzNet} testId="wk-zeile-beverage" indent />
+              </tbody>
+            </table>
+            {betriebsNet > 0.005 && (
+              <p className="mt-1.5 text-[11px] text-muted-foreground" data-testid="wk-betriebskosten-hinweis">
+                Betriebskosten CHF {fmtChf(betriebsNet)}, nicht in Quote (z.B. Betriebsmaterial 4701, Gebinde/Pfand).
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Lieferantenübersicht */}
       <div className="px-4 py-3">
         {invoices && invoices.length === 0 ? (
@@ -220,6 +318,7 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
                 <th className="text-right py-1.5 font-medium">Betrag (CHF netto)</th>
                 <th className="text-right py-1.5 font-medium" title="Lieferant ÷ Netto-Umsatz des Monats — die Anteile summieren sich zur Gesamt-WKQ">Anteil Umsatz</th>
                 <th className="text-right py-1.5 font-medium">Rechnungen</th>
+                <th className="text-right py-1.5 font-medium" title="Lieferschein↔Monatsrechnung: provisorisch = nur Lieferscheine · abgeglichen = Monatsrechnung massgeblich · Differenz offen = Abgleich nicht übernommen">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -246,10 +345,22 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
                         {umsatzNet != null && umsatzNet > 0 ? fmtPct((row.totalNet / umsatzNet) * 100) : '—'}
                       </td>
                       <td className="py-1.5 text-right tabular-nums text-muted-foreground">{row.count}</td>
+                      <td className="py-1.5 text-right" data-testid={`wk-status-${row.supplierName}`}>
+                        {(() => {
+                          const st = supplierStatus.get(row.supplierName) ?? 'provisorisch';
+                          const cls = st === 'differenz_offen'
+                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                            : st === 'abgeglichen'
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : 'bg-muted text-muted-foreground';
+                          const label = st === 'differenz_offen' ? 'Differenz offen' : st;
+                          return <span className={cn('inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', cls)}>{label}</span>;
+                        })()}
+                      </td>
                     </tr>
                     {open && (
                       <tr className="bg-muted/20">
-                        <td colSpan={4} className="py-1.5 pl-6 pr-2">
+                        <td colSpan={5} className="py-1.5 pl-6 pr-2">
                           <table className="w-full text-[11px]">
                             <tbody>
                               {details.map(e => (

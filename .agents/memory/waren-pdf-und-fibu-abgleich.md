@@ -40,3 +40,13 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - Buchungstexte mit Präfix «Barausgabe(n)» → kanonischer Lieferant «Barausgaben <Laden>» (barausgabenLieferant, Vorrang vor findSupplierInText); pro Laden abgeleitete Standard-Alias-Gruppen (`<Laden>`, `Barausgabe <Laden>`), die VOR den Nutzer-Gruppen einsortiert werden — buildAliasResolver ist last-write-wins, Nutzer-Gruppen überstimmen.
 - **buildWarenAbgleich liefert `effektiveAliasGruppen`** — JEDE UI-Stelle, die Rechnungen einer Abgleich-Zeile filtert (Match-Drilldown), MUSS ihren Resolver daraus bauen, nie nur aus den gespeicherten Nutzer-Gruppen, sonst leeres Drilldown bei abgeleiteten Gruppen.
 - Übernahme-Kandidaten für Barausgaben-Zeilen auch bei Status ok/abweichung auf BUCHUNGS-Ebene: ungematchte Buchungen ohne Datum+Betrag-Gegenstück (±5 Rp.) in den erfassten Rechnungen; jede Rechnung deckt genau EINE Buchung, und in Match-Gruppen verbrauchte invoiceIds dürfen keine zweite Buchung decken (sonst verschwindet der Kandidat bei identischen Doppel-Buchungen).
+
+## Tie-Break & erfasste Namen im Buchungstext-Matching (08/2026)
+- `findSupplierInText` gibt bei Längen-Gleichstand null zurück; Alias-Gruppen («X» + «X AG») erzeugen wegen STOP_TOKENS identische Kern-Tokens → Tie → «ohne Zuordnung», obwohl alles da war. Fix: optionaler `canonicalize`-Parameter — Gleichstand ok, wenn alle Top-Treffer denselben kanonischen Namen haben.
+- `buildWarenAbgleich` matcht Buchungstexte zusätzlich gegen die supplierNames der ERFASSTEN Monats-Rechnungen (Buchhaltungs-Namen wie «Obrist SA» fehlen oft im Lieferanten-Stamm).
+- `normRef` (jetzt pure Lib `waren-ref.ts`, Re-Export aus kreditoren-abgleich): FIBU-Übernahme-Referenzen sind «Beleg · Rechnungsnr» — Basis-Nr. steht NACH dem «·»; ohne Extraktion schlug die Dubletten-Wache dieselbe Rechnung erneut vor (Root Cause der Doppel-Erfassungen).
+
+## Dubletten-Bereinigung (waren-dubletten.ts)
+- Doppel-Erfassung = gleiche Rechnung über mehrere Pfade (Detail-PDF/CSV, fibu_uebernahme, kreditoren_uebernahme). Keep-Regel: final>Detail>fibu>kred; FIBU-Splits gleicher Nr. = EIN Beleg (zusammen behalten).
+- Detail-Belege gleicher Nr. an VERSCHIEDENEN Daten sind KEINE Duplikate (Transgourmet verwendet Nummern wieder) — gilt auch in der Übernahme-Wache `findeDublette` (Ausnahme nur Detail+anderes Datum+anderer Betrag).
+- Sammelrechnungs-Heuristik: Übernahme ≥500 CHF ≈ Summe ≥3 Detail-Belegen (Toleranz max(5, 0.5%)) → Vorschlag. Nur Vorschau-Dialog, nie Auto-Löschen.

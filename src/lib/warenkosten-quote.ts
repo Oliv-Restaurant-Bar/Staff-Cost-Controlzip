@@ -360,3 +360,39 @@ export function erVergleichStatusLabel(status: ErVergleichStatus): string {
     default:         return 'Keine Erfolgsrechnung';
   }
 }
+
+/**
+ * WKQ-Ampelfarbe nach fixen Schwellen (Cockpit-Block Warenkosten):
+ * ≤30 % grün · 30–35 % gelb · >35 % rot.
+ */
+export function wkqFarbklasse(wkq: number): 'green' | 'yellow' | 'red' {
+  if (wkq <= 30) return 'green';
+  if (wkq <= 35) return 'yellow';
+  return 'red';
+}
+
+/**
+ * Rechnungen mit Konto-Splits in kategorisierbare Einzelzeilen expandieren:
+ * jeder Split zählt mit SEINEM Konto und SEINEM Netto (ein 4020/4060-Split
+ * wird sonst komplett über das Kopf-Konto/kategorie klassifiziert — falscher
+ * Food/Beverage-Split). Einträge ohne Splits bleiben unverändert. Die
+ * gespeicherte kategorie des Kopfes dient nur als Fallback unkontierter Splits.
+ */
+export function expandKontoSplits<
+  T extends WarenkostenEntryInput & { kontoSplits?: Array<{ warenkonto?: string; amountNet: number }> },
+>(entries: T[]): WarenkostenEntryInput[] {
+  const out: WarenkostenEntryInput[] = [];
+  for (const e of entries) {
+    if (e.kontoSplits && e.kontoSplits.length > 0) {
+      e.kontoSplits.forEach((s, i) => out.push({
+        id: `${e.id}::split${i}`,
+        amountNet: Number.isFinite(s.amountNet) ? s.amountNet : 0,
+        warenkonto: s.warenkonto,
+        kategorie: e.kategorie,
+      }));
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
+}

@@ -24,10 +24,15 @@ import {
 import {
   loadKreditorZuordnung, saveKreditorZuordnung, zuordnungKey, abgleichKreditoren,
   buildUebernahmeEntry, loadKreditorIgnoriert, saveKreditorIgnoriert, ignoriertKey,
+  supplierMatchesKreditor,
   type KreditorZuordnungMap, type KreditorIgnoriertMap, type AbgleichErgebnis, type BuchungMatch,
 } from '@/lib/kreditoren-abgleich';
 import {
-  loadMonthInvoices, saveMonthInvoices, loadWarenkonten,
+  baueMonatsAbgleich, wendeMonatsrechnungAn, markiereDifferenzOffen,
+  type MonatsAbgleichVorschau, type DifferenzModus,
+} from '@/lib/waren-monatsabgleich';
+import {
+  loadMonthInvoices, saveMonthInvoices, loadWarenkonten, loadSupplierAliases,
   erstelleWarenImportSnapshot, saveWarenImportUndo, loadWarenImportUndo, undoWarenImport,
   type Warenkonto, type WarenImportUndoRecord,
 } from '@/lib/waren-db';
@@ -40,6 +45,28 @@ const MODELL_LABEL: Record<AbrechnungsModell, string> = {
 
 const chf = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const defaultVat = (konto: string) => ['4020', '4030', '4040', '4050'].includes(konto) ? 8.1 : 2.6;
+
+/**
+ * Eine Abgleich-Gruppe = ein Lieferant × Monat der Übernahme-Auswahl mit
+ * vorhandenen provisorischen Lieferscheinen. Der User entscheidet:
+ *  'anteilig' | 'rechnungsdatum' → Lieferscheine ERSETZEN (Σ = Monatsrechnung)
+ *  'nicht'                      → Lieferscheine bleiben, Differenz offen,
+ *                                 die Buchungen werden NICHT übernommen.
+ */
+interface AbgleichGruppe {
+  key: string;             // `${monat}|${lieferant}`
+  lieferant: string;
+  monat: string;
+  fehlendeKeys: string[];  // Auswahl-Zeilen dieser Gruppe
+  totalGross: number;
+  totalNet: number;
+  rechnungsDatum: string;  // späteste Buchung
+  referenz?: string;
+  konto?: string;
+  vatRate: number;
+  vorschau: MonatsAbgleichVorschau;
+  entscheid: DifferenzModus | 'nicht';
+}
 
 interface ReviewRow {
   analyse: KreditorAnalyse;
@@ -62,6 +89,10 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
   const [ignoriert, setIgnoriert] = useState<KreditorIgnoriertMap>({});
   // Übernahme-Vorschau: pro Buchung-Key { konto, vatRate, checked }
   const [uebernahme, setUebernahme] = useState<Record<string, { konto: string; vatRate: number; checked: boolean }> | null>(null);
+  // Monatsabgleich-Schritt (Lieferschein → Monatsrechnung): Gruppen mit
+  // provisorischen Lieferscheinen brauchen eine Entscheidung PRO LIEFERANT,
+  // bevor die Übernahme schreibt — sonst wird der Monat verdoppelt.
+  const [abgleich, setAbgleich] = useState<AbgleichGruppe[] | null>(null);
 
   // Eindeutiger Schlüssel pro fehlender Buchung: Index in der fehlende-Liste
   // (gleicher Tag/Betrag/Referenz darf NIE kollidieren — sonst teilen sich
@@ -142,11 +173,18 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
   };
 
   // ── Übernahme (Vorschau → Schreiben mit Undo) ─────────────────────────────
+  // Neben 'fehlt' auch 'provisorisch' anbieten: genau dort greift der
+  // Monatsabgleich (Monatsrechnung ERSETZT erfasste Lieferscheine). Solche
+  // Zeilen werden aber NIE direkt gebucht — nur über eine Abgleich-Gruppe
+  // (sonst würde die Buchung zum bereits erfassten Eintrag addiert).
   const fehlende = useMemo(() => {
-    if (!ergebnis) return [] as { key: string; zeileName: string; match: BuchungMatch; konto: string }[];
+    if (!ergebnis) return [] as { key: string; zeileName: string; match: BuchungMatch; konto: string; status: 'fehlt' | 'provisorisch' }[];
     return ergebnis.zeilen.flatMap(z =>
-      z.matches.filter(m => m.status === 'fehlt')
-        .map(m => ({ zeileName: z.kreditorName, match: m, konto: (m.buchung.gKonto !== 'div' ? m.buchung.gKonto : z.zuordnung.konto) || z.zuordnung.konto || '4060' })))
+      z.matches.filter(m => m.status === 'fehlt' || m.status === 'provisorisch')
+        .map(m => ({
+          zeileName: z.kreditorName, match: m, status: m.status as 'fehlt' | 'provisorisch',
+          konto: (m.buchung.gKonto !== 'div' ? m.buchung.gKonto : z.zuordnung.konto) || z.zuordnung.konto || '4060',
+        })))
       .map((f, i) => ({ ...f, key: `f${i}|${f.zeileName}|${f.match.buchung.datum}` }));
   }, [ergebnis]);
 
@@ -154,11 +192,21 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
     const map: Record<string, { konto: string; vatRate: number; checked: boolean }> = {};
     for (const f of fehlende) {
-      map[f.key] = { konto: f.konto, vatRate: defaultVat(f.konto), checked: nur ? f.match === nur : true };
+      // 'provisorisch' (Lieferschein bereits erfasst) standardmässig NICHT
+      // vorangekreuzt — der User wählt sie bewusst für den Monatsabgleich.
+      map[f.key] = {
+        konto: f.konto, vatRate: defaultVat(f.konto),
+        checked: nur ? f.match === nur : f.status === 'fehlt',
+      };
     }
     setUebernahme(map);
   };
 
+  /**
+   * Schritt 1 der Übernahme: prüfen, ob für Lieferant×Monat der Auswahl
+   * provisorische Lieferscheine erfasst sind. Wenn ja → Monatsabgleich-Dialog
+   * (Entscheidung pro Lieferant), sonst direkt schreiben.
+   */
   const uebernehmen = async () => {
     if (!uebernahme || !ergebnis) return;
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
@@ -166,31 +214,139 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
     if (auswahl.length === 0) { toast.error('Nichts ausgewählt.'); return; }
     setBusy(true);
     try {
-      const monate = [...new Set(auswahl.map(f => f.match.monat))];
+      const gruppenMap = new Map<string, typeof auswahl>();
+      for (const f of auswahl) {
+        const key = `${f.match.monat}|${f.zeileName}`;
+        gruppenMap.set(key, [...(gruppenMap.get(key) ?? []), f]);
+      }
+      const bestandByMonat = new Map<string, Awaited<ReturnType<typeof loadMonthInvoices>>>();
+      for (const m of [...new Set(auswahl.map(f => f.match.monat))]) {
+        bestandByMonat.set(m, await loadMonthInvoices(tenantId, m));
+      }
+      // Dieselben Aliasse wie der Kreditorenabgleich — sonst öffnet der
+      // Monatsabgleich für Alias-Lieferanten nicht und es würde verdoppelt.
+      const aliases = await loadSupplierAliases(tenantId);
+      const gruppen: AbgleichGruppe[] = [];
+      for (const [key, fs] of gruppenMap) {
+        const [monat, lieferant] = [fs[0].match.monat, fs[0].zeileName];
+        const totalGross = fs.reduce((s, f) => s + f.match.buchung.betrag, 0);
+        const totalNet = fs.reduce((s, f) => {
+          const rate = uebernahme[f.key].vatRate;
+          return s + Math.round((f.match.buchung.betrag / (1 + rate / 100)) * 100) / 100;
+        }, 0);
+        const vorschau = baueMonatsAbgleich({
+          bestand: bestandByMonat.get(monat) ?? [], monat, totalNet, totalGross,
+          matcht: name => supplierMatchesKreditor(name, lieferant, aliases),
+        });
+        if (vorschau.lieferscheine.length === 0) continue;
+        const datums = fs.map(f => f.match.buchung.datum).sort();
+        gruppen.push({
+          key, lieferant, monat, fehlendeKeys: fs.map(f => f.key),
+          totalGross: Math.round(totalGross * 100) / 100,
+          totalNet: Math.round(totalNet * 100) / 100,
+          rechnungsDatum: datums[datums.length - 1],
+          referenz: fs.map(f => f.match.buchung.referenz).filter(Boolean).join(', ') || undefined,
+          konto: uebernahme[fs[0].key].konto, vatRate: uebernahme[fs[0].key].vatRate,
+          vorschau, entscheid: 'anteilig',
+        });
+      }
+      if (gruppen.length > 0) { setAbgleich(gruppen); setBusy(false); return; }
+      await schreibeUebernahme(auswahl, []);
+    } catch (e) {
+      console.error('[KREDITOREN] Übernahme:', e);
+      toast.error(`Übernahme fehlgeschlagen: ${String(e)}`);
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Schritt 2: schreiben. Gruppen mit Abgleich-Entscheidung ersetzen ihre
+   * Lieferscheine (bzw. markieren «Differenz offen» und übernehmen NICHTS);
+   * alle übrigen Auswahl-Zeilen werden wie bisher als provisorische
+   * Kreditoren-Übernahme angelegt. Lieferscheine werden dabei NIE doppelt
+   * addiert — die Monatsrechnung ERSETZT sie.
+   */
+  const schreibeUebernahme = async (
+    auswahl: typeof fehlende,
+    entschieden: AbgleichGruppe[],
+  ) => {
+    if (!uebernahme) return;
+    setBusy(true);
+    try {
+      const abgedeckt = new Set(entschieden.flatMap(g => g.fehlendeKeys));
+      // 'provisorisch'-Zeilen dürfen NIE direkt gebucht werden (ihr Gegenstück
+      // ist bereits erfasst) — nur echte 'fehlt'-Zeilen ausserhalb der Gruppen.
+      const direkt = auswahl.filter(f => !abgedeckt.has(f.key) && f.status === 'fehlt');
+      const uebersprungen: string[] = auswahl
+        .filter(f => !abgedeckt.has(f.key) && f.status === 'provisorisch')
+        .map(f => f.zeileName);
+      const nachtraeglichDirekt: typeof auswahl = [];
+      const monate = [...new Set([...auswahl.map(f => f.match.monat), ...entschieden.map(g => g.monat)])];
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate });
+      const aliases = await loadSupplierAliases(tenantId);
       const now = new Date().toISOString();
+      let uebernommen = 0;
+      const proKey = new Map(auswahl.map(f => [f.key, f]));
       for (const m of monate) {
-        const liste = await loadMonthInvoices(tenantId, m);
-        for (const f of auswahl.filter(x => x.match.monat === m)) {
+        let liste = await loadMonthInvoices(tenantId, m);
+        for (const g of entschieden.filter(x => x.monat === m)) {
+          // Stale-Schutz: Vorschau gegen den FRISCH geladenen Bestand neu rechnen.
+          const vorschau = baueMonatsAbgleich({
+            bestand: liste, monat: m, totalNet: g.totalNet, totalGross: g.totalGross,
+            matcht: name => supplierMatchesKreditor(name, g.lieferant, aliases),
+          });
+          if (vorschau.lieferscheine.length === 0) {
+            // Fail-closed: Lieferscheine inzwischen weg/finalisiert → nichts
+            // ersetzen. 'fehlt'-Zeilen der Gruppe regulär direkt buchen,
+            // 'provisorisch'-Zeilen überspringen (nie blind addieren).
+            for (const key of g.fehlendeKeys) {
+              const f = proKey.get(key);
+              if (!f) continue;
+              if (f.status === 'fehlt') nachtraeglichDirekt.push(f);
+              else uebersprungen.push(f.zeileName);
+            }
+            continue;
+          }
+          if (g.entscheid === 'nicht') {
+            liste = markiereDifferenzOffen(liste, vorschau.lieferscheine, now);
+            continue; // Buchungen NICHT übernehmen — Lieferscheine bleiben massgeblich
+          }
+          liste = wendeMonatsrechnungAn({
+            bestand: liste, vorschau, modus: g.entscheid, now,
+            rechnung: {
+              datum: g.rechnungsDatum, referenz: g.referenz,
+              totalNet: g.totalNet, totalGross: g.totalGross,
+              warenkonto: g.konto, vatRate: g.vatRate,
+            },
+          });
+          uebernommen += 1;
+        }
+        for (const f of [...direkt, ...nachtraeglichDirekt.filter(x => !direkt.includes(x))].filter(x => x.match.monat === m)) {
           const cfg = uebernahme[f.key];
           liste.push(buildUebernahmeEntry({
             kreditorName: f.zeileName, buchung: f.match.buchung, konto: cfg.konto, vatRate: cfg.vatRate,
           }, now));
+          uebernommen += 1;
         }
         await saveMonthInvoices(tenantId, m, liste);
       }
       const nachher = await erstelleWarenImportSnapshot(tenantId, { monate });
       const rec: WarenImportUndoRecord = {
         typ: 'kreditoren', zeitpunkt: now, label: 'Kreditoren-Übernahme',
-        anzahlRechnungen: auswahl.length, vorher, nachher,
+        anzahlRechnungen: uebernommen, vorher, nachher,
       };
       await saveWarenImportUndo(tenantId, rec);
       setUndoRec(rec);
       setUebernahme(null);
+      setAbgleich(null);
       // Abgleich neu rechnen
       const zu = await loadKreditorZuordnung(tenantId);
       setErgebnis(await abgleichKreditoren(tenantId, analysen, zu, auszug!.vonDatum!, auszug!.bisDatum!, ignoriert));
-      toast.success(`${auswahl.length} provisorische Rechnung(en) übernommen.`);
+      const offen = entschieden.filter(g => g.entscheid === 'nicht').length;
+      toast.success(`${uebernommen} Rechnung(en) übernommen.${offen ? ` ${offen} Lieferant(en) als «Differenz offen» markiert.` : ''}`);
+      if (uebersprungen.length > 0) {
+        toast.info(`Übersprungen (bereits erfasst, kein Lieferschein zum Ersetzen): ${[...new Set(uebersprungen)].join(', ')}`);
+      }
     } catch (e) {
       console.error('[KREDITOREN] Übernahme:', e);
       toast.error(`Übernahme fehlgeschlagen: ${String(e)}`);
@@ -515,7 +671,14 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
                         <input type="checkbox" checked={cfg.checked}
                           onChange={e => setUebernahme(u => ({ ...u!, [k]: { ...cfg, checked: e.target.checked } }))} />
                       </td>
-                      <td className="py-1.5 pr-2">{f.zeileName}</td>
+                      <td className="py-1.5 pr-2">{f.zeileName}
+                        {f.status === 'provisorisch' && (
+                          <span className="ml-1.5 inline-block rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                            title="Lieferschein(e) bereits erfasst — Übernahme läuft über den Monatsabgleich (ersetzen, nie addieren)">
+                            Lieferschein erfasst
+                          </span>
+                        )}
+                      </td>
                       <td className="py-1.5 pr-2 font-mono text-xs">{f.match.buchung.datum}</td>
                       <td className="py-1.5 pr-2 font-mono text-xs">{f.match.buchung.referenz ?? f.match.buchung.blg ?? '—'}</td>
                       <td className="py-1.5 pr-2">
@@ -549,6 +712,72 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
               <Button size="sm" onClick={() => void uebernehmen()} disabled={busy} data-testid="button-uebernahme-bestaetigen">
                 {busy && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
                 {Object.values(uebernahme).filter(c => c.checked).length} Rechnung(en) übernehmen
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Monatsabgleich: Lieferschein → Monatsrechnung (pro Lieferant) ── */}
+      {abgleich && uebernahme && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAbgleich(null)}>
+          <div className="bg-background border border-border rounded-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto p-4 space-y-3"
+            onClick={e => e.stopPropagation()} data-testid="dialog-monatsabgleich">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Monatsabgleich: Lieferscheine sind bereits erfasst
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Für diese Lieferanten sind provisorische Lieferscheine erfasst. «Übernehmen» ERSETZT die
+              Lieferscheine durch die Monatsrechnung (der Monat entspricht danach exakt der Buchhaltung —
+              es wird NIE addiert). Die Differenz (Rabatt, fehlender/doppelter Lieferschein, Preiskorrektur,
+              Retoure) wird anteilig auf die Lieferdaten verteilt oder aufs Rechnungsdatum gebucht.
+              «Nicht übernehmen» lässt die Lieferscheine stehen und markiert die Differenz als offen.
+            </p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                  <th className="py-1.5 pr-2">Lieferant</th><th className="py-1.5 pr-2">Monat</th>
+                  <th className="py-1.5 pr-2 text-right">Σ Lieferscheine</th>
+                  <th className="py-1.5 pr-2 text-right">Monatsrechnung</th>
+                  <th className="py-1.5 pr-2 text-right">Differenz</th>
+                  <th className="py-1.5">Entscheidung</th>
+                </tr>
+              </thead>
+              <tbody>
+                {abgleich.map(g => (
+                  <tr key={g.key} className="border-b border-border/50 align-top" data-testid={`row-abgleich-${g.key}`}>
+                    <td className="py-1.5 pr-2">{g.lieferant}
+                      <div className="text-xs text-muted-foreground">{g.vorschau.lieferscheine.length} Lieferschein(e)</div>
+                    </td>
+                    <td className="py-1.5 pr-2 font-mono text-xs">{g.monat}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono">{chf(g.vorschau.sigmaGross)}</td>
+                    <td className="py-1.5 pr-2 text-right font-mono">{chf(g.totalGross)}</td>
+                    <td className={cn('py-1.5 pr-2 text-right font-mono',
+                      Math.abs(g.vorschau.differenzGross) > 0.05 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
+                      {chf(g.vorschau.differenzGross)}
+                    </td>
+                    <td className="py-1.5">
+                      <select className="bg-background border border-border rounded px-1.5 py-0.5 text-xs w-full max-w-[240px]"
+                        value={g.entscheid}
+                        data-testid={`select-abgleich-${g.key}`}
+                        onChange={e => setAbgleich(a => a!.map(x => x.key === g.key
+                          ? { ...x, entscheid: e.target.value as AbgleichGruppe['entscheid'] } : x))}>
+                        <option value="anteilig">Übernehmen — Differenz anteilig auf Lieferdaten</option>
+                        <option value="rechnungsdatum">Übernehmen — Differenz aufs Rechnungsdatum</option>
+                        <option value="nicht">Nicht übernehmen — Differenz offen lassen</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setAbgleich(null)} disabled={busy}>Zurück</Button>
+              <Button size="sm" disabled={busy} data-testid="button-abgleich-bestaetigen"
+                onClick={() => void schreibeUebernahme(fehlende.filter(f => uebernahme[f.key]?.checked), abgleich)}>
+                {busy && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                Bestätigen & schreiben
               </Button>
             </div>
           </div>

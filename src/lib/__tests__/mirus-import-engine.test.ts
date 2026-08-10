@@ -402,3 +402,46 @@ describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
     expect(plan.employees[0].beforeTotal).toBe(8);
     expect(expectedAfterTotals(plan)['a']).toBe(8);
   });
+
+// ─── Dateiwert übernehmen (hängende «behalten»-Werte lösen) ──────────────────
+import { hoursFromReportVal, planAdoptFileWrites } from '../mirus-import-engine';
+
+describe('hoursFromReportVal', () => {
+  it('parst Report-Anzeigestrings robust', () => {
+    expect(hoursFromReportVal('8.40 h')).toBe(8.4);
+    expect(hoursFromReportVal('8.40 h + K')).toBe(8.4);
+    expect(hoursFromReportVal('K')).toBe(0);
+    expect(hoursFromReportVal('leer')).toBe(0);
+    expect(hoursFromReportVal('0')).toBe(0);
+    expect(hoursFromReportVal(undefined)).toBe(0);
+  });
+});
+
+describe('planAdoptFileWrites', () => {
+  it('Joana-Fall: 2× 8.40 h + K (Altstand, Datei 0) → Stunden 0, K-Marke bleibt', () => {
+    const writes = planAdoptFileWrites([
+      { date: '2026-07-14', fileHours: 8.63, savedHours: 8.63 },              // deckungsgleich
+      { date: '2026-07-28', fileHours: 0, savedHours: 8.4, savedAbsence: 'K' },
+      { date: '2026-07-31', fileHours: 0, savedHours: 8.4, savedAbsence: 'K' },
+      { date: '2026-07-25', fileHours: 0, savedHours: 0, savedAbsence: 'K' }, // reine Absenz
+      { date: '2026-07-13', fileHours: 0, savedHours: 0, savedAbsence: 'F' }, // reine Absenz
+    ]);
+    expect(writes).toEqual([
+      { date: '2026-07-28', entry: { hours: 0, absenceType: 'K' } },
+      { date: '2026-07-31', entry: { hours: 0, absenceType: 'K' } },
+    ]);
+  });
+  it('Datei > 0 ersetzt Stunden, Marke reitet mit; Datei 0 ohne Marke leert die Zelle', () => {
+    const writes = planAdoptFileWrites([
+      { date: '2026-07-17', fileHours: 7.57, savedHours: 9.0 },
+      { date: '2026-07-18', fileHours: 4.0, savedHours: 8.0, savedAbsence: 'K' },
+      { date: '2026-07-19', fileHours: 0, savedHours: 8.4 },
+      { date: '2026-07-20', fileHours: 6.0, savedHours: 6.0004 },             // epsilon
+    ]);
+    expect(writes).toEqual([
+      { date: '2026-07-17', entry: { hours: 7.57 } },
+      { date: '2026-07-18', entry: { hours: 4.0, absenceType: 'K' } },
+      { date: '2026-07-19', entry: null },
+    ]);
+  });
+});

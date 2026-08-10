@@ -15,3 +15,7 @@ description: Markt→Lieferant-Ableitung pro Rechnung, docKey-Identität, «Lief
 - Bestands-Upsert beim CSV-Import matcht Lieferant+Nr+Datum+MARKT (SSOT `findeCsvBestandsTreffer` in waren-positionen.ts); InvoiceEntry hat optionales Feld `markt`.
 - **Why:** Bern & Moosseedorf mappen beide auf «Prodega»; gleiche kurze Portal-Nr. am selben Tag überschrieb sonst die andere Markt-Rechnung.
 - Alt-Einträge ohne markt matchen tolerant und bekommen den Markt beim Update; der zweite Markt desselben Tags legt danach neu an. ID-Fallback enthält den Markt (keine Date.now()-Kollision).
+
+## TG/Prodega-Familien-Toleranz beim Bestands-Treffer (Aug 2026)
+- Bar-Einkäufe aus einem Prodega-Markt können in der FIBU als Transgourmet laufen (Nummernkreis 2607…) und werden im Bestand manuell umgehängt. `findeCsvBestandsTreffer` akzeptiert TG↔Prodega als denselben Lieferanten — aber NUR bei exakt gleichem Markt; markt-lose Alt-Einträge brauchen weiter den exakten Namen (Cross-Markt-Kollisionsschutz).
+- Beim Re-Import gewinnt der Bestands-supplierName gegen den Markt-Default, und Preis-Historie/Preishinweise werden mit dem EFFEKTIV persistierten Lieferanten gerechnet (nicht mit dem Vorschau-Default) — sonst fallen Umhängungen zurück bzw. landen Preisverläufe unterm falschen Lieferanten.

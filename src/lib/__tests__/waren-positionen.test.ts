@@ -371,6 +371,16 @@ describe('findeCsvBestandsTreffer (Markt im Dedup-Schlüssel)', () => {
     expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-16', markt: 'Bern' }, 'Prodega')).toBeUndefined();
     expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-15', markt: 'BGH' }, 'Transgourmet')).toBeUndefined();
   });
+  it('TG/Prodega-Familie: umgehängte Bar-Rechnung (Transgourmet, Markt Bern) matcht Re-Import mit Markt-Default Prodega', () => {
+    const umgehaengt = { id: 'b', reference: '58', date: '2026-07-03', supplierName: 'Transgourmet', markt: 'Bern' };
+    expect(findeCsvBestandsTreffer([umgehaengt], { rechnungsNr: '58', datum: '2026-07-03', markt: 'Bern' }, 'Prodega')?.id).toBe('b');
+    // Familien-Toleranz gilt NUR bei exakt gleichem Markt: markt-loser Alt-Eintrag braucht exakten Lieferanten
+    const ohneMarkt = { id: 'c', reference: '58', date: '2026-07-03', supplierName: 'Prodega' };
+    expect(findeCsvBestandsTreffer([ohneMarkt], { rechnungsNr: '58', datum: '2026-07-03', markt: 'BGH' }, 'Transgourmet')).toBeUndefined();
+    // andere Lieferanten bleiben strikt getrennt
+    const fremd = { id: 'd', reference: '58', date: '2026-07-03', supplierName: 'Ambro', markt: 'Bern' };
+    expect(findeCsvBestandsTreffer([fremd], { rechnungsNr: '58', datum: '2026-07-03', markt: 'Bern' }, 'Prodega')).toBeUndefined();
+  });
   it('JAHRESÜBERGREIFENDE Nummern-Wiederverwendung (Echt-Fälle Bern 102/253): 2025-Rechnung wird von 2026-Import NIE getroffen', () => {
     const r102alt = { id: 'x', reference: '102', date: '2025-07-17', supplierName: 'Prodega', markt: 'Bern' };
     const r253alt = { id: 'y', reference: '253', date: '2025-07-01', supplierName: 'Prodega', markt: 'Bern' };

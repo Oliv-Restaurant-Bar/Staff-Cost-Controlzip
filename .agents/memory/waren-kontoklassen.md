@@ -40,3 +40,9 @@ kategorieFromKonto = FIBU-identisches Schema: Beverage {4020,4030,4040,4050}, Fo
 ## 6611 & feste ER-Positionen (08/2026)
 - 6611 Kost & Logis = **Werbeaufwand** (marketing/operating_expenses) analog formeller OR-ER; Personalaufwand = nur 5xxx. Frühere Umbuchung nach personnel_other wurde wieder umgekehrt (PL_ITEM_CATEGORY_FIXES kehrt nur die BEKANNTE alte Kategorie um — idempotent).
 - `pli_karate` (Konto 5004, Label «Personal Aushilfe», in Sage teils auch 5005) ist feste, immer sichtbare Lohnaufwand-Position: `isForceVisible: true` ist der Mechanismus gegen die Zero-Row-Ausblendung in PLView (Default-Items mit Ist=Budget=VJ=0 werden sonst versteckt).
+
+## Echter Oliv-Kontenplan & Konto-Datenfix (08/2026)
+- WARENKONTO_LIST (Code-Default, kein KV `warenkonten_v1` bei Oliv): 4020 Wein · 4030 Bier · 4040 Spirituosen · 4050 Mineral · 4060 Küche · 4070 Kaffee/Tee · 4701 Betriebsmaterial. 4090 («Übriger Handelswaren Aufwand», Gebinde) ist bewusst NICHT in der Liste → fällt aus dem FIBU-Warenabgleich (Journal-Filter = warenkontoNummern).
+- Lieferant→Konto (defaultWarenkonto in suppliers_v1 gesetzt): Terravigna/Obrist 4020, Feldschlösschen 4030 (Spirituosen-Anteil 4040 nur in FIBU, Kred-Rechnungen ganz auf 4030), Paul Ulrich 4040, Blaser 4070, Küche-Lieferanten (TG, Ambro, Spahni, Caporaso, La Marra, Bohnenblust, Barausgaben) 4060.
+- «Paul Ulrich» (App, EIN L) ↔ «Paul Ullrich AG» (FIBU): eigene Alias-Gruppe grp-paul-ulrich.
+- Sammelrechnungs-Heuristik: Gegenseite = Rang ≤1 (final=true-Detailbelege zählen als Detail — sonst werden finalisierte Einzelrechnungen übersehen).

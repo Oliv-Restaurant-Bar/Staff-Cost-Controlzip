@@ -18,6 +18,8 @@ import type { FibuMatchState } from '@/lib/waren-fibu-matches';
 import { buchungKey, buchungKeysMitIndex, buchungBetrag } from '@/lib/waren-fibu-matches';
 import type { InvoiceEntry } from '@/lib/waren-db';
 import { buildAliasResolver } from '@/lib/waren-alias-gruppen';
+import { normRef } from '@/lib/waren-ref';
+import { lieferantVerwandt } from '@/lib/waren-dubletten';
 import { kategorieFromKonto, type WarenKategorie } from '@/lib/warenkosten-quote';
 
 export interface UebernahmeKandidat {
@@ -194,15 +196,32 @@ const normName = (s: string) => (s ?? '').trim().toLowerCase().replace(/\s+/g, '
 
 /**
  * Dublette: existiert bereits eine erfasste Rechnung mit gleichem Lieferant
- * + Datum + Betrag (±Toleranz)? Dann Übernahme sperren statt doppelt anlegen.
+ * + Datum + Betrag (±Toleranz) ODER — quellenübergreifend — mit derselben
+ * Basis-Rechnungsnummer bei verwandtem Lieferanten (Kreditoren-Übernahme,
+ * PDF-Einzelrechnung usw.)? Dann Übernahme sperren statt doppelt anlegen.
+ * Die Referenz-Wache nutzt normRef («Beleg · Rechnungsnr» → Nummer nach dem
+ * Trennpunkt), sonst rutscht dieselbe Rechnung über zwei Pfade herein.
  */
 export function findeDublette(
-  draft: Pick<UebernahmeDraft, 'date' | 'supplierName'> & { betrag: number },
+  draft: Pick<UebernahmeDraft, 'date' | 'supplierName'> & { betrag: number; reference?: string },
   invoices: InvoiceEntry[],
   toleranz: number = DUBLETTE_TOLERANZ_CHF,
 ): InvoiceEntry | null {
   const name = normName(draft.supplierName);
+  const ref = normRef(draft.reference);
   for (const inv of invoices) {
+    if (ref !== null && normRef(inv.reference) === ref
+      && lieferantVerwandt(inv.supplierName, draft.supplierName)) {
+      // Nummern-WIEDERVERWENDUNG (z.B. Transgourmet): ein DETAIL-Beleg mit
+      // gleicher Nr., aber anderem Datum UND anderem Betrag ist ein anderer
+      // Beleg — nicht sperren. Übernahmen (fibu/kreditoren) mit gleicher Nr.
+      // sind dagegen immer dieselbe Rechnung (Buchungs- vs. Lieferdatum).
+      const istUebernahme = inv.quelle === 'fibu_uebernahme' || inv.quelle === 'kreditoren_uebernahme';
+      const nummerWiederverwendet = !istUebernahme
+        && inv.date !== draft.date
+        && Math.abs(inv.amountNet - draft.betrag) > toleranz;
+      if (!nummerWiederverwendet) return inv;
+    }
     if (inv.date !== draft.date) continue;
     if (normName(inv.supplierName) !== name) continue;
     if (Math.abs(inv.amountNet - draft.betrag) <= toleranz) return inv;

@@ -64,6 +64,7 @@ import {
 import {
   buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
   computeIstCoverage, formatDayRanges, daysInMonthOf,
+  hoursFromReportVal, planAdoptFileWrites,
   groupPlanCells, patternOf, canonicalAbsence, MIRUS_ROUNDING_THRESHOLD_H,
   MirusReconcilePlan, MirusResolvedEntry, MirusCellPlan, MirusPlanInfo,
 } from '@/lib/mirus-import-engine';
@@ -90,6 +91,8 @@ export interface MirusReportDay {
   beforeVal: string; // gespeicherte Ist vor Import
   afterVal: string;  // gespeicherte Ist nach Import
   fileVal: string;   // MIRUS-Wert
+  /** MIRUS-Dateiwert numerisch (neu; Alt-Reports: aus fileVal geparst) */
+  fileHours?: number;
   pattern: 1 | 2 | 3 | 4 | 5 | null;
   decision: MirusDayDecision;
 }
@@ -101,6 +104,8 @@ export interface MirusImportReport {
   roundingThreshold: number;
   perEmployee: Array<{
     name: string;
+    /** Mitarbeiter-ID (neu; Alt-Reports: per Namensabgleich aufgelöst) */
+    employeeId?: string;
     fileTotal: number;
     beforeTotal: number;
     afterTotal: number;
@@ -685,6 +690,7 @@ export function MirusReconcileImportButton({
               beforeVal: fmtEntry(c.before),
               afterVal: fmtEntry(fin),
               fileVal: c.fileHours > 0 ? `${c.fileHours.toFixed(2)} h` : '0',
+              fileHours: c.fileHours,
               pattern: patternOf(c.decision),
               decision: decisionForCell(c),
             };
@@ -692,6 +698,7 @@ export function MirusReconcileImportButton({
           const absenceDays = e.cells.filter(c => !!finalEntryForCell(c)?.absenceType).length;
           return {
             name: e.employeeName,
+            employeeId: e.employeeId,
             fileTotal: e.fileTotal,
             beforeTotal: e.beforeTotal,
             afterTotal: a,
@@ -747,6 +754,162 @@ export function MirusReconcileImportButton({
         outOfScopeHours: plan.skippedOutOfScope.reduce((s, r) => s + r.hours, 0),
         warnCount,
       }), { duration: 10000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Dateiwert übernehmen: hängende «behalten»-Werte aus dem Report lösen ──
+
+  /**
+   * Ersetzt für die gegebenen Report-Zeilen die gespeicherten Ist-Werte durch
+   * die MIRUS-Dateiwerte (pro Tag, minimal-invasiv — reine Absenzen bleiben,
+   * K/U-Marken reiten mit). Backup vor dem Schreiben, Writes awaited; danach
+   * wird der Report aktualisiert (Gegenprüfung neu berechnet) und persistiert.
+   * MANUELL-Mitarbeiter stehen nie im Report (perEmployee) — bleiben unberührt.
+   */
+  const handleAdoptFileValues = async (names: string[]) => {
+    if (!report) return;
+    setBusy(true);
+    try {
+      const targets = report.perEmployee.filter(p => names.includes(p.name));
+      // Mitarbeiter-ID: neu im Report; Alt-Reports per exaktem Namensabgleich.
+      const resolved = targets.map(p => ({
+        p,
+        empId: p.employeeId ?? employees.find(e => e.name === p.name)?.id ?? null,
+      }));
+      const unresolvable = resolved.filter(r => !r.empId).map(r => r.p.name);
+      if (unresolvable.length > 0) {
+        toast.error(`Mitarbeiter nicht auflösbar: ${unresolvable.join(', ')} — bitte Datei erneut importieren.`);
+      }
+      const jobs = resolved.filter((r): r is { p: typeof r.p; empId: string } => !!r.empId);
+      if (jobs.length === 0) return;
+
+      // Schreib-Plan pro MA aus Report-Dateiwerten + LIVE-Ist (nicht Report-Strings).
+      const perJob = jobs.map(({ p, empId }) => {
+        const days = (p.days ?? []).map(d => {
+          const saved = actualHoursData[`${empId}-${d.date}`];
+          return {
+            date: d.date,
+            fileHours: d.fileHours ?? hoursFromReportVal(d.fileVal),
+            savedHours: saved?.hours ?? 0,
+            savedAbsence: saved?.absenceType ?? null,
+          };
+        });
+        return { p, empId, writes: planAdoptFileWrites(days) };
+      }).filter(j => j.writes.length > 0);
+      if (perJob.length === 0) {
+        toast.info('Gespeicherte Werte entsprechen bereits den Dateiwerten.');
+        return;
+      }
+
+      // Backup VOR dem Schreiben (Undo-Disziplin wie beim Import).
+      const empIds = perJob.map(j => j.empId);
+      const dates = [...new Set(perJob.flatMap(j => j.writes.map(w => w.date)))].sort();
+      const backupRows: DienstplanIstBackupRow[] = [];
+      for (const empId of empIds) {
+        for (const date of dates) {
+          const entry = actualHoursData[`${empId}-${date}`];
+          if (entry) {
+            backupRows.push({
+              employee_id: empId, date, hours: entry.hours,
+              start_time: entry.start ?? null, end_time: entry.end ?? null,
+              absence_type: entry.absenceType ?? null,
+              is_additional_cost_ist: entry.isAdditionalCost ?? false,
+              source: entry.source ?? null,
+            });
+          }
+        }
+      }
+      const backupId = await saveDienstplanIstBackup(
+        tenantId, report.month, 'MIRUS-Dateiwerte übernommen (Gegenprüfung)',
+        { employeeIds: empIds, dates }, backupRows,
+      );
+      if (!backupId) {
+        toast.error('Backup konnte nicht gespeichert werden — es wurde nichts geschrieben.');
+        return;
+      }
+
+      // Writes sind idempotent (Dateiwert erneut schreiben schadet nicht) —
+      // ein Retry mit leicht veraltetem State schreibt schlicht dieselben Werte.
+      const failed: string[] = [];
+      const adoptedNames: string[] = [];
+      /** Erfolgreiche >0h-Writes ohne Marke — für die KV-Absenz-Bereinigung. */
+      const succeededHourKeys = new Set<string>();
+      for (const { p, empId, writes } of perJob) {
+        let empFailed = false;
+        for (const w of writes) {
+          const beforeFlag = actualHoursData[`${empId}-${w.date}`]?.isAdditionalCost;
+          const entry: ActualHoursEntry | null = w.entry ? {
+            hours: w.entry.hours,
+            ...(w.entry.absenceType ? { absenceType: w.entry.absenceType as ActualHoursEntry['absenceType'] } : {}),
+            ...(beforeFlag ? { isAdditionalCost: true } : {}),
+            source: 'import',
+          } : null;
+          const res = await saveActualHourEntry(empId, w.date, entry);
+          if (res.ok) {
+            onCellChange(empId, w.date, entry, { skipSupabase: true });
+            if (entry && entry.hours > 0 && !entry.absenceType) succeededHourKeys.add(`${empId}-${w.date}`);
+          } else {
+            failed.push(`${p.name} ${w.date}`);
+            empFailed = true;
+          }
+        }
+        if (!empFailed) adoptedNames.push(p.name);
+      }
+      if (failed.length > 0) {
+        toast.error(`${failed.length} Zelle(n) konnten nicht gespeichert werden — Backup bleibt erhalten («Rückgängig»). (${failed.slice(0, 5).join(', ')}${failed.length > 5 ? ', …' : ''})`);
+      }
+
+      // KV-Absenz-Marken (absence-ist-*) für adoptierte Stunden-Zellen entfernen —
+      // sonst überstimmt eine alte F/FE/K-Marke die frischen Stunden beim nächsten
+      // Laden (gleiche Regel wie beim Import, SSoT = actual_hours).
+      if (succeededHourKeys.size > 0) {
+        try {
+          const kvAbs = await loadMonthAbsences(report.month, tenantId);
+          const conflicting = Object.keys(kvAbs).filter(k => succeededHourKeys.has(k));
+          if (conflicting.length > 0) {
+            const next = { ...kvAbs };
+            for (const k of conflicting) delete next[k];
+            await saveMonthAbsences(report.month, next, tenantId);
+            console.log(`[MIRUS] ${conflicting.length} KV-Absenz-Marke(n) durch «Dateiwert übernehmen» ersetzt:`, conflicting);
+          }
+        } catch (e) {
+          console.warn('[MIRUS] KV-Absenz-Bereinigung fehlgeschlagen (nicht kritisch):', e);
+        }
+      }
+
+      // Report aktualisieren: Datei ist jetzt massgeblich → Gegenprüfung grün.
+      const adopted = new Set(adoptedNames);
+      const rep: MirusImportReport = {
+        ...report,
+        perEmployee: report.perEmployee.map(p => {
+          if (!adopted.has(p.name)) return p;
+          const days = (p.days ?? []).map(d => {
+            const fh = d.fileHours ?? hoursFromReportVal(d.fileVal);
+            // Absenz-Marke aus dem bisherigen Anzeigewert («8.40 h + K» / «K») —
+            // sie bleibt beim Übernehmen erhalten (nur Stunden werden ersetzt).
+            const savedAbs = /\+ (\S+)$/.exec(d.afterVal)?.[1]
+              ?? (/^[A-ZÄÖÜ]{1,3}$/.test(d.afterVal) ? d.afterVal : null);
+            const afterVal = fh > 0
+              ? `${fh.toFixed(2)} h${savedAbs ? ` + ${savedAbs}` : ''}`
+              : (savedAbs ?? 'leer');
+            const unveraendert = Math.abs(hoursFromReportVal(d.afterVal) - fh) <= 0.005;
+            return unveraendert ? d : { ...d, afterVal, decision: 'uebernommen' as MirusDayDecision };
+          });
+          return {
+            ...p, days,
+            afterTotal: p.fileTotal,
+            delta: Math.round((p.fileTotal - p.beforeTotal) * 100) / 100,
+            warn: false,
+          };
+        }),
+      };
+      try { localStorage.setItem(tenantKey(reportStorageKey(report.month)), JSON.stringify(rep)); } catch { /* voll */ }
+      setReport(rep);
+      if (adoptedNames.length > 0) {
+        toast.success(`Dateiwerte übernommen für: ${adoptedNames.join(', ')} — Gegenprüfung grün.`);
+      }
     } finally {
       setBusy(false);
     }
@@ -1126,8 +1289,14 @@ export function MirusReconcileImportButton({
               {report.perEmployee.some(p => p.warn) && (
                 <Alert variant="destructive">
                   <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    Gegenprüfung fehlgeschlagen bei: {report.perEmployee.filter(p => p.warn).map(p => p.name).join(', ')} — gespeichertes Total weicht mehr als die Tagesrundung von der Datei ab (z. B. wegen «behalten»-Entscheidungen).
+                  <AlertDescription className="space-y-2">
+                    <div>
+                      Gegenprüfung fehlgeschlagen bei: {report.perEmployee.filter(p => p.warn).map(p => p.name).join(', ')} — gespeichertes Total weicht mehr als die Tagesrundung von der Datei ab (z. B. wegen «behalten»-Entscheidungen). Zeile aufklappen zeigt die abweichenden Tage.
+                    </div>
+                    <Button size="sm" variant="destructive" disabled={busy} data-testid="button-adopt-file-all"
+                      onClick={() => handleAdoptFileValues(report.perEmployee.filter(p => p.warn).map(p => p.name))}>
+                      Alle Dateiwerte übernehmen
+                    </Button>
                   </AlertDescription>
                 </Alert>
               )}
@@ -1142,6 +1311,7 @@ export function MirusReconcileImportButton({
                       <TableHead className="text-right">Gespeichert</TableHead>
                       <TableHead className="text-right">Δ</TableHead>
                       <TableHead className="text-right">Absenztage</TableHead>
+                      <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1167,10 +1337,19 @@ export function MirusReconcileImportButton({
                               {p.delta > 0 ? '+' : ''}{p.delta.toFixed(2)}
                             </TableCell>
                             <TableCell className="py-1.5 text-right">{p.absenceDays ?? 0}</TableCell>
+                            <TableCell className="py-1.5 text-right">
+                              {p.warn && (
+                                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
+                                  data-testid={`button-adopt-file-${p.name}`}
+                                  onClick={() => handleAdoptFileValues([p.name])}>
+                                  Dateiwert übernehmen
+                                </Button>
+                              )}
+                            </TableCell>
                           </TableRow>
                           {expanded && days.length > 0 && (
                             <TableRow key={`${p.name}-detail`}>
-                              <TableCell colSpan={7} className="p-0 bg-muted/30">
+                              <TableCell colSpan={8} className="p-0 bg-muted/30">
                                 <div className="max-h-64 overflow-y-auto">
                                   <Table>
                                     <TableHeader>
@@ -1180,22 +1359,32 @@ export function MirusReconcileImportButton({
                                         <TableHead className="text-xs">Ist vorher</TableHead>
                                         <TableHead className="text-xs">MIRUS</TableHead>
                                         <TableHead className="text-xs">Ist nachher</TableHead>
+                                        <TableHead className="text-xs text-right">Δ zu Datei</TableHead>
                                         <TableHead className="text-xs">Muster</TableHead>
                                         <TableHead className="text-xs">Entscheidung</TableHead>
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                      {days.map(d => (
-                                        <TableRow key={d.date}>
+                                      {days.map(d => {
+                                        // Tages-Differenz Gespeichert−Datei: zeigt, welche Tage
+                                        // die Gegenprüfung reissen (z. B. Altstand 8.40 h + K).
+                                        const dayDiff = (hoursFromReportVal(d.afterVal)) - (d.fileHours ?? hoursFromReportVal(d.fileVal));
+                                        const dayOff = Math.abs(dayDiff) > MIRUS_ROUNDING_THRESHOLD_H;
+                                        return (
+                                        <TableRow key={d.date} className={dayOff ? 'bg-red-50 dark:bg-red-950/20' : ''} data-testid={`row-report-day-${d.date}`}>
                                           <TableCell className="py-1 text-xs">{format(new Date(d.date), 'EEE dd.MM.', { locale: de })}</TableCell>
                                           <TableCell className="py-1 text-xs">{d.planVal}</TableCell>
                                           <TableCell className="py-1 text-xs">{d.beforeVal}</TableCell>
                                           <TableCell className="py-1 text-xs">{d.fileVal}</TableCell>
                                           <TableCell className="py-1 text-xs font-medium">{d.afterVal}</TableCell>
+                                          <TableCell className={`py-1 text-xs text-right ${dayOff ? 'font-medium text-red-600' : 'text-muted-foreground'}`}>
+                                            {Math.abs(dayDiff) <= 0.005 ? '—' : `${dayDiff > 0 ? '+' : ''}${dayDiff.toFixed(2)}`}
+                                          </TableCell>
                                           <TableCell className="py-1 text-xs">{d.pattern ? `M${d.pattern}` : d.decision === 'still_gerundet' ? 'Rundung' : '—'}</TableCell>
                                           <TableCell className="py-1 text-xs">{DECISION_LABEL[d.decision]}</TableCell>
                                         </TableRow>
-                                      ))}
+                                        );
+                                      })}
                                     </TableBody>
                                   </Table>
                                 </div>
