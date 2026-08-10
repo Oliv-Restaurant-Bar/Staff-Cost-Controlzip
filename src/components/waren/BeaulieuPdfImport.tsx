@@ -30,6 +30,7 @@ import {
 import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
+  loadMonthInvoices, type InvoiceEntry,
 } from '@/lib/waren-db';
 import { WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
 import {
@@ -66,6 +67,26 @@ interface VorschauZeile {
   bestaetigt?: boolean;
   /** BELEG-Adresse gehört zum ANDEREN Mandanten → Zeile gesperrt (nie umbuchen). */
   mandantFremd?: 'oliv' | 'beaulieu';
+  /** Dublette lt. Bestand (Mandant+Lieferant+Referenz): Re-Import ERSETZT. */
+  dublette?: boolean;
+}
+
+/** Sammelvorschau-Status je Beleg. */
+type BelegStatus = 'NEU' | 'ERSETZT' | 'GESPERRT' | 'FEHLER';
+
+/**
+ * Status für die Sammelvorschau: GESPERRT (nicht buchbar — falscher Mandant/
+ * keine Rechnung) > FEHLER (Σ Lieferungen ≠ Netto, ±0.05) > ERSETZT (Dublette
+ * im Bestand) > NEU.
+ */
+function belegStatus(z: VorschauZeile, buchbar: boolean): BelegStatus {
+  if (!buchbar) return 'GESPERRT';
+  const netto = num(z.netto);
+  if (z.ergebnis.positionenErkannt && z.ergebnis.lieferungen.length > 0 && netto !== null) {
+    const summe = R2(z.ergebnis.lieferungen.reduce((s, l) => s + l.nettoTotal, 0));
+    if (Math.abs(summe - netto) > 0.05) return 'FEHLER';
+  }
+  return z.dublette ? 'ERSETZT' : 'NEU';
 }
 
 function num(s: string): number | null {
@@ -109,6 +130,8 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       const aktuelleProfile = await loadLieferantenProfile(tenantId);
       setProfile(aktuelleProfile);
       const neu: VorschauZeile[] = [];
+      // Monats-Bestand für den Dubletten-Check nur EINMAL pro Batch laden.
+      const bestandCache = new Map<string, InvoiceEntry[]>();
       for (const f of pdfs) {
         try {
           const extract = await extractGnPdfTextItems(f);
@@ -149,7 +172,45 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
                 erg.profil.abAlsLieferschein ? 3 : 0)
             : undefined;
+          // Dubletten-Check für die Sammelvorschau (Mandant+Lieferant+Referenz,
+          // Monate ±1): LS-Nrn UND Rechnungs-Nr prüfen — der Import kann je nach
+          // Deckung/Korrekturen auf Stufe 2 (LS) ODER Stufe 1 (Rechnungs-Nr)
+          // buchen. NUR Anzeige (NEU/ERSETZT) — massgeblich bleibt der
+          // Kern-Upsert. BEST-EFFORT: ein Lesefehler darf die Vorschau NIE
+          // beeinflussen (dann dublette=false, Zeile bleibt erhalten).
+          let dublette = false;
+          if (erg.profil && !mandantFremd) {
+            try {
+              const refs = new Set([...erg.lieferungen.map(l => l.rechnungsNr), erg.rechnungsNr ?? '']
+                .filter(Boolean).map(r => r.trim().toLowerCase()));
+              const daten = [
+                ...erg.lieferungen.map(l => l.datum),
+                ...[erg.lieferdatum ?? erg.rechnungsdatum].filter((d): d is string => !!d),
+              ];
+              const monate = new Set<string>();
+              for (const d of daten) {
+                const base = new Date(`${d}T00:00:00Z`);
+                if (Number.isNaN(base.getTime())) continue;
+                for (const off of [-1, 0, 1]) {
+                  const x = new Date(base); x.setUTCMonth(x.getUTCMonth() + off);
+                  monate.add(x.toISOString().slice(0, 7));
+                }
+              }
+              const name = erg.profil.name.trim().toLowerCase();
+              for (const m of monate) {
+                if (dublette) break;
+                let bestand = bestandCache.get(m);
+                if (!bestand) { bestand = await loadMonthInvoices(tenantId, m); bestandCache.set(m, bestand); }
+                dublette = bestand.some(e => e.supplierName.trim().toLowerCase() === name
+                  && !!e.reference && refs.has(e.reference.trim().toLowerCase()));
+              }
+            } catch (e) {
+              console.warn('[BEAULIEU-PDF] Dubletten-Check fehlgeschlagen (nur Anzeige, ignoriert):', e);
+              dublette = false;
+            }
+          }
           neu.push({
+            dublette,
             modus, abgleich, mandantFremd,
             fileName: f.name, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
@@ -384,11 +445,13 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
   }
 
   return (
-    <div className="border border-border/60 rounded-lg p-3 space-y-3" data-testid="beaulieu-pdf-import">
+    <div className="border border-border/60 rounded-lg p-3 space-y-3" data-testid="beaulieu-pdf-import"
+      onDragOver={e => { e.preventDefault(); }}
+      onDrop={e => { e.preventDefault(); void handleFiles(e.dataTransfer.files); }}>
       <div className="flex flex-wrap items-center gap-3">
         <label className="inline-flex items-center gap-2 text-xs font-medium rounded-lg border border-dashed px-3 py-2 cursor-pointer hover:bg-muted/40 transition-colors">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileScan className="h-4 w-4 text-primary" />}
-          Lieferanten-PDFs importieren (Erkennung über MWST-Nr-Profile)
+          Lieferanten-PDFs importieren — Mehrfachauswahl/Drag&amp;Drop (Erkennung über MWST-Nr-Profile)
           <input type="file" accept="application/pdf" multiple className="hidden" disabled={busy}
             data-testid="input-beaulieu-pdf"
             onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
@@ -400,6 +463,78 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
 
       <WarenImportUndoButton tenantId={tenantId} typ="pdf_profil" refresh={undoRefresh}
         onUndone={() => { setUndoRefresh(k => k + 1); onImported(); }} />
+
+      {zeilen.length > 1 && (
+        <div className="rounded-md border border-border/50 overflow-x-auto" data-testid="beaulieu-pdf-sammelvorschau">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[11px] text-muted-foreground border-b border-border/40">
+                <th className="text-left font-medium px-2 py-1">Lieferant</th>
+                <th className="text-left font-medium px-2 py-1">Rechnungs-Nr</th>
+                <th className="text-left font-medium px-2 py-1">Rechnungsdatum</th>
+                <th className="text-right font-medium px-2 py-1">Lieferungen</th>
+                <th className="text-right font-medium px-2 py-1">Netto</th>
+                <th className="text-right font-medium px-2 py-1">Brutto</th>
+                <th className="text-left font-medium px-2 py-1">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {zeilen.map((z, i) => {
+                const status = belegStatus(z, istBuchbar(z));
+                const netto = num(z.netto);
+                const mwst = num(z.mwst);
+                const brutto = netto !== null ? R2(netto + (mwst ?? 0)) : null;
+                const rd = z.ergebnis.rechnungsdatum;
+                return (
+                  <tr key={`${z.fileName}-${i}`} className="border-b border-border/30 last:border-0"
+                    data-testid={`beaulieu-pdf-sammel-${i}`}>
+                    <td className="px-2 py-1">{profilById.get(z.lieferant)?.name ?? z.ergebnis.profil?.name ?? <span className="text-amber-600">offen</span>}</td>
+                    <td className="px-2 py-1">{z.rechnungsNr || '—'}</td>
+                    <td className="px-2 py-1">{rd ? rd.split('-').reverse().join('.') : '—'}</td>
+                    <td className="px-2 py-1 text-right">{z.ergebnis.lieferungen.length || '—'}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{netto !== null ? netto.toFixed(2) : '—'}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{brutto !== null ? brutto.toFixed(2) : '—'}</td>
+                    <td className="px-2 py-1">
+                      <span className={`font-medium ${
+                        status === 'NEU' ? 'text-emerald-600'
+                        : status === 'ERSETZT' ? 'text-sky-600'
+                        : status === 'FEHLER' ? 'text-amber-600'
+                        : 'text-destructive'}`}
+                        data-testid={`beaulieu-pdf-status-${i}`}>
+                        {status}{status === 'ERSETZT' ? ' (Dublette)' : ''}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              {(() => {
+                // Fusszeile: Σ nur über NEU + ERSETZT (buchbare, fehlerfreie Belege).
+                const zaehlbar = zeilen.filter(z => {
+                  const s = belegStatus(z, istBuchbar(z));
+                  return s === 'NEU' || s === 'ERSETZT';
+                });
+                const sumNetto = R2(zaehlbar.reduce((s, z) => s + (num(z.netto) ?? 0), 0));
+                const sumBrutto = R2(zaehlbar.reduce((s, z) => {
+                  const n = num(z.netto); const m = num(z.mwst);
+                  return n !== null ? s + n + (m ?? 0) : s;
+                }, 0));
+                const sumLief = zaehlbar.reduce((s, z) => s + z.ergebnis.lieferungen.length, 0);
+                return (
+                  <tr className="border-t border-border/50 font-medium" data-testid="beaulieu-pdf-sammel-total">
+                    <td className="px-2 py-1" colSpan={3}>Σ {zaehlbar.length} Beleg{zaehlbar.length === 1 ? '' : 'e'} (NEU + ERSETZT)</td>
+                    <td className="px-2 py-1 text-right">{sumLief}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{sumNetto.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{sumBrutto.toFixed(2)}</td>
+                    <td className="px-2 py-1" />
+                  </tr>
+                );
+              })()}
+            </tfoot>
+          </table>
+        </div>
+      )}
 
       {zeilen.length > 0 && (
         <div className="space-y-2" data-testid="beaulieu-pdf-vorschau">

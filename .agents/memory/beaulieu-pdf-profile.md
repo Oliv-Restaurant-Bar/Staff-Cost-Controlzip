@@ -42,6 +42,11 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 - Fixtures neu via PRODUKTIVER Zeilenrekonstruktion erzeugen (esbuild-Bundle von gn-pdf-lines + reconstructGnPdfLines über die /tmp-Item-JSONs), Ablage `fixtures/oliv-pdf/`; Tests `oliv-pdf-parse.test.ts` mit exakten Kontrollwerten.
 - Spahni-Kopf: Belegdatum aus «Zollikofen , 31.07.26  Seite» (generischer Fallback fängt nur 4-stellige Jahre).
 
+## Sammelvorschau (Batch, Aug 2026)
+- Ab 2 Belegen kompakte Tabelle über den Detail-Karten: Lieferant|Rechnungs-Nr|Rechnungsdatum|Lieferungen|Netto|Brutto|Status (GESPERRT > FEHLER Σ-Lieferungen≠Netto ±0.05 > ERSETZT > NEU); Fusszeile Σ nur über NEU+ERSETZT.
+- Dubletten-Check (NEU/ERSETZT) ist REINE Anzeige und strikt best-effort: eigener try/catch, Lesefehler ⇒ dublette=false, Zeile bleibt — darf den Importpfad nie beeinflussen. Referenzen: LS-Nrn UND Rechnungs-Nr prüfen (Import kann je nach Deckung Stufe 1 oder 2 buchen); Monats-Bestand pro Batch gecacht.
+- Drag&Drop auf den Import-Container; Undo bleibt der bestehende eine pdf_profil-Slot (ganzer Batch).
+
 ## Profil-Lernen ohne MWST-Nr
 - `lerneProfil` leitet ohne MWST-Nr automatisch Namens-Tokens ab (lowercase, Wörter ≥3 Zeichen) → `findeProfilImText` erkennt den Lieferanten beim Re-Import; bestehende Tokens/IBAN nie überschreiben. Lernen ist KUMULATIV — Import-Undo rollt Profile bewusst nicht zurück.
 - AB→Rechnung (Terravigna): Dokumente tragen KEINE gemeinsame Referenz (Rechnung nennt die AB-Nr. nicht). fs-import ersetzt eine provisorische AB nur bei GENAU EINEM Kandidaten im Fenster (Toleranz max(0.10, 1 % Brutto)); Matcher generell in zwei Pässen: exakte Referenz VOR Datum+Betrag.
