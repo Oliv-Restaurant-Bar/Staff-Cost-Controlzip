@@ -1199,7 +1199,9 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               {wocheRange ? `, ${wocheRange}` : ''}), auch über Monatsgrenzen — jeder Tag zieht
               Ist und Budget aus seinem eigenen Monat; nur die laufende Woche ist auf die Ist-Tage
               bis heute geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · Warenkosten total:
-              Ist = erfasste Lieferantenrechnungen (netto), Soll = WEQ × Ist-Netto-Umsatz — die
+              Ist = erfasste Lieferantenrechnungen (netto), Soll = WEQ × Ist-Netto-Umsatz ·
+              Warenkosten Food/Beverage: Ist = Kategorie-Anteile der Rechnungen, Soll = Kategorie-WEQ ×
+              Food-/Beverage-Umsatz, WKQ = Ist ÷ Kategorie-Umsatz — die
               Ist-Warenkosten sind wochenweise sprunghaft (Lieferungen fallen in einzelne Wochen);
               aussagekräftig ist der Monatsvergleich, der Wochen-Δ schwankt naturgemäss ·
               Vorjahr = gleiche Kalenderwoche im Vorjahr

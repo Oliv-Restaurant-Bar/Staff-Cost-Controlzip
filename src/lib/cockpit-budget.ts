@@ -107,11 +107,21 @@ export const COCKPIT_BUDGET_KPIS: CockpitBudgetKpiDef[] = [
  * 1- und 3-Stern = 0 (Zielwert — bewusst eine echte 0, kein «leer statt 0»:
  * das Ziel IST null neue schlechte Bewertungen). 2/4 Sterne: kein Ziel (null).
  */
-export function reviewZielBudget(star: number, tage: number): number | null {
+export function reviewZielBudget(star: number, tage: number, fuenfSterneProWoche = 5): number | null {
   if (!(tage > 0)) return null;
-  if (star === 5) return Math.round(5 * tage / 7);
+  if (star === 5) return Math.round(fuenfSterneProWoche * tage / 7);
   if (star === 3 || star === 1) return 0;
   return null;
+}
+
+/**
+ * Mandanten-/Plattform-spezifische 5★-Wochenrate (Spec 08/2026):
+ * Beaulieu: Google 3/Woche, Lunchgate 10/Woche; Oliv: 5/Woche (Google +
+ * TripAdvisor, unverändert). Unbekannte Kombinationen fallen auf 5 zurück.
+ */
+export function reviewWochenrate(tenantId: TenantId, platform: string): number {
+  if (tenantId === 'beaulieu') return platform === 'Google' ? 3 : 10;
+  return 5;
 }
 
 /**
@@ -125,14 +135,63 @@ export const RESERVIERUNGS_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
   oliv:     [39.7, 38.4, 38.6, 28.1, 25.5, 23.2, 14.7, 19.1, 24.1, 31.4, 42.2, 40.5],
   beaulieu: [27.5, 30.3, 30.7, 26.2, 31.3, 28.9, 21.1, 27.8, 29.5, 31.4, 36.2, 43.2],
 };
-/** Ø-Verkauf-pro-Gast-Ziel-Default je Mandant (CHF, 12 Monatswerte) — aus dem
- *  EIGENEN Ist des Mandanten (2025), NIE mandantenübergreifend: Oliv ~29,
- *  Beaulieu ~17.8 (netto ÷ Gäste, monatlich schwankend). Nur Vorbelegung fürs
- *  «Ziel anwenden» — je Monat überschreibbar. */
+/** Ø-Verkauf-pro-Gast-Ziel-Default je Mandant (CHF, 12 Monatswerte), NIE
+ *  mandantenübergreifend: Oliv 29; Beaulieu 21.00 (Spec 08/2026, aus
+ *  Gastronovi «Umsatz pro Person», Juli 21.55 — ersetzt die zu tiefen
+ *  2025-Ist-Monatswerte ~14.71…). Nur Vorbelegung fürs «Ziel anwenden» —
+ *  je Monat überschreibbar. */
 export const AVG_VERKAUF_ZIEL_DEFAULT: Record<TenantId, number[]> = {
   oliv: Array(12).fill(29),
-  beaulieu: [14.71, 17.25, 18.02, 14.27, 16.75, 16.86, 18.09, 16.12, 19.11, 17.99, 19.36, 25.68],
+  beaulieu: Array(12).fill(21),
 };
+
+/**
+ * Food-/Beverage-Umsatzanteil 2025 in % des Netto-Umsatzes (Spec 08/2026) —
+ * Basis fürs abgeleitete Food-/Beverage-Umsatz-BUDGET (Anteil × Netto-Umsatz-
+ * Budget des Monats) und damit fürs Warenkosten-Soll je Kategorie (WEQ ×
+ * Kategorie-Umsatz-Budget). Bewusst KEINE eigene Cockpit-Position.
+ * Anteile beziehen sich auf (Food + Beverage) und summieren zu 100 % —
+ * Food-Budget + Beverage-Budget = Netto-Umsatz-Budget (Korrektur 08/2026).
+ */
+export const FB_UMSATZ_ANTEIL_2025: Record<TenantId, { food: number; beverage: number }> = {
+  oliv: { food: 65.6, beverage: 34.4 },
+  beaulieu: { food: 63.7, beverage: 36.3 },
+};
+
+/**
+ * WEQ-Stufenlogik («letzter Wert hält», Spec 08/2026): ein manuell gesetzter
+ * Monats-WEQ gilt für diesen Monat UND alle folgenden, bis ein neuer manueller
+ * Wert kommt; ohne (noch) greifenden manuellen Wert gilt Auto/Import.
+ * null-Einträge = «leer statt 0» (kein Wert vorhanden).
+ */
+export function weqMonatswerteMitStufen(
+  monthlyValues: (number | null)[], monthlyExplicit: boolean[],
+  erNetto: (number | null | undefined)[], autoQ: (number | null)[],
+): (number | null)[] {
+  const manualQ = monthlyValues.map((v, i) =>
+    monthlyExplicit[i] && v !== null && typeof erNetto[i] === 'number' && (erNetto[i] as number) > 0
+      ? (v / (erNetto[i] as number)) * 100 : null);
+  const eff = weqCarryForward(manualQ, autoQ);
+  return monthlyValues.map((v, i) => {
+    if (monthlyExplicit[i]) return v; // manueller Monat bleibt exakt stehen
+    const n = erNetto[i];
+    return eff[i] !== null && typeof n === 'number'
+      ? Math.round(n * (eff[i]! / 100) * 100) / 100 : null;
+  });
+}
+
+/** Kern der Stufenlogik: manuelle Quoten mit Carry-Forward über Auto/Import. */
+export function weqCarryForward(
+  manuellQ: (number | null)[], autoQ: (number | null)[],
+): (number | null)[] {
+  const out: (number | null)[] = Array(12).fill(null);
+  let carry: number | null = null;
+  for (let i = 0; i < 12; i++) {
+    if (manuellQ[i] !== null && manuellQ[i] !== undefined) carry = manuellQ[i]!;
+    out[i] = manuellQ[i] ?? carry ?? autoQ[i] ?? null;
+  }
+  return out;
+}
 
 export const GRUPPEN_ANTEIL_DEFAULT: Record<TenantId, number[]> = {
   oliv:     [11.9, 4.6, 7.0, 6.5, 11.8, 15.1, 2.6, 1.3, 6.0, 10.3, 16.2, 15.3],

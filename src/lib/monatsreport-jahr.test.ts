@@ -68,7 +68,7 @@ describe('ladeWochenverlauf – Quellen-Weiche je Jahr', () => {
     expect(ladePersonalkostenDaten).not.toHaveBeenCalled(); // keine Stunden für Vergangenheit
     expect(loadVjDailyMonth).toHaveBeenCalled();            // vj_daily als Hauptquelle
     // Produktive Stunden/Produktivität → keine Quelle → alle Wochen leer.
-    const istRow = daten.rows.find(r => r.label === 'Produktive Stunden (Ist)')!;
+    const istRow = daten.rows.find(r => r.label === 'Stunden — Plan (Budget) / Ist (MIRUS)')!;
     expect(istRow.values.every(v => v === null)).toBe(true);
     const prodRow = daten.rows.find(r => r.label === 'Produktivität (Umsatz/Std)')!;
     expect(prodRow.values.every(v => v === null)).toBe(true);

@@ -12,6 +12,19 @@
 
 import { kontoKategorie, type WarenKategorie } from './warenkosten-quote';
 import type { InvoiceEntry, Warenkonto } from './waren-db';
+import type { TenantId } from './cockpit-budget';
+
+/**
+ * Soll-WEQ je Warenkategorie und Mandant in % des KATEGORIE-Umsatzes
+ * (Food-WEQ × Food-Umsatz = Soll-Warenkosten Küche; analog Beverage/Bar).
+ * Quelle: Gastronovi-WEQ-Auswertung (Oliv) bzw. User-Vorgabe 08/2026
+ * (Beaulieu). Feste Jahreswerte, mandantengetrennt — reine Analyse-Ziele,
+ * KEINE Budget-Positionen.
+ */
+export const KATEGORIE_WEQ_DEFAULT: Record<TenantId, { food: number; beverage: number }> = {
+  oliv: { food: 24.7, beverage: 15.2 },
+  beaulieu: { food: 27.0, beverage: 19.0 },
+};
 
 /**
  * Effektive Kategorie-Anteile einer Rechnung (netto):

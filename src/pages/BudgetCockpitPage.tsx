@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Target, RotateCcw, Save, ChevronDown, ChevronRight, Trash2, Wand2, Upload } from 'lucide-react';
 import { loadWeqKalk, saveWeqKalk, parseWeqExport } from '@/lib/weq-kalkuliert';
+import { loadWeqModus, saveWeqModus, leererWeqModusBlob, effektiveKategorieWeq, type WeqModus, type WeqModusBlob } from '@/lib/weq-modus';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
@@ -39,6 +40,7 @@ import {
   kalkulierteWeqMonate, bedarfSollStundenMonate,
   dienstplanStundenMonate, reservierteGaesteIstMonate,
   RESERVIERUNGS_ANTEIL_DEFAULT, GRUPPEN_ANTEIL_DEFAULT, AVG_VERKAUF_ZIEL_DEFAULT,
+  weqMonatswerteMitStufen,
   erNettoBudgetMonate, type CockpitBudgetKpiDef, type TenantId,
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition, CockpitBudgetYear, CockpitProrataMode } from '@/types/budget';
@@ -91,6 +93,56 @@ export default function BudgetCockpitPage() {
   const [busy, setBusy] = useState<string | null>(null);
   /** Vorjahres-Ist «reservierte Gäste» je Monat — NUR informative Klammer
    *  hinter dem Budget (treibt die Rechnung nicht). null = (noch) nicht geladen. */
+  /** Auto/Import-WEQ-Quoten je Monat (weq-kalkuliert-Blob) — Basis der
+   *  WEQ-Stufenlogik («manuell hält bis zum nächsten manuellen Wert»). */
+  const [weqAutoQ, setWeqAutoQ] = useState<(number | null)[]>(Array(12).fill(null));
+  useEffect(() => {
+    let alive = true;
+    loadWeqKalk(tenantKey, year)
+      .then(b => { if (alive) setWeqAutoQ(b?.weqNettoMonate ?? Array(12).fill(null)); })
+      .catch(() => { if (alive) setWeqAutoQ(Array(12).fill(null)); });
+    return () => { alive = false; };
+  }, [tenantKey, year]);
+
+  /** WEQ-Soll-Modus je Mandant/Jahr (Spec 08/2026): 'gesamt' (Standard) oder
+   *  'kategorie' (getrennte Food-/Bev-WEQ, manuell + Carry-Forward). Steuert
+   *  NUR die Soll-Rechnung im Monatsreport, nie Ist oder Cockpit-CHF-Budget.
+   *  Eigener kleiner KV-Blob — Änderungen werden sofort gespeichert. */
+  const [weqModus, setWeqModus] = useState<WeqModusBlob>(() => leererWeqModusBlob(year));
+  useEffect(() => {
+    let alive = true;
+    setWeqModus(leererWeqModusBlob(year));
+    loadWeqModus(tenantKey, year)
+      .then(b => { if (alive && b) setWeqModus(b); })
+      .catch(() => { /* Standard 'gesamt' bleibt — nie raten */ });
+    return () => { alive = false; };
+  }, [tenantKey, year]);
+  const weqKatEff = useMemo(
+    () => effektiveKategorieWeq(weqModus, tenantId),
+    [weqModus, tenantId],
+  );
+  // Race-sicheres Sofort-Speichern: Updates laufen funktional gegen den
+  // AKTUELLEN State (nie ein Render-Snapshot), und die Writes sind über eine
+  // Kette serialisiert — jeder Write schreibt den JÜNGSTEN Stand (Ref), damit
+  // schnelle Folge-Edits nie von einem älteren Blob überholt werden.
+  const weqModusRef = useRef(weqModus);
+  weqModusRef.current = weqModus;
+  const weqSaveChain = useRef<Promise<void>>(Promise.resolve());
+  const persistWeqModus = useCallback((updater: (cur: WeqModusBlob) => WeqModusBlob) => {
+    const ctx = ctxRef.current;
+    setWeqModus(cur => { const next = updater(cur); weqModusRef.current = next; return next; });
+    weqSaveChain.current = weqSaveChain.current.then(async () => {
+      if (ctxRef.current !== ctx) return; // Mandant/Jahr gewechselt → verwerfen
+      await saveWeqModus(tenantKey, weqModusRef.current).catch(e => {
+        if (ctxRef.current !== ctx) return;
+        toast({
+          title: 'WEQ-Modus speichern fehlgeschlagen',
+          description: String(e?.message ?? e), variant: 'destructive',
+        });
+      });
+    });
+  }, [tenantKey, toast]);
+
   const [vjResIst, setVjResIst] = useState<(number | null)[] | null>(null);
   useEffect(() => {
     let alive = true;
@@ -162,10 +214,10 @@ export default function BudgetCockpitPage() {
    */
   const monatReset = useCallback(async (def: CockpitBudgetKpiDef, i: number) => {
     const ctx = ctxRef.current;
-    let weqQuote: number | null = null;
+    let weqQuoten: (number | null)[] | null = null;
     if (def.id === 'wareneinsatz') {
       const wb = await loadWeqKalk(tenantKey, year).catch(() => null);
-      weqQuote = wb?.weqNettoMonate?.[i] ?? null;
+      weqQuoten = wb?.weqNettoMonate ?? null;
     }
     if (ctxRef.current !== ctx) return; // Mandant/Jahr gewechselt → verwerfen
     const erN = erNetto[i];
@@ -176,11 +228,20 @@ export default function BudgetCockpitPage() {
       const me = cur.monthlyExplicit.slice();
       if (def.unit === 'pct' || (cur.inputMode ?? 'chf') !== 'pct') {
         mv[i] = null; // leer statt 0 — Ableitung/Verteilung übernimmt wieder
+        me[i] = false;
+      } else if (def.id === 'wareneinsatz') {
+        // WEQ-Stufenlogik: Reset hebt NUR den manuellen Override dieses Monats
+        // auf; danach greift wieder Carry-Forward eines früheren manuellen
+        // Monats bzw. Auto/Import (weqNettoMonate), sonst Positions-Quote.
+        me[i] = false;
+        const autoQ = (weqQuoten ?? Array(12).fill(null)).map(q => q ?? cur.pctValue ?? null);
+        const eff = weqMonatswerteMitStufen(mv, me, erNetto, autoQ);
+        for (let m = 0; m < 12; m++) if (!me[m]) mv[m] = eff[m];
       } else {
-        const q = weqQuote ?? cur.pctValue ?? null;
+        const q = cur.pctValue ?? null;
         mv[i] = q !== null && typeof erN === 'number' ? r2(erN * (q / 100)) : null;
+        me[i] = false;
       }
-      me[i] = false;
       return { ...b, positions: { ...b.positions, [def.id]: { ...cur, monthlyValues: mv, monthlyExplicit: me } } };
     });
     setDirty(true);
@@ -966,6 +1027,84 @@ export default function BudgetCockpitPage() {
                         </span>
                       </div>
                     )}
+                    {def.id === 'wareneinsatz' && (
+                      <div className="space-y-2 rounded-md border p-2">
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Soll-Modus (Monatsreport):</span>
+                          <Select value={weqModus.modus}
+                            onValueChange={v => persistWeqModus(cur => ({ ...cur, modus: v as WeqModus }))}>
+                            <SelectTrigger className="h-7 w-[170px] text-xs" data-testid="select-weq-modus">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="gesamt">Gesamt-WEQ</SelectItem>
+                              <SelectItem value="kategorie">Kategorie-WEQ</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <span className="text-[10px] text-muted-foreground">
+                            {weqModus.modus === 'gesamt'
+                              ? 'EIN WEQ je Monat gilt flach für Food und Beverage (Summe = WEQ × Netto).'
+                              : 'Food- und Beverage-WEQ getrennt je Monat; Total-Soll = Food-Soll + Beverage-Soll.'}
+                            {' '}Ändert nur die Soll-Rechnung, nie die Ist-Zahlen. Wird sofort gespeichert.
+                          </span>
+                        </div>
+                        {weqModus.modus === 'kategorie' && (['food', 'bev'] as const).map(katK => {
+                          const manuell = katK === 'food' ? weqModus.foodManuell : weqModus.bevManuell;
+                          const eff = katK === 'food' ? weqKatEff.food : weqKatEff.bev;
+                          const label = katK === 'food' ? 'Food-WEQ %' : 'Beverage-WEQ %';
+                          const setMonat = (i: number, v: number | null) => {
+                            persistWeqModus(cur => {
+                              const next = (katK === 'food' ? cur.foodManuell : cur.bevManuell).slice();
+                              next[i] = v;
+                              return katK === 'food'
+                                ? { ...cur, foodManuell: next }
+                                : { ...cur, bevManuell: next };
+                            });
+                          };
+                          return (
+                            <div key={katK} className="space-y-1">
+                              <p className="text-[10px] text-muted-foreground">
+                                <b>{label}</b> — manuell + Carry-Forward (ein manueller Monat gilt weiter
+                                bis zum nächsten manuellen); Default = Gastronovi-Quote. Reset stellt
+                                Carry/Default wieder her.
+                              </p>
+                              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                                {MONATE_KURZ.map((m, i) => (
+                                  <div key={m} className="space-y-0.5">
+                                    <label className={cn('flex items-center gap-1 text-[10px]',
+                                      manuell[i] !== null ? 'font-bold' : 'text-muted-foreground')}>
+                                      {m}{manuell[i] !== null ? ' ·manuell' : ''}
+                                      {manuell[i] !== null && (
+                                        <button
+                                          type="button" className="text-muted-foreground hover:text-foreground"
+                                          title="Zurück auf Carry/Default"
+                                          onClick={() => setMonat(i, null)}
+                                          data-testid={`button-weq-${katK}-reset-${i + 1}`}
+                                        >
+                                          <RotateCcw className="h-2.5 w-2.5" />
+                                        </button>
+                                      )}
+                                    </label>
+                                    <Input
+                                      type="number" inputMode="decimal" className="h-8 text-right text-xs"
+                                      value={fmtNum(eff[i])}
+                                      placeholder="%"
+                                      onChange={e => {
+                                        const raw = e.target.value;
+                                        const v = raw === '' ? null : Number(raw);
+                                        if (v !== null && (!isFinite(v) || v <= 0)) return; // leer statt 0, nie ÷0
+                                        setMonat(i, v);
+                                      }}
+                                      data-testid={`input-weq-${katK}-${i + 1}`}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {def.id === 'take_away_anteil' && (
                       <div className="flex items-center gap-1.5 text-xs">
                         <span className="text-muted-foreground">Anteil %:</span>
@@ -1112,6 +1251,10 @@ export default function BudgetCockpitPage() {
                     {pctProMonat && (
                       <p className="text-[10px] text-muted-foreground">
                         %-Modus: Monatsfelder = <b>% vom Netto-Umsatz-Budget</b> des Monats (CHF wird automatisch gerechnet).
+                        {def.id === 'wareneinsatz' && (
+                          <> Stufenlogik: ein manueller Monats-WEQ gilt ab diesem Monat weiter,
+                          bis ein neuer manueller Wert kommt; Reset stellt Auto/Import wieder her.</>
+                        )}
                       </p>
                     )}
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
@@ -1156,7 +1299,17 @@ export default function BudgetCockpitPage() {
                               }
                               mv[i] = v !== null ? r2((n as number) * (v / 100)) : null;
                               me[i] = v !== null;
-                              setPos(def.id, { ...pos, monthlyValues: mv, monthlyExplicit: me });
+                              // WEQ-Stufenlogik (Spec 08/2026): ein manueller
+                              // Monats-WEQ gilt ab diesem Monat weiter, bis ein
+                              // neuer manueller Wert kommt; nicht-manuelle
+                              // Monate werden aus Carry-Forward/Auto gerechnet.
+                              // autoQ-Fallback wie beim Reset: fehlende
+                              // Import-Quote → Positions-Zielquote (pctValue).
+                              const mvEff = def.id === 'wareneinsatz'
+                                ? weqMonatswerteMitStufen(mv, me, erNetto,
+                                    weqAutoQ.map(q => q ?? pos.pctValue ?? null))
+                                : mv;
+                              setPos(def.id, { ...pos, monthlyValues: mvEff, monthlyExplicit: me });
                               return;
                             }
                             mv[i] = v;

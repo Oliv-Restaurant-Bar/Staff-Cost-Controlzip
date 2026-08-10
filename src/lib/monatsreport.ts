@@ -23,7 +23,8 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@
 import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { loadCockpitBudget, resolveCockpitBudgets, erNettoBudgetMonate, COCKPIT_BUDGET_KPIS, reviewZielBudget } from '@/lib/cockpit-budget';
+import { loadCockpitBudget, resolveCockpitBudgets, erNettoBudgetMonate, COCKPIT_BUDGET_KPIS, reviewZielBudget, reviewWochenrate, FB_UMSATZ_ANTEIL_2025 } from '@/lib/cockpit-budget';
+import { loadWeqModus, effektiveKategorieWeq, type WeqModus } from '@/lib/weq-modus';
 import {
   ladeWochentagsGewichte, ladePersonalkostenDaten,
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
@@ -1172,6 +1173,10 @@ export async function ladeMonatsreport(
   // Cockpit-Budgets haben VORRANG vor den bisherigen Quellen (budget_v1-Umsatz,
   // PK-Ziel); fehlen sie, bleibt alles beim bestehenden Verhalten.
   const ckBlob = await loadCockpitBudget(tenantKey, year).catch(() => null);
+  // WEQ-Modus je Mandant/Jahr (Soll-Rechnung der Warenkosten, s. buildWarenRows).
+  const weqModusBlob = await loadWeqModus(tenantKey, year).catch(() => null);
+  const weqModusEff: WeqModus = weqModusBlob?.modus ?? 'gesamt';
+  const weqKatQ = effektiveKategorieWeq(weqModusBlob, tenantId);
   // ER-Netto-Monatsbudgets als Ratio-Nenner (die Umsatz-Positionen wurden aus
   // dem Cockpit-Budget entfernt; Umsatz-Budget = budget_v1/ER — dieselbe
   // Quelle wie budgetNet oben). Wochen im Nachbarjahr: Monate des Wochen-
@@ -1544,17 +1549,69 @@ export async function ladeMonatsreport(
       return zielWkq;
     };
     const quoteMonat = weqQuotePct(`${year}-${mm}`);
-    const sollMonat = mNetV != null && mNet > 0 ? r2(mNet * (quoteMonat / 100)) : null;
+
+    // ── WEQ-Modus (Spec 08/2026): 'gesamt' (Standard) = EIN WEQ je Monat gilt
+    // flach für Food UND Beverage (Summe der Kategorie-Solls = Total-Soll,
+    // weil Food+Beverage=Netto); 'kategorie' = getrennte Food-/Bev-WEQ je
+    // Monat (manuell + Carry-Forward), Total-Soll = Food-Soll + Bev-Soll.
+    // Beide Modi rechnen das Soll auf dem IST-Kategorie-Umsatz. Der Modus
+    // ändert NUR die Soll-Rechnung, nie die Ist-Zahlen.
+    const katModus = weqModusEff === 'kategorie';
+    const m0 = Number(mm) - 1;
+    // Wochen-Quote im Kategorie-Modus: Monat des KW-STARTS (nicht der Report-
+    // Monat) — Fremdjahr-Wochen (KW 1/53 im Nachbarjahr) bleiben leer, weil
+    // der Modus-Blob pro Jahr gilt (wie im Wochenverlauf).
+    const wKatM0: number | null = weekFrom
+      ? (weekFrom.slice(0, 4) === String(year) ? Number(weekFrom.slice(5, 7)) - 1 : null)
+      : m0;
+    const foodQ: number | null = katModus ? weqKatQ.food[m0] : r2(quoteMonat);
+    const bevQ: number | null = katModus ? weqKatQ.bev[m0] : r2(quoteMonat);
+    const foodQW: number | null = katModus
+      ? (wKatM0 !== null ? weqKatQ.food[wKatM0] : null) : foodQ;
+    const bevQW: number | null = katModus
+      ? (wKatM0 !== null ? weqKatQ.bev[wKatM0] : null) : bevQ;
+    const katSoll = (q: number | null, umsV: number | null, ums: number): number | null =>
+      q !== null && umsV != null && ums > 0 ? r2(ums * (q / 100)) : null;
+    let foodSollM = katSoll(foodQ, mNetV, mFood);
+    let bevSollM = katSoll(bevQ, mNetV, mBev);
+    let foodSollW = katSoll(foodQW, wNetV, wFood);
+    let bevSollW = katSoll(bevQW, wNetV, wBev);
+
+    // Total-Soll: Modus 'gesamt' = Quote × Netto (monatsgenau, Woche über
+    // wNetProMonat); Modus 'kategorie' = Summe der Kategorie-Solls (leer,
+    // wenn beide leer sind — leer statt 0).
+    const summe2 = (a: number | null, b: number | null): number | null =>
+      a === null && b === null ? null : r2((a ?? 0) + (b ?? 0));
+    let sollMonat: number | null;
     let sollWoche: number | null = null;
-    if (wNetV != null && wNet > 0) {
-      let s = 0;
-      for (const [ym, n] of Object.entries(wNetProMonat)) s += n * (weqQuotePct(ym) / 100);
-      sollWoche = r2(s);
+    if (katModus) {
+      sollMonat = summe2(foodSollM, bevSollM);
+      sollWoche = summe2(foodSollW, bevSollW);
+    } else {
+      sollMonat = mNetV != null && mNet > 0 ? r2(mNet * (quoteMonat / 100)) : null;
+      if (wNetV != null && wNet > 0) {
+        let s = 0;
+        for (const [ym, n] of Object.entries(wNetProMonat)) s += n * (weqQuotePct(ym) / 100);
+        sollWoche = r2(s);
+      }
+      // «Summe stimmt exakt» (Spec): das gerundete Total ist massgeblich —
+      // Beverage-Soll = Total − Food-Soll, wenn beide Kategorien tragen
+      // (sonst könnte die getrennte Rundung um 0.01 abweichen).
+      if (sollMonat !== null && foodSollM !== null && bevSollM !== null) {
+        bevSollM = r2(sollMonat - foodSollM);
+      }
+      if (sollWoche !== null && foodSollW !== null && bevSollW !== null) {
+        bevSollW = r2(sollWoche - foodSollW);
+      }
     }
     const wkqM = wkqInfo(inv, monthTotal, mNetV, mNet);
     const wkqW = wkqInfo(weekInv, weekTotal, wNetV, wNet);
     // Ziel der Inline-WKQ = wirksame WEQ-Quote der Periode (Δ in pp dagegen).
-    if (wkqM) wkqM.ziel = r2(quoteMonat);
+    if (wkqM) {
+      wkqM.ziel = katModus
+        ? (sollMonat != null && mNet > 0 ? r2((sollMonat / mNet) * 100) : null)
+        : r2(quoteMonat);
+    }
     if (wkqW && sollWoche != null && wNet > 0) wkqW.ziel = r2((sollWoche / wNet) * 100);
     const totalRow: MrRow = {
       ...d('warenkosten_total', 'Warenkosten total (Ist) vs. Wareneinsatz (Soll)', {
@@ -1566,10 +1623,48 @@ export async function ladeMonatsreport(
         week: wkqW,
       },
     };
+    // ── Warenkosten je Kategorie: FOOD (Küche) / BEVERAGE (Bar) ────────────
+    // Ist = Kategorie-Anteile der erfassten Warenrechnungen; Soll = wirksame
+    // Kategorie-Quote (je Modus, s. oben) × IST-Kategorie-Umsatz; WKQ-Inline-%
+    // = Ist ÷ Kategorie-Umsatz (Ziel = Quote). KEINE Budget-Position.
+    // «leer statt 0», nie ÷ 0. Fail-safe: unbekannter Mandant ⇒ Soll leer.
+    const katRow = (
+      kat: 'Food' | 'Beverage', id: string, label: string, weqPct: number | null,
+      umsMV: number | null, umsM: number, umsWV: number | null, umsW: number,
+      sollM: number | null, sollW: number | null,
+    ): MrRow => {
+      const istM = inv ? sumNetByKategorie(inv, kat, warenKonten) : 0;
+      const istW = weekInv ? sumNetByKategorie(weekInv, kat, warenKonten) : 0;
+      const wkq = (ist: number, umsV: number | null, ums: number): WkqInlineInfo | null =>
+        ist > 0 && umsV != null && ums > 0
+          ? { pct: r2((ist / ums) * 100), ziel: weqPct !== null ? r2(weqPct) : null, food: null, bev: null }
+          : null;
+      return {
+        ...d(id, label, {
+          month: istM > 0 ? r2(istM) : null,
+          week: istW > 0 ? r2(istW) : null,
+          monthBudget: sollM,
+          weekBudget: sollW,
+          budget: sollW,
+        }, { deltaInverted: true }),
+        wkqInline: {
+          month: wkq(istM, umsMV, umsM),
+          week: wkq(istW, umsWV, umsW),
+        },
+      };
+    };
+    const foodRow = katRow('Food', 'warenkosten_food',
+      'Warenkosten Food (Küche) vs. Soll', foodQ,
+      mNetV != null ? r2(mFood) : null, mFood, wNetV != null ? r2(wFood) : null, wFood,
+      foodSollM, foodSollW);
+    const bevRow = katRow('Beverage', 'warenkosten_beverage',
+      'Warenkosten Beverage (Bar) vs. Soll', bevQ,
+      mNetV != null ? r2(mBev) : null, mBev, wNetV != null ? r2(wBev) : null, wBev,
+      bevSollM, bevSollW);
     // «Betriebskosten (Waren-Lieferanten)» wurde bewusst entfernt — gehört
     // nicht in diese Cockpit-Zeilenliste (Konten > Grenze bleiben aus der WKQ
     // ohnehin draussen; Detail im Waren-Cockpit).
-    return [totalRow, ...supplierRows];
+    return [totalRow, foodRow, bevRow, ...supplierRows];
   }
 
   /** Lieferanten-Aufstellung für den Excel-Export (zweites Blatt «Warenkosten»). */
@@ -1604,6 +1699,20 @@ export async function ladeMonatsreport(
   const budgetGross = hatBudget ? r2(budgetNet * VAT_STD()) : null;
   const budgetNetV = hatBudget ? r2(budgetNet) : null;
   const wBudget = hatBudget && weekFrom ? r2(wBudgetNet) : null;
+
+  // ── Food-/Beverage-Umsatz-BUDGET (abgeleitet, Spec 08/2026) ────────────────
+  // Kategorie-Budget = 2025-Umsatzanteil × Netto-Umsatz-Budget (Cockpit-
+  // Override vor budget_v1) — speist auch das Warenkosten-Soll je Kategorie.
+  // Unbekannter Mandant (Test-Mocks) oder fehlendes Netto-Budget ⇒ leer.
+  const fbAnteil = FB_UMSATZ_ANTEIL_2025[tenantId] as { food: number; beverage: number } | undefined;
+  const fbBudget = (anteilPct: number | undefined, basis: number | null): number | null =>
+    anteilPct != null && basis != null ? r2(basis * (anteilPct / 100)) : null;
+  const nettoBudM = ckMk('netto_umsatz') ?? budgetNetV;
+  const nettoBudW = ckWk('netto_umsatz') ?? wBudget;
+  const fbBudFoodM = fbBudget(fbAnteil?.food, nettoBudM);
+  const fbBudFoodW = fbBudget(fbAnteil?.food, nettoBudW);
+  const fbBudBevM = fbBudget(fbAnteil?.beverage, nettoBudM);
+  const fbBudBevW = fbBudget(fbAnteil?.beverage, nettoBudW);
   const vjGrossV = N(vjGross, hatVj);
   const vjNetV = hatVj ? r2(vjNetSum) : null;
   const mGaesteV = N(mGaeste, hatGaeste);
@@ -1762,32 +1871,35 @@ export async function ladeMonatsreport(
       budget: ckWk('take_away_umsatz'),
       // Mit erfasstem Cockpit-Budget Δ% gegen das Budget, sonst gegen das VJ.
     }, { deltaVsVj: ckMk('take_away_umsatz') == null, ckId: 'take_away_umsatz' }),
+    // Food-/Beverage-UMSATZ (netto): Ist = foodBeverageSplit (Invariante
+    // Food+Beverage=Netto); Budget = 2025-Umsatzanteil × Netto-Umsatz-Budget
+    // (FB_UMSATZ_ANTEIL_2025, abgeleitet — KEINE eigene Cockpit-Position).
+    // Mit Budget Δ% gegen Budget, ohne (kein Netto-Budget) gegen das VJ.
+    d('food_umsatz', 'Food Umsatz (netto)', {
+      month: mHatUmsatz ? r2(mFood) : null,
+      week: weekFrom && wHatUmsatz ? r2(wFood) : null,
+      vj: vwFoodNet, vjMonth: vjFoodNet,
+      monthBudget: fbBudFoodM, weekBudget: fbBudFoodW, budget: fbBudFoodW,
+    }, { deltaVsVj: fbBudFoodM == null }),
+    d('beverage_umsatz', 'Beverage Umsatz (netto)', {
+      month: mHatUmsatz ? r2(mBev) : null,
+      week: weekFrom && wHatUmsatz ? r2(wBev) : null,
+      vj: vwBevNet, vjMonth: vjBevNet,
+      monthBudget: fbBudBevM, weekBudget: fbBudBevW, budget: fbBudBevW,
+    }, { deltaVsVj: fbBudBevM == null }),
     e(),
-    // Die früheren Zeilen «Food»/«Beverage» (Umsatzaufteilung) wurden bewusst
-    // entfernt (alle Ansichten); die WKQ-Food/-Beverage-Detailzeilen unter
-    // «Warenkosten total» bleiben davon unberührt.
     // ── Block Produktivität ──
-    // Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (Budget-Spalte der
-    // beiden Folgezeilen ⇒ Δ% mit Kosten-Ampel: über Bedarf = rot).
-    d('bedarf_stunden', 'Bedarf-Stunden (Soll)', {
-      month: bedarfStdM, week: bedarfStdW,
-    }, { fmt: 'hours', bold: true }),
-    // Dienstplan-Stunden haben ein EIGENES Cockpit-Budget (aus dem Dienstplan,
-    // je Monat überschreibbar) — bewusst NICHT mehr die Bedarf-Stunden als
-    // Budget-Fallback (Spec 08/2026); ohne Budget bleibt die Zelle leer.
-    d('prod_stunden_plan', 'Dienstplan-Stunden (Plan)', {
-      month: planStd, week: wPlanStd,
-      monthBudget: ckMk('dienstplan_stunden'), budget: ckWk('dienstplan_stunden'),
-      weekBudget: ckWk('dienstplan_stunden'),
-    }, { fmt: 'hours', deltaInverted: true, ckId: 'dienstplan_stunden' }),
-    // Ist-Stunden: Cockpit-Budget «Produktive Stunden» (falls erfasst) hat
-    // Vorrang vor der Bedarf-Leitplanke als Budget-Basis.
-    d('prod_stunden_ist', 'Ist-Stunden (MIRUS)', {
+    // EINE Stunden-Zeile (Spec 08/2026, ersetzt Bedarf/Plan/Ist-Einzelzeilen):
+    // Ist-Spalte = Ist-Stunden (MIRUS), Budget-Spalte = Dienstplan-PLAN-Stunden,
+    // Bedarf (Soll) informativ im Label (Monatswert). Δ% Ist vs. Plan mit
+    // Kosten-Ampel (über Plan = rot). «leer statt 0» bleibt je Quelle erhalten.
+    d('prod_stunden_ist',
+      bedarfStdM != null
+        ? `Stunden — Bedarf (Soll) ${Math.round(bedarfStdM).toLocaleString('de-CH')} / Plan (Budget) / Ist (MIRUS)`
+        : 'Stunden — Plan (Budget) / Ist (MIRUS)', {
       month: istStd, week: wIstStd,
-      monthBudget: ckMk('prod_stunden') ?? bedarfStdM,
-      budget: ckWk('prod_stunden') ?? bedarfStdW,
-      weekBudget: ckWk('prod_stunden') ?? bedarfStdW,
-    }, { fmt: 'hours', deltaInverted: true, ckId: 'prod_stunden' }),
+      monthBudget: planStd, weekBudget: wPlanStd, budget: wPlanStd,
+    }, { fmt: 'hours', bold: true, deltaInverted: true }),
     d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
@@ -1863,8 +1975,8 @@ export async function ladeMonatsreport(
       const mTage = new Date(year, month, 0).getDate();
       const wTage = weekFrom && weekTo
         ? Math.round((Date.parse(weekTo) - Date.parse(weekFrom)) / 86_400_000) + 1 : 0;
-      const mBud = collapsed ? null : (hatCk ? ckMk(id) : null) ?? reviewZielBudget(star, mTage);
-      const wBud = collapsed ? null : (hatCk ? ckWk(id) : null) ?? reviewZielBudget(star, wTage);
+      const mBud = collapsed ? null : (hatCk ? ckMk(id) : null) ?? reviewZielBudget(star, mTage, reviewWochenrate(tenantId, platform));
+      const wBud = collapsed ? null : (hatCk ? ckWk(id) : null) ?? reviewZielBudget(star, wTage, reviewWochenrate(tenantId, platform));
       return {
         ...d(id, label, {
           month: reviewSingles ? countReviewsByStar(reviewSingles, platform, fromIso, toIso, star) : null,
@@ -2077,6 +2189,8 @@ function baueWochenverlaufRows(
   vjAggs: (VjWeekAgg | null)[] | undefined,
   /** Aufgelöste Cockpit-Budgets je Woche (resolveCockpitBudgets). */
   budgets?: Record<string, number | null>[],
+  /** F/B-Umsatzanteil 2025 des Mandanten (abgeleitetes Kategorie-Budget). */
+  fbAnteil?: { food: number; beverage: number },
 ): WochenverlaufRow[] {
   const vjCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] | undefined =>
     vjAggs ? vjAggs.map(a => (a ? fn(a) : null)) : undefined;
@@ -2095,6 +2209,10 @@ function baueWochenverlaufRows(
     vj: (a: VjWeekAgg) => number | null;
     /** Cockpit-Budget-KPI dieser Zeile (Subzeile «B …» je Woche). */
     budgetId?: string;
+    /** Abgeleitetes Budget aus den aufgelösten Wochen-Budgets (Vorrang vor budgetId). */
+    budgetOf?: (b: Record<string, number | null>) => number | null;
+    /** Budget aus dem Ist-Aggregat (z.B. Plan-Stunden) — nur im aktuellen Jahr. */
+    budgetIst?: (a: WeekAgg) => number | null;
     budgetInverted?: boolean;
   };
   const defs: Def[] = [
@@ -2102,17 +2220,27 @@ function baueWochenverlaufRows(
       ist: a => a.hatUmsatz ? r2(a.gross) : null, vj: a => a.hatUmsatz ? r2(a.gross) : null },
     { label: 'Netto Umsatz', fmt: 'chf', bold: true, budgetId: 'netto_umsatz',
       ist: a => a.hatUmsatz ? r2(a.net) : null, vj: a => a.hatUmsatz ? r2(a.net) : null },
+    // Food-/Beverage-UMSATZ (netto): Ist = foodBeverageSplit; Budget =
+    // 2025-Umsatzanteil × Netto-Umsatz-Budget der KW (abgeleitet, Spec 08/2026).
+    { label: 'Food Umsatz (netto)', fmt: 'chf',
+      ist: a => a.hatUmsatz ? r2(a.food) : null, vj: a => a.hatFood ? r2(a.food) : null,
+      budgetOf: b => fbAnteil && b['netto_umsatz'] != null
+        ? r2(b['netto_umsatz']! * (fbAnteil.food / 100)) : null },
+    { label: 'Beverage Umsatz (netto)', fmt: 'chf',
+      ist: a => a.hatUmsatz ? r2(a.bev) : null, vj: a => a.hatBev ? r2(a.bev) : null,
+      budgetOf: b => fbAnteil && b['netto_umsatz'] != null
+        ? r2(b['netto_umsatz']! * (fbAnteil.beverage / 100)) : null },
     { label: 'Gäste IN', fmt: 'count', budgetId: 'gaeste_in',
       ist: a => a.hatGaeste ? r2(a.gaeste) : null, vj: a => a.hatGaeste ? r2(a.gaeste) : null },
     // «Durchschnittsverkauf» bewusst entfernt (Spec 08/2026).
     { label: 'Take Away Anteil', fmt: 'pct', budgetId: 'take_away_anteil',
       ist: a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null,
       vj: a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null },
-    { label: 'Produktive Stunden (Ist)', fmt: 'hours', budgetId: 'prod_stunden', budgetInverted: true,
-      ist: a => a.hatIst ? r2(a.istStd) : null, vj: () => null },       // keine vj-Quelle
-    // Budget = EIGENES Dienstplan-Stunden-Budget (Spec 08/2026, kein Bedarf-Fallback).
-    { label: 'Produktive Stunden geplant', fmt: 'hours', budgetId: 'dienstplan_stunden',
-      ist: a => a.hatPlan ? r2(a.planStd) : null, vj: () => null },      // keine vj-Quelle
+    // EINE Stunden-Zeile (Spec 08/2026): Ist = MIRUS, Budget = Dienstplan-PLAN
+    // aus dem Wochen-Ist-Aggregat (nur aktuelles Jahr; VJ hat keine Stunden).
+    { label: 'Stunden — Plan (Budget) / Ist (MIRUS)', fmt: 'hours', budgetInverted: true,
+      ist: a => a.hatIst ? r2(a.istStd) : null, vj: () => null,
+      budgetIst: a => a.hatPlan ? r2(a.planStd) : null },
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf', budgetId: 'produktivitaet',
       ist: a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null, vj: () => null },
     // «Umsatz pro Gast» konsolidiert (es bleibt «Ø-Verkauf pro Gast» in den
@@ -2123,8 +2251,12 @@ function baueWochenverlaufRows(
     label: d.label, fmt: d.fmt, bold: d.bold,
     values: mainAus === 'ist' ? istCol(d.ist) : vjMainCol(d.vj),
     vjValues: vjCol(d.vj),
-    budgetValues: budgets && d.budgetId
-      ? budgets.map(b => b[d.budgetId!] ?? null) : undefined,
+    budgetValues: d.budgetIst
+      ? (mainAus === 'ist' ? istCol(d.budgetIst) : undefined)
+      : d.budgetOf
+        ? (budgets ? budgets.map(b => d.budgetOf!(b)) : undefined)
+        : budgets && d.budgetId
+          ? budgets.map(b => b[d.budgetId!] ?? null) : undefined,
     budgetInverted: d.budgetInverted,
   }));
 }
@@ -2303,7 +2435,8 @@ export async function ladeWochenverlauf(
     }
   })();
 
-  const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs, wochenBudgets);
+  const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs, wochenBudgets,
+    FB_UMSATZ_ANTEIL_2025[tenantId] as { food: number; beverage: number } | undefined);
 
   // ── Reservationen je Woche (Foratable-CSV = ALLEINIGE Quelle) ─────────────
   // «Reservierte Gäste» (Σ Personen gezählter Reservationen) und «Gruppen ab
@@ -2351,7 +2484,7 @@ export async function ladeWochenverlauf(
         if (ck != null) return ck;
         const to = partialWeekIndex === i && todayIso < w.to ? todayIso : w.to;
         const tage = Math.round((Date.parse(to) - Date.parse(w.from)) / 86_400_000) + 1;
-        return reviewZielBudget(star, tage);
+        return reviewZielBudget(star, tage, reviewWochenrate(tenantId, platform));
       }),
       values: weeks.map(w =>
         reviewSingles ? countReviewsByStar(reviewSingles, platform, w.from, w.to, star) : null),
@@ -2386,8 +2519,13 @@ export async function ladeWochenverlauf(
     // Betriebskosten-Anteile separat als eigene Zeile (nie in der WKQ).
     const grenzeVerlauf = await loadWarenkostenGrenze(tenantId).catch(() => DEFAULT_WARENKOSTEN_GRENZE);
     const warenOnly = nurWarenAnteil(allInvoices, grenzeVerlauf);
-    const weekInvAll = weeks.map(w => filterInvoicesByRange(allInvoices, w.from, w.to));
-    const weekInv = weeks.map(w => filterInvoicesByRange(warenOnly, w.from, w.to));
+    // Laufende (partielle) Woche: Rechnungen wie das Ist auf «bis heute»
+    // klemmen — sonst zählen zukünftig datierte Rechnungen gegen einen nur
+    // bis heute laufenden Umsatz-Nenner (falsche WKQ/Δ in der KW).
+    const invTo = (w: WeekWindow, i: number): string =>
+      partialWeekIndex === i && todayIso < w.to ? todayIso : w.to;
+    const weekInvAll = weeks.map((w, i) => filterInvoicesByRange(allInvoices, w.from, invTo(w, i)));
+    const weekInv = weeks.map((w, i) => filterInvoicesByRange(warenOnly, w.from, invTo(w, i)));
     // WKQ je Woche = Warenkosten ÷ Netto-Umsatz derselben Woche (Hauptlinie).
     const netOf = (i: number): number | null => {
       const a = mainAggs[i];
@@ -2427,17 +2565,73 @@ export async function ladeWochenverlauf(
     }
     // «Betriebskosten (Waren-Lieferanten)» bewusst entfernt (Konten > Grenze
     // bleiben aus der WKQ ohnehin draussen; Detail im Waren-Cockpit).
-    // WKQ je Kategorie (Food/Beverage) — separate Zielquoten, deshalb einzeln.
+    // ── Warenkosten je Kategorie: FOOD (Küche) / BEVERAGE (Bar) ──────────────
+    // Ist (CHF) = Kategorie-Anteile der Rechnungen; Soll = wirksame Kategorie-
+    // Quote × IST-Kategorie-Umsatz der KW (WEQ-Modus, Spec 08/2026):
+    //  - 'gesamt': flache Wochen-WEQ = Cockpit-Wareneinsatz-Budget ÷ Netto-
+    //    Budget der KW (Fallback Ziel-WKQ) für Food UND Beverage;
+    //  - 'kategorie': Food-/Bev-WEQ des Monats des KW-Starts (manuell + Carry).
+    // WKQ-% = Ist ÷ IST-Kategorie-Umsatz (Ziel = Quote). «leer statt 0», nie ÷0.
+    const weqModusWv = await loadWeqModus(tenantKey, selectedYear).catch(() => null);
+    const katModusWv = (weqModusWv?.modus ?? 'gesamt') === 'kategorie';
+    const weqKatQWv = effektiveKategorieWeq(weqModusWv, tenantId);
+    const gesamtQOf = (i: number): number | null => {
+      const bud = wochenBudgets?.[i]?.['wareneinsatz'];
+      const netBud = wochenBudgets?.[i]?.['netto_umsatz'];
+      if (bud != null && netBud != null && netBud > 0) return r2((bud / netBud) * 100);
+      return zielWkqVerlauf > 0 ? r2(zielWkqVerlauf) : null;
+    };
+    const katQOf = (i: number, kat: 'Food' | 'Beverage'): number | null => {
+      if (!katModusWv) return gesamtQOf(i);
+      // Wochen dem Jahr des KW-Starts zuordnen; Fremdjahr-Wochen (KW 1/53
+      // im Nachbarjahr) haben keinen Blob des gewählten Jahres → leer.
+      const from = weeks[i].from;
+      if (from.slice(0, 4) !== String(selectedYear)) return null;
+      const m0 = Number(from.slice(5, 7)) - 1;
+      const q = kat === 'Food' ? weqKatQWv.food[m0] : weqKatQWv.bev[m0];
+      return q !== null ? r2(q) : null;
+    };
     const warenKonten = await loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]);
+    const katNetOf = (i: number, kat: 'Food' | 'Beverage'): number | null => {
+      const a = mainAggs[i];
+      if (!a || !a.hatUmsatz) return null;
+      const n = kat === 'Food' ? a.food : a.bev;
+      return n > 0 ? n : null;
+    };
+    const katSollOf = (i: number, kat: 'Food' | 'Beverage'): number | null => {
+      const q = katQOf(i, kat);
+      const n = katNetOf(i, kat);
+      return q !== null && n !== null ? r2(n * (q / 100)) : null;
+    };
+    // Modus 'kategorie': Total-Soll der KW = Food-Soll + Bev-Soll (leer, wenn
+    // beide leer). Modus 'gesamt': Cockpit-Wareneinsatz-Budget (unverändert).
+    if (katModusWv) {
+      const totalWvRow = rows.find(rw => rw.id === 'warenkosten_total');
+      if (totalWvRow) {
+        totalWvRow.budgetValues = weeks.map((_, i) => {
+          const f = katSollOf(i, 'Food'), b = katSollOf(i, 'Beverage');
+          return f === null && b === null ? null : r2((f ?? 0) + (b ?? 0));
+        });
+      }
+    }
     for (const kat of ['Food', 'Beverage'] as const) {
       rows.push({
-        label: `WKQ ${kat}`, fmt: 'pct',
-        childOf: 'warenkosten_total',
-        values: weekInv.map((list, i) => {
-          const net = netOf(i);
+        label: kat === 'Food' ? 'Warenkosten Food (Küche)' : 'Warenkosten Beverage (Bar)',
+        fmt: 'chf',
+        values: weekInv.map(list => {
           const s = sumNetByKategorie(list, kat, warenKonten);
-          return s > 0 && net !== null ? r2((s / net) * 100) : null;
+          return s > 0 ? r2(s) : null;
         }),
+        budgetValues: weeks.map((_, i) => katSollOf(i, kat)),
+        budgetInverted: true,
+        wkqValues: weekInv.map((list, i) => {
+          const n = katNetOf(i, kat);
+          const s = sumNetByKategorie(list, kat, warenKonten);
+          return s > 0 && n !== null ? r2((s / n) * 100) : null;
+        }),
+        // Ziel-Quote je Modus: 'kategorie' = Default-Quote des Mandanten als
+        // Kopfwert (Monatswerte variieren je KW); 'gesamt' ohne festes Ziel.
+        wkqZiel: undefined,
       });
     }
   }
@@ -2657,6 +2851,12 @@ export async function ladeJahresvergleich(
     { label: 'Netto Umsatz', fmt: 'chf', bold: true,
       cur: hatUmsatz ? r2(net) : null, vj: hatVj ? r2(vjNet) : null,
       budget: jb('netto_umsatz') },
+    // Food-/Beverage-UMSATZ (netto) — reine IST-Aufteilung (foodBeverageSplit /
+    // vjTagWerte, Invariante Food+Beverage=Netto), OHNE Budget-Position.
+    { label: 'Food Umsatz (netto)', fmt: 'chf',
+      cur: hatUmsatz ? r2(food) : null, vj: hatVj ? r2(vjFoodG) : null },
+    { label: 'Beverage Umsatz (netto)', fmt: 'chf',
+      cur: hatUmsatz ? r2(bev) : null, vj: hatVj ? r2(vjBevG) : null },
     { label: 'Gäste IN', fmt: 'count',
       cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null,
       budget: jb('gaeste_in') },
@@ -2676,13 +2876,11 @@ export async function ladeJahresvergleich(
     // Wareneinsatz: konsolidierte Budget-Position (Ist folgt im Waren-Block).
     { label: 'Wareneinsatz', fmt: 'chf', cur: null, vj: null,
       budget: jb('wareneinsatz'), deltaInverted: true },
-    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
+    // EINE Stunden-Zeile (Spec 08/2026): Ist = MIRUS, Budget = Dienstplan-Plan
+    // aus dem Ist-Aggregat (keine VJ-Quelle) — konsistent zur Haupttabelle.
+    { label: 'Stunden — Plan (Budget) / Ist (MIRUS)', fmt: 'hours',
       cur: hatIst ? r2(istStd) : null, vj: null,   // keine VJ-Quelle
-      budget: jb('prod_stunden'), deltaInverted: true },
-    // Budget = EIGENES Dienstplan-Stunden-Budget (Spec 08/2026, kein Bedarf-Fallback).
-    { label: 'Produktive Stunden geplant', fmt: 'hours',
-      cur: hatPlan ? r2(planStd) : null, vj: null, // keine VJ-Quelle
-      budget: jb('dienstplan_stunden'), deltaInverted: true },
+      budget: hatPlan ? r2(planStd) : null, deltaInverted: true },
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
       cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null, // keine VJ-Quelle
       budget: jb('produktivitaet') },
@@ -2708,7 +2906,7 @@ export async function ladeJahresvergleich(
           ? countReviewsByStar(reviewSingles, platform, vjFrom, vjTo, star) : 0;
         const pTage = Math.round((Date.parse(curTo) - Date.parse(curFrom)) / 86_400_000) + 1;
         return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null,
-          budget: jb(id) ?? reviewZielBudget(star, pTage),
+          budget: jb(id) ?? reviewZielBudget(star, pTage, reviewWochenrate(tenantId, platform)),
           deltaInverted: star === 1 || star === 3 };
       }),
   ];
