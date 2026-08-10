@@ -39,6 +39,14 @@ import { logImportRun } from '@/lib/import-runs-db';
 import { buildReservationRunStats } from '@/lib/import-runs';
 import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
 import { ReservationCountingSettingsCard } from '@/components/reservations/ReservationCountingSettingsCard';
+import {
+  monatsAggregateAusDatei, selfCheckNachImport,
+} from '@/lib/reservation-import-selfcheck';
+import type { MonatsAggregat, SelfCheckResult } from '@/lib/reservation-import-selfcheck';
+import {
+  loadReservationCounting, DEFAULT_RESERVATION_COUNTING, STATUS_LABELS,
+} from '@/lib/reservation-cockpit-settings';
+import type { ReservationCountingSettings } from '@/lib/reservation-cockpit-settings';
 import { TakeAwayOfferedSettingsCard } from '@/components/reservations/TakeAwayOfferedSettingsCard';
 
 type WizardStep = 'upload' | 'preview' | 'saving' | 'done';
@@ -49,7 +57,7 @@ type Tab = 'import' | 'history';
 export default function ReservationenImportPage(
   { embedded = false, onImported }: { embedded?: boolean; onImported?: () => void } = {},
 ) {
-  const { tenantId } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
 
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -69,12 +77,27 @@ export default function ReservationenImportPage(
   const [history, setHistory] = useState<ReservationImportRow[]>([]);
   const [histLoading, setHistLoading] = useState(false);
 
+  /** Zentrale Zählregel (für Selbstkontrolle je Monat). */
+  const [counting, setCounting] = useState<ReservationCountingSettings>(DEFAULT_RESERVATION_COUNTING);
+  /** Selbstkontrolle nach dem Import (Datei ↔ DB ↔ gemergtes Monats-Total). */
+  const [selfCheck, setSelfCheck] = useState<SelfCheckResult | null>(null);
+  const [selfCheckLoading, setSelfCheckLoading] = useState(false);
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Setup prüfen ────────────────────────────────────────────────────────────
   useEffect(() => {
     checkReservationTablesExist().then(setTablesOk);
   }, []);
+
+  // Zentrale Zählregel laden (bestimmt die Selbstkontrolle je Monat).
+  useEffect(() => {
+    let alive = true;
+    loadReservationCounting(tenantKey)
+      .then(s => { if (alive) setCounting(s); })
+      .catch(() => { /* Defaults bleiben */ });
+    return () => { alive = false; };
+  }, [tenantKey]);
 
   // ── Verlauf laden ─────────────────────────────────────────────────────────
   const loadHistory = useCallback(async () => {
@@ -93,6 +116,7 @@ export default function ReservationenImportPage(
     setParsed(null);
     setGuestClass(null);
     setDiff(null);
+    setSelfCheck(null);
     setParseError(null);
     setStep('upload');
     if (fileRef.current) fileRef.current.value = '';
@@ -104,6 +128,7 @@ export default function ReservationenImportPage(
     setParsed(null);
     setGuestClass(null);
     setDiff(null);
+    setSelfCheck(null);
     try {
       const result = parseReservationsCsv(sourceName, text);
       if (!result.headerOk) {
@@ -115,6 +140,14 @@ export default function ReservationenImportPage(
         setParseError('Keine gültigen Reservationen in der Datei gefunden.');
         return;
       }
+      // Zählregel FRISCH laden und als Snapshot verwenden — Vorschau und
+      // Selbstkontrolle rechnen garantiert mit derselben, aktuellen Regel
+      // (kein Stale-State vom Seitenmount oder von der Einstellungs-Karte).
+      try {
+        const fresh = await loadReservationCounting(tenantKey);
+        setCounting(fresh);
+      } catch { /* zuletzt geladener Stand bleibt */ }
+
       setParsed(result);
       setStep('preview');
 
@@ -138,7 +171,7 @@ export default function ReservationenImportPage(
     } catch (e) {
       setParseError('Fehler beim Verarbeiten der Daten: ' + (e instanceof Error ? e.message : String(e)));
     }
-  }, [tenantId]);
+  }, [tenantId, tenantKey]);
 
   const handleFileSelect = (file: File | undefined) => {
     if (!file) {
@@ -249,7 +282,88 @@ export default function ReservationenImportPage(
     );
     setStep('done');
     loadHistory();
+
+    // Selbstkontrolle NACH dem Import: Datei-Summen je Monat gegen die DB
+    // (Res.Nr. der Datei) + gemergte Monats-Totale. Abweichung → Warnung.
+    setSelfCheckLoading(true);
+    try {
+      const check = await selfCheckNachImport(tenantId, parsed.reservations, counting);
+      setSelfCheck(check);
+      if (!check.allOk) {
+        toast.warning('Selbstkontrolle: Abweichung zwischen Datei und Datenbank — Details unten. Der Import kann rückgängig gemacht werden.');
+      }
+    } finally {
+      setSelfCheckLoading(false);
+    }
   };
+
+  // ── Selbstkontrolle: Monats-Aggregate der Datei (Vorschau) ─────────────────
+  const fileMonths = useMemo<MonatsAggregat[]>(
+    () => parsed ? monatsAggregateAusDatei(parsed.reservations, counting) : [],
+    [parsed, counting],
+  );
+  const nf = useMemo(() => new Intl.NumberFormat('de-CH'), []);
+  const fmtN = (v: number | null) => v === null ? '—' : nf.format(v);
+  const fmtMonth = (m: string) => {
+    const [y, mo] = m.split('-');
+    return `${mo}.${y}`;
+  };
+
+  /** Monats-Tabelle (Datei-Werte, optional mit DB-Kontrolle). */
+  const monthTable = (rows: MonatsAggregat[], check?: SelfCheckResult | null) => (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm" data-testid="table-selfcheck-months">
+        <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 font-medium">Monat</th>
+            <th className="px-3 py-2 font-medium text-right">Res. gezählt</th>
+            <th className="px-3 py-2 font-medium text-right">Reservierte Gäste</th>
+            <th className="px-3 py-2 font-medium text-right">Gruppen ≥{counting.groupThreshold} Pax</th>
+            <th className="px-3 py-2 font-medium text-right">Σ Pers. Gruppen</th>
+            {check && <th className="px-3 py-2 font-medium text-right">Monat gesamt (nach Merge)</th>}
+            {check && <th className="px-3 py-2 font-medium">Kontrolle</th>}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {rows.map(m => {
+            const k = check?.rows.find(r => r.month === m.month);
+            return (
+              <tr key={m.month} data-testid={`row-selfcheck-${m.month}`}>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{fmtMonth(m.month)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{m.countedReservations}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold" data-testid={`text-file-guests-${m.month}`}>{fmtN(m.reservedGuests)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtN(m.groupCount)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtN(m.groupPersons)}</td>
+                {check && (
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold" data-testid={`text-merged-guests-${m.month}`}>
+                    {k ? fmtN(k.merged.reservedGuests) : '—'}
+                    {k && k.merged.largeGroupCount !== null && (
+                      <span className="text-xs text-muted-foreground font-normal">
+                        {' '}· {fmtN(k.merged.largeGroupCount)} Grp / {fmtN(k.merged.largeGroupPersons)} P
+                      </span>
+                    )}
+                  </td>
+                )}
+                {check && (
+                  <td className="px-3 py-2">
+                    {k?.ok ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium" data-testid={`status-check-${m.month}`}>
+                        <CheckCircle2 className="h-3.5 w-3.5" /> OK
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400 text-xs font-medium" data-testid={`status-check-${m.month}`}>
+                        <AlertTriangle className="h-3.5 w-3.5" /> Abweichung
+                      </span>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 
   // ── Vorschau-Werte ──────────────────────────────────────────────────────────
   const stats = parsed?.stats ?? null;
@@ -448,6 +562,19 @@ export default function ReservationenImportPage(
                 </div>
               )}
 
+              {/* Selbstkontrolle (Vorschau): Datei-Summen je Monat nach zentraler Zählregel */}
+              {fileMonths.length > 0 && (
+                <div className="space-y-1.5" data-testid="section-selfcheck-preview">
+                  <p className="text-sm font-semibold">Selbstkontrolle — Datei-Summen je Monat</p>
+                  <p className="text-xs text-muted-foreground">
+                    Gezählt werden nur Status {counting.countedStatuses.map(s => STATUS_LABELS[s]).join(' + ')};
+                    storniert/abgelehnt/No-show/nicht beantwortet zählen nicht. Nach dem Import wird
+                    jede Monatssumme gegen die Datenbank geprüft.
+                  </p>
+                  {monthTable(fileMonths)}
+                </div>
+              )}
+
               <ReservationSummary
                 stats={stats}
                 newGuests={guestClass ? guestClass.newGuests : null}
@@ -493,6 +620,45 @@ export default function ReservationenImportPage(
               <CheckCircle2 className="h-12 w-12 text-emerald-500" />
               <p className="mt-3 text-lg font-semibold">Import abgeschlossen</p>
               <p className="text-sm text-muted-foreground mt-1">Die Reservationen wurden gespeichert.</p>
+
+              {/* Selbstkontrolle nach dem Import */}
+              <div className="w-full max-w-4xl mt-6 text-left space-y-2" data-testid="section-selfcheck-result">
+                <p className="text-sm font-semibold">Selbstkontrolle — Datei ↔ Datenbank je Monat</p>
+                {selfCheckLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Kontrolle läuft …
+                  </div>
+                ) : selfCheck ? (
+                  <>
+                    {selfCheck.error && (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-3 text-sm text-amber-800 dark:text-amber-300" data-testid="banner-selfcheck-error">
+                        Kontrolle konnte nicht vollständig durchgeführt werden: {selfCheck.error}
+                      </div>
+                    )}
+                    {!selfCheck.error && !selfCheck.allOk && (
+                      <div className="rounded-lg border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300 flex gap-2" data-testid="banner-selfcheck-warning">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        <span>
+                          Abweichung zwischen Datei und Datenbank — bitte prüfen. Der Import kann
+                          im Bereich «Letzter Import» rückgängig gemacht werden.
+                        </span>
+                      </div>
+                    )}
+                    {!selfCheck.error && selfCheck.allOk && (
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium" data-testid="text-selfcheck-ok">
+                        Alle Monatssummen der Datei sind exakt in der Datenbank angekommen.
+                      </p>
+                    )}
+                    {monthTable(selfCheck.rows.map(r => r.file), selfCheck)}
+                    <p className="text-xs text-muted-foreground">
+                      «Monat gesamt (nach Merge)» = alle Reservationen des Monats in der Datenbank
+                      (bestehende + diese Datei, gleiche Res.Nr. ersetzt, nie doppelt) — entspricht
+                      den Kennzahlen im Monatsreport/Cockpit.
+                    </p>
+                  </>
+                ) : null}
+              </div>
+
               <div className="flex gap-3 mt-5">
                 <button
                   onClick={resetWizard}
