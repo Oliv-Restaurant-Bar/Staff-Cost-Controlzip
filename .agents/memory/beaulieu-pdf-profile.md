@@ -34,6 +34,14 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 ## Modus-Wahl (Aug 2026)
 - `dokumenttyp` aus dem PDF-Inhalt gewinnt; nur bei null greift die Heuristik `belegart==='rechnung' && lieferungen.length>1` → monatsrechnung. Anzahl LS-Blöcke allein entscheidet NIE.
 
+## Oliv-Erweiterung (Aug 2026)
+- Import + Profil-Editor laufen für BEIDE Mandanten (Gates in Warenrechnungen.tsx geöffnet); Default-Profile gelten mandantenweit, KV bleibt per tenantKey getrennt.
+- Neue Stufe-2-Parser: `ambro` (Blöcke «Basierend auf Lieferschein X vom … Lieferdatum Y» — LIEFERDATUM (2. Datum) ist massgeblich, nie das LS-Datum; Rundung wird dem MwSt-Betrag zugeschlagen, damit netto+mwst=Gesamtbetrag; belegtyp 'monatsrechnung' ⇒ modus immer final), `transgourmet` (EIN LS je Rechnung, «/» oder «vom»; Food/Non-Food je Position aus der MWST-Klasse: 2.6%→Food, 8.1/0%→Nonfood — deckt exakt die Sparten-Tabelle 42020/42030/42040/42060=Food, 42880/43010/47010/61520/64110=Non-Food; mwstSatz null wegen Mischsätzen), `bohnenblust` («Lieferschein Nr. X vom Y Total Z»-Blöcke).
+- Zeilen-Parsing der neuen Parser über Zellen-Split `\s{2,}` (Zeilenrekonstruktion verbindet PDF-Zellen mit Doppel-Leerzeichen) statt fragiler Ganz-Zeilen-Regex; Bezeichnung teils auf Nachbarzeile (Ambro).
+- **Mandanten-Gegenprobe:** `erkenneMandantImText` (Beleg-Adresse: Oliv Gastro AG/Restaurant & Bar Oliv vs Restaurant Beaulieu) — fremder Mandant ⇒ Zeile GESPERRT (istBuchbar false), nie stilles Umbuchen; beide/keine Adresse ⇒ null (kein Raten).
+- Fixtures neu via PRODUKTIVER Zeilenrekonstruktion erzeugen (esbuild-Bundle von gn-pdf-lines + reconstructGnPdfLines über die /tmp-Item-JSONs), Ablage `fixtures/oliv-pdf/`; Tests `oliv-pdf-parse.test.ts` mit exakten Kontrollwerten.
+- Spahni-Kopf: Belegdatum aus «Zollikofen , 31.07.26  Seite» (generischer Fallback fängt nur 4-stellige Jahre).
+
 ## Profil-Lernen ohne MWST-Nr
 - `lerneProfil` leitet ohne MWST-Nr automatisch Namens-Tokens ab (lowercase, Wörter ≥3 Zeichen) → `findeProfilImText` erkennt den Lieferanten beim Re-Import; bestehende Tokens/IBAN nie überschreiben. Lernen ist KUMULATIV — Import-Undo rollt Profile bewusst nicht zurück.
 - AB→Rechnung (Terravigna): Dokumente tragen KEINE gemeinsame Referenz (Rechnung nennt die AB-Nr. nicht). fs-import ersetzt eine provisorische AB nur bei GENAU EINEM Kandidaten im Fenster (Toleranz max(0.10, 1 % Brutto)); Matcher generell in zwei Pässen: exakte Referenz VOR Datum+Betrag.

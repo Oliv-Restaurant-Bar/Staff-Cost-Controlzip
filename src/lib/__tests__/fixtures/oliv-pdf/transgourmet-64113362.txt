@@ -1,0 +1,238 @@
+DOKTYPE;L64113362;SEITE;1;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;ESR;EX;1
+Rechnung 64113362
+CH-3302
+A-PRIORITY  CH-POST AG
+P.P.  Moosseedorf
+Oliv Gastro AG Oliv Restaurant & Bar
+Waisenhausplatz 28
+3011 Bern
+tttt  Vor der Einzahlung abzutrennen / À détacher avant le versement / Da staccare prima del versamento  tttt
+Empfangsschein  Zahlteil  Konto / Zahlbar an
+CH95 3077 0255 1025 2200 1
+Konto / Zahlbar an
+Transgourmet Schweiz AG
+CH95 3077 0255 1025 2200 1
+Lochackerweg 5
+Transgourmet Schweiz AG
+Lochackerweg 5  3302 Moosseedorf
+3302 Moosseedorf
+Referenz
+Referenz
+51 06410 08003 23330 06411 33622
+51 06410 08003 23330 06411 33622
+Zahlbar durch  Zahlbar durch
+Oliv Gastro AG Oliv Restaurant & Bar  Oliv Gastro AG Oliv Restaurant & Bar
+Waisenhausplatz 28
+Waisenhausplatz 28
+3011 Bern
+3011 Bern
+Währung  Betrag  Währung  Betrag
+CHF  2 702.90
+CHF  2 702.90
+Annahmestelle
+DOKTYPE;L64113362;SEITE;2;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;WEISS;EX;1
+Rechnung 64113362
+Fakturaadresse  Rechnungsdatum  31.07.2026
+Oliv Gastro AG Oliv Restaurant & Bar  Rechnungsnummer  64113362
+Waisenhausplatz 28  Regulierer  80032333
+3011 Bern
+Seite 2 / 6
+Beleg  Betrag exkl. MWST  Betrag inkl. MWST
+Oliv Gastro AG, Oliv Restaurant & Bar, Oliv Restaurant & Bar, Waisenhausplatz 28, 3011 Bern, 90032154/00
+Lieferschein 5948740 vom 31.07.2026  2'684.34  2'763.71
+Gebinderetoure 12981227 vom 31.07.2026  -60.80  -60.80
+Zusammenfassung gem. MWST  MWST  exkl. MWST  inkl. MWST
+MWST 0.00%  0.00  -3.20  -3.20
+MWST 8.10%  16.33  201.66  217.99
+MWST 2.60%  63.04  2'425.08  2'488.12
+Rundungsdifferenz  -0.01
+Total Rechnung  79.37  2'623.54  CHF 2'702.90
+Sie profitieren von CHF 26.16 Internet-Bestellrabatt.
+Zahlbar innert 30 Tagen mit beiliegendem Einzahlungsschein
+Basler Kantonalbank, 4002 Basel
+Clearing: 770
+IBAN CH73 0077 0255 1025 2200 1
+Prodega/Transgourmet  CHE-116.311.185 MWST  Kundencenter 0848 000 501
+Transgourmet Schweiz AG  kundencenter@transgourmet.ch
+www.transgourmet.ch
+DOKTYPE;L64113362;SEITE;3;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;WEISS;EX;1
+Rechnung 64113362
+Seite 3 / 6
+Pos  Art-Nr.  T  Best.  Lief.  Eh  Gewicht /  Artikelbezeichnung  Preis  Rabatt  Online  Pos.  Betrag exkl.  Betrag inkl.  MW
+K  Menge  Menge  Inhalt  Rabatt  Kezi  MWST  MWST
+Lieferschein 5948740 / 31.07.2026  2'684.34  2'763.71
+Auftragsnummer 12971071 / 29.07.2026  2'684.34  2'763.71
+10  002066  2  1  St  5.886 kg  Rinds-Entrecote, ca. 5 kg  45.05  1.00%  265.16  272.05  2.60
+Rinds-Entrecote
+Rohstoffherkunft: Schweiz
+30  002092  2  2  St  4.159 kg  Kalbs-Unterspälte, enthäutet, ca. 2 kg  46.43  1.00%  193.10  198.12  2.60
+Kalbs-Unterspälte, enthäutet
+Rohstoffherkunft: Schweiz
+40  512610  1  4  4  1 Ds  Quality Petersilie, luftgetrocknet, 66 g  5.32  1.00%  21.28  21.83  2.60
+Petersilie luftgetrocknet
+50  048827  2  2  2 Gi  6 kg  Zitronen, 6 kg  2.89  1.00%  34.68  35.58  2.60
+Herkunft: Südafrika
+51  000079  1  2  2  1 St  Ifco LiftLock  3.20  6.40  6.40  0.00
+60  047754  2  1  Kt  4.200 kg  Limetten / Limes, 4,2 kg  4.01  1.00%  16.84  17.28  2.60
+Herkunft: Brasilien
+70  043334  2  1  Gi  5.000 kg  Lattich, 5 kg  4.83  1.00%  24.15  24.78  2.60
+Herkunft: Schweiz
+71  000079  1  1  1  1 St  Ifco LiftLock  3.20  3.20  3.20  0.00
+80  041241  2  3  3 Gi  8 St  Eichblattsalat rot / grün gemischt, Schweiz, 8 St  2.12  1.00%  50.88  52.20  2.60
+Herkunft: Schweiz / AL9
+81  000079  1  3  3  1 St  Ifco LiftLock  3.20  9.60  9.60  0.00
+90  040329  2  1  1  1 Bt  Basilikum, 1 kg  29.39  1.00%  29.39  30.15  2.60
+Basilikum
+110  044107  2  2  2 Gi  5 kg  Peperoni Tricolor, Import, 5 kg  4.30  1.00%  43.00  44.12  2.60
+Herkunft: Niederlande
+111  000079  1  2  2  1 St  Ifco LiftLock  3.20  6.40  6.40  0.00
+120  045708  2  1  1 Gi  5 kg  Zucchetti CH, 5 kg  2.71  1.00%  13.55  13.90  2.60
+Herkunft: Schweiz
+121  000079  1  1  1  1 St  Ifco LiftLock  3.20  3.20  3.20  0.00
+130  045777  2  1  1  1 Sc  Zucchetti Mini-Gemüse ohne Blüte, ca. 5 - 6 Stück  7.77  1.00%  7.77  7.97  2.60
+Herkunft: Südafrika
+140  044376  2  4  4  1 Sc  Natura Bio Sango-Rettichsprossen, 100 g  5.77  1.00%  23.08  23.68  2.60
+Sango-Rettich
+AL1
+150  045208  2  1  1 Gi  6 kg  Tomaten, rund, 6 kg  3.17  1.00%  A  19.02  19.51  2.60
+Herkunft: Schweiz
+151  000079  1  1  1  1 St  Ifco LiftLock  3.20  3.20  3.20  0.00
+160  040972  2  1  1 Gi  3 kg  Cherry Rispentomaten, 3 kg  9.37  1.00%  28.11  28.84  2.60
+Herkunft: Schweiz
+161  000079  1  1  1  1 St  Ifco LiftLock  3.20  3.20  3.20  0.00
+170  049135  2  6  6 Kt  1 kg  Champignons weiss, frisch, 1 kg  6.83  1.00%  A  40.98  42.05  2.60
+Weisser Zucht-Champignon (Agaricus bisporus)
+AL9
+180  024440  2  2  2 Kt  12 Tp  Quality Vollrahm 35%, UHT, 12 x 1 l  5.84  1.00%  S  140.16  143.80  2.60
+Vollrahm 35% Fett, UHT
+AL9
+190  010201  2  5  5  1 Bt  Economy Gran Moravia, gerieben, 1 kg  15.63  1.00%  78.15  80.18  2.60
+Italienischer Hartkäse, mindestens 32% Fett i. Tr. gerieben
+200  012201  2  5  5  1 Bt  Economy Gran Moravia, gehobelt, 500 g  8.70  1.00%  43.50  44.63  2.60
+Italienischer Hartkäse, mindestens 32% Fett i. Tr, gehobelt
+210  013702  2  1  St  3.305 kg  Quality Raclette, eckig, 1/2 Laib ca. 3,2 kg  10.82  1.00%  S  35.76  36.69  2.60
+Schweizer Halbhartkäse, vollfett, aus pasteurisierter Milch
+AL9
+220  001494  2  2  Bt  5.190 kg  Bell Poulet-Brust ohne Haut ohne Innenfilet, 150-170 g, ca.  22.28  1.00%  115.63  118.64  2.60
+2,5 kg
+Poulet-Brust ohne Haut, ohne Innenfilet
+Rohstoffherkunft: Schweiz
+230  005010  2  2  2 Ke  3 kg  Quality Joghurt Nature, 3 kg  2.44  1.00%  14.64  15.02  2.60
+Jogurt Nature (3.5 % Fett im Milchanteil)
+AL9
+240  438073  1  4  4  1 Sc  Picosa Datteltomaten getrocknet, 1,1 kg  24.12  1.00%  96.48  98.99  2.60
+Getrocknete Datteltomaten in Öl, halbiert
+250  590111  1  1  1 Bx  20 Lt  Quality Sonnenblumenöl, 20 l  4.41  1.00%  88.20  90.49  2.60
+Sonnenblumenöl
+260  110060  1  1  1 Mp  10 Pk  Feinkristallzucker, 10 x 1 kg  1.36  1.00%  13.60  13.95  2.60
+Feinkristallzucker
+270  509091  1  3  3 Kt  4 Bt  Quality Kapern Capucines, 4 x 1100 g  9.67  1.00%  116.04  119.06  2.60
+Prodega/Transgourmet  CHE-116.311.185 MWST  Kundencenter 0848 000 501
+Transgourmet Schweiz AG  kundencenter@transgourmet.ch
+www.transgourmet.ch
+DOKTYPE;L64113362;SEITE;4;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;WEISS;EX;1
+Rechnung 64113362
+Seite 4 / 6
+Pos  Art-Nr.  T  Best.  Lief.  Eh  Gewicht /  Artikelbezeichnung  Preis  Rabatt  Online  Pos.  Betrag exkl.  Betrag inkl.  MW
+K  Menge  Menge  Inhalt  Rabatt  Kezi  MWST  MWST
+Kapern Capucines im Doypack
+280  993090  1  6  6  1 Pk  Quality Salatschale PP rund FSC, 750 ml, Pack zu 50 Stück  11.03  1.00%  66.18  71.54  8.10
+290  993330  1  6  6  1 Pk  Quality Deckel PP zu Salatschale rund 750 ml, Pack zu 50  8.81  1.00%  52.86  57.14  8.10
+Stück
+300  078253  2  4  St  21.408 kg  Quality Hinterschinken, ohne Schwarte, 1/1, ca. 4,8 kg  10.88  1.00%  A  232.92  238.98  2.60
+Hinterschinken, ohne Schwarte
+Rohstoffherkunft: Schweiz / AL9
+310  083419  2  3  St  2.718 kg  El Campeon Chorizo pikant geschält, ca. 950 g  21.68  1.00%  58.93  60.46  2.60
+Fleischerzeugnis mit Milchprotein und Kartoffelstärke, zum Rohessen
+Rohstoffherkunft: Schweiz
+320  014810  2  3  3 Ke  16 St  Mozzarella di Bufala Campana DOP, 16 x 125 g  2.24  1.00%  107.52  110.32  2.60
+Mozzarella
+330  044540  2  1  1 Sc  1 kg  Rucola / Rauke ungewaschen, 1 kg  12.90  1.00%  12.90  13.24  2.60
+Rucola
+340  996130  1  1  1  1 St  Gefu Vierkantreibe  22.12  1.00%  22.12  23.91  8.10
+350  046909  2  1  1 Sc  3 kg  Birchermüesli Extra fixfertig, 3 kg  10.37  1.00%  31.11  31.92  2.60
+Birchermüesli
+360  018891  2  6  6  1 Ds  Ömür Hirtenkäse 55%, 800 g  9.76  1.00%  58.56  60.08  2.60
+Käse in Salzlake 55% Fett i.Tr.
+370  010131  2  1  1  1 Pk  Berner Alphobelkäse AOP, gerollt, 600 g  27.67  1.00%  S  27.67  28.39  2.60
+Extrahartkäse, mind. 45% FiT, aus Rohmilch hergestellt
+380  010884  2  1  St  1.708 kg  Appenzeller, Mild-Würzig, 1/4 Laib ca. 1,6 kg  14.21  1.00%  A  24.27  24.90  2.60
+Schweizer Hartkäse, vollfett, mit Rohmilch.
+390  012971  2  1  St  1.089 kg  Nuss Käse, 1/1 Laib ca. 1 kg  24.95  1.00%  27.17  27.88  2.60
+Rahmschmelzkäsezubereitug mit Walnüssen
+400  078299  2  1  St  1.368 kg  Quality Truten Brust geräucht, gekocht, Frankreich, 1/3, ca.  19.11  1.00%  26.14  26.82  2.60
+1,3 kg
+Trutenfleischerzeugnis gepökelt, geräuchert
+Rohstoffherkunft: Frankreich
+410  078311  2  1  St  1.826 kg  Bell Hirten Vorderschinken 1/2, mit Schwarte, ca. 2 kg  13.37  1.00%  24.41  25.04  2.60
+Schweinefleischerzeugnis gepökelt, geräuchert
+Rohstoffherkunft: Schweiz
+420  002409  2  3  Pk  4.617 kg  Rinds-Filetspitz Kopf II, ca. 1,5 kg  39.50  1.00%  182.37  187.11  2.60
+Rinds-Filetspitz Kopf
+Rohstoffherkunft: Schweiz
+430  989510  1  4  4  1 Pk  Duni Servietten, 1/8 Falz, 3-lagig, 40 x 40 cm, weiss, 250 St  9.20  1.00%  A  36.80  39.78  8.10
+440  999530  1  2  2  1 Pk  Kassenrolle 76/70/17 mm, Pack zu 10 Rollen  11.85  1.00%  23.70  25.62  8.10
+450  048130  2  2  2 Ne  2 kg  Orangen blond, gepackt, ca. 2 kg  2.18  1.00%  8.72  8.95  2.60
+Herkunft: Spanien
+460  044776  2  1  1  1 Ki  Schnittsalat Oriental, 800 g  21.15  1.00%  21.15  21.70  2.60
+Herkunft: Italien
+470  046576  2  6  6  1 St  Avocado essreif Stück, ca. 280 g  1.94  1.00%  11.64  11.94  2.60
+Herkunft: Peru
+480  046922  2  1  1  1 Sc  Blueberries, 500 g  4.85  1.00%  A  4.85  4.98  2.60
+Herkunft: Polen
+490  047420  2  1  1  1 Sc  Johannisbeeren, CH, 250 g  4.95  1.00%  4.95  5.08  2.60
+Herkunft: Schweiz
+500  047380  2  1  1  1 Sc  Himbeeren, CH, 250 g  6.65  1.00%  6.65  6.82  2.60
+Herkunft: Schweiz
+510  000079  1  0  2  1 St  Ifco LiftLock  3.20  6.40  6.40  0.00
+520  000079  1  0  4  1 St  Ifco LiftLock  3.20  12.80  12.80  0.00
+530  000079  1  0  1  1 St  Ifco LiftLock  3.20  3.20  3.20  0.00
+Auftragsnummer 12981227 / Kundenreferenz 12755813 / 31.07.2026  -60.80  -60.80
+10  000079  1  -19  -19  1 St  Ifco LiftLock  3.20  -60.80  -60.80  0.00
+Zusammenfassung gem. MWST  MWST  exkl. MWST  inkl. MWST
+MWST 0.00%  0.00  -3.20  -3.20
+MWST 8.10%  16.33  201.66  217.99
+MWST 2.60%  63.04  2'425.08  2'488.12
+Rundungsdifferenz  -0.01
+Total Rechnung  79.37  2'623.54  2'702.90
+Prodega/Transgourmet  CHE-116.311.185 MWST  Kundencenter 0848 000 501
+Transgourmet Schweiz AG  kundencenter@transgourmet.ch
+www.transgourmet.ch
+DOKTYPE;L64113362;SEITE;5;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;WEISS;EX;1
+Rechnung 64113362
+Seite 5 / 6
+Legende
+N = Netto-Preis
+S = Spezial-Preis
+A = Aktions-Preis
+* = Liefermenge ist vom Lieferanten noch nicht definitiv rückbestätigt
+AL1 = Bio Knospe Produkt
+AL2 = Verwendungsvorbehalt: Zur ausschliesslichen Verwendung in der Schweiz, darf nicht exportiert werden.
+AL4 = Kann mit hormonellen Leistungsförderern erzeugt worden sein.
+AL5 = Kann mit nichthormonellen Leistungsförderern, wie Antibiotika, erzeugt worden sein.
+AL6 = Die gelieferte Ware wurde zu einem reduzierten Zollansatz eingeführt. Sie darf nur *zur industriellen Herstellung von Produkten der Tarifnummer 2103.9000* verwendet werden.
+Eine allfällige Änderung des Verwendungszwecks muss der Oberzolldirektion vorgängig gemeldet und die Differenz der Einfuhrabgaben muss nachentrichtet werden.
+(Art. 14 und 26 des Zollgesetzes vom 18. März 2005).
+AL7 = aufgetaut, nicht wieder einfrieren
+AL8 = IP-SUISSE Produkt
+AL9 = Suisse Garantie Produkt
+AL10 = Fischereierzeugnisse, die roh oder fast roh konsumiert werden, müssen gemäss Artikel 42 der Hygieneverordnung (HyV,SR 817.024.1) während min. 24 Std. bei -20°C tiefgefroren werden.
+Prodega/Transgourmet  CHE-116.311.185 MWST  Kundencenter 0848 000 501
+Transgourmet Schweiz AG  kundencenter@transgourmet.ch
+www.transgourmet.ch
+DOKTYPE;L64113362;SEITE;6;DRUCKER;RECHNUNG;HEFTEN;;SCHACHT;WEISS;EX;1
+Rechnung 64113362
+Seite 6 / 6
+Aufteilung Spartung  MWST  Betrag exkl.  Betrag inkl.
+MWST  MWST
+42020 Fleisch / Comestible  28.56  1'098.66  1'127.22 2.60
+42030 Früchte / Gemüse  16.80  645.94  662.74 2.60
+42040 Molkereiprodukte  14.49  557.40  571.89 2.60
+42060 Kolonialwaren  3.19  123.08  126.27 2.60
+43010 Gebinde  0.00  -3.20  -3.20 0.00
+47010 Betriebsmaterial Restauration  14.41  177.96  192.37 8.10
+61520 Büromaterial  1.92  23.70  25.62 8.10
+Total Warenwert  79.37  2'623.54  2'702.91
+Prodega/Transgourmet  CHE-116.311.185 MWST  Kundencenter 0848 000 501
+Transgourmet Schweiz AG  kundencenter@transgourmet.ch
+www.transgourmet.ch

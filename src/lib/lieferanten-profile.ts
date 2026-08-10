@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'bohnenblust';
 
 /**
  * Belegtyp des Lieferanten:
@@ -63,7 +63,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual' },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
-  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Backwaren',        konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
+  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Backwaren',        konto: '4060', mwstSatz: 2.6, parser: 'bohnenblust', belegtyp: 'dual' },
+  // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).
+  { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet' },
+  { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'monatsrechnung' },
   { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
   { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6 },
   { id: 'hofamstutz',  name: 'Hof am Stutz',            mwstNr: '',          kategorie: 'Eier',             konto: '4060', mwstSatz: 0,
@@ -160,6 +163,20 @@ export async function lerneProfil(
   }
   await saveLieferantenProfile(tenantId, next);
   return next;
+}
+
+/**
+ * Mandant aus der BELEG-Adresse erkennen: «Oliv Gastro AG»/«Restaurant & Bar
+ * Oliv»/«Oliv Restaurant & Bar» → oliv; «Restaurant Beaulieu AG» → beaulieu.
+ * Beide oder keines gefunden → null (nie raten). Dient als Gegenprobe beim
+ * Import: eine Rechnung des FALSCHEN Mandanten wird blockiert, nie umgebucht.
+ */
+export function erkenneMandantImText(text: string): 'oliv' | 'beaulieu' | null {
+  const oliv = /Oliv\s+Gastro\s+AG|Restaurant\s*&?\s*Bar\s+Oliv|Oliv\s+Restaurant\s*&\s*Bar/i.test(text);
+  const beaulieu = /Restaurant\s+Beaulieu(?:\s+AG)?/i.test(text);
+  if (oliv && !beaulieu) return 'oliv';
+  if (beaulieu && !oliv) return 'beaulieu';
+  return null;
 }
 
 /** Alle im Text gefundenen fremden MWST-Nrn (eigene ausgeschlossen). */

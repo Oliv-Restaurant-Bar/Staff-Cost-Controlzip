@@ -20,6 +20,7 @@ import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import { parseProfilPdf, type ProfilPdfErgebnis } from '@/lib/profil-pdf-parse';
 import {
   loadLieferantenProfile, saveLieferantenProfile, lerneProfil, normalisiereMwstNr,
+  erkenneMandantImText,
   type LieferantenProfil, type ProfilBelegtyp,
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
@@ -63,6 +64,8 @@ interface VorschauZeile {
   abgleich?: MonatsrechnungAbgleich;
   /** Bestätigung nötig, weil manuell erfasste Buchungen überschrieben würden. */
   bestaetigt?: boolean;
+  /** BELEG-Adresse gehört zum ANDEREN Mandanten → Zeile gesperrt (nie umbuchen). */
+  mandantFremd?: 'oliv' | 'beaulieu';
 }
 
 function num(s: string): number | null {
@@ -122,18 +125,28 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           // Kopf-Signal ist lieferungen.length>1 nur ZUSAMMEN mit
           // belegart==='rechnung' ein Monatsrechnungs-Indiz, nie allein.
           const istDual = erg.profil?.belegtyp === 'dual';
+          // Belegtyp 'monatsrechnung' (z.B. Ambro): die Rechnung ist IMMER die
+          // massgebliche Quelle — jede Rechnung mit erkannten Lieferungen final.
           const modus: VorschauZeile['modus'] =
-            istDual && erg.positionenErkannt
+            erg.profil?.belegtyp === 'monatsrechnung' && erg.positionenErkannt && erg.belegart === 'rechnung'
+              ? 'monatsrechnung'
+              : istDual && erg.positionenErkannt
               ? (erg.dokumenttyp === 'monatsrechnung' ? 'monatsrechnung'
                 : erg.dokumenttyp === 'lieferschein' ? 'lieferschein'
                 : (erg.belegart === 'rechnung' && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein'))
               : 'lieferschein';
+          // MANDANTEN-GEGENPROBE nach Beleg-Adresse: falscher Mandant ⇒ Sperre.
+          const belegMandant = erkenneMandantImText(text);
+          const mandantFremd = belegMandant !== null && belegMandant !== tenantId ? belegMandant : undefined;
+          if (mandantFremd) {
+            erg.hinweise.unshift(`Beleg-Adresse gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
+          }
           const abgleich = modus === 'monatsrechnung' && erg.profil
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
                 erg.profil.abAlsLieferschein ? 3 : 0)
             : undefined;
           neu.push({
-            modus, abgleich,
+            modus, abgleich, mandantFremd,
             fileName: f.name, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
@@ -204,8 +217,9 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
 
   // Belegart-Sperre: Auftragsbestätigungen/Offerten/Bestellungen sind NIE buchbar —
   // AUSNAHME: AB bei Profilen mit «Auftragsbestätigung = Lieferschein» (provisorisch).
-  const istBuchbar = (z: VorschauZeile) => z.ergebnis.belegart === 'rechnung'
-    || (z.ergebnis.belegart === 'auftragsbestaetigung' && profilById.get(z.lieferant)?.abAlsLieferschein === true);
+  const istBuchbar = (z: VorschauZeile) => !z.mandantFremd
+    && (z.ergebnis.belegart === 'rechnung'
+      || (z.ergebnis.belegart === 'auftragsbestaetigung' && profilById.get(z.lieferant)?.abAlsLieferschein === true));
   const bereit = zeilen.filter(z => z.lieferant !== ''
     && istBuchbar(z)
     && (z.modus === 'monatsrechnung'
@@ -376,7 +390,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
             onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
         </label>
         <span className="text-[11px] text-muted-foreground">
-          Kopf-Erkennung für alle Profile · Positionen je Lieferung für Terravigna, Spahni, Fideco
+          Kopf-Erkennung für alle Profile · Positionen je Lieferung für Terravigna, Spahni, Fideco, Ambro, Transgourmet, Bohnenblust
         </span>
       </div>
 
@@ -624,7 +638,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                 </span>
               ) : null;
             })()}
-            {gesperrt > 0 && <span className="text-[11px] text-destructive">{gesperrt} Beleg{gesperrt === 1 ? '' : 'e'} gesperrt (keine Rechnung — wird nicht gebucht)</span>}
+            {gesperrt > 0 && <span className="text-[11px] text-destructive">{gesperrt} Beleg{gesperrt === 1 ? '' : 'e'} gesperrt (keine Rechnung oder falscher Mandant — wird nicht gebucht)</span>}
             <Button size="sm" variant="ghost" className="text-xs" onClick={() => setZeilen([])}>Vorschau leeren</Button>
           </div>
         </div>

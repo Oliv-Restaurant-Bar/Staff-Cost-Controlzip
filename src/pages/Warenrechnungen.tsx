@@ -1819,11 +1819,9 @@ export default function WarenrechnungenPage() {
                     <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers}
                       onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
-                    {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (nur Beaulieu) ── */}
-                    {tenantId === 'beaulieu' && (
-                      <BeaulieuPdfImport tenantId={tenantId}
-                        onImported={() => { void loadData(); void ladePreisHinweise(); }} />
-                    )}
+                    {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (beide Mandanten) ── */}
+                    <BeaulieuPdfImport tenantId={tenantId}
+                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
                     {/* ── PDF-Erkennung: Rechnung hochladen → Felder vorfüllen ── */}
                     <div className="flex flex-wrap items-center gap-3">
@@ -4281,13 +4279,11 @@ export default function WarenrechnungenPage() {
               <MarktLieferantenEditor tenantId={tenantId} canEdit={canEdit} />
             </div>
 
-            {/* ── Lieferanten-Profile für PDF-Erkennung (nur Beaulieu) ── */}
-            {tenantId === 'beaulieu' && (
-              <div className="border-t border-border/50 pt-4">
-                <h3 className="text-sm font-semibold mb-2">Lieferanten-Profile (PDF-Erkennung)</h3>
-                <LieferantenProfilEditor tenantId={tenantId} canEdit={canEdit} />
-              </div>
-            )}
+            {/* ── Lieferanten-Profile für PDF-Erkennung (beide Mandanten) ── */}
+            <div className="border-t border-border/50 pt-4">
+              <h3 className="text-sm font-semibold mb-2">Lieferanten-Profile (PDF-Erkennung)</h3>
+              <LieferantenProfilEditor tenantId={tenantId} canEdit={canEdit} />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSupplierDialog(false)}>Schliessen</Button>

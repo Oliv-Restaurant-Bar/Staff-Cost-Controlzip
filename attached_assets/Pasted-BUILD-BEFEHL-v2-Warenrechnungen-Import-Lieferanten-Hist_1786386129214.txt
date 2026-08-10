@@ -1,0 +1,45 @@
+BUILD-BEFEHL v2 — Warenrechnungen-Import + Lieferanten-Historie 2026
+
+ZIEL
+Monatsrechnungen pro Mandant erfassen, mit einzelnen (oft wöchentlichen) Lieferungen
+UND deren Artikelzeilen. Basis für durchgehende 2026-Historie und Lieferanten-Analyse
+(Preis-/Mengen-Entwicklung je Artikel/Lieferant).
+
+DATENMODELL (3 Ebenen)
+1) Warenrechnung: Mandant, Lieferant, Rechnungs-Nr, Rechnungsdatum, Netto, MWST, Brutto.
+   DUBLETTENSICHER: Schlüssel = Mandant + Lieferant + Rechnungs-Nr -> erneuter Import ERSETZT.
+2) Lieferung (1..n): Lieferschein-/Lieferungs-Nr, Lieferdatum, Betrag netto, Kategorie.
+3) Position (1..n je Lieferung): Artikel-Nr, Bezeichnung, Menge, Einheit, Einzelpreis,
+   Betrag netto, MWST-Satz, Sparte/Kategorie.
+"leer statt 0", nie durch 0 teilen.
+
+MANDANTENTRENNUNG
+- Regel: Rechnungsadresse entscheidet ("Oliv Gastro AG" -> OLIV, "Restaurant Beaulieu AG"
+  -> BEAULIEU).
+- AUSNAHME Bohnenblust: Adresse ist immer Beaulieu; Kunden-Nr. 1422004 -> Mandant OLIV.
+  (Falls weitere Bohnenblust-Kunden-Nrn. auftauchen: Mandant offen lassen + Warn-Flag.)
+
+LIEFERDATEN AUS MONATSRECHNUNGEN PARSEN (Muster je Lieferant)
+- Ambro Food:      "Basierend auf Lieferschein <Nr> vom <TT.MM.JJ>. Lieferdatum <TT.MM.JJ>"
+- Terravigna:      "Lieferungsnr. <Nr> vom <TT.MM.JJ>"
+- Metzgerei Spahni:"LS-Nr. <Nr> vom <TT.MM.JJ>"
+- Transgourmet:    "Lieferschein <Nr> / <TT.MM.JJJJ>"
+- Feldschlösschen: "Lieferschein <Nr> vom <TT.MM.JJJJ>"
+- Bohnenblust:     "Lieferschein Nr. <Nr> vom <TT.MM.JJJJ>"
+Jede Lieferung als eigener datierter Datensatz. Kontrolle: Σ Lieferungen = Rechnungs-Netto,
+sonst Warn-Flag.
+
+KATEGORIE / WARENEINSATZ-RELEVANZ (für WKQ Food/Beverage)
+- Food:     Fleisch/Fisch, Früchte/Gemüse, Molkerei, Kolonialwaren, Brot, ital. Ware
+- Beverage: Wein, Kaffee, Getränke
+- NICHT Wareneinsatz (separat führen): Pfand/Leergut, Gebinde, Betriebsmaterial,
+  Reinigung & Entsorgung, Büromaterial, übrige Handelswaren.
+- Transgourmet: vorhandene Sparten-Aufteilung übernehmen:
+    42020/42030/42040/42060 -> Food ; 42880/43010/47010/61520/64110 -> Non-Food.
+- Feldschlösschen: Pfand/Leergut aus dem Warenwert herausrechnen.
+
+ zeitliche Zuordnung
+- Rechnung wird dem Monat/der Woche der jeweiligen LIEFERUNG zugeordnet (nicht dem
+  Rechnungsdatum), damit die Historie stimmt (Monatsrechnung deckt oft mehrere Wochen ab).
+
+VORSCHAU + RÜCKGÄNGIG. Nichts automatisch überschreiben.

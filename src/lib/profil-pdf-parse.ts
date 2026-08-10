@@ -286,6 +286,134 @@ function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, 
   }).filter(l => l.positionen.length > 0);
 }
 
+/** Zelle in \s{2,}-getrennte Spalten teilen (Zeilenrekonstruktion verbindet
+ *  PDF-Zellen mit Doppel-Leerzeichen — robust gegen Leerzeichen IN Zellen). */
+function zellen(line: string): string[] {
+  return line.split(/\s{2,}/).map(z => z.trim()).filter(Boolean);
+}
+
+const istBetragZelle = (z: string) => /^-?[\d’'.,]*\d(?:[.,]\d{1,2})?$/.test(z) && /\d/.test(z);
+
+/**
+ * Ambro: Blöcke «Basierend auf Lieferschein <nr> vom <dd.mm.yy>. Lieferdatum
+ * <dd.mm.yy>. …» — das LIEFERDATUM (2. Datum) ist massgeblich. Positionszeile:
+ * «1  540.402  [Bezeichnung]  24.000  SCA  12.40  15.00  10.54  252.96»
+ * (Bezeichnung teils inline, teils auf eigener Zeile davor).
+ */
+function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const header = /Basierend auf Lieferschein\s+(\d+)\s+vom\s+\d{1,2}\.\d{1,2}\.\d{2,4}\.\s*Lieferdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i;
+  const { bloecke } = teileInBloecke(lines, header);
+  // Blöcke gleicher LS-Nr (Seitenumbruch) zusammenführen.
+  const proNr = new Map<string, LieferungBlock>();
+  for (const b of bloecke) {
+    const alt = proNr.get(`${b.nr}|${b.datum}`);
+    if (alt) alt.zeilen.push(...b.zeilen); else proNr.set(`${b.nr}|${b.datum}`, b);
+  }
+  return [...proNr.values()].map(b => {
+    const positionen: WarenPosition[] = [];
+    let vorherige = '';
+    for (const z of b.zeilen) {
+      const c = zellen(z);
+      // [pos, artNr, (bez), menge, einheit, listpreis, rabatt%, nettopreis, betrag]
+      const ok = (c.length === 8 || c.length === 9)
+        && /^\d{1,4}$/.test(c[0]) && /^\d{3}\.\d{3}$/.test(c[1])
+        && /^[A-ZÄÖÜ]{1,5}$/i.test(c[c.length - 5])
+        && c.slice(-4).every(istBetragZelle) && istBetragZelle(c[c.length - 6]);
+      if (!ok) { if (/[A-Za-zÄÖÜäöü]{3}/.test(z) && !header.test(z)) vorherige = z.trim(); continue; }
+      const bezInline = c.length === 9 ? c[2] : '';
+      positionen.push(position(profil.kategorie, mwstSatz, {
+        artNr: c[1],
+        bezeichnung: bezInline || vorherige || c[1],
+        menge: parseBetrag(c[c.length - 6]) ?? 0,
+        einheit: c[c.length - 5].toUpperCase(),
+        preis: parseBetrag(c[c.length - 2]) ?? 0,           // Nettopreis nach Rabatt
+        positionspreis: parseBetrag(c[c.length - 1]) ?? 0,  // Zeilenbetrag
+      }));
+      vorherige = '';
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
+/** Transgourmet-Sparten (Rechnung, «Aufteilung Spartung»): Food vs Non-Food. */
+export const TG_SPARTEN_FOOD = ['42020', '42030', '42040', '42060'];
+export const TG_SPARTEN_NONFOOD = ['42880', '43010', '47010', '61520', '64110'];
+
+/**
+ * Transgourmet: EIN Lieferschein je Rechnung («Lieferschein <nr> / <datum>»
+ * bzw. «… vom <datum>»). Positionszeile endet mit «… preis [rabatt%] [Kz]
+ * exkl inkl satz» — die MWST-Klasse je Position bestimmt Food (2.6 %) vs
+ * Non-Food (8.1 %/0 %), exakt wie die Sparten-Tabelle (42020/42030/42040/
+ * 42060 = Food; 42880/43010/47010/61520/64110 = Non-Food).
+ */
+function parseTransgourmetLieferungen(lines: string[], profil: LieferantenProfil, _satz: number): ParsedCsvRechnung[] {
+  const header = /Lieferschein\s+(\d+)\s+(?:\/|vom)\s+(\d{1,2}\.\d{1,2}\.\d{4})/i;
+  const { bloecke } = teileInBloecke(lines, header);
+  const proNr = new Map<string, LieferungBlock>();
+  for (const b of bloecke) {
+    const alt = proNr.get(`${b.nr}|${b.datum}`);
+    if (alt) alt.zeilen.push(...b.zeilen); else proNr.set(`${b.nr}|${b.datum}`, b);
+  }
+  return [...proNr.values()].map(b => {
+    const positionen: WarenPosition[] = [];
+    for (const z of b.zeilen) {
+      if (/Aufteilung Spartung|Total Warenwert|Total Rechnung|MWST\s+\d/i.test(z)) continue;
+      const c = zellen(z);
+      if (c.length < 6 || !/^\d{1,4}$/.test(c[0]) || !/^\d{5,7}$/.test(c[1])) continue;
+      // Von hinten: satz («2.60»), inkl, exkl, [Kennzeichen], [rabatt%], preis.
+      let i = c.length - 1;
+      if (!/^\d{1,2}\.\d{2}$/.test(c[i])) continue;
+      const satz = parseBetrag(c[i--]) ?? 0;
+      if (!istBetragZelle(c[i]) || !istBetragZelle(c[i - 1])) continue;
+      const inkl = parseBetrag(c[i--]) ?? 0;
+      const exkl = parseBetrag(c[i--]) ?? 0;
+      if (i >= 2 && /^[A-Z]{1,2}$/.test(c[i])) i--;          // Online/Aktions-Kz
+      if (i >= 2 && /%$/.test(c[i])) i--;                     // Rabatt-%
+      const preis = i >= 2 && istBetragZelle(c[i]) ? (parseBetrag(c[i--]) ?? 0) : 0;
+      // Bezeichnung = letzte Textzelle vor dem Preis-Teil.
+      let bez = '';
+      for (let j = i; j >= 2; j--) {
+        if (/[A-Za-zÄÖÜäöü]{2}/.test(c[j])) { bez = c[j]; break; }
+      }
+      positionen.push({
+        artNr: c[1], bezeichnung: bez || c[1],
+        warengruppe: satz === 2.6 ? 'Food' : 'Nonfood',
+        menge: 0, einheit: '', preis, positionspreis: rundung2(exkl),
+        mwstBetrag: rundung2(inkl - exkl), mwstCode: 1,
+      });
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, 0);
+  }).filter(l => l.positionen.length > 0);
+}
+
+/**
+ * Bohnenblust: Blöcke «Lieferschein Nr. <nr> vom <dd.mm.yyyy>  Total <x>»;
+ * Positionszeile «90  Brioches Hamburger 80gr  [mit]  BW.90.04  1.54  138.60».
+ */
+function parseBohnenblustLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const { bloecke } = teileInBloecke(lines, /(?:Lieferschein|Nachlieferung)\s+Nr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+  return bloecke.map(b => {
+    const positionen: WarenPosition[] = [];
+    for (const z of b.zeilen) {
+      if (/Zwischentotal|MwSt|Total inkl/i.test(z)) break;
+      const c = zellen(z);
+      if (c.length < 4 || !/^\d{1,4}$/.test(c[0])) continue;
+      if (!istBetragZelle(c[c.length - 1]) || !istBetragZelle(c[c.length - 2])) continue;
+      // Artikel-Nr = Zelle mit Punkt-Code (z.B. BW.90.04) vor den Beträgen.
+      const artIdx = c.length - 3;
+      const artNr = /^[A-Z]{1,4}[.\d][\w.]*$/i.test(c[artIdx] ?? '') ? c[artIdx] : '';
+      const bezZellen = c.slice(1, artNr ? artIdx : c.length - 2).filter(x => /[A-Za-zÄÖÜäöü]/.test(x));
+      positionen.push(position(profil.kategorie, mwstSatz, {
+        artNr, bezeichnung: bezZellen.join(' ') || artNr,
+        menge: parseBetrag(c[0]) ?? 0, einheit: '',
+        preis: parseBetrag(c[c.length - 2]) ?? 0,
+        positionspreis: parseBetrag(c[c.length - 1]) ?? 0,
+      }));
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
 // ─── Kopf-Erkennung pro Profil ───────────────────────────────────────────────
 
 interface KopfFelder {
@@ -376,6 +504,9 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     return {
       ...g,
       rechnungsNr: suche(text, [/RECHNUNG\s*:?\s*(\d{4,10})/i]) ?? (ls ? ls[1] : null),
+      // Belegdatum-Zeile «Zollikofen , 31.07.26  Seite 1».
+      rechnungsdatum: g.rechnungsdatum
+        ?? parseDatumCH(suche(text, [/,\s*(\d{1,2}\.\d{1,2}\.\d{2,4})\s+Seite/i]) ?? ''),
       lieferdatum: lieferdatum ?? g.lieferdatum,
       // «Total CHF 3'796.25» (netto) und «1 MWST 2.60 % 98.70»
       netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
@@ -448,9 +579,44 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       ...g,
       rechnungsNr: suche(text, [/Rechnung(?:s-Nr\.?)?\s+(\d{5,10})/i]),
       rechnungsdatum: parseDatumCH(suche(text, [/Rechnungsdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '') ?? g.rechnungsdatum,
+      // Kopffeld «Lieferdatum 29.07.26» — Einzellieferung.
+      lieferdatum: parseDatumCH(suche(text, [/Lieferdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? ''),
       netto: m ? parseBetrag(m[2]) : g.netto,
       mwst: m ? parseBetrag(m[4]) : g.mwst,
       mwstSatz: m ? parseBetrag(m[3]) : g.mwstSatz,
+    };
+  },
+  ambro: (text) => {
+    const g = generischerKopf(text);
+    // Tabellenzeile unter «Belegnummer  Datum  Fälligkeitsdatum  Seite».
+    const kopf = /(?:^|\n)\s*(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d{1,2}\.\d{1,2}\.\d{2,4}\s{2,}\d+\s*\/\s*\d+/.exec(text);
+    const netto = sucheBetrag(text, [new RegExp(`Nettobetrag\\s+(${BETRAG_RE.source})`, 'i')]);
+    const mwst = sucheBetrag(text, [new RegExp(`Mehrwertsteuer\\s+[\\d.,]+%[^\\n]*?(${BETRAG_RE.source})\\s*$`, 'im')]);
+    // Rundung dem MwSt-Betrag zuschlagen, damit netto+mwst = «Gesamtbetrag CHF».
+    const rundung = sucheBetrag(text, [new RegExp(`(?:^|\\n)\\s*Rundung\\s+(${BETRAG_RE.source})`, 'i')]) ?? 0;
+    return {
+      ...g,
+      rechnungsNr: kopf ? kopf[1] : g.rechnungsNr,
+      rechnungsdatum: kopf ? parseDatumCH(kopf[2]) : g.rechnungsdatum,
+      netto: netto ?? g.netto,
+      mwst: mwst !== null ? rundung2(mwst + rundung) : g.mwst,
+      mwstSatz: 2.6,
+    };
+  },
+  transgourmet: (text) => {
+    const g = generischerKopf(text);
+    // «Total Rechnung  203.87  4'985.74  [CHF ]5'189.60» → MwSt, Netto.
+    const total = /Total Rechnung\s+([\d’'.,]+)\s+([\d’'.,]+)/i.exec(text);
+    const ls = /Lieferschein\s+(\d+)\s+(?:\/|vom)\s+(\d{1,2}\.\d{1,2}\.\d{4})/i.exec(text);
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/Rechnungsnummer\s+(\d{6,12})/i]) ?? g.rechnungsNr,
+      rechnungsdatum: parseDatumCH(suche(text, [/Rechnungsdatum\s+(\d{1,2}\.\d{1,2}\.\d{4})/i]) ?? '') ?? g.rechnungsdatum,
+      lieferdatum: ls ? parseDatumCH(ls[2]) : null,
+      netto: total ? parseBetrag(total[2]) : g.netto,
+      mwst: total ? parseBetrag(total[1]) : g.mwst,
+      // Gemischte Sätze (2.6/8.1/0) — kein einzelner Satz.
+      mwstSatz: null,
     };
   },
   hofamstutz: (text) => {
@@ -469,6 +635,9 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   spahni: parseSpahniLieferungen,
   fideco: parseFidecoLieferungen,
   terravigna: parseTerravignaLieferungen,
+  ambro: parseAmbroLieferungen,
+  transgourmet: parseTransgourmetLieferungen,
+  bohnenblust: parseBohnenblustLieferungen,
 };
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
