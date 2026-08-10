@@ -1248,9 +1248,13 @@ export async function ladeMonatsreport(
   const ckMk = (id: string): number | null => ckM[id] ?? null;
   const ckWk = (id: string): number | null => ckW[id] ?? null;
   const ckMFullK = (id: string): number | null => ckMFull[id] ?? null;
-  /** «manuell»-Marker: Monatswert der Position wurde direkt überschrieben. */
+  /** «manuell»-Marker: Monatswert der Position wurde direkt überschrieben.
+   *  AUSNAHME wareneinsatz (Spec 08/2026): das Warenkosten-Budget kommt live
+   *  aus der Budget-Eingabe — dort ist «manuell erfasst» der Normalfall der
+   *  WEQ-Stufenlogik, kein Override-Zustand → kein «manuell»-Badge im Cockpit. */
   const ckManuell = (id: string): boolean =>
-    ckBlob?.positions?.[id]?.monthlyExplicit?.[month - 1] === true;
+    id !== 'wareneinsatz'
+    && ckBlob?.positions?.[id]?.monthlyExplicit?.[month - 1] === true;
 
   // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
   let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
@@ -1633,7 +1637,12 @@ export async function ladeMonatsreport(
     const totalRow: MrRow = {
       ...d('warenkosten_total', 'Warenkosten total (Ist) vs. Wareneinsatz (Soll)', {
         month: monthTotal, week: weekTotal,
-        monthBudget: sollMonat, weekBudget: sollWoche, budget: sollWoche,
+        // Budget LIVE aus der Budget-Eingabe (Cockpit-Position «wareneinsatz»,
+        // pro rata wie alle Cockpit-Budgets); nur ohne Eintrag greift die
+        // bisherige Soll-Rechnung (WEQ-Quote × Ist-Netto). Leer statt 0.
+        monthBudget: ckMk('wareneinsatz') ?? sollMonat,
+        weekBudget: ckWk('wareneinsatz') ?? sollWoche,
+        budget: ckWk('wareneinsatz') ?? sollWoche,
       }, { bold: true, deltaInverted: true, ckId: 'wareneinsatz' }),
       wkqInline: {
         month: wkqM,
@@ -1939,8 +1948,16 @@ export async function ladeMonatsreport(
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
       // vj_daily hat keine Personalstunden → keine VJ-Produktivität.
-      monthBudget: ckMk('produktivitaet'), weekBudget: ckWk('produktivitaet'),
-      budget: ckWk('produktivitaet'),
+      // Budget: direkter Override/Ratio aus dem Cockpit-Budget (Netto ÷
+      // prod_stunden-Position); FEHLT die Stunden-Position, gilt der Fallback
+      // Netto-Umsatz-Budget ÷ Stunden-Budget (Plan) — dieselben Werte wie in
+      // der Stunden-Zeile darüber. Leer wenn Stunden-Budget fehlt, nie ÷ 0.
+      monthBudget: ckMk('produktivitaet')
+        ?? (hatBudget && planStd != null && planStd > 0 ? r2(budgetNet / planStd) : null),
+      weekBudget: ckWk('produktivitaet')
+        ?? (wBudgetNet > 0 && wPlanStd != null && wPlanStd > 0 ? r2(wBudgetNet / wPlanStd) : null),
+      budget: ckWk('produktivitaet')
+        ?? (wBudgetNet > 0 && wPlanStd != null && wPlanStd > 0 ? r2(wBudgetNet / wPlanStd) : null),
     }, { ckId: 'produktivitaet' }),
     // «Umsatz pro Gast» wurde konsolidiert — es bleibt NUR «Ø-Verkauf pro Gast».
     // Ø-Verkauf pro Gast (wie Jahresvergleich): Oliv (Netto − TA-Netto) ÷ Gäste,

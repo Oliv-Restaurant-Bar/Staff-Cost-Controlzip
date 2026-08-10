@@ -16,6 +16,10 @@ description: Regeln des separaten Kennzahlen-Budgets (cockpit-budget:<jahr>) fü
 - Take-Away ist überall NETTO: TA-Budget-Position netto, ladeSaisonGewichte liefert TA netto, %-Basis immer Netto, Monatsreport-TA-Zeile netto; TA-ANTEIL bleibt brutto÷brutto (ratioBudget rechnet Netto-Budget ×Divisor zurück). Alt-Blobs ohne taNetto-Marker werden beim Laden brutto→netto migriert (Marker erst beim Speichern persistiert; neuer Blob MUSS taNetto:true tragen, sonst Doppel-Division).
 - Ableitungen (nur Vorschlag, materialisiert editierbare Monate): Gäste = (Netto − TA-Netto[Oliv]) ÷ Ø-Verkauf-Ziel; Planstunden = Netto ÷ Ziel-Produktivität (kein solches Ziel in Personalbedarf vorhanden — Eingabefeld, Vorschlag aus Produktivitäts-Budget).
 
+## Monatsreport-Budget-Spalten (08/2026)
+- Produktivitäts-Budget im Monatsreport: Cockpit-Override/Ratio hat Vorrang; FEHLT die prod_stunden-Position (z.B. Oliv), Fallback = Netto-Umsatz-Budget (budget_v1) ÷ Dienstplan-Planstunden (planStd/wPlanStd — dieselben Werte wie die Budget-Spalte der Stunden-Zeile). Nie ÷0, leer statt 0.
+- Warenkosten-total-Budget kommt LIVE aus der Budget-Eingabe (ckMk/ckWk 'wareneinsatz', pro rata); nur ohne Eintrag greift die alte Soll-Rechnung (WEQ-Quote × Ist-Netto). Das «manuell»-Badge ist für 'wareneinsatz' bewusst unterdrückt (ckManuell-Ausnahme) — dort ist monthlyExplicit der Normalfall der WEQ-Stufenlogik, kein Override; damit ist auch der generische budgetMonatReset-Pfad (pctValue×ER, ohne WEQ-Semantik) unerreichbar. Reset/Korrektur nur via Budget-Eingabe.
+
 ## Autofill-Regel (08/2026)
 Autofill: abgeschlossene Monate = Jahres-Ist; übrige Monate (inkl. laufender Teilmonat) = voller VORJAHRESMONAT (saisonal), NIE Durchschnitt. Fehlt auch das Vorjahr → leer + Hinweis.
 **Why:** flacher Schnitt ignorierte Saisonalität (Nov-Gäste 9'669 statt VJ 12'365).
