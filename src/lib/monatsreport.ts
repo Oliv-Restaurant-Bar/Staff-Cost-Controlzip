@@ -40,7 +40,7 @@ import { loadTaGaesteDaily, sumTaGaesteRange } from '@/lib/ta-gaeste-store';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
-import { ladeUeberstundenTotal } from '@/lib/ueberstunden';
+import { ladeUeberstundenTotals } from '@/lib/ueberstunden';
 import { computePLForMonth } from '@/lib/pl-engine';
 import { loadMonth as loadReportingMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
@@ -1401,8 +1401,11 @@ export async function ladeMonatsreport(
   // ── Überstunden total (Fix-MA, laufendes Konto ab Juli 2026 bis heute) ─────
   // Fehler → leer (Cockpit darf nicht am Überstunden-Lader scheitern).
   let ueberstundenTotal: number | null = null;
+  let ueberstundenKosten: number | null = null;
   try {
-    ueberstundenTotal = await ladeUeberstundenTotal(tenantId, tenantKey, todayIso);
+    const ueTotals = await ladeUeberstundenTotals(tenantId, tenantKey, todayIso);
+    ueberstundenTotal = ueTotals.stunden;
+    ueberstundenKosten = ueTotals.kosten;
   } catch (err) {
     console.error('[monatsreport] Überstunden total nicht ladbar:', err);
   }
@@ -1991,6 +1994,11 @@ export async function ladeMonatsreport(
     d('ueberstunden_total', 'Überstunden total (Fix-MA, Stand heute)', {
       month: ueberstundenTotal != null ? r2(ueberstundenTotal) : null,
     }, { fmt: 'hours', deltaInverted: true }),
+    // Überstunden-Kosten: Σ POSITIVE laufende Konten × AG-Stundensatz (CHF);
+    // negative Konten zählen 0. Gleiche Konto-Logik (Stand heute, je Mandant).
+    d('ueberstunden_kosten_total', 'Überstunden-Kosten total (Fix-MA, Stand heute)', {
+      month: ueberstundenKosten != null ? r2(ueberstundenKosten) : null,
+    }, { fmt: 'chf', deltaInverted: true }),
     e(),
     // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────
     // Eine Zeile pro Lieferant (Top-Betrag des Monats zuerst) + Total + WKQ.

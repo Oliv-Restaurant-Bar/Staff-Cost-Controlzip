@@ -216,6 +216,51 @@ describe('Monats-Split & laufendes Konto', () => {
   });
 });
 
+describe('Überstunden-Kosten & Tages-Aufschlüsselung', () => {
+  it('Kosten = positives laufendes Saldo × Stundensatz; negativ = 0; ohne Satz = null', () => {
+    const istPlus: Record<string, number> = {};
+    for (let i = 0; i < 5; i++) istPlus[`2026-08-0${3 + i}`] = 9.4; // +5 h
+    const r = berechneUeberstundenJahr(2026, [
+      ma({ id: 'plus', istStunden: istPlus, stundensatz: 40 }),
+      ma({ id: 'minus', stundensatz: 40 }),           // Datenwoche ohne Stunden → −42
+      ma({ id: 'ohneSatz', istStunden: istPlus, stundensatz: null }),
+    ], wochen(MO), '2026-12-31');
+    expect(r.mitarbeiter.find(m => m.id === 'plus')!.kosten).toBeCloseTo(200, 2);   // 5 × 40
+    expect(r.mitarbeiter.find(m => m.id === 'minus')!.kosten).toBe(0);              // schuldet Stunden
+    expect(r.mitarbeiter.find(m => m.id === 'ohneSatz')!.kosten).toBeNull();        // Satz fehlt
+    expect(r.totalKosten).toBeCloseTo(200, 2); // Σ nur positive Konten
+    expect(r.totalLaufend).toBeCloseTo(5 - 42 + 5, 6);
+  });
+
+  it('Woche ohne Datenbasis → Kosten null (nie stille 0)', () => {
+    const r = berechneUeberstundenJahr(2026, [ma({ stundensatz: 40 })], wochen(), '2026-12-31');
+    expect(r.mitarbeiter[0].kosten).toBeNull();
+    expect(r.totalKosten).toBeNull();
+  });
+
+  it('Tages-Aufschlüsselung: Arbeit/Absenz/Gutschrift/Soll je Tag, zaehlt-Flag', () => {
+    const r = berechneUeberstundenJahr(2026, [ma({
+      contractStart: '2026-08-05', // Mi
+      istStunden: { '2026-08-05': 8, '2026-08-06': 9 },
+      absenzen: { '2026-08-07': 'ferien' },
+    })], wochen(MO), '2026-12-31');
+    const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
+    expect(w.tage).toHaveLength(7);
+    const [mo2, , mi, doo, fr, sa] = [w.tage[0], w.tage[1], w.tage[2], w.tage[3], w.tage[4], w.tage[5]];
+    expect(mo2.zaehlt).toBe(false); // vor Eintritt
+    expect(mi.zaehlt).toBe(true);
+    expect(mi.arbeitH).toBe(8);
+    expect(mi.soll).toBeCloseTo(8.4, 6);
+    expect(doo.arbeitH).toBe(9);
+    expect(fr.absenzTyp).toBe('ferien');
+    expect(fr.gutschrift).toBeCloseTo(8.4, 6);
+    expect(sa.soll).toBe(0); // Samstag: kein Soll
+    // Wochen-Summen konsistent zur Tagesliste
+    expect(w.soll).toBeCloseTo(25.2, 6);
+    expect(w.ist).toBeCloseTo(8 + 9 + 8.4, 6);
+  });
+});
+
 describe('Jahre vor dem Konto-Start', () => {
   it('2025: explizit leeres Ergebnis (keine Wochen, alles null)', () => {
     const r = berechneUeberstundenJahr(2025, [ma({

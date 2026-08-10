@@ -26,6 +26,8 @@
 
 import { kvGet, kvGetStrict, kvSetStrict } from '@/lib/supabase-kv';
 import { loadEmployees, loadActualHoursForMonth } from '@/lib/supabase-db';
+import { loadSocialCostRates } from '@/lib/social-costs-db';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { applyEffectiveWagesForMonth } from '@/lib/wage-history';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { pkHasFixedSalary } from '@/lib/personalkosten';
@@ -166,10 +168,26 @@ export interface UeMitarbeiterInput {
    */
   contractStart?: string | null;
   employmentEndDate?: string | null;
+  /** AG-Stundenkostensatz (CHF/h, wie Personalkosten fix); null = Lohn fehlt. */
+  stundensatz?: number | null;
   /** Ist-Arbeitsstunden je ISO-Datum (MIRUS). */
   istStunden: Record<string, number>;
   /** Manuelle Absenzen je ISO-Datum. */
   absenzen: Record<string, UeAbsenzTyp>;
+}
+
+/** Tages-Aufschlüsselung einer Woche (für das Wochen-Detail beim Zellen-Klick). */
+export interface UeTag {
+  datum: string;
+  /** false = Tag zählt nicht (vor Konto-Start/Eintritt, nach Austritt/heute, kein FIX-Monat, keine Datenbasis). */
+  zaehlt: boolean;
+  /** Mirus-Arbeitsstunden (0 = kein Eintrag; nur wenn zaehlt). */
+  arbeitH: number | null;
+  absenzTyp: UeAbsenzTyp | null;
+  /** Stunden-Gutschrift der Absenz (Fe/Kr/Un = Tages-Soll, Frei = 0). */
+  gutschrift: number | null;
+  /** Tages-Soll (Mo–Fr = Wochen-Soll/5, Sa/So = 0; nur wenn zaehlt). */
+  soll: number | null;
 }
 
 export interface UeWoche {
@@ -185,6 +203,8 @@ export interface UeWoche {
   /** Gutschrift-Anteil im Ist (Fe/Kr/Un). */
   gutschrift: number | null;
   hasData: boolean;
+  /** Mo–So-Aufschlüsselung (für das Wochen-Detail). */
+  tage: UeTag[];
 }
 
 export interface UeMitarbeiterErgebnis {
@@ -198,6 +218,13 @@ export interface UeMitarbeiterErgebnis {
   laufend: number | null;
   /** true = kein Eintrittsdatum im Personalstamm — nicht gerechnet, nur Hinweis. */
   ohneEintritt: boolean;
+  /** AG-Stundenkostensatz (CHF/h); null = Lohn fehlt (Kosten dann leer). */
+  stundensatz: number | null;
+  /**
+   * Überstunden-Kosten (CHF) = POSITIVES laufendes Saldo × Stundensatz;
+   * negatives Konto = 0; keine Datenbasis oder kein Satz = null.
+   */
+  kosten: number | null;
 }
 
 export interface UeJahresErgebnis {
@@ -205,6 +232,8 @@ export interface UeJahresErgebnis {
   mitarbeiter: UeMitarbeiterErgebnis[];
   /** Σ laufende Saldi aller MA (null = keiner hat Datenbasis). */
   totalLaufend: number | null;
+  /** Σ Überstunden-Kosten (nur positive Konten; null = keine Datenbasis). */
+  totalKosten: number | null;
 }
 
 /**
@@ -231,8 +260,10 @@ export function berechneUeberstundenJahr(
         id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
         wochen: [], monatsSaldo: Array(12).fill(null), laufend: null,
         ohneEintritt: !emp.contractStart,
+        stundensatz: emp.stundensatz ?? null, kosten: null,
       })),
       totalLaufend: null,
+      totalKosten: null,
     };
   }
   const kontoStart = yearStart > UEBERSTUNDEN_START ? yearStart : UEBERSTUNDEN_START;
@@ -265,14 +296,19 @@ export function berechneUeberstundenJahr(
       const { kw, kwYear } = isoWeekOf(monday);
       const hasData = wochenMitDaten.has(monday);
       let soll: number | null = null, ist: number | null = null, gut: number | null = null;
+      const tage: UeTag[] = [];
       for (let i = 0; i < 7; i++) {
         const day = addDays(monday, i);
-        if (!hasData || !eligible(day)) continue;
+        if (!hasData || !eligible(day)) {
+          tage.push({ datum: day, zaehlt: false, arbeitH: null, absenzTyp: null, gutschrift: null, soll: null });
+          continue;
+        }
         const daySoll = istWochentag(day) ? tagesSoll : 0;
         const typ = emp.absenzen[day];
         const credit = typ && UE_GUTSCHRIFT_TYPEN.has(typ) ? tagesSoll : 0;
         const work = emp.istStunden[day] ?? 0;
         const dayIst = work + credit;
+        tage.push({ datum: day, zaehlt: true, arbeitH: work, absenzTyp: typ ?? null, gutschrift: credit, soll: daySoll });
         soll = (soll ?? 0) + daySoll;
         ist = (ist ?? 0) + dayIst;
         gut = (gut ?? 0) + credit;
@@ -288,13 +324,19 @@ export function berechneUeberstundenJahr(
       const saldo = soll !== null && ist !== null ? ist - soll : null;
       wochen.push({
         label: `KW ${kw}`, kw, kwYear, monday,
-        soll, ist, saldo, gutschrift: gut, hasData,
+        soll, ist, saldo, gutschrift: gut, hasData, tage,
       });
     }
 
+    const stundensatz = emp.stundensatz ?? null;
+    // Kosten = POSITIVES laufendes Saldo × AG-Satz; negativ/0 → 0 CHF;
+    // keine Datenbasis oder kein Satz → leer (null), nie stille 0.
+    const kosten = laufend === null || stundensatz === null
+      ? null
+      : laufend > 0 ? Math.round(laufend * stundensatz * 100) / 100 : 0;
     return {
       id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
-      wochen, monatsSaldo, laufend, ohneEintritt,
+      wochen, monatsSaldo, laufend, ohneEintritt, stundensatz, kosten,
     };
   });
 
@@ -302,7 +344,11 @@ export function berechneUeberstundenJahr(
   const totalLaufend = mitDaten.length === 0
     ? null
     : mitDaten.reduce((s, e) => s + (e.laufend ?? 0), 0);
-  return { year, mitarbeiter: ergebnisse, totalLaufend };
+  const mitKosten = ergebnisse.filter(e => e.kosten !== null);
+  const totalKosten = mitKosten.length === 0
+    ? null
+    : Math.round(mitKosten.reduce((s, e) => s + (e.kosten ?? 0), 0) * 100) / 100;
+  return { year, mitarbeiter: ergebnisse, totalLaufend, totalKosten };
 }
 
 // ── Datenlader (DB → reine Berechnung) ────────────────────────────────────────
@@ -314,6 +360,11 @@ export interface UeJahresDaten {
   /** Fix-MA des Jahres (Union aller Monate) für die Absenz-Erfassung. */
   fixEmployees: Employee[];
   absenzen: UeAbsenzenBlob;
+  /**
+   * ISO-Daten (≤ heute) mit Mirus-Datenbasis (Mandanten-weit) — für die
+   * Import-Ampel je KW (voll/teilweise/nicht importiert).
+   */
+  tageMitDaten: Set<string>;
 }
 
 /**
@@ -354,6 +405,7 @@ export async function ladeUeberstundenJahr(
   );
   const istProEmp = new Map<string, Record<string, number>>();
   const wochenMitDaten = new Set<string>();
+  const tageMitDaten = new Set<string>();
   for (const res of monthResults) {
     if (!res) continue;
     for (const [key, entry] of Object.entries(res)) {
@@ -362,6 +414,7 @@ export async function ladeUeberstundenJahr(
       const empId = key.slice(0, -11);
       if (date > heute) continue; // Stand bis heute; schützt vor Geister-Zukunftszeilen
       wochenMitDaten.add(mondayOf(date));
+      tageMitDaten.add(date);
       if (!fixMonate.has(empId)) continue;
       const h = typeof entry.hours === 'number' && Number.isFinite(entry.hours) ? entry.hours : 0;
       if (h <= 0) continue;
@@ -378,9 +431,15 @@ export async function ladeUeberstundenJahr(
     }
   }
 
+  // AG-Stundenkostensatz (gleiche Basis wie Personalkosten fix): zentrale
+  // Sozialkostensätze des Mandanten + employee-rate-SSOT.
+  const ratesBlob = await loadSocialCostRates(tenantId).catch(() => null);
+  const rates = ratesBlob?.rates ?? null;
+
   const inputs: UeMitarbeiterInput[] = [...fixMonate.entries()].map(([id, monate]) => {
     const e = empById.get(id)!;
     return {
+      stundensatz: rates ? getEffectiveHourlyRate(e, rates) : null,
       id,
       name: e.name ?? id,
       wochenSollH: typeof e.weeklyHours === 'number' && e.weeklyHours > 0 ? e.weeklyHours : VOLLZEIT_WOCHE_H,
@@ -394,7 +453,7 @@ export async function ladeUeberstundenJahr(
 
   const ergebnis = berechneUeberstundenJahr(year, inputs, wochenMitDaten, heute);
   const fixEmployees = inputs.map(i => empById.get(i.id)!).filter(Boolean);
-  return { ergebnis, wochenMitDaten, fixEmployees, absenzen };
+  return { ergebnis, wochenMitDaten, fixEmployees, absenzen, tageMitDaten };
 }
 
 /**
@@ -407,26 +466,62 @@ export async function ladeUeberstundenJahr(
 // Absenzen-Speichern (gleicher Tab); Mirus-Importe schlagen spätestens nach
 // Ablauf der TTL durch.
 const TOTAL_CACHE_TTL_MS = 5 * 60 * 1000;
-const totalCache = new Map<string, { at: number; value: number | null }>();
+
+export interface UeTotals {
+  /** Σ laufender Saldo (h) aller Fix-MA; null = keine Datenbasis. */
+  stunden: number | null;
+  /** Σ Überstunden-Kosten (CHF, nur positive Konten); null = keine Datenbasis. */
+  kosten: number | null;
+}
+
+const totalCache = new Map<string, { at: number; value: UeTotals }>();
 export function ueberstundenTotalCacheLeeren(): void { totalCache.clear(); }
 
-export async function ladeUeberstundenTotal(
+export async function ladeUeberstundenTotals(
   tenantId: TenantId,
   tenantKey: (k: string) => string,
   heute: string = iso(new Date()),
-): Promise<number | null> {
+): Promise<UeTotals> {
   const cacheKey = `${tenantId}|${heute}`;
   const hit = totalCache.get(cacheKey);
   if (hit && Date.now() - hit.at < TOTAL_CACHE_TTL_MS) return hit.value;
   const startJahr = Number(UEBERSTUNDEN_START.slice(0, 4));
   const endJahr = Number(heute.slice(0, 4));
-  if (endJahr < startJahr) return null;
-  let total: number | null = null;
+  if (endJahr < startJahr) return { stunden: null, kosten: null };
+  // Laufendes KONTO über Jahre: erst je MA über alle Jahre konsolidieren
+  // (negatives Altjahr verrechnet sich mit positivem Folgejahr), DANN
+  // max(0, Saldo) × Satz bewerten — nie Jahres-Kosten aufsummieren.
+  const konto = new Map<string, { laufend: number; satz: number | null }>();
   for (let y = startJahr; y <= endJahr; y++) {
     const daten = await ladeUeberstundenJahr(tenantId, tenantKey, y, heute);
-    const t = daten?.ergebnis.totalLaufend ?? null;
-    if (t !== null) total = (total ?? 0) + t;
+    for (const m of daten?.ergebnis.mitarbeiter ?? []) {
+      if (m.laufend === null) continue;
+      const cur = konto.get(m.id) ?? { laufend: 0, satz: null };
+      cur.laufend += m.laufend;
+      // Satz des jüngsten Jahres mit Datenbasis gilt für den Stichtag.
+      if (m.stundensatz !== null) cur.satz = m.stundensatz;
+      konto.set(m.id, cur);
+    }
   }
-  totalCache.set(cacheKey, { at: Date.now(), value: total });
-  return total;
+  let stunden: number | null = null;
+  let kosten: number | null = null;
+  for (const { laufend, satz } of konto.values()) {
+    stunden = (stunden ?? 0) + laufend;
+    if (satz !== null) {
+      const k = laufend > 0 ? Math.round(laufend * satz * 100) / 100 : 0;
+      kosten = Math.round(((kosten ?? 0) + k) * 100) / 100;
+    }
+  }
+  const value: UeTotals = { stunden, kosten };
+  totalCache.set(cacheKey, { at: Date.now(), value });
+  return value;
+}
+
+/** Rückwärtskompatibel: nur die Stunden (Cockpit-Zeile «Überstunden total»). */
+export async function ladeUeberstundenTotal(
+  tenantId: TenantId,
+  tenantKey: (k: string) => string,
+  heute: string = iso(new Date()),
+): Promise<number | null> {
+  return (await ladeUeberstundenTotals(tenantId, tenantKey, heute)).stunden;
 }

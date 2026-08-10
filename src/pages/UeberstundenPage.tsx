@@ -42,6 +42,8 @@ export default function UeberstundenPage() {
   const [loadError, setLoadError] = useState(false);
   const [parked, setParked] = useState<ParkedHoursEntry[]>([]);
   const [selEmp, setSelEmp] = useState<string | null>(null);
+  /** Zellen-Klick: Montag der ausgewählten KW (Wochen-Detail genau dieser Woche). */
+  const [selWeek, setSelWeek] = useState<string | null>(null);
   /** Standard-Ansicht = Wochenübersicht (MA × KW); Monatsübersicht per Umschalter. */
   const [ansicht, setAnsicht] = useState<'woche' | 'monat'>('woche');
 
@@ -68,7 +70,7 @@ export default function UeberstundenPage() {
     }
   }, [tenantId, tenantKey, year, heute]);
 
-  useEffect(() => { void reload(); setStaged({}); setSelEmp(null); }, [reload]);
+  useEffect(() => { void reload(); setStaged({}); setSelEmp(null); setSelWeek(null); }, [reload]);
 
   const erg = daten?.ergebnis ?? null;
   /** Gerechnete MA (mit Eintrittsdatum) vs. Hinweis-Liste (ohne Eintritt). */
@@ -82,6 +84,31 @@ export default function UeberstundenPage() {
   /** Monats-Spalten: ab Konto-Start (2026 → Jul–Dez), sonst ganzes Jahr. */
   const startMonatIdx = year === Number(UEBERSTUNDEN_START.slice(0, 4)) ? Number(UEBERSTUNDEN_START.slice(5, 7)) - 1 : 0;
   const sel = erg?.mitarbeiter.find(m => m.id === selEmp) ?? null;
+  const selWoche = (sel && selWeek && sel.wochen.find(w => w.monday === selWeek)) || null;
+  /** Import-Ampel je KW: Anteil Tage (≤ heute) mit Mirus-Datenbasis (0..1). */
+  const importAnteil = useCallback((monday: string): number => {
+    const tage = daten?.tageMitDaten;
+    if (!tage) return 0;
+    let mit = 0, gesamt = 0;
+    for (let i = 0; i < 7; i++) {
+      // TZ-sicher: lokales Datum formatieren, NIE via toISOString (UTC-Shift).
+      const dt = new Date(monday + 'T12:00:00'); dt.setDate(dt.getDate() + i);
+      const day = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      if (day > heute) break;
+      gesamt++;
+      if (tage.has(day)) mit++;
+    }
+    return gesamt === 0 ? 0 : mit / gesamt;
+  }, [daten, heute]);
+  /** Total je KW-Spalte (Summe der gerechneten MA; null = keiner hat Werte). */
+  const wochenTotal = useCallback((monday: string): number | null => {
+    let tot: number | null = null;
+    for (const m of gerechnet) {
+      const s = m.wochen.find(w => w.monday === monday)?.saldo ?? null;
+      if (s !== null) tot = (tot ?? 0) + s;
+    }
+    return tot;
+  }, [gerechnet]);
   const selAbsenzen = (selEmp && daten?.absenzen.entries[selEmp]) || {};
 
   const editDays = useMemo(() => {
@@ -216,13 +243,29 @@ export default function UeberstundenPage() {
                     <tr className="text-muted-foreground">
                       <th className="text-left py-1 pr-2">Mitarbeiter</th>
                       <th className="text-right pr-2">Pensum</th>
-                      {wochenSpalten.map(w => (
-                        <th key={w.monday} className="text-right px-1 whitespace-nowrap">
-                          <div>{w.label}</div>
-                          <div className="font-normal">{w.monday.slice(8, 10)}.{w.monday.slice(5, 7)}.</div>
-                        </th>
-                      ))}
+                      {wochenSpalten.map(w => {
+                        const anteil = importAnteil(w.monday);
+                        return (
+                          <th key={w.monday} className="text-right px-1 whitespace-nowrap">
+                            <div>{w.label}</div>
+                            <div className="font-normal">{w.monday.slice(8, 10)}.{w.monday.slice(5, 7)}.</div>
+                            {/* Import-Ampel: Anteil Tage mit Mirus-Import (voll grün / teilweise / grau) */}
+                            <div
+                              className="mt-0.5 h-1 w-full rounded bg-muted overflow-hidden"
+                              title={`Mirus-Import: ${Math.round(anteil * 100)} % der Tage`}
+                              data-testid={`ampel-${w.monday}`}
+                              data-anteil={Math.round(anteil * 100)}
+                            >
+                              <div
+                                className={`h-full ${anteil >= 0.999 ? 'bg-green-500' : 'bg-amber-500'}`}
+                                style={{ width: `${Math.round(anteil * 100)}%` }}
+                              />
+                            </div>
+                          </th>
+                        );
+                      })}
                       <th className="text-right pl-2 font-semibold">Laufend</th>
+                      <th className="text-right pl-2 font-semibold">ÜStd-Kosten</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -232,15 +275,21 @@ export default function UeberstundenPage() {
                         <tr
                           key={m.id}
                           className={`border-t cursor-pointer hover:bg-muted/50 ${selEmp === m.id ? 'bg-muted/60' : ''}`}
-                          onClick={() => { setSelEmp(m.id); setStaged({}); }}
+                          onClick={() => { setSelEmp(m.id); setSelWeek(null); setStaged({}); }}
                           data-testid={`row-emp-${m.id}`}
                         >
                           <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
                           <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
                           {wochenSpalten.map(ws => {
                             const s = byMonday.get(ws.monday)?.saldo ?? null;
+                            const aktiv = selEmp === m.id && selWeek === ws.monday;
                             return (
-                              <td key={ws.monday} className={`text-right px-1 tabular-nums ${saldoClass(s)}`} data-testid={`cell-${m.id}-${ws.monday}`}>
+                              <td
+                                key={ws.monday}
+                                className={`text-right px-1 tabular-nums cursor-pointer ${saldoClass(s)} ${aktiv ? 'ring-1 ring-primary rounded' : ''}`}
+                                onClick={e => { e.stopPropagation(); setSelEmp(m.id); setSelWeek(ws.monday); setStaged({}); }}
+                                data-testid={`cell-${m.id}-${ws.monday}`}
+                              >
                                 {s === null ? '–' : s.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                               </td>
                             );
@@ -248,9 +297,29 @@ export default function UeberstundenPage() {
                           <td className={`text-right pl-2 tabular-nums font-semibold ${saldoClass(m.laufend)}`}>
                             {fmtH(m.laufend)}
                           </td>
+                          <td className="text-right pl-2 tabular-nums" data-testid={`kosten-${m.id}`}>
+                            {m.kosten === null ? '–' : `${m.kosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </td>
                         </tr>
                       );
                     })}
+                    {/* Total-Zeile: Summe aller gerechneten Fix-MA je KW + Laufend/Kosten */}
+                    <tr className="border-t-2 font-semibold" data-testid="row-total">
+                      <td className="py-1 pr-2">Total</td>
+                      <td />
+                      {wochenSpalten.map(ws => {
+                        const t = wochenTotal(ws.monday);
+                        return (
+                          <td key={ws.monday} className={`text-right px-1 tabular-nums ${saldoClass(t)}`} data-testid={`total-${ws.monday}`}>
+                            {t === null ? '–' : t.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                          </td>
+                        );
+                      })}
+                      <td className={`text-right pl-2 tabular-nums ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
+                      <td className="text-right pl-2 tabular-nums" data-testid="text-total-kosten">
+                        {erg.totalKosten === null ? '–' : erg.totalKosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               ) : (
@@ -268,7 +337,7 @@ export default function UeberstundenPage() {
                       <tr
                         key={m.id}
                         className={`border-t cursor-pointer hover:bg-muted/50 ${selEmp === m.id ? 'bg-muted/60' : ''}`}
-                        onClick={() => { setSelEmp(m.id); setStaged({}); }}
+                        onClick={() => { setSelEmp(m.id); setSelWeek(null); setStaged({}); }}
                         data-testid={`row-emp-${m.id}`}
                       >
                         <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
@@ -296,6 +365,60 @@ export default function UeberstundenPage() {
               )}
             </CardContent>
           </Card>
+
+          {sel && selWoche && (
+            <Card data-testid="card-wochen-detail">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">
+                  {sel.name} — {selWoche.label} ({selWoche.monday.slice(8, 10)}.{selWoche.monday.slice(5, 7)}. – {selWoche.tage[6]?.datum.slice(8, 10)}.{selWoche.tage[6]?.datum.slice(5, 7)}.)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="text-xs w-full max-w-xl">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left py-1">Tag</th>
+                      <th className="text-right px-2">Mirus-Std</th>
+                      <th className="text-left px-2">Absenz</th>
+                      <th className="text-right px-2">Gutschrift</th>
+                      <th className="text-right px-2">Tages-Soll</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selWoche.tage.map(t => {
+                      const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][new Date(t.datum + 'T12:00:00').getDay()];
+                      return (
+                        <tr key={t.datum} className={`border-t ${t.zaehlt ? '' : 'text-muted-foreground'}`} data-testid={`detail-tag-${t.datum}`}>
+                          <td className="py-0.5 whitespace-nowrap">{wd} {t.datum.slice(8, 10)}.{t.datum.slice(5, 7)}.</td>
+                          <td className="text-right px-2 tabular-nums">{t.zaehlt ? fmtH(t.arbeitH ?? 0) : '–'}</td>
+                          <td className="px-2">{t.absenzTyp ? UE_ABSENZ_LABELS[t.absenzTyp] : t.zaehlt ? '' : '–'}</td>
+                          <td className="text-right px-2 tabular-nums">{t.zaehlt ? (t.gutschrift ? fmtH(t.gutschrift) : '') : '–'}</td>
+                          <td className="text-right px-2 tabular-nums">{t.zaehlt ? fmtH(t.soll ?? 0) : '–'}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="border-t-2 font-medium">
+                      <td className="py-1">Woche</td>
+                      <td className="text-right px-2 tabular-nums">{selWoche.ist === null ? '–' : fmtH(selWoche.ist)}</td>
+                      <td className="px-2 text-muted-foreground">Soll {selWoche.soll === null ? '–' : fmtH(selWoche.soll)}</td>
+                      <td className="text-right px-2 tabular-nums text-muted-foreground">{selWoche.gutschrift ? fmtH(selWoche.gutschrift) : ''}</td>
+                      <td className={`text-right px-2 tabular-nums ${saldoClass(selWoche.saldo)}`} data-testid="detail-saldo">
+                        {selWoche.saldo === null ? '–' : fmtH(selWoche.saldo)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  «–» = Tag zählt nicht (vor Konto-Start/Eintritt, nach Austritt oder keine Datenbasis).
+                  {sel.stundensatz !== null && selWoche.saldo !== null && (
+                    <> · Wochen-Kostenwirkung: {selWoche.saldo > 0
+                      ? `${(Math.round(selWoche.saldo * sel.stundensatz * 100) / 100).toLocaleString('de-CH', { minimumFractionDigits: 2 })} CHF (Saldo × ${sel.stundensatz.toLocaleString('de-CH', { minimumFractionDigits: 2 })} CHF/h)`
+                      : '0.00 CHF (kein positives Saldo)'}</>
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {sel && (
             <Card>
