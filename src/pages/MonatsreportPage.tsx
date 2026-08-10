@@ -960,6 +960,12 @@ export default function MonatsreportPage() {
     });
   }, [budgetModusKey]);
 
+  // Manueller Stichtag (nur Modus 'bis Stichtag'): null = Automatik (letzter
+  // Datentag). Freie Datums-Auswahl im Monat; bei Monats-/Mandantenwechsel
+  // zurück auf Automatik (Tag wäre in anderem Monat sinnlos).
+  const [stichtagTag, setStichtagTag] = useState<number | null>(null);
+  useEffect(() => { setStichtagTag(null); }, [year, month, tenantId]);
+
   const [budgetEdit, setBudgetEdit] = useState(false);
   const [budgetBusy, setBudgetBusy] = useState(false);
   // Ein-Schritt-Rückgängig: Positions-Snapshot VOR der letzten Änderung.
@@ -976,12 +982,12 @@ export default function MonatsreportPage() {
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection, budgetModus)
+    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection, budgetModus, stichtagTag)
       .then(d => { if (alive) setDaten(d); })
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick, budgetModus]);
+  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick, budgetModus, stichtagTag]);
 
   useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
 
@@ -1311,17 +1317,50 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 {MONATE[month - 1]} {year}
               </span>
               {daten?.standBis ? (
-                <span
-                  className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
-                  title={budgetModus === 'monat'
-                    ? 'Budget = volles Monatsbudget; Ist-Werte weiterhin nur bis zum Stichtag (keine Hochrechnung)'
-                    : 'Letzter Tag mit Umsatz- und Ist-Stunden-Daten — alle Ist-Werte bis zu diesem Tag (keine Hochrechnung); Budget anteilig bis zu diesem Tag'}
-                  data-testid="text-stand-bis"
-                >
-                  {budgetModus === 'monat'
-                    ? `voller Monat (Ist bis ${daten.standBis.slice(8, 10)}.${daten.standBis.slice(5, 7)}.)`
-                    : `Stand bis ${fmtDate(daten.standBis)}`}
-                </span>
+                budgetModus === 'monat' ? (
+                  <span
+                    className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                    title="Budget = volles Monatsbudget; Ist-Werte weiterhin nur bis zum Stichtag (keine Hochrechnung)"
+                    data-testid="text-stand-bis"
+                  >
+                    voller Monat (Ist bis {daten.standBis.slice(8, 10)}.{daten.standBis.slice(5, 7)}.)
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                    title={stichtagTag == null
+                      ? 'Automatik: letzter Tag mit Umsatz- und Ist-Stunden-Daten — Ist und anteiliges Budget bis zu diesem Tag. Datum frei wählbar.'
+                      : 'Manuell gewählter Stichtag — Ist und anteiliges Budget bis zu diesem Tag. Leeren = zurück zur Automatik.'}
+                    data-testid="text-stand-bis"
+                  >
+                    Stand bis
+                    <input
+                      type="date"
+                      className="h-6 rounded border border-input bg-background px-1 text-xs tabular-nums"
+                      value={daten.standBis}
+                      min={`${year}-${String(month).padStart(2, '0')}-01`}
+                      max={`${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`}
+                      onChange={(e) => {
+                        const v = e.target.value; // '' = geleert → Automatik
+                        if (!v) { setStichtagTag(null); return; }
+                        const tag = Number(v.slice(8, 10));
+                        setStichtagTag(Number.isFinite(tag) && tag >= 1 ? tag : null);
+                      }}
+                      data-testid="input-stichtag"
+                    />
+                    {stichtagTag != null ? (
+                      <button
+                        type="button"
+                        className="ml-0.5 underline decoration-dotted hover:text-foreground"
+                        onClick={() => setStichtagTag(null)}
+                        title="Zurück zum automatisch erkannten letzten Datentag"
+                        data-testid="button-stichtag-auto"
+                      >
+                        Auto
+                      </button>
+                    ) : null}
+                  </span>
+                )
               ) : null}
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
                 <ChevronRight className="h-4 w-4" />

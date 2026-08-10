@@ -912,6 +912,12 @@ export async function ladeMonatsreport(
    * volle Zielwert. Abgeschlossener Monat: beide Modi identisch.
    */
   budgetModus: 'stichtag' | 'monat' = 'stichtag',
+  /**
+   * Manueller Stichtag (Kalendertag 1–31, nur Modus 'stichtag'): überschreibt
+   * den automatisch erkannten letzten Datentag. Ist UND anteilige Budgets
+   * klemmen dann auf diesen Tag. null/undefined = Automatik.
+   */
+  stichtagTag: number | null = null,
 ): Promise<MonatsreportDaten> {
   const vollerMonat = budgetModus === 'monat';
   const mm = pad2(month);
@@ -1133,6 +1139,13 @@ export async function ladeMonatsreport(
       standTag = heute.getDate(); // PK-Kern nicht ladbar → bisherige «bis heute»-Grenze
     }
   }
+  // Manueller Stichtag (Selektor, nur Modus 'stichtag'): frei wählbarer Tag
+  // im Monat — Ist UND anteilige Budgets klemmen auf diesen Tag (Zukunftstage
+  // haben schlicht keine Ist-Daten). Modus 'monat' ignoriert die Auswahl.
+  if (!vollerMonat && !isFutureMonth
+    && typeof stichtagTag === 'number' && Number.isFinite(stichtagTag)) {
+    standTag = Math.min(Math.max(1, Math.round(stichtagTag)), daysInMonth);
+  }
   const standIso = standTag > 0 ? `${year}-${mm}-${pad2(standTag)}` : '';
   const istTage = alleTage.filter(d => standIso && d <= standIso);
   /** Anteil Kalendertage bis Stichtag (für anteilige absolute Budgets). */
@@ -1234,7 +1247,8 @@ export async function ladeMonatsreport(
   // Quelle wie budgetNet oben). Wochen im Nachbarjahr: Monate des Wochen-
   // Startjahres laden.
   const erMonate = erNettoBudgetMonate(year, tenantKey('budget_v1'));
-  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, standIso || toIso, undefined, erMonate);
+  // (Frühere pro-rata-Auflösung fromIso..standIso entfernt — anteilige
+  // Budgets rechnen jetzt kalendertag-anteilig aus der vollen Monatsauflösung.)
   // VOLLER Monatswert (ohne pro-rata-Klemmung bis Stichtag) — Basis der
   // Inline-Budget-Bearbeitung: der Editor zeigt/schreibt IMMER den ganzen
   // Monat, nie den anteiligen Anzeigwert des laufenden Monats.
@@ -1296,16 +1310,20 @@ export async function ladeMonatsreport(
       };
     }
   }
-  // Monats-Budget je Modus: 'stichtag' = pro-rata-Auflösung (ckM, bis standIso),
+  // Monats-Budget je Modus: 'stichtag' = kalendertag-anteilig (budAbs),
   // 'monat' = volle Monatsauflösung (ckMFull). Verhältnis-Positionen (kind
   // 'ratio': Ø-Verkauf, PKQ, Produktivität, TA-Anteil …) sind in BEIDEN Modi
-  // die volle Monats-Auflösung: die pro-rata-Auflösung kann Ratio-Fallbacks
-  // aus ungleich anteiligen Zähler/Nenner-Basen verzerren (z.B. Gäste
-  // kalendertag-anteilig vs. Umsatz tagesgewichtet).
+  // die volle Monats-Auflösung (Quoten nie kürzen).
   const ckRatioIds = new Set(
     COCKPIT_BUDGET_KPIS.filter(k => k.kind === 'ratio').map(k => k.id));
+  // Absolute Positionen im Modus 'stichtag': KALENDERTAG-anteilig aus dem
+  // vollen Monatswert (Monatsbudget × standTag ÷ daysInMonth, Spec 08/2026) —
+  // gilt für ALLE absoluten Budgets (Umsatz, PK, Waren, Gäste, Reservierte,
+  // TA-Gäste, Gruppen, Stunden, Rezensionen). Ratio-Positionen bleiben voll.
   const ckMk = (id: string): number | null =>
-    ((vollerMonat || ckRatioIds.has(id)) ? ckMFull[id] : ckM[id]) ?? null;
+    (vollerMonat || ckRatioIds.has(id))
+      ? (ckMFull[id] ?? null)
+      : budAbs(ckMFull[id] ?? null);
   const ckWk = (id: string): number | null => ckW[id] ?? null;
   const ckMFullK = (id: string): number | null => ckMFull[id] ?? null;
   /** «manuell»-Marker: Monatswert der Position wurde direkt überschrieben.
@@ -2109,7 +2127,11 @@ export async function ladeMonatsreport(
       const mTage = new Date(year, month, 0).getDate();
       const wTage = weekFrom && weekTo
         ? Math.round((Date.parse(weekTo) - Date.parse(weekFrom)) / 86_400_000) + 1 : 0;
-      const mBud = collapsed ? null : (hatCk ? ckMk(id) : null) ?? reviewZielBudget(star, mTage, reviewWochenrate(tenantId, platform));
+      // Rezensions-Budget: absolut → im Stichtag-Modus kalendertag-anteilig
+      // (Kontrolle: 22 × 9/31 ≈ 6); ckMk ist bereits anteilig, der
+      // reviewZielBudget-Fallback (volle Monatstage) wird via budAbs gekürzt.
+      const mBud = collapsed ? null : (hatCk ? ckMk(id) : null)
+        ?? budAbs(reviewZielBudget(star, mTage, reviewWochenrate(tenantId, platform)));
       const wBud = collapsed ? null : (hatCk ? ckWk(id) : null) ?? reviewZielBudget(star, wTage, reviewWochenrate(tenantId, platform));
       return {
         ...d(id, label, {
