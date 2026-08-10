@@ -19,3 +19,13 @@ Regeln:
 - **How to apply:** Jeder Wochentag zieht Ist UND Budget aus SEINEM Monat/Jahr (Fremdmonats-Daten nachladen: Rechnungen, Plan/Ist-Stunden, PK-Kern, Tages-Budgets; Cockpit-Budgets pro Jahres-Segment auflösen — CHF summieren, % ER-Netto-gewichtet). Wochen-Summen nie aus den Monats-Loops filtern, sondern eigener Loop über die Wochentage.
 - Warenkosten & Wareneinsatz sind EINE Zeile (Ist = Warenkosten total, Soll = WEQ-% × Ist-Netto; WEQ-Quote je Monat aus Cockpit-Wareneinsatz ÷ ER-Netto, Fallback Ziel-WKQ); separate Wareneinsatz- und Betriebskosten-Zeilen wurden bewusst entfernt (auch im Export/Wochenverlauf).
 - PK/PKQ-Budgets NUR aus dem Cockpit-Budget-Store — der alte 35.5-%-Fallback aus dem Personal-Modul darf nicht zurückkommen; leer statt 0.
+
+## Daten-Stichtag statt Hochrechnung (08/2026)
+- Monats-Sicht: Stichtag = min(letzter Umsatz-Tag, letzter MIRUS-Ist-Stunden-Tag) aus dem PK-Kern (pk.istTage/umsatzIstProTag); nur eine Quelle vorhanden → deren letzter Tag; abgeschlossener Monat = Monatsletzter; nie > heute. Kopf zeigt «Stand bis TT.MM.JJJJ» (standBis in MonatsreportDaten).
+- ALLE Monats-Ist (Umsatz, Gäste, Ist-Stunden, Ø-Verkauf-Fallback) und die Cockpit-Budget-pro-rata klemmen auf standIso. Personalkosten-Zeile = personalkosten('istBisHeute',{stichtag}) — KEINE Hochrechnung mehr; PKQ = Ist÷Ist mit demselben Stichtag. Reservationen/TA-Gäste/Reviews bleiben bewusst ganzer Monat (geplante Zukunft zählt); Wochen-Spalte bleibt «bis heute» geklemmt.
+
+## Budget-Umschalter Stichtag/voller Monat (08/2026)
+- Monats-Budgetspalte umschaltbar: 'stichtag' (Default, Budget anteilig standTag/daysInMonth) vs. 'monat' (volles Monatsbudget); Ist bleibt IMMER bis Stichtag. Modus sessionStorage pro Mandant.
+- **Ratio-Positionen (kind 'ratio': Ø-Verkauf, PKQ, Produktivität, TA-Anteil) IMMER aus der vollen Monatsauflösung (ckMFull)**, nie aus der pro-rata-Auflösung — deren Ratio-Fallbacks verzerren, weil Zähler/Nenner ungleich anteilig sind (Gäste kalendertag-anteilig vs. Umsatz tagesgewichtet).
+- Wochen-Budgets bleiben unberührt (ckW); Warenkosten-sollMonat (Ist-basiert) und reviewZielBudget bewusst nicht umgeschaltet.
+- «vs. VJ» nur wo KEIN Budget hinterlegt (08/2026): Anteil-Zeilen (sharePct, z.B. Gäste Take Away) rechnen Δ gegen das Perioden-Budget, sobald eines existiert; Ausnahme fmt='countPax' (Gruppen ab 20 Pax: Budget in Personen, Wert in Anzahl Gruppen → weiter vs. VJ). Regel gilt in Bildschirm-Tabelle, Wochen-Zellen UND Excel-Export (Export-Prädikat synchron halten!).

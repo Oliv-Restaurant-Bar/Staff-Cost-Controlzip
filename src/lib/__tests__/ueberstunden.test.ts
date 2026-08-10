@@ -47,6 +47,74 @@ describe('berechneUeberstundenJahr — Wochen-Saldi', () => {
     expect(w.gutschrift).toBeCloseTo(42, 6);
   });
 
+  it('Ferien Mo–So (7 Tage, 0 MIRUS) → Deckelung auf Wochen-Soll, Saldo 0 (Kontrollfall Spec)', () => {
+    // Kontrolle Mawlood KW32: FE Mo–So, 0 Arbeitsstunden →
+    // Roh-Gutschrift 7×8.4=58.8, gedeckelt auf 42−0=42 → Saldo 0.0 (nicht +16.8).
+    const abs: Record<string, UeAbsenzTyp> = {};
+    for (let i = 0; i < 7; i++) abs[`2026-08-0${3 + i}`] = 'ferien';
+    const r = berechneUeberstundenJahr(2026, [ma({ absenzen: abs })], wochen(MO), '2026-12-31');
+    const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
+    expect(w.gutschrift).toBeCloseTo(42, 6);
+    expect(w.saldo).toBeCloseTo(0, 6);
+    expect(r.mitarbeiter[0].laufend).toBeCloseTo(0, 6);
+  });
+
+  it('Deckelung: Arbeit + Ferien überschreiten das Wochen-Soll nie (kein Plus aus Absenzen)', () => {
+    // 4 Arbeitstage à 10 h (40 h) + 1 Ferientag: Gutschrift roh 8.4, Deckel 42−40=2.
+    const ist: Record<string, number> = {};
+    for (let i = 0; i < 4; i++) ist[`2026-08-0${3 + i}`] = 10;
+    const r = berechneUeberstundenJahr(2026, [ma({
+      istStunden: ist, absenzen: { '2026-08-07': 'ferien' },
+    })], wochen(MO), '2026-12-31');
+    const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
+    expect(w.gutschrift).toBeCloseTo(2, 6);
+    expect(w.saldo).toBeCloseTo(0, 6);
+  });
+
+  it('Mehrarbeit ohne Absenzen bleibt ungedeckelt (+5)', () => {
+    const ist: Record<string, number> = {};
+    for (let i = 0; i < 5; i++) ist[`2026-08-0${3 + i}`] = 9.4;
+    const r = berechneUeberstundenJahr(2026, [ma({ istStunden: ist })], wochen(MO), '2026-12-31');
+    expect(r.mitarbeiter[0].wochen.find(w => w.monday === MO)!.saldo).toBeCloseTo(5, 6);
+  });
+
+  it('Dienstplan-Absenzen (planAbsenzen) zählen wie manuelle; manuelle Erfassung sticht', () => {
+    const plan: Record<string, UeAbsenzTyp> = {};
+    for (let i = 0; i < 5; i++) plan[`2026-08-0${3 + i}`] = 'ferien';
+    // Manueller Override: Mittwoch ist «frei» (keine Gutschrift) statt Plan-Ferien.
+    const r = berechneUeberstundenJahr(2026, [ma({
+      planAbsenzen: plan, absenzen: { '2026-08-05': 'frei' },
+    })], wochen(MO), '2026-12-31');
+    const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
+    expect(w.tage[2].absenzTyp).toBe('frei');
+    expect(w.gutschrift).toBeCloseTo(4 * 8.4, 6);
+    expect(w.saldo).toBeCloseTo(-8.4, 6);
+  });
+
+  it('Plan-Ferienwoche aktiviert NUR den betroffenen MA (kein −42-Drift für andere)', () => {
+    // Woche OHNE mandanten-weite Datenbasis (kein MIRUS, keine manuelle Absenz):
+    // A hat Plan-FE Mo–Fr → Saldo 0; B (nichts) bleibt leer (null), nie −42.
+    const plan: Record<string, UeAbsenzTyp> = {};
+    for (let i = 0; i < 5; i++) plan[`2026-08-0${3 + i}`] = 'ferien';
+    const r = berechneUeberstundenJahr(2026, [
+      ma({ id: 'A', planAbsenzen: plan }),
+      ma({ id: 'B' }),
+    ], wochen(), '2026-12-31');
+    const wA = r.mitarbeiter.find(m => m.id === 'A')!.wochen.find(w => w.monday === MO)!;
+    const wB = r.mitarbeiter.find(m => m.id === 'B')!.wochen.find(w => w.monday === MO)!;
+    expect(wA.saldo).toBeCloseTo(0, 6);
+    expect(wB.saldo).toBeNull();
+    expect(wB.soll).toBeNull();
+  });
+
+  it('Plan-«Frei» allein aktiviert die Woche NICHT (bleibt leer)', () => {
+    const plan: Record<string, UeAbsenzTyp> = {};
+    for (let i = 0; i < 7; i++) plan[`2026-08-0${3 + i}`] = 'frei';
+    const r = berechneUeberstundenJahr(2026, [ma({ planAbsenzen: plan })], wochen(), '2026-12-31');
+    const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
+    expect(w.saldo).toBeNull();
+  });
+
   it('Frei-/0-Woche (Datenbasis vorhanden) → Saldo −42', () => {
     const r = berechneUeberstundenJahr(2026, [ma({})], wochen(MO), '2026-12-31');
     const w = r.mitarbeiter[0].wochen.find(w => w.monday === MO)!;
@@ -253,11 +321,14 @@ describe('Überstunden-Kosten & Tages-Aufschlüsselung', () => {
     expect(mi.soll).toBeCloseTo(8.4, 6);
     expect(doo.arbeitH).toBe(9);
     expect(fr.absenzTyp).toBe('ferien');
-    expect(fr.gutschrift).toBeCloseTo(8.4, 6);
+    // Deckelung (Spec 08/2026): Gutschrift ≤ Wochen-Soll − Arbeits-Ist
+    // (25.2 − 17 = 8.2 statt roh 8.4) — Ferien füllen höchstens bis Saldo 0.
+    expect(fr.gutschrift).toBeCloseTo(8.2, 6);
     expect(sa.soll).toBe(0); // Samstag: kein Soll
-    // Wochen-Summen konsistent zur Tagesliste
+    // Wochen-Summen konsistent zur Tagesliste (Saldo genau 0 dank Deckelung)
     expect(w.soll).toBeCloseTo(25.2, 6);
-    expect(w.ist).toBeCloseTo(8 + 9 + 8.4, 6);
+    expect(w.ist).toBeCloseTo(25.2, 6);
+    expect(w.saldo).toBeCloseTo(0, 6);
   });
 });
 

@@ -326,15 +326,21 @@ function ReportTable({
             //  - Standard:  Δ% gegen das Budget.
             let dev: number | null = null;
             let inverted = !!row.deltaInverted;
-            // Δ abs: GLEICHE Basis wie Δ% — Zeilen mit VJ-Vergleich (deltaVsVj/
-            // sharePct) rechnen Ist − VJ, alle anderen Ist − Budget. Nie zwei
-            // verschiedene Basen nebeneinander in derselben Zeile.
-            const devAbsBase = (row.deltaVsVj || row.sharePct) ? p.vj : p.devBudget;
+            // Δ abs: GLEICHE Basis wie Δ% — «vs. VJ» NUR, wenn wirklich KEIN
+            // Budget hinterlegt ist (Spec 08/2026): Anteil-Zeilen (sharePct,
+            // z.B. Gäste Take Away) rechnen gegen das Budget, sobald eines
+            // existiert; sonst Ist − VJ. Nie zwei Basen in derselben Zeile.
+            // countPax-Ausnahme (Gruppen ab 20 Pax): Budget ist in PERSONEN,
+            // der Zeilenwert in ANZAHL Gruppen — Δ gegen Budget wäre ein
+            // Einheiten-Mix, daher weiterhin vs. VJ.
+            const useVj = row.deltaVsVj
+              || (!!row.sharePct && (p.devBudget === null || row.fmt === 'countPax'));
+            const devAbsBase = useVj ? p.vj : p.devBudget;
             const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
             if (row.deltaPp) {
               dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
               inverted = true; // Quote über Ziel = rot
-            } else if (row.deltaVsVj || row.sharePct) {
+            } else if (useVj) {
               // Anteil-Zeilen (sharePct): Δ% = Veränderung Ist vs. Vorjahr —
               // konsistent mit den übrigen Kennzahlen; der Anteil selbst steht
               // als dezente Unterzeile unter der Zahl (Ist + Vorjahr).
@@ -454,7 +460,7 @@ function ReportTable({
                       : devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), row.fmt) ?? ''}`}
                   {!row.deltaPp && row.fmt !== 'pct' && dev !== null ? (
                     <span className="block text-[9px] font-normal text-muted-foreground">
-                      {fmtDev(dev)}{(row.deltaVsVj || row.sharePct) ? ' vs. VJ' : ''}
+                      {fmtDev(dev)}{useVj ? ' vs. VJ' : ''}
                     </span>
                   ) : null}
                 </td>
@@ -629,15 +635,19 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
         </>
       );
     }
-    // Δ-Logik identisch zur Report-Tabelle (deltaPp / deltaVsVj / Standard).
+    // Δ-Logik identisch zur Report-Tabelle (deltaPp / deltaVsVj / Standard);
+    // «vs. VJ» nur ohne hinterlegtes Budget (sharePct-Zeilen mit Budget → Budget).
     let dev: number | null = null;
     let inverted = !!skel.deltaInverted;
-    const devAbsBase = (skel.deltaVsVj || skel.sharePct) ? p.vj : p.devBudget;
+    // countPax-Ausnahme: Budget in Personen vs. Wert in Anzahl Gruppen → vs. VJ.
+    const useVj = skel.deltaVsVj
+      || (!!skel.sharePct && (p.devBudget === null || skel.fmt === 'countPax'));
+    const devAbsBase = useVj ? p.vj : p.devBudget;
     const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
     if (skel.deltaPp) {
       dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
       inverted = true;
-    } else if (skel.deltaVsVj || skel.sharePct) {
+    } else if (useVj) {
       dev = p.ist !== null && p.vj !== null && p.vj > 0 ? ((p.ist - p.vj) / p.vj) * 100 : null;
     } else {
       dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
@@ -681,7 +691,7 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
               : devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), skel.fmt) ?? ''}`}
           {!skel.deltaPp && skel.fmt !== 'pct' && dev !== null ? (
             <span className="block text-[9px] font-normal text-muted-foreground">
-              {fmtDev(dev)}{(skel.deltaVsVj || skel.sharePct) ? ' vs. VJ' : ''}
+              {fmtDev(dev)}{useVj ? ' vs. VJ' : ''}
             </span>
           ) : null}
         </td>
@@ -926,6 +936,30 @@ export default function MonatsreportPage() {
     saveOrder(next);
   }, [currentIds, saveOrder]);
 
+  // Budget-Umschalter: 'stichtag' = Budget anteilig bis Stichtag (Default),
+  // 'monat' = volles Monatsbudget (Ist bleibt IMMER bis Stichtag). Pro Sitzung
+  // und Mandant gemerkt (sessionStorage).
+  const budgetModusKey = `mr-budget-modus:${tenantId}`;
+  const [budgetModus, setBudgetModus] = useState<'stichtag' | 'monat'>(() => {
+    try {
+      return sessionStorage.getItem(budgetModusKey) === 'monat' ? 'monat' : 'stichtag';
+    } catch { return 'stichtag'; }
+  });
+  // Bei Tenant-Wechsel den gespeicherten Modus des neuen Mandanten lesen.
+  useEffect(() => {
+    try {
+      setBudgetModus(sessionStorage.getItem(budgetModusKey) === 'monat' ? 'monat' : 'stichtag');
+    } catch { setBudgetModus('stichtag'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budgetModusKey]);
+  const toggleBudgetModus = useCallback(() => {
+    setBudgetModus(m => {
+      const next = m === 'stichtag' ? 'monat' : 'stichtag';
+      try { sessionStorage.setItem(budgetModusKey, next); } catch { /* egal */ }
+      return next;
+    });
+  }, [budgetModusKey]);
+
   const [budgetEdit, setBudgetEdit] = useState(false);
   const [budgetBusy, setBudgetBusy] = useState(false);
   // Ein-Schritt-Rückgängig: Positions-Snapshot VOR der letzten Änderung.
@@ -942,12 +976,12 @@ export default function MonatsreportPage() {
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection)
+    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection, budgetModus)
       .then(d => { if (alive) setDaten(d); })
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick]);
+  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick, budgetModus]);
 
   useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
 
@@ -970,12 +1004,12 @@ export default function MonatsreportPage() {
     setDatenPrev(null);
     setLoadingPrev(true);
     ladeMonatsreport(mo.getFullYear(), mo.getMonth() + 1, tenantId, tenantKey, rates, heute,
-      { kind: 'kw', kw: week, kwYear })
+      { kind: 'kw', kw: week, kwYear }, budgetModus)
       .then(d => { if (alive) setDatenPrev(d); })
       .catch(() => { if (alive) setDatenPrev(null); })
       .finally(() => { if (alive) setLoadingPrev(false); });
     return () => { alive = false; };
-  }, [activeTab, daten?.weekFrom, tenantId, tenantKey, rates, ratesLoading, heute, budgetReloadTick]);
+  }, [activeTab, daten?.weekFrom, tenantId, tenantKey, rates, ratesLoading, heute, budgetReloadTick, budgetModus]);
 
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
   /** Wochen-Navigation: springt genau eine ISO-KW weiter/zurück (auch über
@@ -1172,7 +1206,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
           + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
           + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-          + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
+          + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
           + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».',
       };
@@ -1188,7 +1222,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
           + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
           + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
           + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-          + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
+          + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
           + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».',
       };
@@ -1263,6 +1297,11 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             {/* Capture-only: schlichte Zeitraum-Zeile anstelle der Controls (nur im PDF sichtbar) */}
             <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-monat">
               {MONATE[month - 1]} {year}
+              {daten?.standBis
+                ? (budgetModus === 'monat'
+                  ? ` · Budget: voller Monat (Ist bis ${daten.standBis.slice(8, 10)}.${daten.standBis.slice(5, 7)}.)`
+                  : ` · Stand bis ${fmtDate(daten.standBis)}`)
+                : ''}
             </div>
             <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month">
@@ -1271,6 +1310,19 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               <span className="min-w-[130px] text-center text-sm font-semibold" data-testid="text-month-label">
                 {MONATE[month - 1]} {year}
               </span>
+              {daten?.standBis ? (
+                <span
+                  className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                  title={budgetModus === 'monat'
+                    ? 'Budget = volles Monatsbudget; Ist-Werte weiterhin nur bis zum Stichtag (keine Hochrechnung)'
+                    : 'Letzter Tag mit Umsatz- und Ist-Stunden-Daten — alle Ist-Werte bis zu diesem Tag (keine Hochrechnung); Budget anteilig bis zu diesem Tag'}
+                  data-testid="text-stand-bis"
+                >
+                  {budgetModus === 'monat'
+                    ? `voller Monat (Ist bis ${daten.standBis.slice(8, 10)}.${daten.standBis.slice(5, 7)}.)`
+                    : `Stand bis ${fmtDate(daten.standBis)}`}
+                </span>
+              ) : null}
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -1280,6 +1332,14 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 data-testid="button-toggle-vj-monat"
               >
                 Vorjahr {showVj ? 'ein' : 'aus'}
+              </Button>
+              <Button
+                variant={budgetModus === 'monat' ? 'default' : 'outline'} size="sm" className="h-8"
+                onClick={toggleBudgetModus}
+                title="Budget-Spalte umschalten: anteilig bis Stichtag oder volles Monatsbudget (Ist bleibt immer bis Stichtag)"
+                data-testid="button-toggle-budget-modus"
+              >
+                Budget: {budgetModus === 'monat' ? 'voller Monat' : 'bis Stichtag'}
               </Button>
               <Button
                 variant={budgetEdit ? 'default' : 'outline'} size="sm" className="h-8 gap-1.5"
@@ -1349,8 +1409,8 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
               Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, Budget =
               Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz), Δ in PROZENTPUNKTEN (über Ziel = rot), rot über
-              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Take Away Umsatz:
-              Δ% gegen das Vorjahr, da kein Budget vorhanden («vs. VJ») · Personalkosten/PKQ
+              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Gäste Take Away:
+              Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · Personalkosten/PKQ
               (Vorjahr) = schreibgeschützter Buchhaltungswert «aus Buchhaltung {year - 1}» (nur Jahre ohne
               Dienstplan-Berechnung, keine Wochen-Verteilung) · Bedarf-Stunden (Soll) = Leitplanke aus dem
               Personalbedarf; Dienstplan- und Ist-Stunden vergleichen sich gegen den BEDARF, nicht gegen das Budget (Δ% dazu, über Bedarf = rot) · leere Felder = keine
@@ -1489,7 +1549,8 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               Netto ÷ Gäste nur über Tage mit beiden Quellen · Personalkosten = FIX pro-rata der Wochentage
               + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · PKQ =
               Ist ÷ Ist, Budget = Ziel-PKQ, Δ in PROZENTPUNKTEN (über Ziel = rot), rot über Obergrenze 40 %;
-              bei Personalkosten ist «über Budget» rot (Kosten) · Take Away Umsatz: Δ% gegen das Vorjahr («vs. VJ») ·
+              bei Personalkosten ist «über Budget» rot (Kosten) · Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget ·
+              «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget ·
               leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».
             </p>
           </TabsContent>

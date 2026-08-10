@@ -119,6 +119,15 @@ export default function UeberstundenPage() {
     }
     return tot;
   }, [gerechnet]);
+  /** Total je Monatsspalte (Summe der gerechneten MA; null = keiner hat Werte). */
+  const monatsTotal = useCallback((mIdx: number): number | null => {
+    let tot: number | null = null;
+    for (const m of gerechnet) {
+      const s = m.monatsSaldo[mIdx] ?? null;
+      if (s !== null) tot = (tot ?? 0) + s;
+    }
+    return tot;
+  }, [gerechnet]);
   const selAbsenzen = (selEmp && daten?.absenzen.entries[selEmp]) || {};
 
   const editDays = useMemo(() => {
@@ -362,6 +371,7 @@ export default function UeberstundenPage() {
                       <th className="text-right pr-2">Pensum</th>
                       {MONATE.slice(startMonatIdx).map(m => <th key={m} className="text-right px-1">{m}</th>)}
                       <th className="text-right pl-2 font-semibold">Laufend</th>
+                      <th className="text-right pl-2 font-semibold">ÜStd-Kosten</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -382,8 +392,28 @@ export default function UeberstundenPage() {
                         <td className={`text-right pl-2 tabular-nums font-semibold ${saldoClass(m.laufend)}`}>
                           {fmtH(m.laufend)}
                         </td>
+                        <td className="text-right pl-2 tabular-nums" data-testid={`kosten-monat-${m.id}`}>
+                          {m.kosten === null ? '–' : m.kosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
                       </tr>
                     ))}
+                    {/* Total-Zeile: Summe aller gerechneten Fix-MA je Monat + Laufend/Kosten (analog Wochen-Ansicht) */}
+                    <tr className="border-t-2 font-semibold" data-testid="row-total-monat">
+                      <td className="py-1 pr-2">Total</td>
+                      <td />
+                      {MONATE.slice(startMonatIdx).map((_, i) => {
+                        const t = monatsTotal(startMonatIdx + i);
+                        return (
+                          <td key={i} className={`text-right px-1 tabular-nums ${saldoClass(t)}`} data-testid={`total-monat-${startMonatIdx + i + 1}`}>
+                            {t === null ? '–' : t.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                          </td>
+                        );
+                      })}
+                      <td className={`text-right pl-2 tabular-nums ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
+                      <td className="text-right pl-2 tabular-nums" data-testid="text-total-kosten-monat">
+                        {erg.totalKosten === null ? '–' : erg.totalKosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               )}

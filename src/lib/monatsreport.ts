@@ -310,12 +310,12 @@ export interface PersonalBlockInput {
   wNetIst: number | null;
   /** Ziel-Personalquote als BRUCH (Kern: budgetZielQuote, z.B. 0.355). */
   zielQuote: number;
-  /** Personalkosten-Hochrechnung des Monats (Kern: personalkosten(hochrechnung)). */
-  hrKostenMonat: number | null;
+  /** PK-Ist des Monats BIS STICHTAG (Kern: personalkosten(istBisHeute, {stichtag})). */
+  istKostenMonat: number | null;
   /** Umsatz-Budget des Monats (für PK-Budget-Monat = Zielquote × Umsatz-Budget). */
   umsatzBudgetMonat: number | null;
-  /** PKQ Hochrechnung des Monats (Kern: personalquote().pkqHochrechnung, Bruch). */
-  pkqHrMonat: number | null;
+  /** PKQ Ist des Monats bis Stichtag (Kern: personalquote({stichtag}).pkqIst, Bruch). */
+  pkqIstMonat: number | null;
 }
 
 export interface PersonalBlockErgebnis {
@@ -325,11 +325,11 @@ export interface PersonalBlockErgebnis {
   pkBudgetWoche: number | null;
   /** PK-Budget des Monats = Zielquote × Umsatz-Budget-Monat, null = keine Quelle. */
   pkBudgetMonat: number | null;
-  /** PK-Hochrechnung Monat (durchgereicht). */
-  pkHrMonat: number | null;
+  /** PK-Ist Monat bis Stichtag (durchgereicht, KEINE Hochrechnung). */
+  pkIstMonat: number | null;
   /** PKQ Woche = PK-Ist-Woche ÷ Netto-Umsatz-Ist-Woche in %, null = kein Umsatz. */
   pkqWochePct: number | null;
-  /** PKQ Hochrechnung Monat in %, null = kein Umsatz. */
+  /** PKQ Monat = PK-Ist ÷ Umsatz-Ist (beide bis Stichtag) in %, null = kein Umsatz. */
   pkqMonatPct: number | null;
 }
 
@@ -340,7 +340,7 @@ export interface PersonalBlockErgebnis {
  *  - PK-Budget-Woche = zielQuote × Netto-Umsatz-Budget der Woche.
  *  - PK-Budget-Monat = zielQuote × Umsatz-Budget-Monat.
  *  - PKQ-Woche = PK-Ist-Woche ÷ Netto-Umsatz-Ist-Woche (Ist ÷ Ist), % .
- *  - PKQ-Monat = pkqHrMonat (Hochrechnung ÷ Hochrechnung aus dem Kern), % .
+ *  - PKQ-Monat = pkqIstMonat (Ist ÷ Ist bis Stichtag aus dem Kern), % .
  * «leer statt 0»: fehlt die jeweilige Quelle → null. Reine Funktion — testbar.
  */
 export function computePersonalBlock(inp: PersonalBlockInput): PersonalBlockErgebnis {
@@ -365,13 +365,13 @@ export function computePersonalBlock(inp: PersonalBlockInput): PersonalBlockErge
   // PKQ-Woche = Ist ÷ Ist (zeitkonsistent). null wenn kein Ist-Umsatz-Woche.
   const pkqWochePct = pkIstWoche != null && inp.wNetIst != null && inp.wNetIst > 0
     ? r2((pkIstWoche / inp.wNetIst) * 100) : null;
-  const pkqMonatPct = inp.pkqHrMonat != null ? r2(inp.pkqHrMonat * 100) : null;
+  const pkqMonatPct = inp.pkqIstMonat != null ? r2(inp.pkqIstMonat * 100) : null;
 
   return {
     pkIstWoche,
     pkBudgetWoche,
     pkBudgetMonat,
-    pkHrMonat: inp.hrKostenMonat,
+    pkIstMonat: inp.istKostenMonat,
     pkqWochePct,
     pkqMonatPct,
   };
@@ -644,7 +644,7 @@ export interface MrRow {
   weekBudget: number | null;
   /** MONATS-Budget (Basis der Monat-Δ% + Budget-Spalte der Monatssicht). */
   monthBudget: number | null;
-  /** Spalte «Monat» (Ist bis heute; Personalkosten = Hochrechnung) */
+  /** Spalte «Monat» (Ist strikt bis Daten-Stichtag; keine Hochrechnung) */
   month: number | null;
   /**
    * Cockpit-Budget-Positions-ID: gesetzt = das MONATS-Budget dieser Zeile ist
@@ -758,6 +758,13 @@ export interface MonatsreportDaten {
   /** Zeitraum der «Vorjahr (Woche)»-Spalte (gleiche ISO-KW im Vorjahr); null wenn keine VJ-Woche. */
   vjWeekFrom: string | null;
   vjWeekTo: string | null;
+  /**
+   * Daten-Stichtag der Monats-Sicht (ISO): letzter Tag mit Umsatz- UND
+   * Ist-Stunden-Daten (min beider Quellen); abgeschlossener Monat =
+   * Monatsletzter. null = keine Daten (Zukunftsmonat). Fürs Kopf-Label
+   * «Stand bis TT.MM.JJJJ».
+   */
+  standBis: string | null;
   rows: MrRow[];
   /**
    * Lieferanten-Aufstellung für den Cockpit-Export (zweites Blatt
@@ -894,7 +901,19 @@ export async function ladeMonatsreport(
   rates: SocialCostRates,
   heute: Date = new Date(),
   weekSelection: WeekSelection = { kind: 'lastComplete' },
+  /**
+   * Budget-Modus der Monats-Spalte (Spec 08/2026, Umschalter):
+   * - 'stichtag' (Default): absolute Budgets ANTEILIG bis zum Daten-Stichtag
+   *   (Monatsbudget × Tage-bis-Stichtag ÷ Kalendertage) — gleicher Zeitraum
+   *   wie das Ist.
+   * - 'monat': volles Monatsbudget (Ist bleibt trotzdem bis Stichtag — nie
+   *   Hochrechnung).
+   * Verhältnis-Budgets (PKQ, Produktivität, Quoten) sind in BEIDEN Modi der
+   * volle Zielwert. Abgeschlossener Monat: beide Modi identisch.
+   */
+  budgetModus: 'stichtag' | 'monat' = 'stichtag',
 ): Promise<MonatsreportDaten> {
+  const vollerMonat = budgetModus === 'monat';
   const mm = pad2(month);
   const daysInMonth = new Date(year, month, 0).getDate();
   const fromIso = `${year}-${mm}-01`;
@@ -919,7 +938,6 @@ export async function ladeMonatsreport(
 
   const alleTage: string[] = [];
   for (let t = 1; t <= daysInMonth; t++) alleTage.push(`${year}-${mm}-${pad2(t)}`);
-  const istTage = alleTage.filter(d => istToIso && d <= istToIso);
   // Wochen-Tage über Monatsgrenzen hinweg generieren (nicht aus alleTage
   // filtern — die Woche kann Tage ausserhalb des Report-Monats enthalten).
   const wocheTage: string[] = [];
@@ -1092,6 +1110,39 @@ export async function ladeMonatsreport(
     } catch { /* keine ER-Daten → VJ-Personalkosten bleiben leer */ }
   }
 
+  // ── Daten-Stichtag (Spec 08/2026): letzter Tag MIT DATEN im Monat ──────────
+  // Stichtag = min(letzter Umsatz-Tag, letzter Ist-Stunden-Tag/MIRUS); fehlt
+  // eine Quelle ganz, gilt die vorhandene; abgeschlossener Monat = Monats-
+  // letzter. KEINE Hochrechnung mehr — ALLE Ist-Kennzahlen (Umsatz, Gäste,
+  // Stunden, Personalkosten) rechnen strikt bis zu diesem Tag.
+  let standTag = 0;
+  if (!isFutureMonth) {
+    if (!isCurrentMonth) standTag = daysInMonth;
+    else if (pk) {
+      const prefix = `${year}-${mm}-`;
+      let hTag = 0, uTag = 0;
+      for (const d of pk.istTage) {
+        if (d.startsWith(prefix)) hTag = Math.max(hTag, Number(d.slice(8, 10)) || 0);
+      }
+      for (const [d, v] of Object.entries(pk.umsatzIstProTag)) {
+        if (Number(v) > 0 && d.startsWith(prefix)) uTag = Math.max(uTag, Number(d.slice(8, 10)) || 0);
+      }
+      standTag = hTag > 0 && uTag > 0 ? Math.min(hTag, uTag) : Math.max(hTag, uTag);
+      standTag = Math.min(standTag, heute.getDate()); // nie in die Zukunft
+    } else {
+      standTag = heute.getDate(); // PK-Kern nicht ladbar → bisherige «bis heute»-Grenze
+    }
+  }
+  const standIso = standTag > 0 ? `${year}-${mm}-${pad2(standTag)}` : '';
+  const istTage = alleTage.filter(d => standIso && d <= standIso);
+  /** Anteil Kalendertage bis Stichtag (für anteilige absolute Budgets). */
+  const standAnteil = standTag > 0 && daysInMonth > 0 ? standTag / daysInMonth : null;
+  /** Absolutes Monats-Budget im gewählten Modus: 'stichtag' → anteilig
+   *  (× Tage-bis-Stichtag ÷ Kalendertage; ohne Stichtag leer), 'monat' → voll.
+   *  NUR für absolute Werte (CHF/Anzahl/Stunden) — Quoten nie kürzen. */
+  const budAbs = (v: number | null): number | null =>
+    v == null ? null : vollerMonat ? v : standAnteil != null ? r2(v * standAnteil) : null;
+
   // ── Umsatz Ist aus der kanonischen Netto-Quelle (src/lib/umsatz.ts) ────────
   // Laderange deckt Monat UND (evtl. monatsübergreifende) Woche ab.
   const umsatzTage = await ladeUmsatzTage(
@@ -1183,7 +1234,7 @@ export async function ladeMonatsreport(
   // Quelle wie budgetNet oben). Wochen im Nachbarjahr: Monate des Wochen-
   // Startjahres laden.
   const erMonate = erNettoBudgetMonate(year, tenantKey('budget_v1'));
-  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, istToIso || toIso, undefined, erMonate);
+  const ckM = resolveCockpitBudgets(ckBlob, tenantId, fromIso, standIso || toIso, undefined, erMonate);
   // VOLLER Monatswert (ohne pro-rata-Klemmung bis Stichtag) — Basis der
   // Inline-Budget-Bearbeitung: der Editor zeigt/schreibt IMMER den ganzen
   // Monat, nie den anteiligen Anzeigwert des laufenden Monats.
@@ -1245,7 +1296,16 @@ export async function ladeMonatsreport(
       };
     }
   }
-  const ckMk = (id: string): number | null => ckM[id] ?? null;
+  // Monats-Budget je Modus: 'stichtag' = pro-rata-Auflösung (ckM, bis standIso),
+  // 'monat' = volle Monatsauflösung (ckMFull). Verhältnis-Positionen (kind
+  // 'ratio': Ø-Verkauf, PKQ, Produktivität, TA-Anteil …) sind in BEIDEN Modi
+  // die volle Monats-Auflösung: die pro-rata-Auflösung kann Ratio-Fallbacks
+  // aus ungleich anteiligen Zähler/Nenner-Basen verzerren (z.B. Gäste
+  // kalendertag-anteilig vs. Umsatz tagesgewichtet).
+  const ckRatioIds = new Set(
+    COCKPIT_BUDGET_KPIS.filter(k => k.kind === 'ratio').map(k => k.id));
+  const ckMk = (id: string): number | null =>
+    ((vollerMonat || ckRatioIds.has(id)) ? ckMFull[id] : ckM[id]) ?? null;
   const ckWk = (id: string): number | null => ckW[id] ?? null;
   const ckMFullK = (id: string): number | null => ckMFull[id] ?? null;
   /** «manuell»-Marker: Monatswert der Position wurde direkt überschrieben.
@@ -1259,7 +1319,7 @@ export async function ladeMonatsreport(
   // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
   let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
   for (const [date, n] of Object.entries(gaesteDaily)) {
-    if (date < fromIso || !istToIso || date > istToIso) continue;
+    if (date < fromIso || !standIso || date > standIso) continue;
     if (!(n > 0)) continue;
     mGaeste += n; hatGaeste = true;
   }
@@ -1281,7 +1341,8 @@ export async function ladeMonatsreport(
   // Mittelwert der Tageswerte (avgcheck-daily) über den Monat, Fallback
   // einfacher Mittelwert. Leer NUR wenn weder Monats- noch Tageswerte da sind.
   let avgMonat: number | null = avgMonthly[`${year}-${mm}`] ?? null;
-  if (avgMonat == null) avgMonat = gewichteterTagesAvg(alleTage, avgDaily, gaesteDaily);
+  // Ist-Fallback strikt bis Daten-Stichtag (keine künftigen Tageswerte).
+  if (avgMonat == null) avgMonat = gewichteterTagesAvg(istTage, avgDaily, gaesteDaily);
   // Vorjahr: primär der importierte Monatswert (avgcheck-monthly). Fehlt dieser
   // (z.B. alte Importe, die nur Tageswerte schrieben), Fallback = einfacher
   // Mittelwert der Vorjahres-Tageswerte (avgcheck-daily) über den Vorjahres-
@@ -1389,7 +1450,8 @@ export async function ladeMonatsreport(
         positions: staffingPositions, dates: wocheTage,
       })
     : null;
-  const istStd = istHoursForDates(stackActual, alleTage);
+  // Ist-Stunden strikt bis Stichtag (gleicher Zeitraum wie Umsatz/PK-Ist).
+  const istStd = istHoursForDates(stackActual, istTage);
   const wIstStd = wocheTage.length > 0 ? istHoursForDates(stackActual, wocheTage) : null;
 
   // ── Bedarf-Stunden (Soll aus dem Personalbedarf, netto mit ArG-Pausen) ─────
@@ -1428,8 +1490,11 @@ export async function ladeMonatsreport(
     for (const t of flexDetail.tage) {
       if (t.istTag) { istTagSet.add(t.date); flexIstProTag[t.date] = t.istKosten; }
     }
-    const hrKosten = personalkosten(pk, 'hochrechnung');
-    const pkq = personalquote(pk);
+    // KEINE Hochrechnung (Spec 08/2026): tatsächlich bis STICHTAG angefallene
+    // Kosten — Stundenlohn-MA = Ist-Stunden × AG-Satz, Fix-MA = Monatslohn ×
+    // (Tage bis Stichtag ÷ Kalendertage). PKQ mit demselben Stichtag (Ist÷Ist).
+    const istKosten = standTag > 0 ? personalkosten(pk, 'istBisHeute', { stichtag: standTag }) : null;
+    const pkq = standTag > 0 ? personalquote(pk, { stichtag: standTag }) : null;
     personal = computePersonalBlock({
       flexIstProTag,
       istTagSet,
@@ -1441,9 +1506,9 @@ export async function ladeMonatsreport(
       wBudgetNet: hatBudget && weekFrom ? r2(wBudgetNet) : null,
       wNetIst: weekFrom && wHatUmsatz ? r2(wNet) : null,
       zielQuote: budgetZielQuote(pk),
-      hrKostenMonat: hrKosten.total,
+      istKostenMonat: istKosten ? istKosten.total : null,
       umsatzBudgetMonat: hatBudget ? r2(budgetNet) : null,
-      pkqHrMonat: pkq.pkqHochrechnung,
+      pkqIstMonat: pkq ? pkq.pkqIst : null,
     });
     // Monatsübergreifende Woche: PK-Ist der Fremdmonats-Tage additiv aus dem
     // Kern des jeweiligen Monats (FIX pro-rata + FLEX-Ist); Ladefehler → die
@@ -1722,8 +1787,9 @@ export async function ladeMonatsreport(
   const mNetV = N(mNet, mHatUmsatz);
   const wGrossV = weekFrom ? N(wGross, wHatUmsatz) : null;
   const wNetV = weekFrom ? N(wNet, wHatUmsatz) : null;
-  const budgetGross = hatBudget ? r2(budgetNet * VAT_STD()) : null;
-  const budgetNetV = hatBudget ? r2(budgetNet) : null;
+  // Absolute Umsatz-Budgets folgen dem Budget-Modus (anteilig ↔ voll).
+  const budgetGross = hatBudget ? budAbs(r2(budgetNet * VAT_STD())) : null;
+  const budgetNetV = hatBudget ? budAbs(r2(budgetNet)) : null;
   const wBudget = hatBudget && weekFrom ? r2(wBudgetNet) : null;
 
   // ── Food-/Beverage-Umsatz-BUDGET (abgeleitet, Spec 08/2026) ────────────────
@@ -1942,7 +2008,8 @@ export async function ladeMonatsreport(
         ? `Stunden — Bedarf (Soll) ${Math.round(bedarfStdM).toLocaleString('de-CH')} / Plan (Budget) / Ist (MIRUS)`
         : 'Stunden — Plan (Budget) / Ist (MIRUS)', {
       month: istStd, week: wIstStd,
-      monthBudget: planStd, weekBudget: wPlanStd, budget: wPlanStd,
+      // Stunden-Budget (Plan) ist absolut → folgt dem Budget-Modus.
+      monthBudget: budAbs(planStd), weekBudget: wPlanStd, budget: wPlanStd,
     }, { fmt: 'hours', bold: true, deltaInverted: true }),
     d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
@@ -1973,9 +2040,12 @@ export async function ladeMonatsreport(
     }, { ckId: 'avg_verkauf_gast' }),
     e(),
     // ── Block Personal (ALLE Werte aus dem Kern personalkosten.ts) ─────────────
-    // Kosten-Zeile: deltaInverted → über Budget = rot. MONAT = Hochrechnung
-    // (bewusst anders als «Ist bis heute» der übrigen Zeilen; im Label markiert).
-    d('personalkosten', 'Personalkosten (Monat = Hochrechnung)', {
+    // Kosten-Zeile: deltaInverted → über Budget = rot. MONAT = tatsächlich bis
+    // STICHTAG angefallene Kosten (KEINE Hochrechnung; Stichtag im Label).
+    d('personalkosten',
+      standIso
+        ? `Personalkosten (Monat — bis ${standIso.split('-').reverse().join('.')})`
+        : 'Personalkosten', {
       week: personal?.pkIstWoche ?? null,
       // Budget AUSSCHLIESSLICH aus dem Cockpit-Budget-Store (eine Quelle);
       // ohne gespeichertes Budget bleibt die Zelle leer (nie die alte
@@ -1983,7 +2053,7 @@ export async function ladeMonatsreport(
       weekBudget: ckWk('personalkosten'),
       budget: ckWk('personalkosten'),
       monthBudget: ckMk('personalkosten'),
-      month: personal?.pkHrMonat ?? null,
+      month: personal?.pkIstMonat ?? null,
       // Vorjahr NUR Monat: Buchhaltungswert (vorjahres_personalkosten,
       // ausschliesslich Jahre < 2026 ohne Dienstplan-Berechnung).
       // KEINE Verteilung auf Wochen → vj (Woche) bleibt leer.
@@ -2063,6 +2133,7 @@ export async function ladeMonatsreport(
 
   return {
     year, month, weekFrom, weekTo, weekLabel,
+    standBis: standIso || null,
     vjWeekFrom: vjWochePaare.length > 0 ? vjWochePaare[0].vj : null,
     vjWeekTo: vjWochePaare.length > 0 ? vjWochePaare[vjWochePaare.length - 1].vj : null,
     rows: rowsFinal,

@@ -50,9 +50,12 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const vj = granularity === 'monat' ? row.vjMonth : row.vj;
   const ist = granularity === 'monat' ? row.month : row.week;
   const devBudget = granularity === 'monat' ? row.monthBudget : row.weekBudget;
-  // Δ-Basis wie die Bildschirmtabelle: Zeilen mit VJ-Vergleich (deltaVsVj/
-  // sharePct) rechnen Ist − Vorjahr, alle übrigen Ist − Budget. Nie ÷ 0.
-  const vsVj = !!(row.deltaVsVj || row.sharePct);
+  // Δ-Basis wie die Bildschirmtabelle: «vs. VJ» NUR ohne hinterlegtes Budget
+  // (sharePct-Zeilen mit Budget rechnen Ist − Budget, z.B. Gäste Take Away).
+  // countPax-Ausnahme (Gruppen ab 20 Pax): Budget in PERSONEN, Wert in
+  // ANZAHL Gruppen → weiterhin vs. VJ (kein Einheiten-Mix). Nie ÷ 0.
+  const vsVj = !!(row.deltaVsVj
+    || (row.sharePct && (devBudget == null || row.fmt === 'countPax')));
   const devBase = vsVj ? vj : devBudget;
   const devAbs = ist !== null && devBase !== null ? ist - devBase : null;
   const dev = ist !== null && devBase !== null && devBase > 0

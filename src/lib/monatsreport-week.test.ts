@@ -454,9 +454,9 @@ describe('computePersonalBlock', () => {
     wBudgetNet: 20000,      // Netto-Umsatz-Budget der Woche
     wNetIst: 18000,         // Netto-Umsatz-Ist der Woche
     zielQuote: 0.355,
-    hrKostenMonat: 123961,
+    istKostenMonat: 123961,
     umsatzBudgetMonat: 280000,
-    pkqHrMonat: 0.489,
+    pkqIstMonat: 0.489,
   };
 
   it('PK-Ist-Woche = FIX pro-rata (7/30 × 30000) + FLEX-Ist (5×200)', () => {
@@ -492,10 +492,10 @@ describe('computePersonalBlock', () => {
     expect(r.pkqWochePct! > OBERGRENZE_PKQ_PCT).toBe(true);
   });
 
-  it('PKQ-Monat = Hochrechnung (durchgereicht), % ; HR-Kosten durchgereicht', () => {
+  it('PKQ-Monat = Ist bis Stichtag (durchgereicht), % ; Ist-Kosten durchgereicht', () => {
     const r = computePersonalBlock(base);
     expect(r.pkqMonatPct).toBe(48.9);
-    expect(r.pkHrMonat).toBe(123961);
+    expect(r.pkIstMonat).toBe(123961);
   });
 
   it('keine Woche gewählt → Woche-Werte null (leer statt 0)', () => {
@@ -521,8 +521,8 @@ describe('computePersonalBlock', () => {
     expect(r.pkqWochePct).toBeNull();
   });
 
-  it('kein PKQ-HR vom Kern → PKQ-Monat null', () => {
-    const r = computePersonalBlock({ ...base, pkqHrMonat: null });
+  it('kein PKQ-Ist vom Kern → PKQ-Monat null', () => {
+    const r = computePersonalBlock({ ...base, pkqIstMonat: null });
     expect(r.pkqMonatPct).toBeNull();
   });
 });

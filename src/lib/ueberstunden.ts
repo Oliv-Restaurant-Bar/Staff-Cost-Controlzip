@@ -25,7 +25,8 @@
  */
 
 import { kvGet, kvGetStrict, kvSetStrict } from '@/lib/supabase-kv';
-import { loadEmployees, loadActualHoursForMonth } from '@/lib/supabase-db';
+import { loadEmployees, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import { VACATION_CODES, SICK_CODES, ACCIDENT_CODES, SKIP_CODES } from '@/lib/absence-utils';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { applyEffectiveWagesForMonth } from '@/lib/wage-history';
@@ -49,6 +50,19 @@ export const UE_ABSENZ_LABELS: Record<UeAbsenzTyp, string> = {
 
 /** Absenz-Typen mit Stunden-Gutschrift (Frei = 0). */
 export const UE_GUTSCHRIFT_TYPEN: ReadonlySet<UeAbsenzTyp> = new Set(['ferien', 'krank', 'unfall']);
+
+/**
+ * Dienstplan-Absenzcode (FE/K/U/F …) → Überstunden-Absenztyp.
+ * Unbekannte Codes (z. B. FT) ⇒ null (keine Gutschrift, kein «Frei»).
+ */
+export function planCodeZuUeTyp(code: string | null | undefined): UeAbsenzTyp | null {
+  if (!code) return null;
+  if (VACATION_CODES.has(code)) return 'ferien';
+  if (SICK_CODES.has(code)) return 'krank';
+  if (ACCIDENT_CODES.has(code)) return 'unfall';
+  if (SKIP_CODES.has(code)) return 'frei';
+  return null;
+}
 
 export interface UeAbsenzenBlob {
   year: number;
@@ -172,8 +186,13 @@ export interface UeMitarbeiterInput {
   stundensatz?: number | null;
   /** Ist-Arbeitsstunden je ISO-Datum (MIRUS). */
   istStunden: Record<string, number>;
-  /** Manuelle Absenzen je ISO-Datum. */
+  /** Manuelle Absenzen je ISO-Datum (Override — sticht Dienstplan). */
   absenzen: Record<string, UeAbsenzTyp>;
+  /**
+   * Absenzen aus dem DIENSTPLAN je ISO-Datum (FE/K/U/F, Quelle der Wahrheit
+   * wenn keine manuelle Erfassung für den Tag existiert).
+   */
+  planAbsenzen?: Record<string, UeAbsenzTyp>;
 }
 
 /** Tages-Aufschlüsselung einer Woche (für das Wochen-Detail beim Zellen-Klick). */
@@ -294,32 +313,63 @@ export function berechneUeberstundenJahr(
 
     for (const monday of mondays) {
       const { kw, kwYear } = isoWeekOf(monday);
-      const hasData = wochenMitDaten.has(monday);
+      // Datenbasis der Woche: Mandanten-weit (MIRUS-Import oder manuelle
+      // Absenz) ODER — nur für DIESEN MA — eine gutschrift-fähige
+      // Dienstplan-Absenz (FE/K/U) in der Woche. Fremde Dienstplan-Absenzen
+      // dürfen NIE eine Woche für andere MA aktivieren (sonst −42-Drift bei
+      // fehlendem MIRUS-Import); Plan-«Frei» allein aktiviert ebenfalls nicht.
+      const hasData = wochenMitDaten.has(monday)
+        || (!!emp.planAbsenzen && Array.from({ length: 7 }, (_, i) => addDays(monday, i))
+          .some(day => {
+            const t = emp.planAbsenzen![day];
+            return !!t && UE_GUTSCHRIFT_TYPEN.has(t);
+          }));
       let soll: number | null = null, ist: number | null = null, gut: number | null = null;
       const tage: UeTag[] = [];
+      // Pass 1: Tageswerte sammeln (Absenz = manueller Override, sonst
+      // Dienstplan). Roh-Gutschrift NOCH ungedeckelt.
+      type TagRoh = { day: string; zaehlt: boolean; daySoll: number; work: number; typ: UeAbsenzTyp | null; rawCredit: number };
+      const roh: TagRoh[] = [];
+      let sollSum = 0, workSum = 0, rawCreditSum = 0;
       for (let i = 0; i < 7; i++) {
         const day = addDays(monday, i);
         if (!hasData || !eligible(day)) {
-          tage.push({ datum: day, zaehlt: false, arbeitH: null, absenzTyp: null, gutschrift: null, soll: null });
+          roh.push({ day, zaehlt: false, daySoll: 0, work: 0, typ: null, rawCredit: 0 });
           continue;
         }
         const daySoll = istWochentag(day) ? tagesSoll : 0;
-        const typ = emp.absenzen[day];
-        const credit = typ && UE_GUTSCHRIFT_TYPEN.has(typ) ? tagesSoll : 0;
+        const typ = emp.absenzen[day] ?? emp.planAbsenzen?.[day] ?? null;
+        const rawCredit = typ && UE_GUTSCHRIFT_TYPEN.has(typ) ? tagesSoll : 0;
         const work = emp.istStunden[day] ?? 0;
-        const dayIst = work + credit;
-        tage.push({ datum: day, zaehlt: true, arbeitH: work, absenzTyp: typ ?? null, gutschrift: credit, soll: daySoll });
-        soll = (soll ?? 0) + daySoll;
+        roh.push({ day, zaehlt: true, daySoll, work, typ, rawCredit });
+        sollSum += daySoll; workSum += work; rawCreditSum += rawCredit;
+      }
+      // Deckelung (Spec 08/2026): Wochen-Gutschrift ≤ max(0, Wochen-Soll −
+      // Arbeits-Ist) — Absenzen füllen höchstens bis Saldo 0, erzeugen nie
+      // Plus-Überstunden. Proportional auf die Absenz-Tage verteilt (Monats-
+      // Splits bleiben tageanteilig konsistent).
+      const capFaktor = rawCreditSum > 0
+        ? Math.min(1, Math.max(0, sollSum - workSum) / rawCreditSum)
+        : 1;
+      for (const t of roh) {
+        if (!t.zaehlt) {
+          tage.push({ datum: t.day, zaehlt: false, arbeitH: null, absenzTyp: null, gutschrift: null, soll: null });
+          continue;
+        }
+        const credit = t.rawCredit * capFaktor;
+        const dayIst = t.work + credit;
+        tage.push({ datum: t.day, zaehlt: true, arbeitH: t.work, absenzTyp: t.typ, gutschrift: credit, soll: t.daySoll });
+        soll = (soll ?? 0) + t.daySoll;
         ist = (ist ?? 0) + dayIst;
         gut = (gut ?? 0) + credit;
-        const dSaldo = dayIst - daySoll;
+        const dSaldo = dayIst - t.daySoll;
         // Monats-Zuordnung: tageanteilig (Wochen an Monatsgrenzen gesplittet)
-        if (day >= yearStart && day <= yearEnd) {
-          const mIdx = Number(day.slice(5, 7)) - 1;
+        if (t.day >= yearStart && t.day <= yearEnd) {
+          const mIdx = Number(t.day.slice(5, 7)) - 1;
           monatsSaldo[mIdx] = (monatsSaldo[mIdx] ?? 0) + dSaldo;
         }
         // Laufendes Konto: Kumulation ab Juli 2026
-        if (day >= UEBERSTUNDEN_START) laufend = (laufend ?? 0) + dSaldo;
+        if (t.day >= UEBERSTUNDEN_START) laufend = (laufend ?? 0) + dSaldo;
       }
       const saldo = soll !== null && ist !== null ? ist - soll : null;
       wochen.push({
@@ -431,6 +481,32 @@ export async function ladeUeberstundenJahr(
     }
   }
 
+  // Dienstplan-Absenzen (FE/K/U/F) — Quelle der Wahrheit, wenn keine manuelle
+  // Erfassung existiert (Override-Vorrang liegt in berechneUeberstundenJahr).
+  // Mandanten-gefiltert. WICHTIG: Plan-Absenzen aktivieren die Woche NICHT
+  // mandanten-weit (kein Eintrag in wochenMitDaten) — nur der betroffene MA
+  // selbst zählt die Woche (per-MA-Prüfung in berechneUeberstundenJahr),
+  // sonst entstünde ein −42-Drift für andere MA ohne MIRUS-Import.
+  const planProEmp = new Map<string, Record<string, UeAbsenzTyp>>();
+  const scheduleResults = await Promise.all(
+    Array.from({ length: Math.max(0, maxMonat - minMonat + 1) },
+      (_, i) => loadScheduleForMonth(new Date(year, minMonat - 1 + i, 15), tenantId)),
+  );
+  for (const res of scheduleResults) {
+    if (!res) continue;
+    for (const [key, dayPlan] of Object.entries(res)) {
+      const date = key.slice(-10);
+      const empId = key.slice(0, -11);
+      if (date > heute) continue; // Stand bis heute (geplante Zukunft zählt nicht)
+      if (!fixMonate.has(empId)) continue;
+      const typ = planCodeZuUeTyp(dayPlan.frühAbsence) ?? planCodeZuUeTyp(dayPlan.spätAbsence);
+      if (!typ) continue;
+      const rec = planProEmp.get(empId) ?? {};
+      rec[date] = typ;
+      planProEmp.set(empId, rec);
+    }
+  }
+
   // AG-Stundenkostensatz (gleiche Basis wie Personalkosten fix): zentrale
   // Sozialkostensätze des Mandanten + employee-rate-SSOT.
   const ratesBlob = await loadSocialCostRates(tenantId).catch(() => null);
@@ -448,6 +524,7 @@ export async function ladeUeberstundenJahr(
       employmentEndDate: e.employmentEndDate ?? null,
       istStunden: istProEmp.get(id) ?? {},
       absenzen: absenzen.entries[id] ?? {},
+      planAbsenzen: planProEmp.get(id) ?? {},
     };
   }).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
