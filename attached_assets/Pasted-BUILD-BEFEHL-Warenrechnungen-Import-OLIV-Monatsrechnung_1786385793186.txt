@@ -1,0 +1,58 @@
+BUILD-BEFEHL — Warenrechnungen-Import OLIV + Monatsrechnungs-Lieferdaten
+
+ZIEL
+Warenrechnungen (PDF-Daten) pro Mandant erfassen, inkl. der einzelnen Lieferungen
+mit Lieferdatum, die bei Monatsrechnungen (Ambro, Terravigna, Spahni, Transgourmet,
+Feldschlösschen) im Beleg stehen.
+
+DATENMODELL
+- Warenrechnung: Mandant, Lieferant, Rechnungs-Nr, Rechnungsdatum, Netto, MWST, Brutto,
+  Kategorie-Summe(n).
+- Lieferung (1..n pro Rechnung): Lieferschein-/Lieferungs-Nr, Lieferdatum, Betrag,
+  Sparte/Kategorie.
+- DUBLETTENSICHER: Schlüssel = Mandant + Lieferant + Rechnungs-Nr. Erneuter Import
+  derselben Rechnung ERSETZT (kein Doppel). Vorschau + Rückgängig anbieten.
+
+MANDANTENTRENNUNG (zwingend)
+- Adresse im Beleg entscheidet, NICHT die Ablage:
+  "Oliv Gastro AG" / "Restaurant Bar Oliv"  -> Mandant OLIV
+  "Restaurant Beaulieu AG"                  -> Mandant BEAULIEU
+- Rechnung Bohnenblust 49300 ist BEAULIEU, NICHT Oliv importieren.
+
+LIEFERDATEN AUS MONATSRECHNUNGEN PARSEN (je Lieferant ein Muster)
+- Ambro Food:      "Basierend auf Lieferschein <Nr> vom <TT.MM.JJ>. Lieferdatum <TT.MM.JJ>"
+- Terravigna:      "Lieferungsnr. <Nr> vom <TT.MM.JJ>"
+- Metzgerei Spahni:"LS-Nr. <Nr> vom <TT.MM.JJ>"
+- Transgourmet:    "Lieferschein <Nr> / <TT.MM.JJJJ>"
+- Feldschlösschen: "Lieferschein <Nr> vom <TT.MM.JJJJ>"
+- Bäckerei Bohnenblust: "Lieferschein Nr. <Nr> vom <TT.MM.JJJJ>"
+Jede Lieferung wird als eigener, datierter Datensatz unter der Rechnung gespeichert;
+Summe der Lieferungen muss dem Rechnungs-Netto entsprechen (sonst Warn-Flag).
+
+KATEGORIE / WARENEINSATZ-RELEVANZ (wichtig für WKQ Food/Beverage)
+- Food:     Fleisch, Fisch, Früchte/Gemüse, Molkerei, Kolonialwaren, Brot, ital. Ware
+- Beverage: Wein (Terravigna), Kaffee (Blaser), Getränke (Feldschlösschen)
+- NON-FOOD (NICHT in WKQ): Betriebsmaterial, Reinigung & Entsorgung, Büromaterial,
+  Gebinde/Pfand, übrige Handelswaren.
+- Transgourmet: die im Beleg vorhandene Sparten-Aufteilung übernehmen und Food vs
+  Non-Food getrennt summieren:
+    42020 Fleisch, 42030 Früchte/Gemüse, 42040 Molkerei, 42060 Kolonialwaren -> Food
+    42880 übr. Handelswaren, 43010 Gebinde, 47010 Betriebsmaterial,
+    61520 Büromaterial, 64110 Reinigung -> Non-Food
+- Feldschlösschen: Pfand/Leergut NICHT als Wareneinsatz zählen (nur Warenwert netto).
+
+BETRÄGE
+- Netto (exkl. MWST) ist die WKQ-relevante Basis. Brutto zusätzlich speichern.
+- "leer statt 0", nie durch 0 teilen (bei WKQ-Berechnung).
+
+KONTROLLWERTE (nach Import genau prüfen, OLIV)
+  Transgourmet 64104237: Netto 4'985.74 (Food 3'546.75 / Non-Food 1'438.99), Brutto 5'189.61
+  Transgourmet 64113362: Netto 2'623.54 (Food 2'425.08 / Non-Food 198.46),   Brutto 2'702.91
+  Metzgerei Spahni 8649975: Netto 1'842.85, Brutto 1'890.75, 3 Lief. (22/28/31.07)
+  Blaser 1091031: Netto 731.50, Brutto 750.50, 1 Lief. (29.07)
+  Terravigna 211363: Brutto 7'581.45, 9 Lief. (05–31.07)
+  Feldschlösschen 87776884 / 87785674 / 87791818: Brutto 1'076.75 / 2'310.30 / 1'675.30
+  Ambro 26210060 / 26212344 / 26214454: Brutto 5'848.15 / 6'874.35 / 8'791.15
+  Σ OLIV (11 Rechn.) = 44'691.22 brutto.
+
+Nichts automatisch überschreiben. Vorschau anzeigen, dann bestätigen lassen.
