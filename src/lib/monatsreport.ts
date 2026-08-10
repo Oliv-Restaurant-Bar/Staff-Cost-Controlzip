@@ -40,6 +40,7 @@ import { loadTaGaesteDaily, sumTaGaesteRange } from '@/lib/ta-gaeste-store';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
+import { ladeUeberstundenTotal } from '@/lib/ueberstunden';
 import { computePLForMonth } from '@/lib/pl-engine';
 import { loadMonth as loadReportingMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
@@ -1395,6 +1396,15 @@ export async function ladeMonatsreport(
     bedarfStdW = wocheTage.length > 0 ? bedarfNettoHoursForDates({ ...base, dates: wocheTage }) : null;
   }
 
+  // ── Überstunden total (Fix-MA, laufendes Konto ab Juli 2026 bis heute) ─────
+  // Fehler → leer (Cockpit darf nicht am Überstunden-Lader scheitern).
+  let ueberstundenTotal: number | null = null;
+  try {
+    ueberstundenTotal = await ladeUeberstundenTotal(tenantId, tenantKey, todayIso);
+  } catch (err) {
+    console.error('[monatsreport] Überstunden total nicht ladbar:', err);
+  }
+
   // ── Personal-Block: ALLE Zahlen aus dem Kern (personalkosten.ts) ───────────
   // KEINE Parallel-Rechnung: FIX/FLEX/Hochrechnung/PKQ stammen aus den zentralen
   // Kern-Funktionen (identisch mit der Personalkosten-Seite).
@@ -1955,6 +1965,12 @@ export async function ladeMonatsreport(
       vj: null,
       vjMonth: pkVjEff && vjNetV != null && vjNetV > 0 ? r2((pkVjEff.chf / vjNetV) * 100) : null,
     }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true, ckId: 'personalquote' }),
+    // Überstunden total: Σ laufender Saldo aller FIX-MA ab Juli 2026 bis HEUTE
+    // (je Mandant; unabhängig vom gewählten Monat — Konto-Stand, kein
+    // Periodenwert). leer statt 0 wenn keine Datenbasis. Kein Budget/VJ.
+    d('ueberstunden_total', 'Überstunden total (Fix-MA, Stand heute)', {
+      month: ueberstundenTotal != null ? r2(ueberstundenTotal) : null,
+    }, { fmt: 'hours', deltaInverted: true }),
     e(),
     // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────
     // Eine Zeile pro Lieferant (Top-Betrag des Monats zuerst) + Total + WKQ.

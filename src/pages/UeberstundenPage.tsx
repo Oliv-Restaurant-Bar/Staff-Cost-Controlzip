@@ -1,0 +1,354 @@
+/**
+ * Überstunden-Aufstellung pro FIX-Mitarbeiter (je Mandant)
+ * ─────────────────────────────────────────────────────────
+ * Woche/Monat/Laufend (ab Juli 2026) je Fix-MA; Ist = MIRUS-Stunden +
+ * Absenz-Gutschriften (Ferien/Krank/Unfall = Pensum×8.4 h/Tag, Frei = 0).
+ * Manuelle Absenz-Erfassung mit Vorschau, striktem Speichern und einstufigem
+ * Rückgängig. «leer statt 0»: Wochen ohne Mirus-/Absenz-Datenbasis bleiben leer.
+ * Nicht zuordenbare Mirus-Namen (Park-Store) werden als Hinweis angezeigt.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTenant } from '@/contexts/TenantContext';
+import {
+  ladeUeberstundenJahr, ladeUeAbsenzenStrict, speichereUeAbsenzen, UeAbsenzenKonflikt,
+  UE_ABSENZ_LABELS, UEBERSTUNDEN_START, VOLLZEIT_WOCHE_H,
+  type UeJahresDaten, type UeAbsenzTyp, type UeAbsenzenBlob,
+} from '@/lib/ueberstunden';
+import { fetchOpenParkedEntries, type ParkedHoursEntry } from '@/lib/mirus-open-hours-store';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
+
+const MONATE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+function fmtH(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '–';
+  return `${v.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
+}
+function saldoClass(v: number | null | undefined): string {
+  if (v === null || v === undefined) return 'text-muted-foreground';
+  if (v > 0.05) return 'text-red-600 font-medium';
+  if (v < -0.05) return 'text-blue-600';
+  return '';
+}
+
+export default function UeberstundenPage() {
+  const { tenantId, tenantKey } = useTenant();
+  const { toast } = useToast();
+  const heute = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [daten, setDaten] = useState<UeJahresDaten | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [parked, setParked] = useState<ParkedHoursEntry[]>([]);
+  const [selEmp, setSelEmp] = useState<string | null>(null);
+
+  // Absenz-Editor (staged → Vorschau → Speichern; einstufiges Rückgängig)
+  const [editMonat, setEditMonat] = useState(() => new Date().getMonth() + 1);
+  const [staged, setStaged] = useState<Record<string, UeAbsenzTyp | ''>>({});
+  const [saving, setSaving] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true); setLoadError(false);
+    try {
+      const [d, p] = await Promise.all([
+        ladeUeberstundenJahr(tenantId, tenantKey, year, heute),
+        fetchOpenParkedEntries(tenantId).catch(() => [] as ParkedHoursEntry[]),
+      ]);
+      if (d === null) { setLoadError(true); setDaten(null); }
+      else setDaten(d);
+      setParked(p);
+    } catch (e) {
+      console.error('[Ueberstunden] Laden fehlgeschlagen:', e);
+      setLoadError(true); setDaten(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, tenantKey, year, heute]);
+
+  useEffect(() => { void reload(); setStaged({}); setSelEmp(null); }, [reload]);
+
+  const erg = daten?.ergebnis ?? null;
+  const sel = erg?.mitarbeiter.find(m => m.id === selEmp) ?? null;
+  const selAbsenzen = (selEmp && daten?.absenzen.entries[selEmp]) || {};
+
+  const editDays = useMemo(() => {
+    const n = new Date(year, editMonat, 0).getDate();
+    return Array.from({ length: n }, (_, i) => `${year}-${String(editMonat).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`);
+  }, [year, editMonat]);
+
+  const changes = useMemo(() => {
+    const list: Array<{ date: string; von: UeAbsenzTyp | undefined; zu: UeAbsenzTyp | '' }> = [];
+    for (const [date, zu] of Object.entries(staged)) {
+      const von = selAbsenzen[date];
+      if ((zu || undefined) !== von) list.push({ date, von, zu });
+    }
+    return list.sort((a, b) => a.date.localeCompare(b.date));
+  }, [staged, selAbsenzen]);
+
+  async function speichern() {
+    if (!selEmp || changes.length === 0 || saving) return;
+    setSaving(true);
+    try {
+      // Frisch UND STRIKT laden (Lesefehler wirft — nie leeren Pseudo-Stand
+      // als Basis nehmen); updatedAt = Stale-Wache gegen parallele Tabs.
+      const remote = await ladeUeAbsenzenStrict(tenantKey, year);
+      const prevEntries = JSON.parse(JSON.stringify(remote.entries)) as UeAbsenzenBlob['entries'];
+      const empRec = { ...(remote.entries[selEmp] ?? {}) };
+      for (const c of changes) {
+        if (c.zu === '') delete empRec[c.date];
+        else empRec[c.date] = c.zu;
+      }
+      const nextEntries = { ...remote.entries, [selEmp]: empRec };
+      if (Object.keys(empRec).length === 0) delete nextEntries[selEmp];
+      await speichereUeAbsenzen(tenantKey, { year, entries: nextEntries, prev: prevEntries }, remote.updatedAt);
+      setStaged({});
+      toast({ title: 'Absenzen gespeichert', description: `${changes.length} Änderung(en) übernommen.` });
+      await reload();
+    } catch (e) {
+      console.error('[Ueberstunden] Speichern fehlgeschlagen:', e);
+      if (e instanceof UeAbsenzenKonflikt) {
+        toast({ title: 'Konflikt', description: 'Absenzen wurden zwischenzeitlich geändert — Ansicht wird neu geladen, bitte erneut speichern.', variant: 'destructive' });
+        await reload();
+      } else {
+        toast({ title: 'Speichern fehlgeschlagen', description: String(e), variant: 'destructive' });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function rueckgaengig() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const remote = await ladeUeAbsenzenStrict(tenantKey, year);
+      if (!remote.prev) {
+        toast({ title: 'Nichts rückgängig zu machen', description: 'Kein gespeicherter Vorzustand vorhanden.' });
+        return;
+      }
+      // Undo nur auf den Stand, den die Ansicht zeigt — nicht blind einen
+      // fremden, zwischenzeitlich gespeicherten Stand zurückrollen.
+      if ((daten?.absenzen.updatedAt ?? undefined) !== (remote.updatedAt ?? undefined)) {
+        toast({ title: 'Konflikt', description: 'Absenzen wurden zwischenzeitlich geändert — Ansicht wird neu geladen. Rückgängig danach erneut prüfen.', variant: 'destructive' });
+        await reload();
+        return;
+      }
+      await speichereUeAbsenzen(tenantKey, { year, entries: remote.prev, prev: remote.entries }, remote.updatedAt);
+      setStaged({});
+      toast({ title: 'Letztes Speichern rückgängig gemacht' });
+      await reload();
+    } catch (e) {
+      console.error('[Ueberstunden] Rückgängig fehlgeschlagen:', e);
+      toast({ title: 'Rückgängig fehlgeschlagen', description: String(e), variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const jahre = [2026, 2027, 2028].filter(y => y <= new Date().getFullYear() + 1);
+
+  return (
+    <div className="p-4 md:p-6 space-y-4 max-w-6xl">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">Überstunden (Fix-Mitarbeiter)</h1>
+        <select
+          className="border rounded px-2 py-1 text-sm bg-background"
+          value={year}
+          onChange={e => setYear(Number(e.target.value))}
+          data-testid="select-jahr"
+        >
+          {jahre.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <span className="text-xs text-muted-foreground">
+          Laufendes Konto ab Juli 2026 · Soll = Pensum × {VOLLZEIT_WOCHE_H} h/Woche · Stand bis heute
+        </span>
+      </div>
+
+      {loading && <p className="text-sm text-muted-foreground">Lade…</p>}
+      {loadError && !loading && (
+        <p className="text-sm text-red-600">Daten konnten nicht geladen werden (Verbindung prüfen und neu laden).</p>
+      )}
+
+      {erg && !loading && (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Monats-Saldi &amp; laufendes Konto</span>
+                <span data-testid="text-total-laufend" className={saldoClass(erg.totalLaufend)}>
+                  Total laufend: {fmtH(erg.totalLaufend)}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {erg.mitarbeiter.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Keine Fix-Mitarbeiter im gewählten Jahr.</p>
+              ) : (
+                <table className="text-xs w-full">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left py-1 pr-2">Mitarbeiter</th>
+                      <th className="text-right pr-2">Pensum</th>
+                      {MONATE.map(m => <th key={m} className="text-right px-1">{m}</th>)}
+                      <th className="text-right pl-2 font-semibold">Laufend</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {erg.mitarbeiter.map(m => (
+                      <tr
+                        key={m.id}
+                        className={`border-t cursor-pointer hover:bg-muted/50 ${selEmp === m.id ? 'bg-muted/60' : ''}`}
+                        onClick={() => { setSelEmp(m.id); setStaged({}); }}
+                        data-testid={`row-emp-${m.id}`}
+                      >
+                        <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
+                        <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
+                        {m.monatsSaldo.map((s, i) => (
+                          <td key={i} className={`text-right px-1 tabular-nums ${saldoClass(s)}`}>
+                            {s === null ? '–' : s.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                          </td>
+                        ))}
+                        <td className={`text-right pl-2 tabular-nums font-semibold ${saldoClass(m.laufend)}`}>
+                          {fmtH(m.laufend)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="text-[11px] text-muted-foreground mt-2">
+                «–» = keine Datenbasis (kein Mirus-Import / keine Absenz in der Periode). Laufend = Summe ab {UEBERSTUNDEN_START.split('-').reverse().join('.')}.
+              </p>
+            </CardContent>
+          </Card>
+
+          {sel && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">
+                  {sel.name} — Wochen {year} (Soll {fmtH(sel.wochenSollH)}/Woche)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="text-xs w-full max-w-xl">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left py-1">KW</th>
+                      <th className="text-right px-2">Soll</th>
+                      <th className="text-right px-2">Ist</th>
+                      <th className="text-right px-2">davon Gutschrift</th>
+                      <th className="text-right px-2">Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sel.wochen.filter(w => w.monday <= heute).map(w => (
+                      <tr key={w.monday} className="border-t">
+                        <td className="py-0.5 whitespace-nowrap">{w.label} <span className="text-muted-foreground">({w.monday.slice(8, 10)}.{w.monday.slice(5, 7)}.)</span></td>
+                        <td className="text-right px-2 tabular-nums">{w.soll === null ? '–' : fmtH(w.soll)}</td>
+                        <td className="text-right px-2 tabular-nums">{w.ist === null ? '–' : fmtH(w.ist)}</td>
+                        <td className="text-right px-2 tabular-nums text-muted-foreground">{w.gutschrift ? fmtH(w.gutschrift) : w.gutschrift === 0 ? '0.0 h' : '–'}</td>
+                        <td className={`text-right px-2 tabular-nums ${saldoClass(w.saldo)}`}>{w.saldo === null ? '–' : fmtH(w.saldo)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+
+          {sel && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex flex-wrap items-center gap-3">
+                  <span>Absenzen erfassen — {sel.name}</span>
+                  <select
+                    className="border rounded px-2 py-1 text-sm bg-background font-normal"
+                    value={editMonat}
+                    onChange={e => { setEditMonat(Number(e.target.value)); setStaged({}); }}
+                    data-testid="select-absenz-monat"
+                  >
+                    {MONATE.map((m, i) => <option key={m} value={i + 1}>{m} {year}</option>)}
+                  </select>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Ferien/Krank/Unfall = Gutschrift {fmtH(sel.wochenSollH / 5)}/Tag · Frei = 0 (wie kein Eintrag, aber dokumentiert).
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1">
+                  {editDays.map(date => {
+                    const gespeichert = selAbsenzen[date];
+                    const val = staged[date] !== undefined ? staged[date] : (gespeichert ?? '');
+                    const dirty = staged[date] !== undefined && (staged[date] || undefined) !== gespeichert;
+                    const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][new Date(date + 'T12:00:00').getDay()];
+                    return (
+                      <label key={date} className={`flex items-center gap-1 text-[11px] rounded px-1 py-0.5 ${dirty ? 'bg-amber-100 dark:bg-amber-900/40' : ''}`}>
+                        <span className={`w-10 tabular-nums ${wd === 'Sa' || wd === 'So' ? 'text-muted-foreground' : ''}`}>{wd} {date.slice(8, 10)}.</span>
+                        <select
+                          className="border rounded px-1 py-0.5 bg-background flex-1"
+                          value={val}
+                          onChange={e => setStaged(s => ({ ...s, [date]: e.target.value as UeAbsenzTyp | '' }))}
+                          data-testid={`select-absenz-${date}`}
+                        >
+                          <option value="">—</option>
+                          {(Object.keys(UE_ABSENZ_LABELS) as UeAbsenzTyp[]).map(t => (
+                            <option key={t} value={t}>{UE_ABSENZ_LABELS[t]}</option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
+                {changes.length > 0 && (
+                  <div className="text-xs border rounded p-2 bg-muted/40" data-testid="text-vorschau">
+                    <p className="font-medium mb-1">Vorschau — {changes.length} Änderung(en):</p>
+                    <ul className="space-y-0.5">
+                      {changes.map(c => (
+                        <li key={c.date}>
+                          {c.date.slice(8, 10)}.{c.date.slice(5, 7)}.: {c.von ? UE_ABSENZ_LABELS[c.von] : '—'} → {c.zu ? UE_ABSENZ_LABELS[c.zu] : '—'}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => void speichern()} disabled={changes.length === 0 || saving} data-testid="button-absenz-speichern">
+                    {saving ? 'Speichert…' : 'Speichern'}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setStaged({})} disabled={changes.length === 0 || saving} data-testid="button-absenz-verwerfen">
+                    Verwerfen
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void rueckgaengig()} disabled={saving} data-testid="button-absenz-undo">
+                    Letztes Speichern rückgängig
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {parked.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Hinweis: nicht zuordenbare Mirus-Namen ({parked.length})</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Diese importierten Stunden sind KEINEM Mitarbeiter zugeordnet und fehlen darum
+                  in der Überstunden-Rechnung. Zuordnung im Import-Center vornehmen.
+                </p>
+                <ul className="text-xs space-y-0.5">
+                  {parked.map(p => (
+                    <li key={p.id} data-testid={`text-parked-${p.id}`}>
+                      <span className="font-medium">{p.name}</span> — {p.month}, {Object.keys(p.days).length} Tag(e), Σ {fmtH(p.totalHours)}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

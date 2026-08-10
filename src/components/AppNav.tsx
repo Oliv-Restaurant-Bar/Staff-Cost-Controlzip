@@ -155,6 +155,13 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
       },
       {
+        path: '/ueberstunden',
+        label: 'Überstunden',
+        shortLabel: 'Überstd.',
+        icon: DollarSign,
+        module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
         path: '/personal-stamm',
         label: 'Personalstamm',
         shortLabel: 'Personal',

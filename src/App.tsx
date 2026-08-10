@@ -45,6 +45,7 @@ import NotFound from "./pages/NotFound";
 import ImportHub from "./pages/ImportHub";
 import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
+import UeberstundenPage from "./pages/UeberstundenPage";
 import PersonalkostenNeu from "./pages/PersonalkostenNeu";
 import MonatsreportPage from "./pages/MonatsreportPage";
 import BudgetCockpitPage from "./pages/BudgetCockpitPage";
@@ -378,6 +379,10 @@ const AppContent = () => {
             />
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
+            />
+            {/* Überstunden-Konto pro Fix-MA (gleiches Zugriffs-Gate wie Personalkosten) */}
+            <Route path="/ueberstunden"
+              element={canAccessModule('personal_fix') ? <UeberstundenPage /> : <Navigate to="/personal" replace />}
             />
             {/* NEU – Prüfung: Prüfansicht der zentralen Personalkosten-Berechnungsquelle (Etappe 1) */}
             <Route path="/personalkosten-neu"
