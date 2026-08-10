@@ -165,13 +165,28 @@ export async function lerneProfil(
   return next;
 }
 
+/** Bohnenblust-Kunden-Nrn → Mandant (Beleg-Adresse ist dort IMMER
+ *  «Restaurant Beaulieu AG», auch für Oliv-Lieferungen). */
+const BOHNENBLUST_KUNDEN_NRN: Record<string, 'oliv' | 'beaulieu'> = {
+  '1422004': 'oliv',
+  '9865.2': 'beaulieu',
+};
+
 /**
  * Mandant aus der BELEG-Adresse erkennen: «Oliv Gastro AG»/«Restaurant & Bar
  * Oliv»/«Oliv Restaurant & Bar» → oliv; «Restaurant Beaulieu AG» → beaulieu.
  * Beide oder keines gefunden → null (nie raten). Dient als Gegenprobe beim
  * Import: eine Rechnung des FALSCHEN Mandanten wird blockiert, nie umgebucht.
+ *
+ * AUSNAHME Bohnenblust: die Adresse ist immer Beaulieu — dort entscheidet die
+ * Kunden-Nr (1422004 = Oliv, 9865.2 = Beaulieu); unbekannte Kunden-Nr → null
+ * (Mandant offen + Warn-Hinweis beim Aufrufer, nie raten).
  */
 export function erkenneMandantImText(text: string): 'oliv' | 'beaulieu' | null {
+  if (/Bohnenblust/i.test(text)) {
+    const kd = /Kunden-?\s?Nr\.?\s*:?\s*([\d.]+)/i.exec(text);
+    return kd ? (BOHNENBLUST_KUNDEN_NRN[kd[1]] ?? null) : null;
+  }
   const oliv = /Oliv\s+Gastro\s+AG|Restaurant\s*&?\s*Bar\s+Oliv|Oliv\s+Restaurant\s*&\s*Bar/i.test(text);
   const beaulieu = /Restaurant\s+Beaulieu(?:\s+AG)?/i.test(text);
   if (oliv && !beaulieu) return 'oliv';

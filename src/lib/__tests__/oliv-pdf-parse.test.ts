@@ -31,8 +31,14 @@ describe('Mandanten-Erkennung nach Beleg-Adresse', () => {
     expect(erkenneMandantImText(fx('transgourmet-64104237.txt'))).toBe('oliv');
     expect(erkenneMandantImText(fx('ambro-26210060.txt'))).toBe('oliv');
   });
-  it('Bohnenblust 49300 → beaulieu (Gegenprobe: unter Oliv gesperrt)', () => {
-    expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBe('beaulieu');
+  it('Bohnenblust: Kunden-Nr entscheidet (Adresse ist immer Beaulieu)', () => {
+    // 49300 trägt Kunden-Nr 1422004 → OLIV (trotz Beaulieu-Adresse).
+    expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBe('oliv');
+    // Beaulieu-Rechnung: Kunden-Nr 9865.2 → beaulieu.
+    const bea = readFileSync(join(__dirname, 'fixtures', 'beaulieu-pdf', 'bohnenblust-49415.txt'), 'utf8');
+    expect(erkenneMandantImText(bea)).toBe('beaulieu');
+    // Unbekannte Kunden-Nr → offen (null), nie raten.
+    expect(erkenneMandantImText('Bäckerei Bohnenblust AG\nRestaurant Beaulieu AG\nKunden-Nr. 555555')).toBeNull();
   });
 });
 

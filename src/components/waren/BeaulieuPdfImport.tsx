@@ -139,7 +139,11 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           const belegMandant = erkenneMandantImText(text);
           const mandantFremd = belegMandant !== null && belegMandant !== tenantId ? belegMandant : undefined;
           if (mandantFremd) {
-            erg.hinweise.unshift(`Beleg-Adresse gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
+            erg.hinweise.unshift(`Beleg gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
+          } else if (belegMandant === null && erg.profil?.id === 'bohnenblust') {
+            // Bohnenblust: Adresse immer Beaulieu — Mandant kommt aus der
+            // Kunden-Nr; unbekannte Nr ⇒ offen lassen + warnen (nie raten).
+            erg.hinweise.push('Bohnenblust: unbekannte Kunden-Nr — Mandant nicht eindeutig, bitte vor dem Import prüfen.');
           }
           const abgleich = modus === 'monatsrechnung' && erg.profil
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
