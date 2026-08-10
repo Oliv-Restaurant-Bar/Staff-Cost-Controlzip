@@ -269,7 +269,9 @@ function parseFidecoLieferungen(lines: string[], profil: LieferantenProfil, mwst
 function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const { bloecke } = teileInBloecke(lines, /Lieferungsnr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
   // Betrag MUSS Rappen haben (x.xx) — schützt vor QR-Zahlteil-Referenzzeilen.
-  const zeileRe = /^\s*\d{1,3}\s+(\d[\w-]*)\s+(\d+)\s+(.+?)\s+([\d’'.,]+)\s+(?:(\d{1,2})\s+)?(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  // Menge und Betrag dürfen NEGATIV sein (Retouren-Block, z.B. «-36 75 cl»);
+  // negative Positionen werden mitgeführt und subtrahieren sich im Total.
+  const zeileRe = /^\s*\d{1,3}\s+(\d[\w-]*)\s+(-?\d+)\s+(.+?)\s+([\d’'.,]+)\s+(?:(\d{1,2})\s+)?(-?[\d’',]*\d[.,]\d{2})\s*$/;
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
     for (let i = 0; i < b.zeilen.length; i++) {
@@ -465,14 +467,23 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       mwstSatz: 8.1,
     };
   },
-  terravigna: (text) => ({
-    ...generischerKopf(text),
-    rechnungsNr: suche(text, [/Rechnung\s+(\d{4,10})/i]),
-    rechnungsdatum: parseDatumCH(suche(text, [/Belegdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? ''),
-    netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*ohne\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]),
-    mwst: sucheBetrag(text, [new RegExp(`[\\d.]+\\s*%\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]),
-    mwstSatz: 8.1,
-  }),
+  terravigna: (text) => {
+    const netto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*ohne\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]);
+    // Gemischte MwSt-Sätze möglich (z.B. 8.1% + 2.6%): Brutto DIREKT aus dem
+    // Beleg lesen («Total CHF inkl. MwSt.») und MwSt = Brutto − Netto — nie
+    // aus einem Einzelsatz zurückrechnen.
+    const brutto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*inkl\\.?\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]);
+    return {
+      ...generischerKopf(text),
+      rechnungsNr: suche(text, [/Rechnung\s+(\d{4,10})/i]),
+      rechnungsdatum: parseDatumCH(suche(text, [/Belegdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? ''),
+      netto,
+      mwst: netto !== null && brutto !== null
+        ? rundung2(brutto - netto)
+        : sucheBetrag(text, [new RegExp(`[\\d.]+\\s*%\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]),
+      mwstSatz: 8.1,
+    };
+  },
   spahni: (text) => {
     const g = generischerKopf(text);
     // Einzel-Lieferschein: «Liefersch./Kd.-Nr. : 5210840 / XBEA» + «Lieferdatum».

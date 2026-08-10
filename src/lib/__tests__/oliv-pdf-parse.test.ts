@@ -36,6 +36,37 @@ describe('Mandanten-Erkennung nach Beleg-Adresse', () => {
   });
 });
 
+describe('Terravigna Retouren + gemischte MwSt (synthetische Kontrolle)', () => {
+  const text = [
+    'Terra Vigna AG  CHE-108.008.709 MWST',
+    'Rechnung 209259',
+    'Belegdatum 30.06.26',
+    'Lieferungsnr. 285295 vom 18.06.26',
+    '1  21111-24-075  12 75 cl  14.50  174.00',
+    'Barbera d’Asti',
+    'Lieferungsnr. 286277 vom 18.06.26',
+    '2  33333-24-075  -36 75 cl  14.50  -522.00',
+    'Retoure Weisswein',
+    '3  44444-24-075  6 75 cl  21.00  126.00',
+    'Total CHF ohne MwSt.  -222.00',
+    'Total CHF inkl. MwSt.  -238.15',
+  ].join('\n');
+  const e = parseProfilPdf(text, P);
+  it('negative Retouren-Positionen werden gelesen und subtrahiert', () => {
+    expect(e.profil?.id).toBe('terravigna');
+    expect(e.lieferungen).toHaveLength(2); // 18.06. ZWEIMAL: 285295 UND 286277
+    expect(e.lieferungen[1].positionen.map(p => p.positionspreis)).toEqual([-522, 126]);
+    expect(e.lieferungen[1].positionen[0].menge).toBe(-36);
+    expect(R2(e.lieferungen.reduce((s, l) => s + l.nettoTotal, 0))).toBe(-222);
+    expect(e.hinweise).toHaveLength(0); // Σ Positionen == Netto
+  });
+  it('Brutto direkt aus «Total CHF inkl. MwSt.»; MwSt = Brutto − Netto', () => {
+    expect(e.netto).toBe(-222);
+    expect(e.brutto).toBe(-238.15);
+    expect(e.mwst).toBe(-16.15);
+  });
+});
+
 describe('Bohnenblust ist vom Automatik-Import ausgeschlossen', () => {
   it('49300 wird keinem Profil zugeordnet (nur manuelle Erfassung)', () => {
     const e = parse('bohnenblust-49300.txt');
