@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import { ZweiWochenTable } from '@/pages/MonatsreportPage';
+import { ZweiWochenTable, WochenTable } from '@/pages/MonatsreportPage';
 import type { MrRow } from '@/lib/monatsreport';
 
 const row = (over: Partial<MrRow>): MrRow => ({
@@ -48,5 +48,35 @@ describe('ZweiWochenTable', () => {
     expect(screen.getByTestId('wb-delta-personalquote').textContent).toContain('+2.0 PP');
     // TA Umsatz ohne Budget: Δ gegen VJ («vs. VJ»)
     expect(screen.getByTestId('wb-delta-take_away_umsatz').textContent).toContain('vs. VJ');
+  });
+});
+
+describe('WochenTable (4 Spalten, PDF-Export «letzte 4 Wochen»)', () => {
+  it('rendert 4 Wochen-Spalten; Skeleton = neueste Spalte, leere Spalte bleibt leer', () => {
+    const w1 = [row({ id: 'netto_umsatz', label: 'Netto Umsatz', week: 40_000, budget: 50_000, weekBudget: 50_000 })];
+    const w3 = [row({ id: 'netto_umsatz', label: 'Netto Umsatz', week: 55_000, budget: 50_000, weekBudget: 50_000 })];
+    const w4 = B;
+    render(<WochenTable
+      cols={[
+        { rows: w1, header: 'KW 29', keyPrefix: 'w1' },
+        { rows: null, header: 'KW 30', keyPrefix: 'w2' }, // Woche nicht ladbar
+        { rows: w3, header: 'KW 31', keyPrefix: 'w3' },
+        { rows: w4, header: 'KW 32', keyPrefix: 'w4' },
+      ]}
+      testid="t4w"
+    />);
+    expect(screen.getByTestId('w1-ist-netto_umsatz').textContent).toContain('40');
+    expect(screen.getByTestId('w3-ist-netto_umsatz').textContent).toContain('55');
+    expect(screen.getByTestId('w4-ist-netto_umsatz').textContent).toContain('60');
+    // Leere Spalte: keine Zellen-Inhalte, aber Zeile existiert (Skeleton = w4)
+    expect(screen.queryByTestId('w2-ist-netto_umsatz')).toBeNull();
+    // Skeleton-Zeile «nur_neu» aus der neuesten Woche vorhanden
+    expect(screen.getByTestId('row2w-nur_neu')).toBeTruthy();
+    // Kopf: 4 Wochen-Header
+    for (const kw of ['KW 29', 'KW 30', 'KW 31', 'KW 32']) {
+      expect(screen.getByText(kw)).toBeTruthy();
+    }
+    // Budget-Δ in w4: +3'548 gegen Budget
+    expect(screen.getByTestId('w4-delta-netto_umsatz').textContent).toContain('+3’548.00');
   });
 });

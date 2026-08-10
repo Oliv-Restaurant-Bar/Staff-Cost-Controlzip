@@ -30,3 +30,8 @@ Regeln:
 - Wochen-Budgets bleiben unberührt (ckW); Warenkosten-sollMonat (Ist-basiert) und reviewZielBudget bewusst nicht umgeschaltet.
 - «vs. VJ» nur wo KEIN Budget hinterlegt (08/2026): Anteil-Zeilen (sharePct, z.B. Gäste Take Away) rechnen Δ gegen das Perioden-Budget, sobald eines existiert; Ausnahme fmt='countPax' (Gruppen ab 20 Pax: Budget in Personen, Wert in Anzahl Gruppen → weiter vs. VJ). Regel gilt in Bildschirm-Tabelle, Wochen-Zellen UND Excel-Export (Export-Prädikat synchron halten!).
 - Stichtag-Selektor (08/2026): Modus «bis Stichtag» hat manuellen Datums-Override (Ist UND Budget klemmen auf gewählten Tag; Reset bei Monats-/Mandantenwechsel). Anteilige absolute Budgets rechnen KALENDERTAG-anteilig aus der vollen Monatsauflösung (Monatsbudget × Tag ÷ Monatstage) — die frühere tagesgewichtete pro-rata-Auflösung (resolveCockpitBudgets fromIso..standIso) ist bewusst entfernt. Gilt für ALLE Absolutwerte inkl. Rezensions-Budgets; Ratio-KPIs nie kürzen.
+
+## PDF-Auswahl-Export (Monat/Woche-Tabs)
+- Mehrseitiges PDF via `exportCockpitPagesPDF` (Orientierung pro Seite); Einzel-Export delegiert darauf.
+- «Letzte 4 Wochen» = generalisierte `WochenTable` (N Spalten, Skeleton = neueste Woche); Vorwochen laden mit demselben `{kind:'kw'}`-Muster wie die Live-Vorwochen-Spalte — Wochen-Spalten sind ISO-Wochen-massgeblich über Monatsgrenzen.
+- Off-screen-Rendering: fixed −left-10000px-Container + Poll auf `<table>` (20s Timeout); versteckter Wochenverlauf bekommt `initialJahr` der Report-Auswahl, Meta via Ref (State wäre im async-Closure stale).

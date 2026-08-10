@@ -40,7 +40,9 @@ import {
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition } from '@/types/budget';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
-import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
+import { exportCockpitPanelPDF, exportCockpitPagesPDF, naechsterFrame, type CockpitPdfOptions } from '@/lib/cockpit-pdf-export';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -594,6 +596,16 @@ function ReportTable({
  * die ältere Woche (rowsA) wird per Zeilen-ID zugeordnet — fehlende Zeilen
  * bleiben leer (leer statt 0).
  */
+/** Eine Wochen-Spalte der Mehr-Wochen-Tabelle (rows=null → Spalte leer). */
+export interface WochenSpalte {
+  rows: MrRow[] | null;
+  header: string;
+  sub?: string | null;
+  /** testid-Präfix der Zellen dieser Spalte (z.B. 'wa'/'wb' bzw. 'w1'…). */
+  keyPrefix: string;
+}
+
+/** 2-Wochen-Ansicht der Wochenübersicht (Live-Tab): Vorwoche + gewählte Woche. */
 export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, testid, onDrill }: {
   rowsA: MrRow[] | null;
   rowsB: MrRow[];
@@ -602,17 +614,47 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
   testid: string;
   onDrill?: (rowId: string) => void;
 }) {
-  const byIdA = new Map<string, MrRow>();
-  for (const r of rowsA ?? []) if (r.type === 'data' && r.id) byIdA.set(r.id, r);
+  return (
+    <WochenTable
+      cols={[
+        { rows: rowsA, header: headerA, sub: subA, keyPrefix: 'wa' },
+        { rows: rowsB, header: headerB, sub: subB, keyPrefix: 'wb' },
+      ]}
+      testid={testid}
+      onDrill={onDrill}
+    />
+  );
+}
+
+/**
+ * Generalisierte Mehr-Wochen-Tabelle: N ISO-Wochen nebeneinander, je Woche
+ * Ist | Budget | Δ. Skeleton (Zeilen/Reihenfolge/Kinder) = LETZTE Spalte mit
+ * Daten (neueste Woche); ältere Spalten werden per Zeilen-ID zugeordnet —
+ * fehlende Zeilen bleiben leer (leer statt 0). Wird auch für den 4-Wochen-
+ * PDF-Export (Querformat) verwendet.
+ */
+export function WochenTable({ cols, testid, onDrill }: {
+  cols: WochenSpalte[];
+  testid: string;
+  onDrill?: (rowId: string) => void;
+}) {
+  // Skeleton = letzte Spalte mit Zeilen (neueste Woche).
+  const skelRows = [...cols].reverse().find(c => c.rows && c.rows.length > 0)?.rows ?? [];
+  // Zeilen-Zuordnung je Spalte per ID.
+  const byId = cols.map(c => {
+    const m = new Map<string, MrRow>();
+    for (const r of c.rows ?? []) if (r.type === 'data' && r.id) m.set(r.id, r);
+    return m;
+  });
   const childrenBy = new Map<string, MrRow[]>();
-  for (const r of rowsB) {
+  for (const r of skelRows) {
     if (r.type === 'data' && r.childOf) {
       const list = childrenBy.get(r.childOf) ?? [];
       list.push(r);
       childrenBy.set(r.childOf, list);
     }
   }
-  const mains = rowsB.filter(r => !(r.type === 'data' && r.childOf));
+  const mains = skelRows.filter(r => !(r.type === 'data' && r.childOf));
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   /** Wochen-Werte einer Zeile (null-Zeile = ganze Wochenspalte leer). */
@@ -699,14 +741,12 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
     );
   };
 
-  const colCount = 7;
-  const wochenKopf = (label: string, sub?: string | null) => (
-    <>
-      <th className="px-2 py-2 text-right font-semibold" colSpan={3}>
-        {label}
-        {sub ? <span className="block normal-case font-normal">{sub}</span> : null}
-      </th>
-    </>
+  const colCount = 1 + 3 * cols.length;
+  const wochenKopf = (label: string, sub?: string | null, key?: string) => (
+    <th key={key} className="px-2 py-2 text-right font-semibold" colSpan={3}>
+      {label}
+      {sub ? <span className="block normal-case font-normal">{sub}</span> : null}
+    </th>
   );
 
   return (
@@ -714,22 +754,25 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
       <table className="w-full table-fixed text-sm" data-testid={testid}>
         <colgroup>
           <col className="w-[200px]" />
-          <col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[84px]" />
-          <col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[84px]" />
+          {cols.map(c => (
+            <Fragment key={`cg-${c.keyPrefix}`}>
+              <col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[84px]" />
+            </Fragment>
+          ))}
         </colgroup>
         <thead>
           <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
             <th className="px-2 py-2 text-left font-semibold" rowSpan={2}>Kennzahl</th>
-            {wochenKopf(headerA, subA)}
-            {wochenKopf(headerB, subB)}
+            {cols.map(c => wochenKopf(c.header, c.sub, `h-${c.keyPrefix}`))}
           </tr>
           <tr className="border-b bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground">
-            <th className="px-2 py-1 text-right font-semibold">Ist</th>
-            <th className="px-2 py-1 text-right font-semibold">Budget</th>
-            <th className="px-2 py-1 text-right font-semibold">Δ</th>
-            <th className="px-2 py-1 text-right font-semibold">Ist</th>
-            <th className="px-2 py-1 text-right font-semibold">Budget</th>
-            <th className="px-2 py-1 text-right font-semibold">Δ</th>
+            {cols.map(c => (
+              <Fragment key={`sh-${c.keyPrefix}`}>
+                <th className="px-2 py-1 text-right font-semibold">Ist</th>
+                <th className="px-2 py-1 text-right font-semibold">Budget</th>
+                <th className="px-2 py-1 text-right font-semibold">Δ</th>
+              </Fragment>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -739,7 +782,6 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
             }
             const children = row.id ? (childrenBy.get(row.id) ?? []) : [];
             const isOpen = !!row.id && expanded.has(row.id);
-            const srcA = row.id ? byIdA.get(row.id) : undefined;
             const parentTr = (
               <tr
                 key={row.id ?? `d${i}`}
@@ -774,8 +816,11 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
                     </button>
                   ) : row.label}
                 </td>
-                {wochenZellen(row, srcA, 'wa')}
-                {wochenZellen(row, row, 'wb')}
+                {cols.map((c, j) => (
+                  <Fragment key={`z-${c.keyPrefix}`}>
+                    {wochenZellen(row, row.id ? byId[j].get(row.id) : undefined, c.keyPrefix)}
+                  </Fragment>
+                ))}
               </tr>
             );
             if (children.length === 0 || !isOpen) return parentTr;
@@ -783,8 +828,6 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
               <Fragment key={`g-${row.id}`}>
                 {parentTr}
                 {children.map(child => {
-                  const ca = child.id ? byIdA.get(child.id) : undefined;
-                  const cA = pickW(ca), cB = pickW(child);
                   const kindZelle = (p: ReturnType<typeof pickW>, key: string) => (
                     <Fragment key={key}>
                       <td className="px-2 py-1 text-right tabular-nums text-xs">
@@ -802,8 +845,8 @@ export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, te
                   return (
                     <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row2w-${child.id}`}>
                       <td className="px-2 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
-                      {kindZelle(cA, 'a')}
-                      {kindZelle(cB, 'b')}
+                      {cols.map((c, j) => kindZelle(
+                        pickW(child.id ? byId[j].get(child.id) : undefined), c.keyPrefix))}
                     </tr>
                   );
                 })}
@@ -868,6 +911,23 @@ export default function MonatsreportPage() {
   const [verlaufMeta, setVerlaufMeta] = useState<CockpitPdfMeta | null>(null);
   const [jahrMeta, setJahrMeta] = useState<CockpitPdfMeta | null>(null);
   const [pdfLaeuft, setPdfLaeuft] = useState(false);
+
+  // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
+  //    Wochen (quer, Ist|Budget|Δ), optional Wochenverlauf als weitere Seite.
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [expAktuell, setExpAktuell] = useState(true);
+  const [expVierWochen, setExpVierWochen] = useState(false);
+  const [expVerlauf, setExpVerlauf] = useState(false);
+  /** Off-screen gerenderte 4-Wochen-Tabelle (nur während des Exports). */
+  const [exportVier, setExportVier] = useState<{
+    cols: { rows: MrRow[] | null; header: string; sub: string | null; keyPrefix: string }[];
+    range: string;
+  } | null>(null);
+  const exportVierRef = useRef<HTMLDivElement>(null);
+  /** Off-screen gemounteter Wochenverlauf (nur während des Exports). */
+  const [exportVerlaufAktiv, setExportVerlaufAktiv] = useState(false);
+  const exportVerlaufRef = useRef<HTMLDivElement>(null);
+  const exportVerlaufMetaRef = useRef<CockpitPdfMeta | null>(null);
 
   const [year, setYear] = useState(heute.getFullYear());
   const [month, setMonth] = useState(heute.getMonth() + 1); // 1-basiert
@@ -1196,6 +1256,25 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     ? `KW ${isoWeekOf(parseIso(daten.vjWeekFrom)).week} · ${fmtDate(daten.vjWeekFrom)}–${fmtDate(daten.vjWeekTo)}${daten.vjWeekTo.slice(0, 4)}`
     : null;
 
+  // Fussnoten der Monats-/Wochen-PDFs (auch vom Auswahl-Export genutzt).
+  const MONAT_FOOTNOTE = 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
+    + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
+    + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
+    + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
+    + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+    + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
+    + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
+    + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».';
+  const WOCHE_FOOTNOTE = 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
+    + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
+    + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, '
+    + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
+    + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
+    + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+    + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
+    + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
+    + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».';
+
   // PDF-Export der aktuell aktiven Ansicht «genau so wie angezeigt».
   const handlePdfExport = useCallback(async () => {
     // Panel + Metadaten je aktivem Tab bestimmen.
@@ -1207,14 +1286,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         title: 'Monatsübersicht',
         subtitle: `${MONATE[month - 1]} ${year}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
-          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
-          + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
-          + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
-          + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-          + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
-          + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
-          + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».',
+        footnote: MONAT_FOOTNOTE,
       };
     } else if (activeTab === 'woche') {
       el = wochePanelRef.current;
@@ -1222,15 +1294,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         title: 'Wochenübersicht',
         subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
         fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
-          + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
-          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, '
-          + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
-          + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
-          + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-          + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
-          + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
-          + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».',
+        footnote: WOCHE_FOOTNOTE,
       };
     } else if (activeTab === 'verlauf') {
       el = verlaufPanelRef.current;
@@ -1258,6 +1322,129 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     }
   }, [activeTab, month, year, daten, wocheRange, verlaufMeta, jahrMeta, heute, toast]);
 
+  /** Metadaten der Monats-/Wochen-Ansicht (für den Auswahl-Export wiederverwendet). */
+  const monatMeta = useCallback((): CockpitPdfOptions => ({
+    title: 'Monatsübersicht',
+    subtitle: `${MONATE[month - 1]} ${year}`,
+    fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
+    footnote: MONAT_FOOTNOTE,
+  }), [month, year]);
+  const wocheMeta = useCallback((): CockpitPdfOptions => ({
+    title: 'Wochenübersicht',
+    subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
+    fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
+    footnote: WOCHE_FOOTNOTE,
+  }), [month, year, daten, wocheRange]);
+
+  /** Pollt, bis cond wahr ist (Export-Hilfe: off-screen-Inhalte fertig gerendert). */
+  const warteAuf = async (cond: () => boolean, timeoutMs = 20000): Promise<void> => {
+    const t0 = Date.now();
+    while (!cond()) {
+      if (Date.now() - t0 > timeoutMs) throw new Error('Zeitüberschreitung beim Rendern der Export-Ansicht');
+      await new Promise(r => setTimeout(r, 250));
+    }
+  };
+
+  /**
+   * Auswahl-Export (Tabs Monat/Woche): baut ein mehrseitiges PDF aus den
+   * angehakten Teilen — aktuelle Ansicht, letzte 4 Wochen (Querformat,
+   * Ist|Budget|Δ je Woche) und/oder Wochenverlauf.
+   */
+  const handleAuswahlExport = useCallback(async () => {
+    if (!expAktuell && !expVierWochen && !expVerlauf) {
+      toast({ title: 'Nichts ausgewählt', description: 'Bitte mindestens einen Bestandteil anhaken.' });
+      return;
+    }
+    setExportMenuOpen(false);
+    setPdfLaeuft(true);
+    try {
+      const pages: Array<{ element: HTMLElement; opts: CockpitPdfOptions }> = [];
+
+      // 1) Aktuelle Ansicht (Monats- oder Wochenübersicht, wie angezeigt).
+      if (expAktuell) {
+        const el = activeTab === 'woche' ? wochePanelRef.current : monatPanelRef.current;
+        if (!el) throw new Error('Ansicht ist noch nicht geladen.');
+        pages.push({ element: el, opts: activeTab === 'woche' ? wocheMeta() : monatMeta() });
+      }
+
+      // 2) Letzte 4 Wochen: gewählte Woche + 3 Vorwochen laden (jede Woche =
+      //    eigener ladeMonatsreport-Lauf mit fester ISO-KW) — GLEICHES Muster
+      //    wie die Vorwochen-Spalte der Live-2-Wochen-Ansicht: die Wochen-
+      //    Spalten von ladeMonatsreport sind ISO-Wochen-massgeblich und laufen
+      //    über Monatsgrenzen hinaus. Dann off-screen als 4-Spalten-Tabelle
+      //    rendern und quer capturen.
+      if (expVierWochen) {
+        if (!daten?.weekFrom || !rates) throw new Error('Wochendaten sind noch nicht geladen.');
+        const basisMontag = parseIso(daten.weekFrom);
+        basisMontag.setDate(basisMontag.getDate() - ((basisMontag.getDay() + 6) % 7));
+        const wochen: (MonatsreportDaten | null)[] = [null, null, null, null];
+        wochen[3] = daten; // neueste = aktuell gewählte Woche (bereits geladen)
+        await Promise.all([1, 2, 3].map(async back => {
+          const mo = new Date(basisMontag);
+          mo.setDate(mo.getDate() - back * 7);
+          const { week, year: kwYear } = isoWeekOf(mo);
+          try {
+            wochen[3 - back] = await ladeMonatsreport(
+              mo.getFullYear(), mo.getMonth() + 1, tenantId, tenantKey, rates, heute,
+              { kind: 'kw', kw: week, kwYear }, budgetModus);
+          } catch {
+            wochen[3 - back] = null; // Woche nicht ladbar → Spalte bleibt leer
+          }
+        }));
+        const cols = wochen.map((w, i) => ({
+          rows: w?.rows ?? null,
+          header: w?.weekFrom ? `KW ${isoWeekOf(parseIso(w.weekFrom)).week}` : `Woche −${3 - i}`,
+          sub: w?.weekFrom && w?.weekTo ? `${fmtDate(w.weekFrom)}–${fmtDate(w.weekTo)}` : null,
+          keyPrefix: `w${i + 1}`,
+        }));
+        const ersteVon = wochen.find(w => w?.weekFrom)?.weekFrom;
+        const range = ersteVon && daten.weekTo ? `${fmtDate(ersteVon)}–${fmtDate(daten.weekTo)}` : '';
+        setExportVier({ cols, range });
+        await naechsterFrame();
+        await warteAuf(() => !!exportVierRef.current?.querySelector('table'));
+        pages.push({
+          element: exportVierRef.current!,
+          opts: {
+            title: 'Letzte 4 Wochen',
+            subtitle: `${range || ''} · je Woche Ist | Budget | Δ`,
+            fileName: `cockpit-4-wochen-${year}-${String(month).padStart(2, '0')}`,
+            orientation: 'landscape',
+            cloneWidthPx: 1700,
+            footnote: WOCHE_FOOTNOTE,
+          },
+        });
+      }
+
+      // 3) Wochenverlauf: falls Tab nicht aktiv, off-screen mounten und auf
+      //    fertige Tabelle warten (eigene Datenladung der Ansicht).
+      if (expVerlauf) {
+        exportVerlaufMetaRef.current = null;
+        setExportVerlaufAktiv(true);
+        await naechsterFrame();
+        await warteAuf(() =>
+          !!exportVerlaufRef.current?.querySelector('table') && !!exportVerlaufMetaRef.current);
+        pages.push({ element: exportVerlaufRef.current!, opts: exportVerlaufMetaRef.current! });
+      }
+
+      await naechsterFrame();
+      const fileName = pages.length === 1
+        ? pages[0].opts.fileName
+        : `cockpit-report-${year}-${String(month).padStart(2, '0')}`;
+      await exportCockpitPagesPDF(pages, fileName, heute);
+    } catch (e) {
+      toast({
+        title: 'PDF-Export fehlgeschlagen',
+        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportVier(null);
+      setExportVerlaufAktiv(false);
+      setPdfLaeuft(false);
+    }
+  }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
+    heute, budgetModus, year, month, monatMeta, wocheMeta, toast]);
+
   return (
     <PageShell>
       <div className="space-y-4 max-w-5xl">
@@ -1280,17 +1467,69 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               <TabsTrigger value="woche" data-testid="tab-woche">Wochenübersicht</TabsTrigger>
               <TabsTrigger value="verlauf" data-testid="tab-verlauf">Wochenverlauf</TabsTrigger>
             </TabsList>
-            <Button
-              variant="outline" size="sm" className="h-8 gap-1.5"
-              onClick={handlePdfExport}
-              disabled={pdfLaeuft}
-              data-testid="button-pdf-export"
-            >
-              {pdfLaeuft
-                ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
-                : <FileDown className="h-4 w-4" />}
-              PDF
-            </Button>
+            {(activeTab === 'monat' || activeTab === 'woche') ? (
+              <Popover open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline" size="sm" className="h-8 gap-1.5"
+                    disabled={pdfLaeuft}
+                    data-testid="button-pdf-export"
+                  >
+                    {pdfLaeuft
+                      ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+                      : <FileDown className="h-4 w-4" />}
+                    PDF
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 space-y-3" data-testid="popover-pdf-export">
+                  <p className="text-sm font-semibold">PDF-Export — Inhalt wählen</p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={expAktuell}
+                      onCheckedChange={v => setExpAktuell(v === true)}
+                      data-testid="check-export-aktuell"
+                    />
+                    {activeTab === 'woche' ? 'Wochenübersicht (aktuelle Ansicht)' : 'Monatsübersicht (aktuelle Ansicht)'}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={expVierWochen}
+                      onCheckedChange={v => setExpVierWochen(v === true)}
+                      data-testid="check-export-vier-wochen"
+                    />
+                    <span>Letzte 4 Wochen <span className="text-xs text-muted-foreground">(Ist | Budget | Δ, Querformat)</span></span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={expVerlauf}
+                      onCheckedChange={v => setExpVerlauf(v === true)}
+                      data-testid="check-export-verlauf"
+                    />
+                    <span>Wochenverlauf <span className="text-xs text-muted-foreground">(letzte 4 Wochen, Tabelle)</span></span>
+                  </label>
+                  <Button
+                    size="sm" className="w-full h-8"
+                    onClick={handleAuswahlExport}
+                    disabled={pdfLaeuft || (!expAktuell && !expVierWochen && !expVerlauf)}
+                    data-testid="button-pdf-export-los"
+                  >
+                    Exportieren
+                  </Button>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <Button
+                variant="outline" size="sm" className="h-8 gap-1.5"
+                onClick={handlePdfExport}
+                disabled={pdfLaeuft}
+                data-testid="button-pdf-export"
+              >
+                {pdfLaeuft
+                  ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+                  : <FileDown className="h-4 w-4" />}
+                PDF
+              </Button>
+            )}
           </div>
 
           {/* ── 1) Jahresübersicht (YTD) ── */}
@@ -1605,6 +1844,32 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
           <CockpitWarenkosten year={year} month={month} />
         </div>
 
+        {/* ── Off-screen-Render nur während des Auswahl-PDF-Exports ── */}
+        {exportVier ? (
+          <div
+            ref={exportVierRef}
+            className="fixed top-0 -left-[10000px] w-[1700px] bg-background p-2 space-y-2"
+            aria-hidden="true"
+            data-testid="export-vier-wochen"
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              Letzte 4 Wochen{exportVier.range ? ` · ${exportVier.range}` : ''}
+            </div>
+            <WochenTable cols={exportVier.cols} testid="table-vier-wochen" />
+          </div>
+        ) : null}
+        {exportVerlaufAktiv ? (
+          <div
+            ref={exportVerlaufRef}
+            className="fixed top-0 -left-[10000px] w-[1400px] bg-background p-2 space-y-4"
+            aria-hidden="true"
+            data-testid="export-verlauf"
+          >
+            {/* Jahr folgt der Report-Auswahl (historischer Export = passendes Jahr). */}
+            <WochenverlaufView initialJahr={year} onPdfMeta={(m) => { exportVerlaufMetaRef.current = m; }} />
+          </div>
+        ) : null}
+
         {/* ── Reservations-Drilldown (Kennzahl → zugrunde liegende Reservationen) ── */}
         <Dialog open={drill !== null} onOpenChange={(o) => { if (!o) setDrill(null); }}>
           <DialogContent className="max-w-2xl" data-testid="dialog-reservation-drill">
@@ -1702,13 +1967,17 @@ function Sparkline({ values }: { values: (number | null)[] }) {
   );
 }
 
-function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => void }) {
+function WochenverlaufView({ onPdfMeta, initialJahr }: {
+  onPdfMeta: (m: CockpitPdfMeta) => void;
+  /** Start-Jahr (z.B. Export aus historischer Monatssicht); Default = heute. */
+  initialJahr?: number;
+}) {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
 
   const [anzahl, setAnzahl] = useState(4);
-  const [jahr, setJahr] = useState(heute.getFullYear());
+  const [jahr, setJahr] = useState(initialJahr ?? heute.getFullYear());
   const [mitVorjahr, setMitVorjahr] = useState(false);
   const [ansicht, setAnsicht] = useState<'table' | 'chart'>('table');
   const [daten, setDaten] = useState<WochenverlaufDaten | null>(null);

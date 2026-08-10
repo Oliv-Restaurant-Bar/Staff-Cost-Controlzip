@@ -103,22 +103,14 @@ function bereiteKlonAuf(clonedRoot: HTMLElement, cloneWidth: number): void {
   });
 }
 
-/**
- * Exportiert das übergebene Panel als einseitiges PDF.
- */
-export async function exportCockpitPanelPDF(
+/** Rastert ein Panel und liefert Canvas + gewünschte Orientierung. */
+async function capturePanel(
+  html2canvas: typeof import('html2canvas').default,
   element: HTMLElement,
   opts: CockpitPdfOptions,
-  heute: Date = new Date(),
-): Promise<void> {
-  const [html2canvas, { default: jsPDF }] = await Promise.all([
-    import('html2canvas').then(m => m.default),
-    import('jspdf'),
-  ]);
-
+): Promise<{ canvas: HTMLCanvasElement; landscape: boolean }> {
   const background = ermittleHintergrund(element);
   const cloneWidth = opts.cloneWidthPx ?? CLONE_WIDTH_PX;
-
   const canvas = await html2canvas(element, {
     scale: 2,
     useCORS: true,
@@ -129,18 +121,24 @@ export async function exportCockpitPanelPDF(
     windowWidth: cloneWidth,
     onclone: (_doc, clonedEl) => bereiteKlonAuf(clonedEl as HTMLElement, cloneWidth),
   });
-
-  const imgData = canvas.toDataURL('image/png');
-
   // Orientierung: explizit (z.B. Wochenverlauf nach Wochen-Anzahl), sonst
   // automatisch nach Seitenverhältnis des Captures.
   const landscape = opts.orientation
     ? opts.orientation === 'landscape'
     : canvas.width >= canvas.height;
+  return { canvas, landscape };
+}
+
+/** Zeichnet eine gerasterte Seite (Kopfzeile, Bild, Fussnote) ins PDF. */
+function zeichneSeite(
+  pdf: import('jspdf').jsPDF,
+  canvas: HTMLCanvasElement,
+  landscape: boolean,
+  opts: CockpitPdfOptions,
+  heute: Date,
+): void {
   const pageW = landscape ? MM_PER_PAGE.a4w : MM_PER_PAGE.a4h;
   const pageH = landscape ? MM_PER_PAGE.a4h : MM_PER_PAGE.a4w;
-
-  const pdf = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
 
   // Kopfzeile.
   const datum = heute.toLocaleDateString('de-CH');
@@ -174,7 +172,7 @@ export async function exportCockpitPanelPDF(
   const offsetX = MARGIN_MM + (availW - drawW) / 2;
   const offsetY = MARGIN_MM + HEADER_MM;
 
-  pdf.addImage(imgData, 'PNG', offsetX, offsetY, drawW, drawH);
+  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', offsetX, offsetY, drawW, drawH);
 
   // Fussnote als sauberer, umgebrochener Text unter dem Bild.
   if (footLines.length > 0) {
@@ -183,6 +181,49 @@ export async function exportCockpitPanelPDF(
     const footY = pageH - MARGIN_MM - footBlockH + 3;
     pdf.text(footLines, MARGIN_MM, footY);
   }
+}
 
-  pdf.save(`${opts.fileName}.pdf`);
+/**
+ * Exportiert das übergebene Panel als einseitiges PDF.
+ */
+export async function exportCockpitPanelPDF(
+  element: HTMLElement,
+  opts: CockpitPdfOptions,
+  heute: Date = new Date(),
+): Promise<void> {
+  await exportCockpitPagesPDF([{ element, opts }], opts.fileName, heute);
+}
+
+/**
+ * Exportiert MEHRERE Panels als mehrseitiges PDF (eine Seite pro Panel,
+ * Orientierung pro Seite — z.B. Monatsübersicht hoch + 4-Wochen-Tabelle quer).
+ */
+export async function exportCockpitPagesPDF(
+  pages: Array<{ element: HTMLElement; opts: CockpitPdfOptions }>,
+  fileName: string,
+  heute: Date = new Date(),
+): Promise<void> {
+  if (pages.length === 0) return;
+  const [html2canvas, { default: jsPDF }] = await Promise.all([
+    import('html2canvas').then(m => m.default),
+    import('jspdf'),
+  ]);
+
+  // Erst alle Panels rastern (DOM stabil halten), dann Seiten zeichnen.
+  const captured: Array<{ canvas: HTMLCanvasElement; landscape: boolean; opts: CockpitPdfOptions }> = [];
+  for (const p of pages) {
+    const { canvas, landscape } = await capturePanel(html2canvas, p.element, p.opts);
+    captured.push({ canvas, landscape, opts: p.opts });
+  }
+
+  const pdf = new jsPDF({
+    orientation: captured[0].landscape ? 'landscape' : 'portrait',
+    unit: 'mm', format: 'a4',
+  });
+  captured.forEach((c, i) => {
+    if (i > 0) pdf.addPage('a4', c.landscape ? 'landscape' : 'portrait');
+    zeichneSeite(pdf, c.canvas, c.landscape, c.opts, heute);
+  });
+
+  pdf.save(`${fileName}.pdf`);
 }
