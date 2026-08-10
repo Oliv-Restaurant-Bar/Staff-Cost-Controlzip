@@ -110,3 +110,8 @@ assume the in-CREATE-TABLE declaration actually ran.
 - Snapshot NIE select('*'): nur die vom Import geschriebenen Spalten sichern; Restore-Upsert einer Teilmenge lässt unberührte Spalten (created_at etc.) stehen.
 - Undo: guest_ids VOR dem Löschen einsammeln (aktuelle + prior), neu importierte extIds löschen, priorRows verbatim upserten, recomputeGuestAggregates (jetzt exportiert). Stale-Schutz kommt vom generischen undoImportRun (nur neuester nicht-undone Lauf).
 - «Reservierte Gäste»/«Gruppen ab N Pax» in ALLEN Ansichten (Monat/Woche/Wochenverlauf/Jahresvergleich) NUR via loadReservationMetrics + zentrale Zählregel; die alten Direkt-Zähler countGroupsFrom20Pax(Vj) wurden gelöscht — keine parallele Zählregel wieder einführen.
+
+## Selbstkontrolle je Monat (08/2026)
+- Import-Vorschau + Nach-Import-Kontrolle (reservation-import-selfcheck.ts) rechnen mit derselben zentralen Zählregel — beim Einlesen wird die Regel FRISCH geladen (Snapshot), sonst prüft die Kontrolle mit Stale-Defaults.
+- Nach-Import-«OK» braucht den exakten Res.Nr.-Feldabgleich (Datum/Pax/Status), nicht nur Monats-Aggregate — zwei sich ausgleichende Fehler im selben Monat täuschen sonst Übereinstimmung vor.
+- «Monat gesamt (nach Merge)» kommt aus loadReservationMetrics (Cockpit-Zahl); Datei-Aggregation dedupliziert je Res.Nr. mit letzte-Zeile-gewinnt (Verhalten des Import-Upserts).

@@ -1,0 +1,597 @@
+﻿Restaurant;Res.Nr.;Personen;Zeit;Datum;Firma;Vorname;Nachname;Mobile;E-Mail;Status;"reserviert am";Kommentar;Notiz;Tisch;Auswahl;Gästeinformationen;Raum;Bereich
+"Restaurant Beaulieu";32302;2;11:30:00;01.08.2026;;Michael;Zwilling;0041788631661;michael.zwilling@gmx.ch;Abgeschlossen;"31.07.2026 09:59";;;;;;;
+"Restaurant Beaulieu";32008;7;11:45:00;01.08.2026;;Stefan;Signer;0041794697616;;Abgeschlossen;"14.07.2026 12:54";;;;;;Terrasse;
+"Restaurant Beaulieu";32273;4;12:00:00;01.08.2026;;;Menci;;;Abgeschlossen;"29.07.2026 11:45";;108;;;;Terrasse;
+"Restaurant Beaulieu";32286;2;12:15:00;01.08.2026;;;Hadecker;;;Abgeschlossen;"30.07.2026 10:28";;;;;;Terrasse;
+"Restaurant Beaulieu";32310;2;18:00:00;01.08.2026;;Bruno;Bucher;0041796236478;bbucher69@bluewin.ch;Abgeschlossen;"01.08.2026 10:58";"Wenn es möglich ist sehr gerne im Garten";;122;;;;Terrasse
+"Restaurant Beaulieu";32087;7;18:30:00;01.08.2026;;Mario;Salerno;0041788982319;ariale@sunrise.ch;Abgeschlossen;"19.07.2026 22:22";;"Ohne Sonne,";"144, 145";;;;Terrasse
+"Restaurant Beaulieu";32307;4;18:30:00;01.08.2026;;Stefan;Wachter;0041789440765;stefan.wachter@web.de;Abgeschlossen;"31.07.2026 14:47";"Wenn möglich draussen";;133;;;;Terrasse
+"Restaurant Beaulieu";32208;4;19:00:00;01.08.2026;;Marcos;Areias;00351933010284;marcos.areias86@gmail.com;Abgeschlossen;"26.07.2026 18:37";;;116;;;;Terrasse
+"Restaurant Beaulieu";32259;3;19:00:00;01.08.2026;;Reto;Friedli;0041796224536;reto.friedli@be.ch;Abgeschlossen;"28.07.2026 17:30";"Im Garten bei schönem Wetter
+Liebe Grüsse an Nehat";;112;;;;Terrasse
+"Restaurant Beaulieu";32240;2;19:30:00;01.08.2026;;Samuel;Marti;0041795349976;samuel.marti@bluewin.ch;Abgeschlossen;"27.07.2026 19:15";"Wenn schönes Wetter, gerne draussen";;120;;;;Terrasse
+"Restaurant Beaulieu";32312;3;20:00:00;01.08.2026;;Janick;Schaltegger;0041799484421;j.s.schaltegger@gmail.com;Abgeschlossen;"01.08.2026 11:25";"gerne draussen wenn möglich :-)";;114;;;;Terrasse
+"Restaurant Beaulieu";32281;2;20:15:00;01.08.2026;;Stefano;Pietrobon;00393355850488;tenpietrobon@gmail.com;Abgeschlossen;"29.07.2026 18:26";;;119;;;;Terrasse
+"Restaurant Beaulieu";30331;5;10:30:00;03.08.2026;;;Räss;;;Abgeschlossen;"22.04.2026 11:14";;;11;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32301;2;11:30:00;03.08.2026;;Heini;Conrad;0041794094679;heini.conrad@bluewin.ch;Abgeschlossen;"30.07.2026 19:21";"Gerne TISCH im BIERGARTEN";;117;;;;Terrasse
+"Restaurant Beaulieu";32303;3;11:30:00;03.08.2026;;Max;Gsell;0041793007567;max.gsell@bluewin.ch;Abgeschlossen;"31.07.2026 11:53";;;144;;;;Terrasse
+"Restaurant Beaulieu";32290;3;11:45:00;03.08.2026;;Stefan;Friedrich;0041795029237;stefan.friedrich@fenaco.com;Abgeschlossen;"30.07.2026 11:38";"Bei schönem Wetter gerne im Garten";;114;;;;Terrasse
+"Restaurant Beaulieu";32315;2;11:45:00;03.08.2026;;Kathrin;Allemann;0041792443529;allemann@ddag.ch;Abgeschlossen;"02.08.2026 18:19";"Liebes Beaulieu-Team. Gerne möchten wir einen Tisch im Garten reservieren lassen. Herzlichen Dank und bis morgen - wir freuen uns! Freundliche Grüsse, Kathrin Allemann";;121;;;;Terrasse
+"Restaurant Beaulieu";32335;2;11:45:00;03.08.2026;;;Walk-In;;;Abgeschlossen;"03.08.2026 11:42";;;118;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32304;2;12:00:00;03.08.2026;;Norman;Gerber;0041763476620;ng@va-genossenschaft.ch;Abgeschlossen;"31.07.2026 13:50";;;122;;;;Terrasse
+"Restaurant Beaulieu";32330;2;12:00:00;03.08.2026;;Mentor;Latifi;0041797505500;mentifi@gmail.com;Abgeschlossen;"03.08.2026 10:47";"Tisch im Garten, bitte!";;116;;;;Terrasse
+"Restaurant Beaulieu";31585;11;12:15:00;03.08.2026;;Monika;Heuer;0041796619864;monika.heuer@unibe.ch;Abgeschlossen;"26.06.2026 20:26";;"Universität Bern Zentraler Rechnungseingang REF-37-066 Hochschulstr. 6 3012 Bern per Mail: kreditoren@unibe.ch";"147, 148";;;Restaurant;Terrasse
+"Restaurant Beaulieu";31790;2;12:15:00;03.08.2026;;Gabriella;Schaller;0041795310489;gabriella.schaller@postfinance.ch;Abgeschlossen;"06.07.2026 10:21";"Bei schönem Wetter - gerne draussen. 
+Gabriella Schaller";;120;;;;Terrasse
+"Restaurant Beaulieu";32321;2;12:15:00;03.08.2026;;Barbara;"Hofer Brogini";0041792443863;hoferbrogini@formundraum.ch;Abgeschlossen;"03.08.2026 07:56";"wenn möglich würden wir gerne im garten reservieren, vielen dank!";;137;;;;Terrasse
+"Restaurant Beaulieu";32324;2;12:15:00;03.08.2026;;Raffael;Nussbaumer;0041797692940;raffael.nussbaumer@isolutions.ch;Abgeschlossen;"03.08.2026 08:12";;;136;;;;Terrasse
+"Restaurant Beaulieu";31264;7;12:30:00;03.08.2026;;Bernhard;Schlup;;;Abgeschlossen;"15.06.2026 14:29";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32342;3;18:00:00;03.08.2026;;Ronen;Medzini;0041796595194;medzinironen@gmail.com;Abgeschlossen;"03.08.2026 15:22";"Baby seat please!";;112;;;;Terrasse
+"Restaurant Beaulieu";32260;3;18:15:00;03.08.2026;;;Ritscard;;;Abgeschlossen;"28.07.2026 17:38";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32318;2;18:30:00;03.08.2026;;Simone;Buess;0041792820608;simonebuess@gmx.ch;Abgeschlossen;"02.08.2026 22:25";;;141;;;;Terrasse
+"Restaurant Beaulieu";32319;2;18:30:00;03.08.2026;;Ruth;Rast;0041795675310;ruth.e@gmx.ch;Abgeschlossen;"02.08.2026 22:41";"Einen Platz im Garten";;139;;;;Terrasse
+"Restaurant Beaulieu";32356;2;11:45:00;04.08.2026;;Bettina;Rhyn;0041792874603;bettina.rhyn@unibe.ch;Abgeschlossen;"04.08.2026 07:43";;;119;;;;Terrasse
+"Restaurant Beaulieu";32084;2;12:00:00;04.08.2026;;Ursula;Frauchiger;0041794036925;frau.frauchiger@bluewin.ch;Abgeschlossen;"19.07.2026 09:35";;;122;;;;Terrasse
+"Restaurant Beaulieu";32148;2;12:00:00;04.08.2026;;;Schluep;;;Abgeschlossen;"22.07.2026 13:38";;T10!;10;;;Terrasse;Gaststube
+"Restaurant Beaulieu";32258;2;12:00:00;04.08.2026;;Alex;Bütikofer;0041792539718;pbta@gmx.ch;Abgeschlossen;"28.07.2026 17:12";"Bitte einen Tisch im Biergarten reservieren. Besten Dank.";;141;;;;Terrasse
+"Restaurant Beaulieu";32325;2;12:00:00;04.08.2026;;Caecilia;Ebeling;0041797751029;caecilia.ebeling@bluewin.ch;Abgeschlossen;"03.08.2026 08:16";"Wenn es drinnen kühler ist als draussen, bitte drinnen. und wenn möglich eine ruhige Ecke";;;;;;
+"Restaurant Beaulieu";32341;2;12:00:00;04.08.2026;;Anouk;Hiedl;0041764451506;anoukhiedl@hotmail.com;Abgeschlossen;"03.08.2026 15:18";"Gerne so kühl wie möglich, draussen am Schatten oder sonst drinnen.";;139;;;;Terrasse
+"Restaurant Beaulieu";32354;2;12:00:00;04.08.2026;;Roland;Koller;0041793054077;rk@va-genossenschaft.ch;Abgeschlossen;"04.08.2026 07:19";"Tschou zäme
+Danke für eine Reservation von 2 Plätzen im Schatten unter den Bäumen :-)
+Lieber Gruss und bis glii
+Roland";;136;;;;Terrasse
+"Restaurant Beaulieu";32359;7;12:00:00;04.08.2026;;Fabian;Tanner;0041799564757;fabian.tanner@helvetia.ch;Abgeschlossen;"04.08.2026 09:56";;;"144, 145";;;;Terrasse
+"Restaurant Beaulieu";32256;2;12:15:00;04.08.2026;;Patricia;Zihlmann;0041797959680;pzihlmann@gmx.net;Abgeschlossen;"28.07.2026 15:58";;;140;;;;Terrasse
+"Restaurant Beaulieu";32338;3;12:30:00;04.08.2026;;;Sandra;;;Abgeschlossen;"03.08.2026 14:22";;;116;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32340;3;12:30:00;04.08.2026;;Marcel;Stucki;0041792215599;tp.vo@outlook.com;Abgeschlossen;"03.08.2026 15:13";;;114;;;;Terrasse
+"Restaurant Beaulieu";28443;20;14:00:00;04.08.2026;"Pensionierte Lockomotivführer";Peter;Wüthrich;0041795053421;prewue@gmail.com;Abgeschlossen;"07.01.2026 11:57";;;;;"ab 14:00 - 16:00 Uhr ca. 20 Personen zum trinken.
+Bei passendem Wetter gerne im Garten..";Restaurant;
+"Restaurant Beaulieu";32076;4;17:30:00;04.08.2026;;;Bosshard;;;Abgeschlossen;"17.07.2026 21:45";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32287;4;17:45:00;04.08.2026;;;Hitz;0041796550808;;Abgeschlossen;"30.07.2026 10:36";;"Jansen und essen";116;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32314;3;17:45:00;04.08.2026;;Erika;Leiser;0041795630426;leiser.erika@bluewin.ch;Abgeschlossen;"02.08.2026 14:29";"Bitte schattig unter den Bäumen Danke!";;120;;;;Terrasse
+"Restaurant Beaulieu";32262;3;18:00:00;04.08.2026;;Irene;Warmuth;0041765218901;iwarmuth@gmx.ch;Abgeschlossen;"28.07.2026 19:47";"Bei gutem Wetter gerne draussen. 
+Falls diese Reservation bereits getätigt worden wäre auf den Namen Warmuth, gilt nur diese Reservation";;112;;;;Terrasse
+"Restaurant Beaulieu";32289;6;18:00:00;04.08.2026;;Michaela;Egli;0041764538434;michaelaegli@gmail.com;Abgeschlossen;"30.07.2026 11:09";;;147;;;;Terrasse
+"Restaurant Beaulieu";32328;4;18:00:00;04.08.2026;;Anita;Gerber;0041795487552;anitagerber@gmx.ch;Abgeschlossen;"03.08.2026 09:31";"Gerne draussen, ausser das Wetter schlägt plötzlich um, danke.";;"117, 118";;;;Terrasse
+"Restaurant Beaulieu";32370;6;18:00:00;04.08.2026;;;Matthias;;;Abgeschlossen;"04.08.2026 16:10";;;"30, 31";;;Terrasse;Terrasse
+"Restaurant Beaulieu";32361;4;18:15:00;04.08.2026;;Stefan;Kurt;0041797612616;stefan.kurt@bluewin.ch;Abgeschlossen;"04.08.2026 10:58";"Bitte draussen auf der Terrasse";;133;;;;Terrasse
+"Restaurant Beaulieu";32294;2;18:30:00;04.08.2026;;Livia;Jeckelmann;0041797465216;livia.jeckelmann@sensemail.ch;Abgeschlossen;"30.07.2026 12:53";"Bei schöner und angenehmer Witterung gerne auf der Terrasse.";;;;;;
+"Restaurant Beaulieu";32364;2;18:45:00;04.08.2026;;Gabriel;Lüchinger;0041791088955;gabriel.luechinger@gmail.com;Abgeschlossen;"04.08.2026 11:55";"Bitte Tisch im Garten reservieren, danke!";;;;;;
+"Restaurant Beaulieu";32333;5;19:00:00;04.08.2026;;Claudine;Schneider-Klöti;0041798657654;awi.amtssekretariat@be.ch;Abgeschlossen;"03.08.2026 11:17";;;150;;;;Terrasse
+"Restaurant Beaulieu";32376;2;19:45:00;04.08.2026;;Nicole;Wernli;0041786299855;nicole@wern.li;"Nicht beantwortet";"04.08.2026 18:48";;;;;;;
+"Restaurant Beaulieu";32336;5;20:00:00;04.08.2026;;Mirko;Novák;0041765893669;miroslav.novak@unibe.ch;Abgeschlossen;"03.08.2026 12:38";;;146;;;;Terrasse
+"Restaurant Beaulieu";32383;8;11:45:00;05.08.2026;;Diana;Herren;0041798259092;luder_diana@hotmail.com;Abgeschlossen;"05.08.2026 09:23";;;"144, 145";;;;Terrasse
+"Restaurant Beaulieu";32349;4;12:00:00;05.08.2026;;Verena;Bourquenez;0041792980379;verena.bourquenez@bluewin.ch;Abgeschlossen;"03.08.2026 17:28";"Bitte gerne im Garten reservieren. Vielen Dank.";;112;;;;Terrasse
+"Restaurant Beaulieu";32360;2;12:00:00;05.08.2026;;;Schnyder;;;Abgeschlossen;"04.08.2026 10:17";;;135;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32382;2;12:00:00;05.08.2026;;Norman;Gerber;0041763476620;ng@va-genossenschaft.ch;Abgeschlossen;"05.08.2026 08:17";;;137;;;;Terrasse
+"Restaurant Beaulieu";32320;2;12:15:00;05.08.2026;;Silvana;Schnider;0041797557935;silschnider@gmail.com;Abgeschlossen;"03.08.2026 05:58";"Bei schönem Wetter gerne vorne im Garten - herzlichen Dank!";;117;;;;Terrasse
+"Restaurant Beaulieu";32381;2;12:15:00;05.08.2026;;Vreni;Röthlisberger;0041796130624;vreni.roethlisberger@gmail.com;Abgeschlossen;"05.08.2026 07:06";;;139;;;;Terrasse
+"Restaurant Beaulieu";32368;2;12:30:00;05.08.2026;;Beat;Immenhauser;0041793305816;beat.immenhauser@sagw.ch;Abgeschlossen;"04.08.2026 14:11";;;141;;;;Terrasse
+"Restaurant Beaulieu";31352;15;17:30:00;05.08.2026;;;Marti;;komarti@bluewin.ch;Abgeschlossen;"17.06.2026 16:13";;;147;;;Restaurant;Terrasse
+"Restaurant Beaulieu";30945;2;18:00:00;05.08.2026;;Regula;Feldmann;0041763054343;re.feldmann@bluewin.ch;Abgeschlossen;"28.05.2026 11:41";"gerne draussen und ruhiger Tisch";;134;;;;Terrasse
+"Restaurant Beaulieu";32288;4;18:00:00;05.08.2026;;Lisa;Hug;0041765028413;lisa.hug@vtxmail.ch;Abgeschlossen;"30.07.2026 10:53";"Gerne am Rand, bei schönem Wetter draussen. Danke";;112;;;;Terrasse
+"Restaurant Beaulieu";32386;2;18:00:00;05.08.2026;;jasmin;käser;0041792120275;jasmin.kaeser@hotmail.com;Abgeschlossen;"05.08.2026 10:38";"Tisch im Garten";;139;;;;Terrasse
+"Restaurant Beaulieu";32390;4;18:00:00;05.08.2026;;Tobias;Reber;0041795444672;t.reber@gmx.ch;Abgeschlossen;"05.08.2026 13:34";"Gerne auf der Terrasse. Essen und Kartenspiel.";;133;;;;Terrasse
+"Restaurant Beaulieu";32397;5;18:00:00;05.08.2026;;;Peter;;;Abgeschlossen;"05.08.2026 16:57";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32322;8;18:30:00;05.08.2026;;Cornelia;Hitz;0041793851752;cornelia.hitz@bluewin.ch;Abgeschlossen;"03.08.2026 07:57";;;144;;;;Terrasse
+"Restaurant Beaulieu";32332;7;18:30:00;05.08.2026;;Hélène;Brülhart;0041793703737;helene@sensemail.ch;Abgeschlossen;"03.08.2026 11:11";"falls möglich in Ihrem schönen Garten";;30;;;;Terrasse
+"Restaurant Beaulieu";32398;3;18:30:00;05.08.2026;;;Kilzen;;;Abgeschlossen;"05.08.2026 16:59";;;150;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32353;2;18:45:00;05.08.2026;;Christoph;Münger;0041794275644;christophmuenger@bluewin.ch;Abgeschlossen;"03.08.2026 21:59";;;135;;;;Terrasse
+"Restaurant Beaulieu";32374;3;19:00:00;05.08.2026;;Katrin;Deutsch;004915751471496;kavillinger@gmx.de;Abgeschlossen;"04.08.2026 16:42";;;110;;;;Terrasse
+"Restaurant Beaulieu";32384;2;19:00:00;05.08.2026;;Franziska;Marti;0041796503505;franziska-marti@bluewin.ch;Abgeschlossen;"05.08.2026 09:39";;;120;;;;Terrasse
+"Restaurant Beaulieu";32378;2;19:30:00;05.08.2026;;;Bamir;0041797616484;;Abgeschlossen;"04.08.2026 20:38";;;141;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32197;2;11:45:00;06.08.2026;;Fred;Rohrer;0041795153837;fred.rohrer@bluewin.ch;Abgeschlossen;"25.07.2026 11:01";;;136;;;;Terrasse
+"Restaurant Beaulieu";32372;2;11:45:00;06.08.2026;;Tom;Hügli;0041796524607;thomas.huegli@arconia.ch;Abgeschlossen;"04.08.2026 16:30";"Bei schönem Wetter im Biergarten";;132;;;;Terrasse
+"Restaurant Beaulieu";32408;2;11:45:00;06.08.2026;;Barbara;Chatelain;0041794886953;barbara.chatelain@bluewin.ch;Abgeschlossen;"06.08.2026 08:36";;;133;;;;Terrasse
+"Restaurant Beaulieu";32167;2;12:00:00;06.08.2026;;Bruno;Lehmann;0041765538290;bruno.lehmann@allianceswisspass.ch;Storniert;"23.07.2026 11:52";;;;;;;
+"Restaurant Beaulieu";32355;4;12:00:00;06.08.2026;;Roland;Koller;0041793054077;rk@va-genossenschaft.ch;Abgeschlossen;"04.08.2026 07:21";"Tschou zäme
+Auch am Donnerstag 6.8. würde ich gerne einen Tisch für 4 Personen im Schatten unter den Bäumen reservieren - merci :-)
+Bis bald u ne Gruess
+Roland";;114;;;;Terrasse
+"Restaurant Beaulieu";32399;4;12:00:00;06.08.2026;;;Werner;0041775006726;;Abgeschlossen;"05.08.2026 17:54";;;116;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32407;2;12:00:00;06.08.2026;;Sarah;Roth;0041793960923;sarahroth@bluewin.ch;Abgeschlossen;"06.08.2026 08:15";"Tisch draussen,wenn möglich😊";;112;;;;Terrasse
+"Restaurant Beaulieu";28951;16;12:15:00;06.08.2026;"Innovage Netzwerk Bern-Solothurn";Roman;Füglister;0041796193646;roman.fueglister@innovage.ch;Abgeschlossen;"31.01.2026 11:28";;;"144, 145, 146";;"OHNE WASSER";Restaurant;Terrasse
+"Restaurant Beaulieu";31759;11;12:15:00;06.08.2026;;Sylvia;Löwe;0041766070887;sylvia.loewe@unibe.ch;Abgeschlossen;"03.07.2026 17:06";"Wir werden aus dem Mittagsmenü auswählen, könnten Sie für das Mittagessen bitte eine Rechnung ausstellen und nachgängig per E-Mail senden? 
+
+Damit wir an dem Tag keinen Stress haben, schicke ich Ihnen jetzt schon die Rechnungsadresse zu, sie können mir die Rechnung nach dem Mittagessen dann an meine E-Mail-Adresse schicken: 
+
+Universität Bern
+Zentraler Rechnungseingang
+REF 001-11
+Hochschulstrasse 6
+3012 Bern
+
+Wenn irgendwo auf der Rechnung noch mein Name steht, wäre das perfekt, dann kann die Rechnung auch schnell verarbeitet werden. 
+
+Beste Grüsse
+
+Sylvia Löwe";;"147, 148";;;;Terrasse
+"Restaurant Beaulieu";32403;2;12:15:00;06.08.2026;;Yannic;Ehrsam;0041798121993;yannic.ehrsam@gmail.com;Abgeschlossen;"05.08.2026 22:17";;;;;;;
+"Restaurant Beaulieu";32401;2;12:30:00;06.08.2026;;Hugo;Herren;0041793021315;;Abgeschlossen;"05.08.2026 18:33";;;117;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32418;3;12:30:00;06.08.2026;;;Stiven;;;Abgeschlossen;"06.08.2026 11:18";;;32;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32339;6;14:00:00;06.08.2026;;"Sibylle Elisabeth";Kündig;0041794247437;sibylle.kuendig@gmx.ch;Abgeschlossen;"03.08.2026 14:35";"Jassgruppe mahoganyhall";;;;;;
+"Restaurant Beaulieu";32011;2;17:30:00;06.08.2026;;Natalie;Wenger;0041799228403;familie.wenger@quickline.ch;Abgeschlossen;"14.07.2026 15:56";"Bei schönem Wetter gerne im Garten ;-)";;135;;;;Terrasse
+"Restaurant Beaulieu";32385;2;17:30:00;06.08.2026;;;Mosser;;;Abgeschlossen;"05.08.2026 10:26";;;137;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32379;8;18:00:00;06.08.2026;"Berner Bertholdia Stamm";Flurin;Mössinger;;flurin.moessinger@gmail.com;Abgeschlossen;"04.08.2026 21:44";;;144;;"Immer Tisch 10";Restaurant;Terrasse
+"Restaurant Beaulieu";32406;2;18:00:00;06.08.2026;;Carole;Rawyler;0041797715161;carolerawyler@yahoo.com;Abgeschlossen;"06.08.2026 08:05";;;;;;;
+"Restaurant Beaulieu";32420;2;18:00:00;06.08.2026;;;Sutter;;;Abgeschlossen;"06.08.2026 11:23";;;;;;Restaurant;
+"Restaurant Beaulieu";31919;7;18:15:00;06.08.2026;;Theo;Oldenberg;0041796889315;oldenberg@swissonline.ch;Abgeschlossen;"09.07.2026 17:51";"Bei gutem Wetter im Garten.
+Bitte Reservation bestätigen";;"118, 119, 120, 121";;;;Terrasse
+"Restaurant Beaulieu";32352;2;18:15:00;06.08.2026;;Andreas;Hasler;0041796409373;a-hasler@gmx.net;Abgeschlossen;"03.08.2026 21:14";;;;;;;
+"Restaurant Beaulieu";32416;2;18:15:00;06.08.2026;;mar;Baumann;0041792914511;m.baumann@team.jobs;Abgeschlossen;"06.08.2026 10:07";;;;;;;
+"Restaurant Beaulieu";32394;6;18:30:00;06.08.2026;;;Alex;;;Abgeschlossen;"05.08.2026 15:10";;;;;;Terrasse;
+"Restaurant Beaulieu";32419;5;18:30:00;06.08.2026;;;Zürcher;;;Abgeschlossen;"06.08.2026 11:22";;;150;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32402;2;19:00:00;06.08.2026;;Louise;Droz;0041796355764;louise.droz@gmx.ch;Abgeschlossen;"05.08.2026 18:57";;;;;;;
+"Restaurant Beaulieu";32425;2;19:00:00;06.08.2026;;Anne-Lise;Winzeler;0041793452693;Anne-lise.winzeler@bluewin.ch;Abgeschlossen;"06.08.2026 18:19";;;;;;;
+"Restaurant Beaulieu";32426;2;20:00:00;06.08.2026;;Aurélien;Duc;0033606457513;aurelien.duc2001@gmail.com;Abgeschlossen;"06.08.2026 18:56";;;;;;;
+"Restaurant Beaulieu";32433;6;11:30:00;07.08.2026;;;Amir;;;Abgeschlossen;"07.08.2026 10:16";;;147;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32413;3;11:45:00;07.08.2026;;Karin;Mürner;0041765538256;karin.muerner@allianceswisspass.ch;Abgeschlossen;"06.08.2026 10:02";"Gerne auf der Terrasse.";;114;;;;Terrasse
+"Restaurant Beaulieu";32430;3;11:45:00;07.08.2026;;Michel;Furer;0041796534348;michelfurer@gmx.ch;Abgeschlossen;"07.08.2026 09:47";;;112;;;;Terrasse
+"Restaurant Beaulieu";26103;2;12:00:00;07.08.2026;BWD;Karin;Greischberger;;;Storniert;"11.09.2025 11:49";;"Exklusiv / Grill Fest / prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";31905;5;12:00:00;07.08.2026;;Dominique-Martin;Müller;0041768220100;dominique-martin.mueller@martiag.ch;Abgeschlossen;"09.07.2026 11:27";;;150;;;;Terrasse
+"Restaurant Beaulieu";32182;8;12:00:00;07.08.2026;;Christine;Stettler;0041793628017;christine.stettler@gmx.ch;Abgeschlossen;"24.07.2026 11:46";;;"144, 145";;;;Terrasse
+"Restaurant Beaulieu";32388;3;12:00:00;07.08.2026;;Selina;Meister;0041788412988;selina.meister@hotmail.com;Abgeschlossen;"05.08.2026 11:55";"Wenn möglich draussen";;119;;;;Terrasse
+"Restaurant Beaulieu";32432;4;12:00:00;07.08.2026;;;Thomas;;;Abgeschlossen;"07.08.2026 10:12";;;116;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32331;4;12:15:00;07.08.2026;;Sofie;Utz;0041797833690;sofie.utz@laenggasstee.ch;Abgeschlossen;"03.08.2026 10:50";"Guten Tag
+Gerne reservieren wir einen Tisch für Freitagmittag. Da es sich um einen Business-Lunch (von Länggass-Tee) handelt, wären wir froh, wenn wir einen Tisch möglichst am Rand, oder wo es halt möglichst ruhig ist, haben könnten. Des Weiteren, ist eine unserer Teilnehmerinnen schwanger, so dass wir froh wären um einen möglichst beschatteten Platz. Vielen Dank!";;32;;;;Terrasse
+"Restaurant Beaulieu";32435;2;12:45:00;07.08.2026;;Katharina;Kilchenmann;0041792483190;katharina.kilchenmann@bluewin.ch;Abgeschlossen;"07.08.2026 11:07";;;137;;;;Terrasse
+"Restaurant Beaulieu";32327;7;17:00:00;07.08.2026;;Roman;Staudenmann;0041793566439;roman.staudenmann@bluewin.ch;Abgeschlossen;"03.08.2026 09:24";"Bitte im Biergarten, falls es nicht regnet.";;150;;;;Terrasse
+"Restaurant Beaulieu";32404;15;17:00:00;07.08.2026;;;Wiees;;;Abgeschlossen;"05.08.2026 22:17";;;"144, 145, 146";;;Terrasse;Terrasse
+"Restaurant Beaulieu";32436;10;17:30:00;07.08.2026;;;Concordia;;;Abgeschlossen;"07.08.2026 13:08";;;"118, 119, 117";;;Terrasse;Terrasse
+"Restaurant Beaulieu";32431;2;17:45:00;07.08.2026;;Bettina;Jossen;0041763858312;bettina.jossen@gmx.ch;Abgeschlossen;"07.08.2026 09:55";;;138;;;;Terrasse
+"Restaurant Beaulieu";32363;4;18:00:00;07.08.2026;;Marion;Leutert;0041774193446;bonus.leutert@bluemail.ch;Abgeschlossen;"04.08.2026 11:32";"4er Tisch im Garten";;32;;;;Terrasse
+"Restaurant Beaulieu";32415;2;18:00:00;07.08.2026;;Beatrice;Müller;0041765677812;be@tricemueller.ch;Abgeschlossen;"06.08.2026 10:04";"Bei schönem Wetter bitte draussen";;136;;;;Terrasse
+"Restaurant Beaulieu";32440;2;18:00:00;07.08.2026;;florian;künti;0041793794293;flokuenti@bluewin.ch;Abgeschlossen;"07.08.2026 16:13";"bitte draussen :-), klar, wer nicht";;139;;;;Terrasse
+"Restaurant Beaulieu";32316;4;18:15:00;07.08.2026;;Nadine;Wetter;0041798823273;nadine.wetter@hotmail.ch;Abgeschlossen;"02.08.2026 19:12";;;116;;;;Terrasse
+"Restaurant Beaulieu";32441;2;18:15:00;07.08.2026;;;Suess;;;Abgeschlossen;"07.08.2026 16:20";;;122;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32445;5;18:15:00;07.08.2026;;;Stefan;;;Abgeschlossen;"07.08.2026 18:10";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32429;2;18:30:00;07.08.2026;;Simona;Altorfer;0041765771475;simonaaltorfer@yahoo.de;Abgeschlossen;"06.08.2026 20:55";;;140;;;;Terrasse
+"Restaurant Beaulieu";32427;3;18:45:00;07.08.2026;;Breitler;Ramona;0041797501329;;Abgeschlossen;"06.08.2026 19:13";;;133;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32168;4;19:00:00;07.08.2026;;;bönuar;0041793381079;;Abgeschlossen;"23.07.2026 13:44";;;131;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32313;3;19:00:00;07.08.2026;;Anita;"Bigler Anliker";0041788622093;anita_bigler@hotmail.com;Abgeschlossen;"02.08.2026 10:11";"im Garten :-)";;132;;;;Terrasse
+"Restaurant Beaulieu";32326;4;19:00:00;07.08.2026;;Angela;Sanmann;0041788064214;asanmann@gmail.com;Abgeschlossen;"03.08.2026 08:59";"Guten Tag, bei schönem Wetter und milden Temperaturen sitzen wir gerne im Garten. Vielen Dank!";;112;;;;Terrasse
+"Restaurant Beaulieu";32337;2;19:00:00;07.08.2026;;;Solamita;0041793409772;;Abgeschlossen;"03.08.2026 14:14";;;134;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32439;3;19:00:00;07.08.2026;;;Swend;;;Abgeschlossen;"07.08.2026 16:11";;;110;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32443;5;19:00:00;07.08.2026;;Daniel;Stehelin;0041786477350;daniel.stehelin@sinwel.ch;"Nicht beantwortet";"07.08.2026 16:38";"Bitte im Garten";;;;;;
+"Restaurant Beaulieu";32280;12;19:15:00;07.08.2026;;;Riedmn;0041794600694;;Abgeschlossen;"29.07.2026 17:55";;;"147, 148";;;Terrasse;Terrasse
+"Restaurant Beaulieu";32428;3;19:30:00;07.08.2026;;Ivo;Martelozzo;0041795547280;ivo.martelozzo@gmail.com;Abgeschlossen;"06.08.2026 20:23";"Gerne ein schöner Tisch draussen.";;130;;;;Terrasse
+"Restaurant Beaulieu";32442;7;19:30:00;07.08.2026;;;Gabriela;;;Abgeschlossen;"07.08.2026 16:24";;;"30, 31";;;Terrasse;Terrasse
+"Restaurant Beaulieu";32446;2;19:30:00;07.08.2026;;;Weiser;;;Abgeschlossen;"07.08.2026 18:29";;;121;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32131;3;12:30:00;08.08.2026;;Brigitte;Hartmann;0041796545133;hartmann_brigitte@bluewin.ch;Abgeschlossen;"21.07.2026 17:50";"Bei schönem Wetter bitte einen Tisch draussen";;112;;;;Terrasse
+"Restaurant Beaulieu";31683;6;18:00:00;08.08.2026;;Urs;Steiner;;;Abgeschlossen;"01.07.2026 14:25";;;144;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32396;3;18:00:00;08.08.2026;;Ursula;Zimmerli;0041786789686;ursula@zimsig.ch;Abgeschlossen;"05.08.2026 16:37";"Bitte im Garten";;116;;;;Terrasse
+"Restaurant Beaulieu";32455;5;18:00:00;08.08.2026;;;Kuoni;;;Abgeschlossen;"08.08.2026 16:50";;;146;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32454;6;18:15:00;08.08.2026;;;Renat;;;Abgeschlossen;"08.08.2026 16:19";;;147;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32366;3;19:00:00;08.08.2026;;Katrin;Schneider;0041794352205;katrin-schneider@bluewin.ch;Abgeschlossen;"04.08.2026 14:03";"Bei schönem Wetter bitte einen Tisch im Garten. Besten Dank!";;114;;;;Terrasse
+"Restaurant Beaulieu";32448;2;19:00:00;08.08.2026;;Katrin;Horn;0041799183369;katrin.horn@gmx.ch;Abgeschlossen;"07.08.2026 22:49";;;;;;;
+"Restaurant Beaulieu";32451;5;19:00:00;08.08.2026;;;Macquart;;;Abgeschlossen;"08.08.2026 11:53";;"1 kind";30;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32457;3;19:00:00;08.08.2026;;Karin;Schorer;0041794501505;kaso-zumba@bluewin.ch;Abgeschlossen;"08.08.2026 17:04";;;;;;;
+"Restaurant Beaulieu";32453;3;19:15:00;08.08.2026;;Andrea;Dudli;0041763314233;andrea.schneider@gmx.ch;Abgeschlossen;"08.08.2026 13:53";"Draussen im Garten";;112;;;;Terrasse
+"Restaurant Beaulieu";32458;3;20:00:00;08.08.2026;;Philip;Tkalec;0041762134898;dado89@gmx.net;Abgeschlossen;"08.08.2026 17:05";"Tisch draussen bitte";;;;;;
+"Restaurant Beaulieu";32456;2;21:00:00;08.08.2026;;Peter;Köppel;0041795383010;riset@bluewin.ch;Abgeschlossen;"08.08.2026 16:55";"Im Aussenbereich / Garten";;;;;;
+"Restaurant Beaulieu";31627;5;11:30:00;10.08.2026;;Sabine;Zulauf;0041792732238;sabine.zulauf@bfh.ch;Bestätigt;"29.06.2026 15:15";;;147;;;;Terrasse
+"Restaurant Beaulieu";32344;3;11:30:00;10.08.2026;;Stefan;Batzli;0041794204666;stefan.batzli@aeesuisse.ch;Bestätigt;"03.08.2026 16:01";;;114;;;;Terrasse
+"Restaurant Beaulieu";32449;2;11:30:00;10.08.2026;;Andreas;Fuchs;0041792940693;andreas.fuchs@bluewin.ch;Bestätigt;"08.08.2026 08:36";;;137;;;;Terrasse
+"Restaurant Beaulieu";32471;2;11:45:00;10.08.2026;;Joel;Blunier;0041763797679;joel.blunier@prosperita.ch;Bestätigt;"10.08.2026 08:09";;;134;;;;Terrasse
+"Restaurant Beaulieu";32477;2;11:45:00;10.08.2026;;Stefan;Hunziker;0041794553062;shunziker@bluewin.ch;Bestätigt;"10.08.2026 10:34";"Gerne draussen";;139;;;;Terrasse
+"Restaurant Beaulieu";32437;2;12:00:00;10.08.2026;;Nadine;Haslauer;0041765010666;n.haslauer@fenaco.com;Bestätigt;"07.08.2026 13:55";;;140;;;;Terrasse
+"Restaurant Beaulieu";32462;2;12:00:00;10.08.2026;;Remo;Walther;0041797033961;remowalther@hotmail.com;Bestätigt;"09.08.2026 12:36";"Wir würden wenn möglich gerne im Garten essen?!";;135;;;;Terrasse
+"Restaurant Beaulieu";32464;8;12:00:00;10.08.2026;;Vicky;Keller;0041792408272;vicky.keller@bison-group.com;Bestätigt;"09.08.2026 18:57";;;"144, 145";;;;Terrasse
+"Restaurant Beaulieu";32469;2;12:00:00;10.08.2026;;Roland;Koller;0041793054077;rk@va-genossenschaft.ch;Bestätigt;"10.08.2026 07:33";"Danke für einen Tisch unter den Bäumen im Schatten";;133;;;;Terrasse
+"Restaurant Beaulieu";32479;2;12:00:00;10.08.2026;;;Hoffer;;;Bestätigt;"10.08.2026 10:53";;;122;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32480;2;12:00:00;10.08.2026;;;Mari;;;Bestätigt;"10.08.2026 11:36";;;110;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32410;2;12:15:00;10.08.2026;;Nicole;Rothen;0041799008109;nicole@mmhu.ch;Bestätigt;"06.08.2026 08:57";;;121;;;;Terrasse
+"Restaurant Beaulieu";32483;2;12:15:00;10.08.2026;;;Franko;;;Bestätigt;"10.08.2026 11:50";;;117;;;Terrasse;Terrasse
+"Restaurant Beaulieu";31265;7;12:30:00;10.08.2026;;Bernhard;Schlup;;;Bestätigt;"15.06.2026 14:30";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";28182;16;14:00:00;10.08.2026;"Stämpfli Höck";Heinz;Malzacher;0041794341732;heinz.malzacher@muri-be.ch;Bestätigt;"17.12.2025 06:38";;;;;"Jeweils ab 14.00 bis zirka 16.00 Uhr  10 bis 20 Personen
+zum trinken.
+bei schönem Wetter im Garten
+Sommer im Garten Winter im Grossen Saal";Restaurant;
+"Restaurant Beaulieu";32409;4;17:00:00;10.08.2026;;Walter;Knobel;0041793333736;walter.knobel@bluewin.ch;Bestätigt;"06.08.2026 08:36";"Jassen und Essen, bei gutem Wetter gerne draussen";;112;;;;Terrasse
+"Restaurant Beaulieu";28845;4;18:00:00;10.08.2026;;Martin;Röthlisberger;0041795120324;tinu.roethlisberger@bluewin.ch;Bestätigt;"26.01.2026 21:42";;"Essen & Jassen";116;;;Terrasse;Terrasse
+"Restaurant Beaulieu";31937;4;18:00:00;10.08.2026;;;Bierri;0041799367783;;Bestätigt;"10.07.2026 15:15";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32239;5;18:00:00;10.08.2026;;Irene;Brunner;0041786201900;irene.brunner@gmx.net;Bestätigt;"27.07.2026 19:08";"Bei schönem Wetter einen Tisch im Garten reservieren. Danke.";;150;;;;Terrasse
+"Restaurant Beaulieu";32417;2;18:00:00;10.08.2026;;Andrea;Jiss;0041797538015;wienerin@zapp.ch;Bestätigt;"06.08.2026 10:25";"Bitte im Garten , ist ein Geburtstag … Dankeschön ❣️";;135;;;;Terrasse
+"Restaurant Beaulieu";32450;2;18:00:00;10.08.2026;;Patricia;Moser;0041792348766;p.moser@evard.ch;Bestätigt;"08.08.2026 11:12";"Im Garten";;137;;;;Terrasse
+"Restaurant Beaulieu";32465;2;18:00:00;10.08.2026;;Simon;Brack;0041792839945;simonbrack@bluewin.ch;Bestätigt;"09.08.2026 19:49";;;139;;;;Terrasse
+"Restaurant Beaulieu";32472;7;18:00:00;10.08.2026;;Veronika;Magyar;0041796885699;veronika.magyar-haas@unifr.ch;Bestätigt;"10.08.2026 08:50";"Wir würden sehr gerne draussen sitzen";;144;;;;Terrasse
+"Restaurant Beaulieu";32387;2;18:30:00;10.08.2026;;;Jordy;;;Bestätigt;"05.08.2026 10:57";;;141;;;Terrasse;Terrasse
+"Restaurant Beaulieu";31889;12;19:00:00;10.08.2026;;"Zentrum Paul";Klee;;;Bestätigt;"08.07.2026 16:28";;;147;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32478;2;19:00:00;10.08.2026;;;Messmer;;;Bestätigt;"10.08.2026 10:52";;;131;;;Restaurant;Terrasse
+"Restaurant Beaulieu";32357;1;19:15:00;10.08.2026;;Maxy;HILGER;00352661370610;maximilienne.hilger@eucation.lu;Storniert;"04.08.2026 09:05";"Bitte Tisch draussen auf der Terrasse (Biergarten) im Schatten reservieren.
+Einzeltisch bitte.
+Vielen Dank";;;;;;
+"Restaurant Beaulieu";32491;4;19:30:00;10.08.2026;;Lauren;Sowers;0041774566572;laurenmsowers@gmail.com;Bestätigt;"10.08.2026 15:43";;;;;;;
+"Restaurant Beaulieu";32484;4;19:45:00;10.08.2026;;Daniel;Schürmann;0041792138848;daniel@diskmail.ch;Bestätigt;"10.08.2026 12:52";"Im Garten bitte";;133;;;;Terrasse
+"Restaurant Beaulieu";32365;3;11:30:00;11.08.2026;;Stefan;Lerch;0041797766510;lerchs@bluewin.ch;Bestätigt;"04.08.2026 13:12";;;;;;;
+"Restaurant Beaulieu";31063;2;11:45:00;11.08.2026;;Beat;Jakob;0041792062105;beat.jakob@be.ch;Bestätigt;"03.06.2026 15:54";;;;;;;
+"Restaurant Beaulieu";31801;4;11:45:00;11.08.2026;;Barbara;Mischler;0041794865853;barbara.mischler@adnovum.ch;Bestätigt;"06.07.2026 11:52";;;;;;;
+"Restaurant Beaulieu";32329;2;11:45:00;11.08.2026;;Michèle;Murer;0041794112937;michele.murer@transsicura.ch;Bestätigt;"03.08.2026 09:43";"Grüessech! Gerne reserviere ich bei schönem Wetter einen Tisch draussen unter den schattenspendenden Bäumen. Besten Dank und freundliche Grüsse, Michèle Murer";;;;;;
+"Restaurant Beaulieu";32424;2;11:45:00;11.08.2026;;Kathrin;Allemann;0041792443529;allemann@ddag.ch;Bestätigt;"06.08.2026 16:14";"Bitte reservieren Sie für uns wieder einen Tisch im Gärtli :-). Herzlichen Dank und bis bald. Freundliche Grüsse, Kathrin Allemann";;;;;;
+"Restaurant Beaulieu";32233;2;12:00:00;11.08.2026;;mirjam;Eggen;0041791033872;mirjam.eggen@unibe.ch;Bestätigt;"27.07.2026 17:36";"bei schönem Wetter würden wir gerne im Garten essen.";;;;;;
+"Restaurant Beaulieu";32371;2;12:00:00;11.08.2026;;Bruno;Lehmann;0041765538290;bruno.lehmann@allianceswisspass.ch;Bestätigt;"04.08.2026 16:14";;;;;;;
+"Restaurant Beaulieu";32412;3;12:00:00;11.08.2026;;Nicole;Clausen;0041795411035;nicole.clausen@baloise.ch;Bestätigt;"06.08.2026 09:41";;;;;;;
+"Restaurant Beaulieu";31312;2;12:15:00;11.08.2026;;Markus;Brönnimann;0041786203972;doris.moser@unibe.ch;Bestätigt;"16.06.2026 14:20";;;;;;;
+"Restaurant Beaulieu";32145;5;12:15:00;11.08.2026;;Fabio;Crameri;0041794883552;fabio.crameri@hso.ch;Bestätigt;"22.07.2026 11:43";"Gerne draussen wenn schönes Wetter";;;;;;
+"Restaurant Beaulieu";32242;2;12:15:00;11.08.2026;;Christina;Cuonz;0041797379112;christinac.cuonz@unibe.ch;Bestätigt;"27.07.2026 20:10";;;;;;;
+"Restaurant Beaulieu";32064;2;12:30:00;11.08.2026;;Pascal;Coullery;0041797873805;pascal.coullery@bfh.ch;Bestätigt;"17.07.2026 10:36";;;;;;;
+"Restaurant Beaulieu";32470;2;13:00:00;11.08.2026;;Fatma;Dapar;0041788911442;daparfatma@gmail.com;Bestätigt;"10.08.2026 07:55";;;;;;;
+"Restaurant Beaulieu";30741;10;14:00:00;11.08.2026;"UB Club der Rentnerinnen und Rentner der UB/StUB Bern";"Hans Rudolf";Kull;0041763432076;hansruedik@gmail.com;Bestätigt;"15.05.2026 15:43";;;;;"Monatliche ungezwungene Treffen
+jeweils 14:30 am zweiten Dienstag des Monats.
+In der warmen Jahreszeit sind wir gerne draussen. In der Regel sind wir ca. 10 Personen für ein Bier oder ein anderes Getränk.";Restaurant;
+"Restaurant Beaulieu";28305;20;14:15:00;11.08.2026;;Margrit;Bühlmann;0041796256845;buehlmar2@bluewin.ch;Bestätigt;"27.12.2025 16:37";;"Siemens Rentner Höck";;;"Siemens Rentnergruppe";Restaurant;
+"Restaurant Beaulieu";32358;5;17:00:00;11.08.2026;;Stefan;Bierbächer;0041793732266;st.kaspar@gmx.ch;Bestätigt;"04.08.2026 09:34";"Schönes Wetter: Garten.
+Nicht so schönes Wetter: runder Tisch gleich links beim Haupteingang";;;;;;
+"Restaurant Beaulieu";32467;2;17:45:00;11.08.2026;;Daniel;Aellig;0041794495445;d.aellig@bluewin.ch;Bestätigt;"09.08.2026 21:24";Draussen;;;;;;
+"Restaurant Beaulieu";32300;2;18:00:00;11.08.2026;;Reto;Müller;0041795057111;reto@mube.ch;Bestätigt;"30.07.2026 19:01";"Wenn möglich draussen im Garten. Danke!";;;;;;
+"Restaurant Beaulieu";32485;2;18:00:00;11.08.2026;;Kurt;Zuppinger;0041792025174;k.zuppinger@bluewin.ch;Bestätigt;"10.08.2026 13:07";"Gerne schattigen Platz draussen.";;;;;;
+"Restaurant Beaulieu";32444;2;18:15:00;11.08.2026;;Kathrin;Summermatter;0041797133825;kathrin.summermatter@outlook.com;Bestätigt;"07.08.2026 17:29";;;;;;;
+"Restaurant Beaulieu";32463;4;18:30:00;11.08.2026;;Margrith;Hanselmann;0041798275150;margrith.hanselmann@bluewin.ch;Bestätigt;"09.08.2026 14:58";"Bitte im Garten reservieren, so das Wetter es zulässt";;;;;;
+"Restaurant Beaulieu";32481;2;20:00:00;11.08.2026;;Michael;Hendy;0041797546801;mick@webfeat.ch;Bestätigt;"10.08.2026 11:47";"Drassen im Garten";;;;;;
+"Restaurant Beaulieu";32228;9;12:00:00;12.08.2026;;;Stamgast;;;Bestätigt;"27.07.2026 16:01";;"Jas karte";;;;Terrasse;
+"Restaurant Beaulieu";32345;4;12:00:00;12.08.2026;;Marcel;Stutz;0041795783341;marcel@stutz.es;Bestätigt;"03.08.2026 16:02";"Ei schönem Wetter bitte im Garten, sonst der Tisch im Zwischenbereich";;;;;;
+"Restaurant Beaulieu";32346;4;12:00:00;12.08.2026;;Marcel;Stutz;0041795783341;marcel@stutz.es;Bestätigt;"03.08.2026 16:04";"Bei schönem Wetter im Garten, sonst der Tisch im Zwischenraum, bitte";;;;;;
+"Restaurant Beaulieu";32434;9;12:00:00;12.08.2026;;Jas;Groupe;;;Bestätigt;"07.08.2026 10:34";;;;;;Terrasse;
+"Restaurant Beaulieu";32488;9;12:00:00;12.08.2026;;Sofia;Zug;0041795874403;;Bestätigt;"10.08.2026 14:12";;;;;;Restaurant;
+"Restaurant Beaulieu";32367;2;12:15:00;12.08.2026;;;Schueb;;;Bestätigt;"04.08.2026 14:10";;"Tisch 10";;;;Restaurant;
+"Restaurant Beaulieu";30374;4;15:00:00;12.08.2026;;;Burri;;;Storniert;"23.04.2026 20:43";;T3.;;;;Terrasse;
+"Restaurant Beaulieu";32474;2;17:45:00;12.08.2026;;Lorenz;"von Allmen";0041774989420;et14allo@gmail.com;Bestätigt;"10.08.2026 09:47";;;;;;;
+"Restaurant Beaulieu";31897;4;18:00:00;12.08.2026;;Oliver;Heimann;0041763180596;oliver.heimann@bluewin.ch;Bestätigt;"08.07.2026 21:42";;;;;;Restaurant;
+"Restaurant Beaulieu";32405;4;18:00:00;12.08.2026;;Konrad;Aellig;0041788283891;konrad.aellig@bluewin.ch;Bestätigt;"05.08.2026 22:55";"Wir möchten etwas essen und dann noch jassen. Freundliche Grüsse Konrad Aellig";;;;;;
+"Restaurant Beaulieu";31896;2;18:30:00;12.08.2026;;Max;Gsell;0041793007567;max.gsell@bluewin.ch;Bestätigt;"08.07.2026 21:11";;;;;;Restaurant;
+"Restaurant Beaulieu";32395;2;18:30:00;12.08.2026;;Linus;Schwab;0041795524289;linus.schwab@devedis.ch;Bestätigt;"05.08.2026 15:26";;;;;;;
+"Restaurant Beaulieu";32476;2;18:45:00;12.08.2026;;Monika;"Bolliger Fetahi";0041764213003;monika.bolliger@vtxmail.ch;Bestätigt;"10.08.2026 10:23";"Falls es nicht regnet bitte im Garten. Danke.";;;;;;
+"Restaurant Beaulieu";32461;5;19:00:00;12.08.2026;;Claudio;Imperatori;0041796107615;claudio.imperatori@lu16.ch;Storniert;"09.08.2026 09:45";;;;;;;
+"Restaurant Beaulieu";32268;2;12:00:00;13.08.2026;;Samuel;Hungerbühler;0041794312965;s.hungerbuehler@plnr.ch;Bestätigt;"29.07.2026 08:31";;;;;;;
+"Restaurant Beaulieu";32414;2;12:00:00;13.08.2026;;Daniel;Emch;0041788370090;daniel.emch@kellerhals-carrard.ch;Bestätigt;"06.08.2026 10:03";"Im Garten (Schatten), wenn es schön ist.";;;;;;
+"Restaurant Beaulieu";32489;3;12:15:00;13.08.2026;;Christian;Aumayer;0041763633583;christian.aumayer@baslerhofmann.ch;Bestätigt;"10.08.2026 14:26";;;;;;;
+"Restaurant Beaulieu";32369;2;12:30:00;13.08.2026;;;Mosimann;0041796119735;;Bestätigt;"04.08.2026 14:19";;;;;;Terrasse;
+"Restaurant Beaulieu";32421;12;16:00:00;13.08.2026;;Benjamin;Affolter;0041765214627;affolterfamily@vtxmail.ch;Bestätigt;"06.08.2026 14:27";"Bitte den langen Tisch bei der Treppe reservieren. Nur Apéro für Treffen (kein Auftischen nötig).";;;;;;
+"Restaurant Beaulieu";32460;3;17:30:00;13.08.2026;;Thomas;Pinegger;0041794321805;thomas.pinegger@gmx.ch;Bestätigt;"09.08.2026 08:39";"wenn möglich, draussen";;;;;;
+"Restaurant Beaulieu";32389;6;17:45:00;13.08.2026;;Daniel;Hänni;0041787404940;d.haenni@outlook.com;Bestätigt;"05.08.2026 12:14";"Bei schönem Wetter gerne im Biergarten.";;;;;;
+"Restaurant Beaulieu";31929;5;18:00:00;13.08.2026;;Vreni;Wyssmann;0041794284316;vreniwyssmann@bluewin.ch;Bestätigt;"09.07.2026 19:40";"Bei schönem Wetter bitte einen Tisch im Garten. Danke";;;;;;
+"Restaurant Beaulieu";31549;4;18:15:00;13.08.2026;;Andreas;Hauck;0041765618182;a.hauck@gmx.ch;Bestätigt;"25.06.2026 10:53";"Wir würden nach dem Essen gerne noch Jassen, falls das möglich ist. Bei schönem Wetter essen wir gerne draussen.";;;;;;
+"Restaurant Beaulieu";32411;2;18:15:00;13.08.2026;;Michael;Ackermann;0041797762463;michaelackermann@yahoo.com;Bestätigt;"06.08.2026 09:40";"Wenn dad Wetter es zulässt, gerne draussen auf der Terrasse, sonst drinnen. Danke!";;;;;;
+"Restaurant Beaulieu";31453;9;18:30:00;13.08.2026;;Bogdan;Draganski;0041782325179;fabienne.jegge@insel.ch;Bestätigt;"22.06.2026 13:46";"Bitte auf die folgende Rechnungsadresse: 
+Insel Gruppe AG
+Kreditorenbuchhaltung
+WNK-128
+Freiburgstrasse 18
+3010 Bern";;;;;;
+"Restaurant Beaulieu";32347;7;11:30:00;14.08.2026;;Jörg;Tanner;0041774049652;faisal27@gmx.ch;Storniert;"03.08.2026 16:13";;;;;;;
+"Restaurant Beaulieu";31973;20;18:00:00;14.08.2026;"Uni Bern";Isabelle;Zürcher;;isabelle.zuercher@unibe.ch;Bestätigt;"13.07.2026 10:57";;"Vorbestellung
+Rechnungsadresse:
+Universität Bern
+Zentraler Rechnungseingang
+REF-205-50
+Hochschulstrasse 6
+3012 Bern";;;;Terrasse;
+"Restaurant Beaulieu";32380;20;18:00:00;14.08.2026;;Isabelle;Zürcher;;;Bestätigt;"04.08.2026 22:04";;"Draussen LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32466;4;18:00:00;14.08.2026;;Samuel;Lanz;0041797782840;xamax1978@gmail.com;Bestätigt;"09.08.2026 19:56";"Wir würden gerne Jassen und Essen.";;;;;;
+"Restaurant Beaulieu";32492;4;18:00:00;14.08.2026;;Robert;Lustenberger;0041797378210;robert_lustenberger@hotmail.com;Bestätigt;"10.08.2026 16:08";"Wir würden gerne eine Runde Jassen und wären Froh, wenn Sie uns ein Jassset bzw. einen Jassteppich zur Verfügung stellen könnten.";;;;;;
+"Restaurant Beaulieu";20389;5;19:00:00;14.08.2026;;;Dubi;0041795437370;;Bestätigt;"11.10.2024 22:15";;;;;;Restaurant;
+"Restaurant Beaulieu";32438;15;12:30:00;15.08.2026;;;Murps;0041797650798;;Bestätigt;"07.08.2026 16:07";;;;;;Terrasse;
+"Restaurant Beaulieu";32111;10;18:00:00;15.08.2026;;Damian;Eggli;0041786210240;damian.eggli@gmail.com;Bestätigt;"21.07.2026 08:39";"Nach Möglichkeit und Wetter draussen.";;;;;;
+"Restaurant Beaulieu";32482;2;18:00:00;15.08.2026;;Nicole;Krieg;0041794048046;tirion@bluemail.ch;Bestätigt;"10.08.2026 11:48";"Wir feiern de Geburi meines Mannes, ein ruhiger Tisch auf der schattigen Terrasse wäre wunderbar. Vielen Dank";;;;;;
+"Restaurant Beaulieu";32490;3;11:30:00;17.08.2026;;Stefan;Batzli;0041794204666;stefan.batzli@aeesuisse.ch;Bestätigt;"10.08.2026 15:09";;;;;;;
+"Restaurant Beaulieu";31672;8;12:00:00;17.08.2026;;Andreas;Rüsch;0041795247700;andreas.ruesch@fenaco.com;Bestätigt;"01.07.2026 10:44";;;;;;;
+"Restaurant Beaulieu";32069;2;12:00:00;17.08.2026;;;Mile;;;Bestätigt;"17.07.2026 14:24";;;;;;Restaurant;
+"Restaurant Beaulieu";31698;4;12:15:00;17.08.2026;;ROSSITZA;TZVETKOVA;0041799602085;rossitza.tzvetkova@swisslife-am.com;Bestätigt;"01.07.2026 17:31";;;;;;;
+"Restaurant Beaulieu";32180;4;12:15:00;17.08.2026;;Dennis;Stemann;0041795383852;le@baulink.ch;Bestätigt;"24.07.2026 11:06";;;;;;;
+"Restaurant Beaulieu";32293;2;12:15:00;17.08.2026;;Pascal;Coullery;0041797873805;pascal.coullery@bfh.ch;Bestätigt;"30.07.2026 12:30";;;;;;;
+"Restaurant Beaulieu";31266;7;12:30:00;17.08.2026;;Bernhard;Schlup;;;Bestätigt;"15.06.2026 14:30";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";30306;6;15:00:00;17.08.2026;;Paul;Flückiger;0041797919327;;Bestätigt;"21.04.2026 11:24";;"Jassen Dan essen";12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32459;12;15:30:00;17.08.2026;"Zentralpräsident SERV (Président Central ATCS)";Max;Bart;0041788100470;max.bart@servrail.ch;Bestätigt;"08.08.2026 20:17";;"Erst Sitzung im Weinkeller dan ab 17:30 Appetit  und dan essen in die Terrasse";;;"Ab ca. 18h30 werden wir dann für mindestens CHF 1'000.- konsumieren (Nachtessen und Getränke).";Terrasse;
+"Restaurant Beaulieu";32311;12;17:30:00;17.08.2026;;;Tschannen;0041794199823;;Bestätigt;"01.08.2026 11:07";;"Beim schlechte Wetter 101";"147, 148";;;Restaurant;Terrasse
+"Restaurant Beaulieu";31804;20;18:00:00;17.08.2026;;Julia;Spyra;;;Bestätigt;"06.07.2026 13:10";;"LZ folgt";;;;Terrasse;
+"Restaurant Beaulieu";31998;7;18:00:00;17.08.2026;;Reto;Mueller;0041794152363;mueller.reto19@gmail.com;Bestätigt;"14.07.2026 10:28";"Min. 1 Person isst, ab 1845 Jass-Training = nur Trinken";;;;;;
+"Restaurant Beaulieu";32350;4;18:00:00;17.08.2026;;Michael;Vonlanthen;0041794713024;michael@mionline.ch;Bestätigt;"03.08.2026 17:33";"Gern auf der Terrasse, wenns das Wetter erlaubt. Gern etwas ruhiger.";;;;;;
+"Restaurant Beaulieu";31128;5;12:00:00;18.08.2026;;Myrtha;Naef;0041793085114;myrthanaef@gmx.net;Bestätigt;"08.06.2026 14:13";"Falls das Wetter es nicht zulässt, draussen zu Essen, würden wir sehr gerne den runden Tisch direkt um die Ecke beim Eingang reservieren. Danke und freundliche Grüsse Myrtha Naef";;;;;;
+"Restaurant Beaulieu";31055;6;12:15:00;18.08.2026;;Carolina;Adler;0041789228254;carolina.adler@unibe.ch;Bestätigt;"03.06.2026 10:45";;;;;;;
+"Restaurant Beaulieu";31441;2;12:15:00;18.08.2026;;Christian;Bigler;0041792478506;christian.bigler@bern.ch;Bestätigt;"22.06.2026 09:12";;;;;;;
+"Restaurant Beaulieu";32317;3;12:15:00;18.08.2026;;Denise;Tormen;0041764667050;d.tormen@gmx.net;Bestätigt;"02.08.2026 20:48";;;;;;;
+"Restaurant Beaulieu";32392;2;12:15:00;18.08.2026;;Vincenza;Trivigno;0041767121507;Direktionssekretariat@swissmedic.ch;Bestätigt;"05.08.2026 14:46";;;;;;;
+"Restaurant Beaulieu";32334;2;17:30:00;18.08.2026;;;Lauber;;;Bestätigt;"03.08.2026 11:29";;;;;;Terrasse;
+"Restaurant Beaulieu";32283;4;18:00:00;18.08.2026;;Yvonne;Schluchter;0041786124015;yvschlu@gmail.com;Bestätigt;"29.07.2026 20:12";"Bei schönem Wetter gerne in ihrem tollen Garten";;;;;;
+"Restaurant Beaulieu";32422;11;18:30:00;18.08.2026;;;Badestschr;0041774019779;;Bestätigt;"06.08.2026 14:28";;;;;;Terrasse;
+"Restaurant Beaulieu";32400;4;19:00:00;18.08.2026;;Daniel;Käsermann;0041795349799;daniel@kaesermann.info;Bestätigt;"05.08.2026 18:08";"Bei schönem Wetter gerne im Garten";;;;;;
+"Restaurant Beaulieu";30843;12;11:30:00;19.08.2026;;Martin;Ziörjen;0041795407167;m.jaana@bluewin.ch;Bestätigt;"21.05.2026 17:20";"Steh-Apéro beim Eingang West. Dann Mittagessen à la carte";;;;;;
+"Restaurant Beaulieu";26498;4;12:00:00;19.08.2026;;Ulla;Reusser;0041765923311;ullareusser@sunrise.ch;Bestätigt;"06.10.2025 13:23";;"Tisch 5 wann schone Wetter drausen bitte";5;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32220;2;12:00:00;19.08.2026;;Nicolas;Haller;0041795809211;nicolas.haller@isolutions.ch;Bestätigt;"27.07.2026 11:08";;;;;;;
+"Restaurant Beaulieu";32487;5;12:00:00;19.08.2026;;Hans-Jürg;Schürch;0041798316847;liliane.uhlich@fenaco.com;Bestätigt;"10.08.2026 14:03";"Nach Möglichkeit auf Terrasse, Danke!";;;;;;
+"Restaurant Beaulieu";30707;12;12:30:00;19.08.2026;;Susanne;Schlueb;;;Bestätigt;"13.05.2026 13:48";;"Ein stuhl für den Hund
+
+Apero dann Essen 95 Geburi
+Apero Nüssli und Chips
+
+Blattsalat french 10Chf
+****
+Kalbsblätzli Morchelsauce, Nüdeli Gemüse kein Brokkoli
+Platte Pfirsich mit Rahm 45Chf
+1x Vegi vor Ort
+****
+Dessert a la carte
+Dünne plätzli
+Haru Wein
+Rot Pinot Noir cuvee Marcel
+Mineral
+
+Auch";;;;Restaurant;
+"Restaurant Beaulieu";32181;11;17:00:00;19.08.2026;;Hansruedi;Gilgen;0041799337834;hansruedi.gilgen@bluewin.ch;Bestätigt;"24.07.2026 11:26";"Apéro wenn möglich im Garten, Nachtessen Innenraum";;;;;;
+"Restaurant Beaulieu";29453;14;18:00:00;19.08.2026;"Galexis AG";Eva;Baumann;;;Bestätigt;"25.02.2026 16:22";;;;;;Restaurant;
+"Restaurant Beaulieu";31999;4;18:00:00;19.08.2026;;Reto;Mueller;0041794152363;mueller.reto19@gmail.com;Bestätigt;"14.07.2026 10:28";"Min. 1 Person isst, ab 1845 Jass-Training = nur Trinken";;;;;;
+"Restaurant Beaulieu";32391;6;18:00:00;19.08.2026;;Karin;Janz;0041794663292;karin_janz@bluewin.ch;Bestätigt;"05.08.2026 13:37";"Bei schönem Wetter bitte ein Tisch im Garten. Merci!";;;;;;
+"Restaurant Beaulieu";32244;8;18:30:00;19.08.2026;"Erich Kobel-Christen";Erich;Kobel;0041797061704;kobel.erich@bluewin.ch;Bestätigt;"28.07.2026 00:06";"Wir möchten in der Gaststube essen, z.B. an einem langen Tisch bei der Treppe, die zu den Toiletten hinunter führt.";;;;;;
+"Restaurant Beaulieu";25718;5;19:00:00;19.08.2026;;Franziska;"von Allmen";0041797033735;frvonallmen@hotmail.com;Storniert;"20.08.2025 13:36";;;;;;;
+"Restaurant Beaulieu";32452;2;11:45:00;20.08.2026;;Bruno;Lehmann;0041765538290;bruno.lehmann@allianceswisspass.ch;Bestätigt;"08.08.2026 13:36";;;;;;;
+"Restaurant Beaulieu";30242;4;12:00:00;20.08.2026;;;Ramseyer;;;Bestätigt;"16.04.2026 13:36";;T5;;;;Restaurant;
+"Restaurant Beaulieu";30708;15;12:00:00;20.08.2026;;Susanne;Schlueb;;;Bestätigt;"13.05.2026 13:50";;"1 Stuhl für den Hund
+
+
+Geburi 95 gibt noch bescheid";;;;Restaurant;
+"Restaurant Beaulieu";32047;10;12:15:00;20.08.2026;;;Swissmedic;;;Bestätigt;"16.07.2026 13:09";;;;;;Restaurant;
+"Restaurant Beaulieu";32116;10;12:15:00;20.08.2026;;;Swissmedic;;;Storniert;"21.07.2026 11:22";;;;;;Restaurant;
+"Restaurant Beaulieu";28210;20;14:00:00;20.08.2026;;;"Pensionierten- Club Spar+Leihkasse Bern";0041797411136;rapin@muri-be.ch;Bestätigt;"18.12.2025 11:08";;;;;;Restaurant;
+"Restaurant Beaulieu";31064;40;17:00:00;20.08.2026;;;Scheurer;;;Bestätigt;"03.06.2026 17:11";;"LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";31977;3;17:45:00;20.08.2026;;Hansjörg;Znoj;0041788892779;hansjoerg.znoj@unibe.ch;Bestätigt;"13.07.2026 12:11";"gerne auf der Terrasse draussen";;;;;;
+"Restaurant Beaulieu";27051;6;18:00:00;20.08.2026;"Zähringia Bernensis";Beat;Weidmann;;;Bestätigt;"31.10.2025 16:39";;;;;;Restaurant;
+"Restaurant Beaulieu";28793;8;18:00:00;20.08.2026;;"SchKG Stamm";;;;Bestätigt;"23.01.2026 12:31";;;500;;"T 500";Restaurant;Gaststube
+"Restaurant Beaulieu";31326;8;18:00:00;20.08.2026;;Mark;Blatter;0041797410546;;Bestätigt;"16.06.2026 20:53";;;;;;Restaurant;
+"Restaurant Beaulieu";32284;4;12:00:00;21.08.2026;;;Lehman;;;Bestätigt;"29.07.2026 21:16";;;;;;Terrasse;
+"Restaurant Beaulieu";32362;2;12:00:00;21.08.2026;;;Schmutz;;;Bestätigt;"04.08.2026 11:12";;;;;;Terrasse;
+"Restaurant Beaulieu";28963;5;13:00:00;21.08.2026;;August;Blunschi;0041774242426;August@blunschi.info;Bestätigt;"31.01.2026 21:49";"am liebsten den grossen runden Tisch links vom Eingang";;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";31524;4;16:30:00;21.08.2026;;Manuela;Mazenauer;0041788751807;manuela_p76@hotmail.com;Bestätigt;"24.06.2026 13:17";"Gerne kommen wir zum Jassen und Abendessen vorbei";;;;;;
+"Restaurant Beaulieu";32299;6;17:00:00;21.08.2026;;;Muron;0041795549467;;Bestätigt;"30.07.2026 18:20";;"Appero mit eine grosse fleischplatte";;;;Terrasse;
+"Restaurant Beaulieu";32348;7;18:00:00;21.08.2026;;Tobias;Kaiser;0041796640622;tk2503@gmail.com;Bestätigt;"03.08.2026 16:45";"Bei schönem Wetter bitte draussen! :-)";;;;;;
+"Restaurant Beaulieu";32447;4;18:00:00;21.08.2026;;Gaensli;CHRISTINE;0041797033684;christine.gaensli@gmail.com;Bestätigt;"07.08.2026 22:21";;;;;;;
+"Restaurant Beaulieu";32216;8;19:00:00;21.08.2026;Theaterdresse;Kristin;Jaggi;;;Bestätigt;"27.07.2026 10:26";;;;;;Terrasse;
+"Restaurant Beaulieu";31753;2;12:00:00;24.08.2026;;Vincenza;Trivigno;0041793012088;direktionssekretariat@swissmedic.ch;Bestätigt;"03.07.2026 14:39";;;;;;;
+"Restaurant Beaulieu";32351;12;12:00:00;24.08.2026;;Tanja;Colin;0041799375505;tanja.colin@interpharma.ch;Bestätigt;"03.08.2026 18:48";;;;;;;
+"Restaurant Beaulieu";31267;7;12:30:00;24.08.2026;;Bernhard;Schlup;;;Bestätigt;"15.06.2026 14:31";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32475;13;18:15:00;24.08.2026;;"Timbatec AG";Nadia;0041787923223;;Bestätigt;"10.08.2026 10:15";;;"54, 53, 52";;;Terrasse;"Salon Châtillon"
+"Restaurant Beaulieu";32177;18;12:00:00;25.08.2026;;;Fenaco;;;Bestätigt;"24.07.2026 10:28";;;;;;Restaurant;
+"Restaurant Beaulieu";32255;12;12:15:00;25.08.2026;;Luzia;Genhart;0041795484379;luzia.genhart@gmx.ch;Bestätigt;"28.07.2026 13:48";"Guten Tag
+Bei schönem Wetter gerne im Garten, aber alle Sitze im Schatten.
+Besten Dank!";;;;;;
+"Restaurant Beaulieu";28236;6;17:30:00;25.08.2026;;Robin;Hug;;robin.hug@swisscom.com;Bestätigt;"19.12.2025 12:17";;"Essen dann Zigarren";"12, 16";;;Restaurant;"Gaststube, Fumoir"
+"Restaurant Beaulieu";28529;8;18:30:00;25.08.2026;"Niklaus Hugi Dr. pharm. Stritenstrasse 27 3176 Neuenegg";Niklaus;"Hugi Juventa";0041799596122;niklaus@hugi.to;Bestätigt;"12.01.2026 16:56";;6-8;;;;Restaurant;
+"Restaurant Beaulieu";32308;7;18:30:00;25.08.2026;;Paola;Häusler;0041795754908;pahaeusler@hotmail.com;Bestätigt;"31.07.2026 19:19";"Bei schönem Wetter gerne unter Ihren Kastanienbäumen. 😁";;;;;;
+"Restaurant Beaulieu";27601;8;12:00:00;26.08.2026;"Praxis Club";Tamara;Hasler;;tamara@praxisclub.ch;Bestätigt;"21.11.2025 12:48";;;;;;Restaurant;
+"Restaurant Beaulieu";31548;5;12:00:00;26.08.2026;;Markus;Gujer;0041797766145;markus.gujer@laupen.ch;Bestätigt;"25.06.2026 10:31";;;144;;;Terrasse;Terrasse
+"Restaurant Beaulieu";32270;10;12:00:00;26.08.2026;;Hanspeter;Rohrbach;0041794453356;hpr2@bluewin.ch;Bestätigt;"29.07.2026 10:15";"Bei schönem Wetter draussen, Genaue Anzahl Gäste werde ich am Vortag kommunizieren";;;;;;
+"Restaurant Beaulieu";29764;4;18:00:00;26.08.2026;;Tanja;Clerc;0041797556487;tanjaocean@gmail.com;Bestätigt;"16.03.2026 18:53";"Wir werden Jassen";;"9, 10";;;Restaurant;Gaststube
+"Restaurant Beaulieu";32309;4;18:00:00;26.08.2026;;Walter;Hayoz;0041792426306;hayozworb@bluewin.ch;Bestätigt;"01.08.2026 10:46";"Bei schönem Wetter im Garten";;;;;;
+"Restaurant Beaulieu";30904;2;12:15:00;27.08.2026;;Stefan;Ernst;0041792763390;stefan.ernst@previs.ch;Bestätigt;"26.05.2026 18:25";;;;;;;
+"Restaurant Beaulieu";31654;7;16:15:00;27.08.2026;;;Schneberger;;;Bestätigt;"30.06.2026 15:06";;Apero;;;;Terrasse;
+"Restaurant Beaulieu";22449;4;17:30:00;27.08.2026;;;"Hans Urlich";0041797117107;;Bestätigt;"04.02.2025 15:12";;"Tisch 500";;;;Restaurant;
+"Restaurant Beaulieu";31034;7;18:00:00;27.08.2026;;Rolf;Blaser;0041792612702;rolf.blaser@smt.ch;Bestätigt;"02.06.2026 10:11";;;;;;;
+"Restaurant Beaulieu";31168;25;18:00:00;27.08.2026;;;Martinolli;;alexander.martinolli@bracherpartner.ch;Bestätigt;"10.06.2026 11:40";;Feierabendbier;;;;Restaurant;
+"Restaurant Beaulieu";32423;9;18:30:00;27.08.2026;;Edgar;Studer;0041796016546;edgar.studer@gmx.ch;Bestätigt;"06.08.2026 14:35";"Bitte im Garten, falls das Wetter es zulässt.";;;;;;
+"Restaurant Beaulieu";31743;2;21:15:00;27.08.2026;;;Walk-In;;;Storniert;"02.07.2026 21:14";;;;;;Restaurant;
+"Restaurant Beaulieu";32393;2;11:45:00;28.08.2026;;Thomas;Erne;0041798247871;thomas.erne@cerebreal.ch;Bestätigt;"05.08.2026 14:53";;;;;;;
+"Restaurant Beaulieu";32343;2;12:00:00;28.08.2026;;Swiss;Medic;;;Bestätigt;"03.08.2026 15:44";;;;;;Restaurant;
+"Restaurant Beaulieu";32291;2;12:15:00;28.08.2026;;Silvia;Siegenthaler;0041792612725;silvia.siegenthaler@unibe.ch;Bestätigt;"30.07.2026 11:40";"Gerne im Garten am Schatten, besten Dank.";;;;;;
+"Restaurant Beaulieu";32377;2;12:30:00;28.08.2026;;Claus;Beisbart;0041767313889;claus.Beisbart@unibe.ch;Bestätigt;"04.08.2026 19:06";;;;;;;
+"Restaurant Beaulieu";32117;15;12:00:00;29.08.2026;;Sabine;Schultze-Heim;0041792767629;sabine.schultzeheim@gmail.com;Bestätigt;"21.07.2026 11:28";;;;;;Restaurant;
+"Restaurant Beaulieu";31268;7;12:30:00;31.08.2026;;Bernhard;Schlup;;;Bestätigt;"15.06.2026 14:32";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32298;2;12:30:00;31.08.2026;;Isabelle;"Van Damme";0041783140933;isabelle.vandamme@unibe.ch;Bestätigt;"30.07.2026 17:41";;;;;;;
+"Restaurant Beaulieu";31348;5;13:15:00;31.08.2026;;Rahel;Niggli;0041774522120;rahel.niggli@ipi.ch;Bestätigt;"17.06.2026 14:04";"Es wird ein geschäftliches Mittagessen sein, weshalb wir froh sind, wenn wir dann die Küche noch offen ist";;;;;;
+"Restaurant Beaulieu";28144;5;16:30:00;31.08.2026;;Martin;Gerber;;;Bestätigt;"15.12.2025 21:03";;"Jassen und essen";500;;;Restaurant;Gaststube
+"Restaurant Beaulieu";31139;4;18:00:00;31.08.2026;;Stefan;Kroplewski;0041792276770;stefan.kroplewski@bluewin.ch;Bestätigt;"08.06.2026 21:18";"Gerne zum Jassen und Essen, bei schönem Wetter draussen. Vielen Dank.";;;;;;
+"Restaurant Beaulieu";32305;8;18:00:00;31.08.2026;;Ueli;Schmid;0041792896521;uelischmid@gmail.com;Bestätigt;"31.07.2026 13:54";"Bitte den langen Tisch links nahe des Abgangs in den Keller reservieren. Danke für Ihre Bestätigung.";;;;;;
+"Restaurant Beaulieu";32373;10;11:30:00;01.09.2026;;;Emch;0041793002794;;Bestätigt;"04.08.2026 16:37";;"Ruhige ecke";;;;Terrasse;
+"Restaurant Beaulieu";31813;9;12:00:00;01.09.2026;;Barbara;Gbadago;0041765538295;barbara.gbadago@allianceswisspass.ch;Bestätigt;"06.07.2026 15:04";"Reservation für Alliance SwissPass";;;;;;
+"Restaurant Beaulieu";31717;6;12:15:00;01.09.2026;;Christophe;Jenzer;0041764907770;christophe.jenzer@canon.ch;Bestätigt;"02.07.2026 10:46";"Wenn möglich ein Tisch bei dem wir ein bisschen unter uns sind, da es ein geschäftliches Mittagessen ist. Danke";;;;;;
+"Restaurant Beaulieu";27171;14;15:00:00;01.09.2026;;;Moser;0041794152523;;Bestätigt;"04.11.2025 17:51";;;104;;;Restaurant;Gaststube
+"Restaurant Beaulieu";31631;12;18:00:00;01.09.2026;;Monika;Heuer;0041796619864;monika.heuer@unibe.ch;Bestätigt;"29.06.2026 16:04";"Gerne reservieren wir einen Tisch für 12 Personen, ev. sind es auch mehr, jedoch höchstens 15.
+Bitte Gesamtrechung an:
+Universität Bern
+Zentraler Rechnungseingang
+REF-37-066
+Hochschulstr. 6
+3012 Bern
+per Mail: kreditoren@unibe.ch
+Vielen Dank und liebe Grüsse, Monika Heuer";;;;;;
+"Restaurant Beaulieu";24027;20;19:00:00;01.09.2026;EDJV;Salber;Thomas;0041794691677;thomas.salber@bluewin.ch;Bestätigt;"08.05.2025 14:06";;"EDJV Jassabend / Weinkeller";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";30785;4;19:00:00;01.09.2026;;Urs;Gurtner;0041793260416;urs.gurtneroesch@gmail.com;Bestätigt;"19.05.2026 06:55";;;1;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32212;4;19:00:00;01.09.2026;;Karin;Stumpf;0041766121426;karin.stumpf1@web.de;Bestätigt;"27.07.2026 08:26";"bei schönem Wetter gerne im Garten";;;;;;
+"Restaurant Beaulieu";32375;6;19:30:00;01.09.2026;;Miranda;Music;0041797897892;miranda.music@invethos.ch;Bestätigt;"04.08.2026 16:47";;;;;;;
+"Restaurant Beaulieu";31216;12;11:00:00;03.09.2026;;Roland;Scherler;0041792567118;rscherler@gmx.ch;Bestätigt;"12.06.2026 16:15";"Wir sind 12 - 15 Personen
+Bitte langer Tisch bei Toilettenabgang reservieren";;;;;;
+"Restaurant Beaulieu";28952;20;12:00:00;03.09.2026;"Innovage Netzwerk Bern-Solothurn";Roman;Füglister;0041796193646;roman.fueglister@innovage.ch;Bestätigt;"31.01.2026 11:29";;;;;"OHNE WASSER";Restaurant;
+"Restaurant Beaulieu";30842;13;12:00:00;03.09.2026;;Stephanie;Manser;;;Bestätigt;"21.05.2026 16:21";;"a la carte";;;;Restaurant;
+"Restaurant Beaulieu";27354;16;12:15:00;03.09.2026;"Sanitas Management AG";Valeria;"Di Maria";;valeria.dimaria@sanitas.com;Bestätigt;"12.11.2025 15:52";;"Rechnungsadresse:
+Sanitas Management AG
+Finanzbuchhaltung
+PO 109/409065
+Postfach
+8021 Zürich
+invoice@sanitas.com";;;;Restaurant;
+"Restaurant Beaulieu";29604;21;12:15:00;03.09.2026;Fenaco;Seraina;Keller;;seraina.keller@fenaco.com;Bestätigt;"05.03.2026 16:56";;"rechnungseingang@fenaco.com<mailto:rechnungseingang@fenaco.com>
+
+Rechnungsadresse
+fenaco Genossenschaft
+Zentraler Rechnungseingang
+Hans-Jürg Schürch
+Erlachstrasse 5
+Postfach
+3001 Bern";;;;Restaurant;
+"Restaurant Beaulieu";30060;30;18:00:00;03.09.2026;;;bitt;;;Bestätigt;"01.04.2026 16:02";;"LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32170;28;12:00:00;04.09.2026;"Landi Schweiz";;Lucia;;;Bestätigt;"23.07.2026 14:00";;Vorbestellung;;;;Restaurant;
+"Restaurant Beaulieu";27187;16;19:15:00;04.09.2026;;;"Crista Joder";0041798164530;;Bestätigt;"05.11.2025 10:05";;"Ruhiger Tisch oder Terrasse";;;;Restaurant;
+"Restaurant Beaulieu";29350;12;12:30:00;07.09.2026;;Susanne;Fürst;0041793396979;susanne.fuerst@unibe.ch;Bestätigt;"20.02.2026 14:17";;;;;;Restaurant;
+"Restaurant Beaulieu";30643;14;14:00:00;07.09.2026;;;Urs;0041763310570;;Bestätigt;"11.05.2026 10:49";;;;;;Restaurant;
+"Restaurant Beaulieu";32112;4;17:00:00;07.09.2026;;;Fischer;;;Bestätigt;"21.07.2026 10:06";;T500;;;;Terrasse;
+"Restaurant Beaulieu";32115;6;17:00:00;07.09.2026;;;Reber;;;Bestätigt;"21.07.2026 10:35";;;;;;Terrasse;
+"Restaurant Beaulieu";30989;18;13:00:00;08.09.2026;"Fenaco ( Scheidegger)";Irene;Scheidegger;;irene.scheidegger@fenaco.com;Bestätigt;"29.05.2026 18:13";;;;;;Terrasse;
+"Restaurant Beaulieu";30742;10;14:00:00;08.09.2026;"UB Club der Rentnerinnen und Rentner der UB/StUB Bern";"Hans Rudolf";Kull;0041763432076;hansruedik@gmail.com;Bestätigt;"15.05.2026 15:43";;;;;"Monatliche ungezwungene Treffen
+jeweils 14:30 am zweiten Dienstag des Monats.
+In der warmen Jahreszeit sind wir gerne draussen. In der Regel sind wir ca. 10 Personen für ein Bier oder ein anderes Getränk.";Restaurant;
+"Restaurant Beaulieu";28306;20;14:15:00;08.09.2026;;Margrit;Bühlmann;0041796256845;buehlmar2@bluewin.ch;Bestätigt;"27.12.2025 16:37";;"Siemens Rentner Höck";;;"Siemens Rentnergruppe";Restaurant;
+"Restaurant Beaulieu";32094;4;11:30:00;09.09.2026;;;Engel;;;Bestätigt;"20.07.2026 11:27";;;12;;;Restaurant;Gaststube
+"Restaurant Beaulieu";29427;10;13:00:00;09.09.2026;;Markus;Rusch;0041793715801;;Bestätigt;"24.02.2026 13:26";;;;;;Restaurant;
+"Restaurant Beaulieu";31280;8;18:00:00;09.09.2026;;Markus;Känel;;;Bestätigt;"15.06.2026 17:58";;;;;;Terrasse;
+"Restaurant Beaulieu";31191;4;19:00:00;09.09.2026;;;Borner;0041763380018;;Bestätigt;"11.06.2026 10:44";;;500;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32078;2;12:15:00;10.09.2026;;Barbara;Studer;0041793770433;barbara.studer@be.ch;Bestätigt;"18.07.2026 11:13";"Falls es schön und warm genug ist, würden wir gerne draussen essen. Danke!";;;;;;
+"Restaurant Beaulieu";31765;4;17:30:00;10.09.2026;;Kathrin;Wüthrich;0041794725314;zaugg.kathrin@gmail.com;Bestätigt;"04.07.2026 13:37";"Wir treffen uns zum Jassen - vielen Dank fürs Bereitstellen von Jasskarten und „Jassmätteli“";;;;;;
+"Restaurant Beaulieu";31272;21;18:00:00;10.09.2026;"Pro Juventute";Carole;Müller;;;Bestätigt;"15.06.2026 15:28";;"LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";31837;5;12:00:00;11.09.2026;;Priska;Bürgi;0041795570757;priska.buergi@ewanet.ch;Bestätigt;"07.07.2026 10:26";"Ich weiss nicht, ob meine kürzlich geschriebene Reservation angekommen ist. Daher schreibe ich noch einmal. Vielleicht werden wir 6 Personen sein. Zwei Personen essen glutenfrei. Davon eine zusätzlich ohne Eiweiss der Kuh- und Ziegenmilch. Das heisst auch keine Butter, kein Rahm, kein Käse. Herzlichen Dank für ihre Bemühungen.";;;;;;
+"Restaurant Beaulieu";31529;4;18:30:00;11.09.2026;;Peter;Ludi;0041796231157;peter.ludi@ludi-ch.com;Bestätigt;"24.06.2026 17:19";"Gibt es auch kleine Portionen (z.B. Züri Geschnetzeltes)? - Es geht lediglich um eine gesundheitliche Einschränkung, nicht um den Preis.";;;;;;
+"Restaurant Beaulieu";31794;20;14:00:00;12.09.2026;;Daniel;schwarz;0041762054061;;Bestätigt;"06.07.2026 11:02";;"trinken und Dessert draussen wan möglich";;;;Restaurant;
+"Restaurant Beaulieu";30456;4;19:00:00;12.09.2026;;;Bernet;;;Bestätigt;"29.04.2026 17:43";;"Jassen essen";500;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32110;4;12:00:00;14.09.2026;;Joëlle;Hars;0041788912558;pascale.bodenmann@fenaco.com;Bestätigt;"21.07.2026 08:39";;;;;;;
+"Restaurant Beaulieu";28183;15;14:00:00;14.09.2026;"Stämpfli Höck";Heinz;Malzacher;0041794341732;heinz.malzacher@muri-be.ch;Bestätigt;"17.12.2025 06:38";;;;;"Jeweils ab 14.00 bis zirka 16.00 Uhr  10 bis 20 Personen
+zum trinken.
+bei schönem Wetter im Garten
+Sommer im Garten Winter im Grossen Saal";Restaurant;
+"Restaurant Beaulieu";30251;10;18:00:00;16.09.2026;;Benedikt;Fasel;0041764837921;kristina@swissstartupassociation.ch;Bestätigt;"16.04.2026 16:24";;;;;;;
+"Restaurant Beaulieu";32128;2;12:00:00;17.09.2026;;Regula;Feldmann;0041762570823;direktionssekretariat@spital-emmental.ch;Bestätigt;"21.07.2026 17:19";;;;;;;
+"Restaurant Beaulieu";32187;30;13:00:00;17.09.2026;;;Cantoni;0041795366086;;Bestätigt;"24.07.2026 15:07";;VORBESTELLUNG;;;;Terrasse;
+"Restaurant Beaulieu";27052;6;18:00:00;17.09.2026;"Zähringia Bernensis";Beat;Weidmann;;;Bestätigt;"31.10.2025 16:39";;;;;;Restaurant;
+"Restaurant Beaulieu";28794;8;18:00:00;17.09.2026;;"SchKG Stamm";;;;Bestätigt;"23.01.2026 12:32";;;500;;"T 500";Restaurant;Gaststube
+"Restaurant Beaulieu";30655;6;11:00:00;21.09.2026;;;Lang;;;Bestätigt;"11.05.2026 14:03";;;55;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";28530;8;18:30:00;22.09.2026;"Niklaus Hugi Dr. pharm. Stritenstrasse 27 3176 Neuenegg";Niklaus;"Hugi Juventa";0041799596122;niklaus@hugi.to;Bestätigt;"12.01.2026 16:57";;6-8;;;;Restaurant;
+"Restaurant Beaulieu";30243;4;12:00:00;23.09.2026;;;Ramseyer;;;Bestätigt;"16.04.2026 13:38";;T5;;;;Restaurant;
+"Restaurant Beaulieu";32000;6;18:00:00;28.09.2026;;Reto;Mueller;0041794152363;mueller.reto19@gmail.com;Bestätigt;"14.07.2026 10:29";"Min. 1 Person isst, ab 1845 Jass-Training = nur Trinken";;;;;;
+"Restaurant Beaulieu";32118;11;18:00:00;28.09.2026;;Jürg;Herren;;juerg.herren@seco.admin.ch;Bestätigt;"21.07.2026 11:34";;;;;;Restaurant;
+"Restaurant Beaulieu";21215;2;18:00:00;30.09.2026;;Daniel;Santschi;0041765498602;santschi-hutzli@bluewin.ch;Bestätigt;"20.11.2024 15:52";"Bitte Tisch 5! Danke im Voraus.";;5;;;Restaurant;Gaststube
+"Restaurant Beaulieu";28953;20;12:00:00;01.10.2026;"Innovage Netzwerk Bern-Solothurn";Roman;Füglister;0041796193646;roman.fueglister@innovage.ch;Bestätigt;"31.01.2026 11:29";;;;;"OHNE WASSER";Restaurant;
+"Restaurant Beaulieu";31271;20;12:15:00;06.10.2026;SZBLIND;Rahel;Rutishauser;;;Bestätigt;"15.06.2026 15:26";;"LZ folgt fix Saal";54;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";28444;20;14:00:00;06.10.2026;"Pensionierte Lockomotivführer";Peter;Wüthrich;0041795053421;prewue@gmail.com;Bestätigt;"07.01.2026 11:57";;;;;"ab 14:00 - 16:00 Uhr ca. 20 Personen zum trinken.
+Bei passendem Wetter gerne im Garten..";Restaurant;
+"Restaurant Beaulieu";24028;20;19:00:00;06.10.2026;EDJV;Salber;Thomas;0041794691677;thomas.salber@bluewin.ch;Bestätigt;"08.05.2025 14:06";;"EDJV Jassabend / Weinkeller";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";31325;3;18:00:00;07.10.2026;;Daniel;Santschi;0041765498602;santschi-hutzli@bluewin.ch;Bestätigt;"16.06.2026 20:42";;;5;;;Restaurant;Gaststube
+"Restaurant Beaulieu";30284;15;11:00:00;08.10.2026;;Lotti;Wyss;;lowyssti@hotmail.com;Bestätigt;"20.04.2026 10:49";;Klassenzusammenkunft;;;;Restaurant;
+"Restaurant Beaulieu";31274;16;17:00:00;08.10.2026;;Linda;Hunziker;;;Bestätigt;"15.06.2026 15:33";;"LZ folgt Weinkeller Kurs danach Essen";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";28184;15;14:00:00;12.10.2026;"Stämpfli Höck";Heinz;Malzacher;0041794341732;heinz.malzacher@muri-be.ch;Bestätigt;"17.12.2025 06:38";;;;;"Jeweils ab 14.00 bis zirka 16.00 Uhr  10 bis 20 Personen
+zum trinken.
+bei schönem Wetter im Garten
+Sommer im Garten Winter im Grossen Saal";Restaurant;
+"Restaurant Beaulieu";30743;10;14:00:00;13.10.2026;"UB Club der Rentnerinnen und Rentner der UB/StUB Bern";"Hans Rudolf";Kull;0041763432076;hansruedik@gmail.com;Bestätigt;"15.05.2026 15:44";;;;;"Monatliche ungezwungene Treffen
+jeweils 14:30 am zweiten Dienstag des Monats.
+In der warmen Jahreszeit sind wir gerne draussen. In der Regel sind wir ca. 10 Personen für ein Bier oder ein anderes Getränk.";Restaurant;
+"Restaurant Beaulieu";28307;20;14:15:00;13.10.2026;;Margrit;Bühlmann;0041796256845;buehlmar2@bluewin.ch;Bestätigt;"27.12.2025 16:38";;"Siemens Rentner Höck";;;"Siemens Rentnergruppe";Restaurant;
+"Restaurant Beaulieu";31324;2;18:00:00;13.10.2026;;Daniel;Santschi;0041765498602;santschi-hutzli@bluewin.ch;Bestätigt;"16.06.2026 20:42";;;5;;;Restaurant;Gaststube
+"Restaurant Beaulieu";32468;10;18:00:00;13.10.2026;;Morena;Neuhaus;0041792971258;morena.neuhaus@farb-bern.ch;Bestätigt;"10.08.2026 07:25";"Knoblauchunverträglichkeit einer Person";;;;;;
+"Restaurant Beaulieu";31203;18;13:00:00;14.10.2026;"Fenaco ( Scheidegger)";Irene;Scheidegger;;irene.scheidegger@fenaco.com;Bestätigt;"12.06.2026 10:46";;;;;;Restaurant;
+"Restaurant Beaulieu";32486;2;12:00:00;15.10.2026;;;Sigethaler;;;Bestätigt;"10.08.2026 14:00";;;;;;Terrasse;
+"Restaurant Beaulieu";28211;20;14:00:00;15.10.2026;;;"Pensionierten- Club Spar+Leihkasse Bern";0041797411136;rapin@muri-be.ch;Bestätigt;"18.12.2025 11:08";;;;;;Restaurant;
+"Restaurant Beaulieu";27053;6;18:00:00;15.10.2026;"Zähringia Bernensis";Beat;Weidmann;;;Bestätigt;"31.10.2025 16:39";;;;;;Restaurant;
+"Restaurant Beaulieu";31991;4;18:30:00;15.10.2026;;Reto;Mueller;0041794152363;mueller.reto19@gmail.com;Bestätigt;"14.07.2026 09:07";"Wir freuen uns auf's Wiedersehen !";;;;;;
+"Restaurant Beaulieu";32323;3;12:00:00;16.10.2026;;Helmut;Eichhorn;0041794735042;alexandra.ballmer@allianceswisspass.ch;Bestätigt;"03.08.2026 08:07";;;;;;;
+"Restaurant Beaulieu";31600;12;19:00:00;16.10.2026;;Dominic;Bolzli;0041782206886;dominic.bolzli@bering.ch;Bestätigt;"29.06.2026 08:56";"Guten Tag
+Dies ist ein Firmenausflug mit dem Team. Wäre toll, wenn wir etwas zusammensitzen könnten. Bestellen werden wir À la carte.";;;;;;
+"Restaurant Beaulieu";30244;4;12:00:00;20.10.2026;;;Ramseyer;;;Bestätigt;"16.04.2026 13:38";;T5;;;;Restaurant;
+"Restaurant Beaulieu";14207;11;11:00:00;21.10.2026;;René;Müller;0041796630445;rugmueller@bluewin.ch;Bestätigt;"26.10.2023 11:39";"Bitte um Reservation des Weinkeller für die Pensionierten der VonRoll Bern";;800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";27602;8;12:00:00;21.10.2026;"Praxis Club";Tamara;Hasler;;tamara@praxisclub.ch;Bestätigt;"21.11.2025 12:49";;;;;;Restaurant;
+"Restaurant Beaulieu";28237;6;17:30:00;21.10.2026;;Robin;Hug;;robin.hug@swisscom.com;Bestätigt;"19.12.2025 12:17";;"Essen dann Zigarren";"12, 16";;;Restaurant;"Gaststube, Fumoir"
+"Restaurant Beaulieu";27355;16;12:15:00;22.10.2026;"Sanitas Management AG";Valeria;"Di Maria";;valeria.dimaria@sanitas.com;Bestätigt;"12.11.2025 15:56";;"Rechnungsadresse:
+Sanitas Management AG
+Finanzbuchhaltung
+PO 109/409065
+Postfach
+8021 Zürich
+invoice@sanitas.com";;;;Restaurant;
+"Restaurant Beaulieu";28795;8;18:00:00;22.10.2026;;"SchKG Stamm";;;;Bestätigt;"23.01.2026 12:32";;;500;;"T 500";Restaurant;Gaststube
+"Restaurant Beaulieu";31951;4;11:30:00;24.10.2026;;;Weckerli;;;Bestätigt;"11.07.2026 15:55";;;114;;;Terrasse;Terrasse
+"Restaurant Beaulieu";28531;8;18:30:00;27.10.2026;"Niklaus Hugi Dr. pharm. Stritenstrasse 27 3176 Neuenegg";Niklaus;"Hugi Juventa";0041799596122;niklaus@hugi.to;Bestätigt;"12.01.2026 16:57";;6-8;;;;Restaurant;
+"Restaurant Beaulieu";31992;4;18:30:00;27.10.2026;;Reto;Mueller;0041794152363;mueller.reto19@gmail.com;Bestätigt;"14.07.2026 09:07";"Wir freuen uns !";;;;;;
+"Restaurant Beaulieu";32252;20;11:00:00;28.10.2026;;Meier;Rolf;0041792260927;;Bestätigt;"28.07.2026 10:21";;Vkf;;;;Restaurant;
+"Restaurant Beaulieu";28539;3;12:00:00;28.10.2026;;Beat;Wittmer;0041788657580;teuta.buergi@frigemo.ch;Bestätigt;"13.01.2026 08:59";;;;;;;
+"Restaurant Beaulieu";30098;8;18:00:00;28.10.2026;;Veronika;Messerli;0041765401684;vronimesserli@gmail.com;Bestätigt;"07.04.2026 13:39";;;;;;Restaurant;
+"Restaurant Beaulieu";29816;50;15:00:00;29.10.2026;SwissFoundations;Simone;Meinen;;;Bestätigt;"18.03.2026 15:01";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32048;15;20:00:00;29.10.2026;"Sekretariat Berner Zirkel Ur- und Frühgeschichte";Jolanda;Studer;;jolanda.studer@bhm.ch;Bestätigt;"16.07.2026 13:15";;"Falls ab 20h15 niemand von der Gruppe kommt, können Sie den Tisch freigeben.";;;;Restaurant;
+"Restaurant Beaulieu";29992;45;12:30:00;01.11.2026;;Martin;Zbinden;0041794398721;;Bestätigt;"27.03.2026 15:47";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";28954;20;12:00:00;05.11.2026;"Innovage Netzwerk Bern-Solothurn";Roman;Füglister;0041796193646;roman.fueglister@innovage.ch;Bestätigt;"31.01.2026 11:30";;;;;"OHNE WASSER";Restaurant;
+"Restaurant Beaulieu";30728;20;11:30:00;06.11.2026;;Wobei;Otto;0041793716358;;Bestätigt;"15.05.2026 11:25";;;;;;Restaurant;
+"Restaurant Beaulieu";31065;25;17:30:00;06.11.2026;;Olivia;Müller;;;Bestätigt;"03.06.2026 17:14";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";29929;7;18:00:00;06.11.2026;;Schutz;Maya;0041799538338;;Bestätigt;"24.03.2026 11:42";;"Reihe Tisch";;;;Restaurant;
+"Restaurant Beaulieu";19631;12;10:00:00;07.11.2026;"Ist Siemens 79";;Krumm;0041792510701;;Bestätigt;"26.08.2024 13:30";;"10-15 Weinkeller Versammlung, gegen 12.30 oben im Restaurant essen";58;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";26383;16;11:00:00;07.11.2026;;Adi;Iten-Marty;0041763949754;adi@bruhst.ch;Bestätigt;"29.09.2025 15:19";"Grüezi
+Wir würden gerne wieder unser Jassturnier bei ihnen machen.
+Am 8.11.25 von 10-16 Uhr ca 12-16 Personen mit Mitagessen. Ist dies möglich.
+Liebe Grüsse
+Adrian Iten-Marty, Akademische Landwirtschaftliche Verbindung ALV";;800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";31802;40;18:00:00;08.11.2026;;;Klassengastro;;;Bestätigt;"06.07.2026 12:38";;;;;;Restaurant;
+"Restaurant Beaulieu";28185;15;14:00:00;09.11.2026;"Stämpfli Höck";Heinz;Malzacher;0041794341732;heinz.malzacher@muri-be.ch;Bestätigt;"17.12.2025 06:39";;;;;"Jeweils ab 14.00 bis zirka 16.00 Uhr  10 bis 20 Personen
+zum trinken.
+bei schönem Wetter im Garten
+Sommer im Garten Winter im Grossen Saal";Restaurant;
+"Restaurant Beaulieu";30744;10;14:00:00;10.11.2026;"UB Club der Rentnerinnen und Rentner der UB/StUB Bern";"Hans Rudolf";Kull;0041763432076;hansruedik@gmail.com;Bestätigt;"15.05.2026 15:44";;;;;"Monatliche ungezwungene Treffen
+jeweils 14:30 am zweiten Dienstag des Monats.
+In der warmen Jahreszeit sind wir gerne draussen. In der Regel sind wir ca. 10 Personen für ein Bier oder ein anderes Getränk.";Restaurant;
+"Restaurant Beaulieu";28308;20;14:15:00;10.11.2026;;Margrit;Bühlmann;0041796256845;buehlmar2@bluewin.ch;Bestätigt;"27.12.2025 16:38";;"Siemens Rentner Höck";;;"Siemens Rentnergruppe";Restaurant;
+"Restaurant Beaulieu";32473;11;12:15:00;12.11.2026;;Joanna;Schmutz;0041795436915;joanna.schmutz@sbb.ch;Bestätigt;"10.08.2026 08:56";"Mittagessen der Arbeitsgruppe Sortimentsentwicklung NDV (Alliance SwissPass)";;;;;;
+"Restaurant Beaulieu";28010;40;19:00:00;12.11.2026;"Geographisches Institut Uni Bern";Matthias;Probst;;matthias.probst@unibe.ch;Storniert;"09.12.2025 11:50";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32049;15;20:00:00;12.11.2026;"Sekretariat Berner Zirkel Ur- und Frühgeschichte";Jolanda;Studer;;jolanda.studer@bhm.ch;Bestätigt;"16.07.2026 13:16";;"Falls ab 20h15 niemand von der Gruppe kommt, können Sie den Tisch freigeben.";;;;Restaurant;
+"Restaurant Beaulieu";30508;8;16:00:00;13.11.2026;;Christian;Hörack;0041796845739;;Bestätigt;"03.05.2026 11:49";;"Besprechung danach Essen";;;;Restaurant;
+"Restaurant Beaulieu";31167;25;12:00:00;14.11.2026;;Barbara;Zünd-Gugger;;;Bestätigt;"10.06.2026 11:27";;"LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";30099;23;11:30:00;17.11.2026;;Veronika;Messerli;0041765401684;vronimesserli@gmail.com;Bestätigt;"07.04.2026 13:40";;"LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32146;4;11:30:00;17.11.2026;;Benno;Nussberger;0041795482709;ines.horlacher@sbb.ch;Bestätigt;"22.07.2026 11:49";"Business-Lunch - gerne einen ruhigen Tisch, vielen Dank!";"Schweizerische Bundesbahnen AG
+
+Kreditoren Infrastruktur
+
+Referenz: charlotte_sophie.enderlin@sbb.ch
+
+Poststrasse 6
+
+3000 Bern 65";;;;;
+"Restaurant Beaulieu";31979;22;17:00:00;17.11.2026;Post;;Gruber;;;Bestätigt;"13.07.2026 14:20";;"LZ folgt";54;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";21397;16;17:30:00;17.11.2026;;Erik;Egloff;0041797790610;erik.egloff@gmx.net;Storniert;"28.11.2024 18:32";;"Versammlung danach Essen / Weinkeller.. Da Gesungen wird.
+LZ folgt
+17.30 Uhr Besammlung mit Umtrunk,
+18.30 Uhr Jahresversammlung,
+um 19.30 Uhr Abendessen
+bis spätestens 21.30 Uhr";;;;Restaurant;
+"Restaurant Beaulieu";22818;21;17:30:00;17.11.2026;;Erik;Egloff;0041797790610;erik.egloff@gmx.net;Bestätigt;"26.02.2025 15:21";;"LZ folgt Zwiebel & Käsekuchen Dito 2025";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";31410;18;13:00:00;18.11.2026;"Fenaco ( Scheidegger)";Irene;Scheidegger;;irene.scheidegger@fenaco.com;Bestätigt;"19.06.2026 14:07";;Weinkeller;;;;Restaurant;
+"Restaurant Beaulieu";30245;4;12:00:00;19.11.2026;;;Ramseyer;;;Bestätigt;"16.04.2026 13:38";;T5;;;;Restaurant;
+"Restaurant Beaulieu";28212;20;14:00:00;19.11.2026;;;"Pensionierten- Club Spar+Leihkasse Bern";0041797411136;rapin@muri-be.ch;Bestätigt;"18.12.2025 11:09";;;;;;Restaurant;
+"Restaurant Beaulieu";27054;6;18:00:00;19.11.2026;"Zähringia Bernensis";Beat;Weidmann;;;Bestätigt;"31.10.2025 16:39";;;;;;Restaurant;
+"Restaurant Beaulieu";28796;8;18:00:00;19.11.2026;;"SchKG Stamm";;;;Bestätigt;"23.01.2026 12:32";;;500;;"T 500";Restaurant;Gaststube
+"Restaurant Beaulieu";30814;25;11:30:00;23.11.2026;;"John Philipp";Amstein;0041792477256;;Bestätigt;"20.05.2026 11:03";;;;;"Essen Mittagsmenü";Restaurant;
+"Restaurant Beaulieu";28532;8;18:30:00;24.11.2026;"Niklaus Hugi Dr. pharm. Stritenstrasse 27 3176 Neuenegg";Niklaus;"Hugi Juventa";0041799596122;niklaus@hugi.to;Bestätigt;"12.01.2026 16:58";;6-8;;;;Restaurant;
+"Restaurant Beaulieu";30789;18;11:30:00;25.11.2026;;;Erne;0041788974900;;Bestätigt;"19.05.2026 10:03";;Saal;54;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";30362;20;12:00:00;25.11.2026;;;"Peter Paul";0041797638406;;Bestätigt;"23.04.2026 15:08";;Weinkeller;800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";29600;70;17:00:00;26.11.2026;"Meister ConCept GmbH";van;Velzen;;post-eshram@meister-concept.ch;Bestätigt;"05.03.2026 16:48";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";32050;15;20:00:00;26.11.2026;"BERNISCHES HISTORISCHES MUSEUM";"Jolanda Studer";"Berner Zirkel für Ur- und Frühgeschichte";;jolanda.studer@bhm.ch;Bestätigt;"16.07.2026 13:17";;"Falls ab 20h15 niemand von der Gruppe kommt, können Sie den Tisch freigeben.";;;;Restaurant;
+"Restaurant Beaulieu";29089;70;17:30:00;27.11.2026;"Jaisli-xamax AG";Nur;Englisch;;;Storniert;"08.02.2026 16:31";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";31223;50;18:00:00;27.11.2026;"Eversheds Sutherland AG";Linda;Stettler;;linda.stettler@eversheds-sutherland.ch;Storniert;"12.06.2026 18:02";;"prov. LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";24965;20;11:00:00;02.12.2026;;;"Ueli M V";0041794746990;;Bestätigt;"02.07.2025 14:40";;"Saal 50-54.       3 Tische. 50-6.      51 -4.       58 -10.    Wunsch";"51, 58, 50";;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";28955;20;12:00:00;03.12.2026;"Innovage Netzwerk Bern-Solothurn";Roman;Füglister;0041796193646;roman.fueglister@innovage.ch;Bestätigt;"31.01.2026 11:30";;;;;"OHNE WASSER";Restaurant;
+"Restaurant Beaulieu";28238;6;17:30:00;03.12.2026;;Robin;Hug;;robin.hug@swisscom.com;Bestätigt;"19.12.2025 12:18";;"Essen dann Zigarren";"12, 16";;;Restaurant;"Gaststube, Fumoir"
+"Restaurant Beaulieu";29815;40;18:30:00;03.12.2026;"Uni Bern";Alexandra;Erler;;alexandra.erler@unibe.ch;Bestätigt;"18.03.2026 14:44";;"LZ folgt";54;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";28740;50;18:00:00;04.12.2026;;Antonia;Chiffi;;;Bestätigt;"21.01.2026 19:24";;"fix LZ folgt";54;;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";29502;15;18:00:00;04.12.2026;;Eli;Aisics;;;Bestätigt;"27.02.2026 11:24";;"Prov lzfolgt";"104, 103, 102, 101, 100";;;Restaurant;Gaststube
+"Restaurant Beaulieu";30131;45;18:00:00;04.12.2026;;;Odermatt;;;Bestätigt;"09.04.2026 17:54";;Kurt;"5, 6, 3, 4, 1, 2, 96, 95, 11, 12, 10, 9, 8, 7";;;Restaurant;Gaststube
+"Restaurant Beaulieu";31413;19;18:00:00;04.12.2026;;Sandro;Affolter;0041793562598;;Bestätigt;"19.06.2026 14:46";;"LZ folgt Erlachstube";;;;Restaurant;
+"Restaurant Beaulieu";29961;20;18:30:00;04.12.2026;;;Innenhauser;0041794735351;;Bestätigt;"25.03.2026 14:00";;"Apero und Dan essen";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";30745;10;14:30:00;08.12.2026;"UB Club der Rentnerinnen und Rentner der UB/StUB Bern";"Hans Rudolf";Kull;0041763432076;hansruedik@gmail.com;Bestätigt;"15.05.2026 15:45";;;;;"Monatliche ungezwungene Treffen
+jeweils 14:30 am zweiten Dienstag des Monats.
+In der warmen Jahreszeit sind wir gerne draussen. In der Regel sind wir ca. 10 Personen für ein Bier oder ein anderes Getränk.";Restaurant;
+"Restaurant Beaulieu";24033;15;15:00:00;08.12.2026;;Lilo;renggli;0041797433204;lilo.renggli@bluewin.ch;Bestätigt;"08.05.2025 16:38";;"LZ folgt";"100, 101, 102, 103, 104";;;Restaurant;Gaststube
+"Restaurant Beaulieu";30566;25;20:00:00;08.12.2026;;;"Fotografische Gesselsschaft";0041792086546;;Bestätigt;"05.05.2026 21:26";;"Essen a la carte";;;;Restaurant;
+"Restaurant Beaulieu";20778;13;16:00:00;09.12.2026;;;Heinniman;0041797094092;;Bestätigt;"01.11.2024 10:19";;"16 bis 18 h Versammlung Weinkeller anschliessend essen egal wo";"53, 52, 54";;;Restaurant;"Salon Châtillon"
+"Restaurant Beaulieu";31045;14;18:00:00;09.12.2026;;Severin;Ruchti;0041787755463;;Bestätigt;"02.06.2026 16:57";;"Eisenbahner Fotoklub";;;;Restaurant;
+"Restaurant Beaulieu";31615;17;19:00:00;09.12.2026;;Jens;Evens;0041796245626;jens.evens@sbb.ch;Bestätigt;"29.06.2026 11:40";;"Weinkeller prov. LZ folgt";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";29451;25;12:00:00;10.12.2026;;Anne-Sophie;Ludy;0041796645417;;Bestätigt;"25.02.2026 16:15";;"LZ folgt Fondue";;;;Restaurant;
+"Restaurant Beaulieu";29557;30;17:30:00;10.12.2026;"uni bern";Kathrin;Balmer;;kathrin.balmer@unibe.ch;Bestätigt;"04.03.2026 08:07";;"Fumoir / Apéro Riche LZ folgt";;;;Restaurant;
+"Restaurant Beaulieu";31014;30;18:00:00;10.12.2026;;Marc;Zurflüh;;marc.zurflueh@cler.ch;Bestätigt;"01.06.2026 13:25";;"Weinkeller LZ folgt";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";32051;15;20:00:00;10.12.2026;"BERNISCHES HISTORISCHES MUSEUM";"Jolanda Studer";"Berner Zirkel für Ur- und Frühgeschichte";;jolanda.studer@bhm.ch;Bestätigt;"16.07.2026 13:17";;"Falls ab 20h15 niemand von der Gruppe kommt, können Sie den Tisch freigeben.";;;;Restaurant;
+"Restaurant Beaulieu";29819;80;18:30:00;11.12.2026;;Antoinette;Angehrn;;;Bestätigt;"18.03.2026 15:12";;"prov. LZ folgt";"54, 63";;;Restaurant;"Salon Châtillon, Erlachstube"
+"Restaurant Beaulieu";28186;15;14:00:00;14.12.2026;"Stämpfli Höck";Heinz;Malzacher;0041794341732;heinz.malzacher@muri-be.ch;Bestätigt;"17.12.2025 06:39";;;;;"Jeweils ab 14.00 bis zirka 16.00 Uhr  10 bis 20 Personen
+zum trinken.
+bei schönem Wetter im Garten
+Sommer im Garten Winter im Grossen Saal";Restaurant;
+"Restaurant Beaulieu";30425;25;18:00:00;14.12.2026;;Christian;Leuthold;0041794558594;christian_leuthold@bluewin.ch;Bestätigt;"28.04.2026 11:24";;"Fix Weinkeller";"800, 801";;;Restaurant;Weinkeller
+"Restaurant Beaulieu";26270;20;18:00:00;15.12.2026;;;"Blasser Hans-Ulrich";0041763657955;;Bestätigt;"23.09.2025 11:18";;"Arneis Weisswein";800;;;Restaurant;Weinkeller
+"Restaurant Beaulieu";27603;8;12:00:00;16.12.2026;"Praxis Club";Tamara;Hasler;;tamara@praxisclub.ch;Bestätigt;"21.11.2025 12:49";;;;;;Restaurant;
+"Restaurant Beaulieu";31438;18;13:00:00;16.12.2026;"Fenaco ( Scheidegger)";Irene;Scheidegger;;irene.scheidegger@fenaco.com;Bestätigt;"22.06.2026 06:20";;Weinkeller;;;;Restaurant;
+"Restaurant Beaulieu";30246;4;12:00:00;17.12.2026;;;Ramseyer;;;Bestätigt;"16.04.2026 13:39";;;;;;Restaurant;
+"Restaurant Beaulieu";28214;25;13:00:00;17.12.2026;;;"Pensionierten- Club Spar+Leihkasse Bern";0041797411136;rapin@muri-be.ch;Bestätigt;"18.12.2025 11:11";;Weinkeller!;;;;Restaurant;
+"Restaurant Beaulieu";27055;6;18:00:00;17.12.2026;"Zähringia Bernensis";Beat;Weidmann;;;Bestätigt;"31.10.2025 16:40";;;;;;Restaurant;
+"Restaurant Beaulieu";28797;8;18:00:00;17.12.2026;;"SchKG Stamm";;;;Bestätigt;"23.01.2026 12:33";;;"500, 9";;"T 500";Restaurant;Gaststube
+"Restaurant Beaulieu";30792;21;18:00:00;17.12.2026;;;Memeti;;;Storniert;"19.05.2026 13:24";;"prov. LZ folgt
+wollen für sich sein";;;;Restaurant;
+"Restaurant Beaulieu";31707;8;12:00:00;18.12.2026;;Ulrich;Ryser;0041763241097;ulrich.ryser@barto.ch;Bestätigt;"01.07.2026 21:53";;;;;;;
+"Restaurant Beaulieu";28588;25;19:00:00;18.12.2026;;Marina;Soltermann;;marina.soltermann@winnewisser.ch;Bestätigt;"14.01.2026 14:40";;"LZ folgt";;;;Restaurant;

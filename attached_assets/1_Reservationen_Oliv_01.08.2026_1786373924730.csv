@@ -1,0 +1,296 @@
+﻿Restaurant;Res.Nr.;Personen;Zeit;Datum;Firma;Vorname;Nachname;Mobile;E-Mail;Status;"reserviert am";Kommentar;Notiz;Tisch;Auswahl;Gästeinformationen;Raum;Bereich
+"Oliv Restaurant & Bar";25310;2;12:30:00;01.08.2026;;Samira;Imboden;0041793267885;samira.im@hotmail.com;Abgeschlossen;"29.07.2026 10:08";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25362;6;13:15:00;01.08.2026;;Iwan;Jenny;0041793607279;iwanjenny@gmx.ch;Abgeschlossen;"01.08.2026 10:08";"1 Kind mit Rollstuhl…dieses wird nicht essen. Plus 5 Erwachsene. Am liebsten draussen, in einer Ecke wegen dem Kind. MFG";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25367;2;14:45:00;01.08.2026;;Vanessa;Peise;0041795052846;peise.vanessa@gmail.com;"Nicht beantwortet";"01.08.2026 14:22";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25364;4;18:00:00;01.08.2026;;;Gochman;0041793382603;;Abgeschlossen;"01.08.2026 12:15";;;"128, 129";;;Terrasse;Terrasse
+"Oliv Restaurant & Bar";25359;3;19:00:00;01.08.2026;;Leana;Zeller;0041797248147;leana.zeller@gmail.com;Abgeschlossen;"31.07.2026 20:05";;;"121, 122";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25322;2;19:15:00;01.08.2026;;"Gian Simo";Gunzinger;0041763056649;gian.gunzinger@gmail.com;Storniert;"30.07.2026 09:30";"Guten Tag Ich würde gerne einen Tisch draussen auf der Terrasse reservieren. Besten Dank für Ihre Bemühungen.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25372;5;19:15:00;01.08.2026;;Remo;Jäger;0041797992660;remo-jaeger@hotmail.de;Abgeschlossen;"01.08.2026 18:31";;;"104, 103";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25316;2;19:30:00;01.08.2026;;Moritz;Aebischer;0041797647143;;Storniert;"29.07.2026 13:17";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25358;4;19:45:00;01.08.2026;;Nicolas;Mengis;0041794226227;n.mengis@bluewim.ch;Storniert;"31.07.2026 20:02";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25330;5;20:00:00;01.08.2026;;Daria;Candan;0041786618218;daria.candan1305@gmail.com;Abgeschlossen;"30.07.2026 16:09";"Tisch auf der Terrasse.
+Danke";;"135, 136";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25353;4;20:00:00;01.08.2026;;Marc;Hämmerli;0041774115161;marc.haemmerli@gmx.net;Abgeschlossen;"31.07.2026 18:14";"Gerne bei gutem Wetter draussen.";;"106, 107";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25365;2;20:00:00;01.08.2026;;Kenza;Laraki;0041778098755;;Abgeschlossen;"01.08.2026 13:33";;;120;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25366;2;20:00:00;01.08.2026;;Noa;Kästli;0041775058394;kaestlinoa@gmail.com;Abgeschlossen;"01.08.2026 13:39";;;114;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25373;4;20:00:00;01.08.2026;;;Marzano;;;Abgeschlossen;"01.08.2026 18:48";;;"116, 117";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25346;2;20:15:00;01.08.2026;;Kaja;Sommer;0041762613881;Kajaluisa@gmx.ch;Abgeschlossen;"31.07.2026 14:23";;;105;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25369;3;20:30:00;01.08.2026;;Eva;"Dos Santos";0041787200259;eva.dossantos@bluewin.ch;Abgeschlossen;"01.08.2026 16:13";"Draussen wenn es möglich ist.";;"126, 127";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25374;3;21:00:00;01.08.2026;;;NOEMI;;;Abgeschlossen;"01.08.2026 20:41";;;"131, 132";;;Terrasse;Terrasse
+"Oliv Restaurant & Bar";25166;3;12:00:00;02.08.2026;;Suhiab;Hassan;0041795969953;ch-lifestyle@tengroup.com;Abgeschlossen;"20.07.2026 18:21";"1 Person ist pescatariar";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25324;4;12:00:00;02.08.2026;;Pierre;Töndury;0041788882020;pierre@toendury.net;Abgeschlossen;"30.07.2026 11:17";"Bitte ruhiger Tisch, danke!";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25263;3;12:15:00;02.08.2026;;Sarah;Tran;0041794870710;sarah.tran@gmx.ch;Abgeschlossen;"26.07.2026 13:33";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25375;3;15:00:00;02.08.2026;;Denis;Lunin;0041799325566;dlunin@gmail.com;Abgeschlossen;"01.08.2026 22:59";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25382;2;17:00:00;02.08.2026;;;Alici;;;Abgeschlossen;"02.08.2026 16:38";;draussen;129;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25380;2;17:15:00;02.08.2026;;Vivien;Faes;0041774832923;faesvivien479@gmail.com;Abgeschlossen;"02.08.2026 14:38";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25371;4;18:00:00;02.08.2026;;Erik;Grass;0041764011659;;Abgeschlossen;"01.08.2026 18:02";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25378;2;18:00:00;02.08.2026;;Osvaldo;Moffa;0041792960545;osvaldo.moffa@bluewin.ch;Abgeschlossen;"02.08.2026 09:58";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25381;3;18:00:00;02.08.2026;;;Haldimann;;;Abgeschlossen;"02.08.2026 16:18";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25370;5;18:30:00;02.08.2026;;;Eros;;;Abgeschlossen;"01.08.2026 16:55";;"plus kind, draussen";;;;Terrasse;
+"Oliv Restaurant & Bar";25368;5;19:30:00;02.08.2026;;Christa;Steiner;0041763490435;melzani@gmx.ch;Abgeschlossen;"01.08.2026 14:58";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25379;4;19:30:00;02.08.2026;;Noemi;Grünig;0041768232926;noemi.gruenig@gmail.com;Abgeschlossen;"02.08.2026 10:22";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24825;4;20:00:00;02.08.2026;;Jessica;Chaintreuil;0013109918061;jchaint@gmail.com;Abgeschlossen;"27.06.2026 16:30";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25385;2;20:45:00;02.08.2026;;Michal;Molcan;004916091924440;mishko8@gmail.com;Abgeschlossen;"02.08.2026 18:43";"Outside if possible";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25008;6;11:45:00;03.08.2026;;Marko;Zahnd;0041795276074;marko.zahnd@gmail.com;Abgeschlossen;"09.07.2026 10:04";;;38;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25265;5;11:45:00;03.08.2026;;Thomas;Müller;0041793031505;thomas.mueller@swissfibrenet.ch;Abgeschlossen;"26.07.2026 16:11";;;"120, 121, 122";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25343;2;12:00:00;03.08.2026;;Markus;Reber;0041791973666;jasmin.degenmann@swisscom.com;Abgeschlossen;"31.07.2026 10:30";;;22;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25390;3;12:00:00;03.08.2026;;;Ali;;;Abgeschlossen;"03.08.2026 11:42";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25191;2;12:30:00;03.08.2026;;Patrick;Flückiger;0041795574218;p.flueckiger@terravigna.ch;Abgeschlossen;"22.07.2026 13:39";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25275;2;18:00:00;03.08.2026;;Annika;Krienbühl;0041797331510;annika.krienbuehl@galenica.com;Abgeschlossen;"27.07.2026 08:24";;;119;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25384;2;18:00:00;03.08.2026;;Sirina;Weber;0041798247684;sirina.weber@gmail.com;Abgeschlossen;"02.08.2026 17:31";"Bitte auf der Terrasse, vielen Dank :)";;115;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25386;2;18:00:00;03.08.2026;;Jana;Riesen;0041797831227;jana.riesen@gmx.ch;Abgeschlossen;"02.08.2026 19:05";;;125;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25388;2;18:00:00;03.08.2026;;Gjanije;Ajgeraj;0041791560328;gjanije.ajgeraj@privera.ch;Abgeschlossen;"03.08.2026 08:07";"wenn möglich draussen";;134;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25392;2;18:15:00;03.08.2026;;Gresa;Selmani;0041767514219;gresaselmani00@gmail.com;Abgeschlossen;"03.08.2026 12:26";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25395;9;19:00:00;03.08.2026;;Lina;Wieland;0041775050444;lina.wieland@icloud.com;Abgeschlossen;"03.08.2026 15:30";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25398;3;19:30:00;03.08.2026;;Monica;Steiner;0041797538880;monica_steiner@gmx.ch;Abgeschlossen;"03.08.2026 18:40";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25396;2;12:00:00;04.08.2026;;Isabek;Schär;0041795197771;isabelschaer@gmail.com;Abgeschlossen;"03.08.2026 17:42";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25318;6;12:15:00;04.08.2026;;"Nadja Andrea";Tanner;0041795036338;nadja.tanner@livit.ch;Abgeschlossen;"29.07.2026 16:45";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25404;3;18:30:00;04.08.2026;;Rafael;Maichle;0041767012626;rafaelmaichle1@gmail.com;Abgeschlossen;"04.08.2026 11:55";"Gerne Draussen sitzen.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25409;2;18:30:00;04.08.2026;;Marie-Helene;Rarra;0041774220232;marierarra@googlemail.com;Abgeschlossen;"04.08.2026 17:42";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25410;2;18:30:00;04.08.2026;;Alain;Aubée;0041792706232;alain7777777@outlook.com;Abgeschlossen;"04.08.2026 17:50";;;21;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25412;2;18:30:00;04.08.2026;;Jana;Liechti;0041762619800;jana.liechti@icloud.com;Abgeschlossen;"04.08.2026 17:59";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25208;2;18:45:00;04.08.2026;;Jasmin;Brenzikofer;0041763090875;j.brenzikofer@icloud.com;Abgeschlossen;"23.07.2026 15:47";;;15;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25411;2;18:45:00;04.08.2026;;Martin;Zwahlen;0041794209132;;Abgeschlossen;"04.08.2026 17:58";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25394;2;19:15:00;04.08.2026;;Antonia;Mühlemann;0041794208239;antonia.muehlemann@bluewin.ch;Abgeschlossen;"03.08.2026 14:01";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25383;2;19:30:00;04.08.2026;;Céline;Trachsel;0041765631861;cece.1@gmx.ch;Abgeschlossen;"02.08.2026 16:48";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25393;7;19:30:00;04.08.2026;;Kira;Brumec;0041788214485;kira.brumec@omega.ch;Abgeschlossen;"03.08.2026 12:34";"OMEGA Bern Team Essen, bitte schöne Tisch draussen beim guten Wetter. Wird auf Rechnung bezahlt.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25397;5;19:30:00;04.08.2026;;Sara;Hobi;0041797073454;Hofzurschmitte3454@gmail.com;Abgeschlossen;"03.08.2026 18:18";"Kind (Lena) Geburtstag wird 11 Jahre";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25399;5;19:30:00;04.08.2026;;Noa;Vazquez;0041787304960;noavazquez04@gmail.com;Abgeschlossen;"03.08.2026 19:20";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25414;8;19:30:00;04.08.2026;;;Milad;;;Abgeschlossen;"04.08.2026 19:07";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25416;3;20:45:00;04.08.2026;;Kristin;Bina;0041782215747;kristin.bina@icloud.com;Abgeschlossen;"04.08.2026 20:07";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25272;2;21:45:00;04.08.2026;;Martina;Adinolfi;00393891581308;martina.adinolfiaurelio@gmail.com;Abgeschlossen;"26.07.2026 20:16";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25309;3;12:00:00;05.08.2026;;Shayanuda;Palaniyandy;0041791389614;shayanuda.palaniyandy@globetrotter.ch;Storniert;"29.07.2026 09:24";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25420;3;12:00:00;05.08.2026;;Rhiana;Rosser;0041791252533;rhianarosser@outlook.com;Abgeschlossen;"05.08.2026 08:38";"Gerne draussen";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25423;2;13:15:00;05.08.2026;;Kira;Zumstein;0041795324502;kira.zumstein@gmail.com;Abgeschlossen;"05.08.2026 12:22";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25363;4;18:00:00;05.08.2026;;Iris;Delaquis;0041792035286;iris@delaquis.net;Abgeschlossen;"01.08.2026 11:39";"Bitte Tisch drinnen reservieren";;12;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25422;11;18:00:00;05.08.2026;;Ribeiro;;0041787462990;;Abgeschlossen;"05.08.2026 10:21";;"Bitte draussen";"135, 136, 137, 138";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25424;3;18:00:00;05.08.2026;;Stephanie;Simon;0041796220377;steffi.simon@gmx.ch;Abgeschlossen;"05.08.2026 13:09";"Mit Gutschein";;"121, 122";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25425;2;18:00:00;05.08.2026;;Dylan;Hartmann;0041764043506;dylanhartmann2000@gmail.com;Abgeschlossen;"05.08.2026 13:18";;;129;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25405;3;18:30:00;05.08.2026;;Antoine;Martin;0041795043192;apvmartin@yahoo.com;Abgeschlossen;"04.08.2026 13:15";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25428;3;18:30:00;05.08.2026;;Esme;Zumstein;0041782353416;stargazerlily2026@proton.me;Abgeschlossen;"05.08.2026 17:00";"Wir freuen uns.
+Vielen Dank!";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25419;3;18:45:00;05.08.2026;;Russo;Gabriel;0041764071869;gabrielrusso51@gmail.com;Storniert;"05.08.2026 08:26";"Meine Mutter Hatt geburtstag, wenn möglich dekorieren";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25421;2;19:45:00;05.08.2026;;Patrick;Cupelin;0041796039571;patrick.cupelin@bluewin.ch;Abgeschlossen;"05.08.2026 08:50";"bitte schönen Tisch für ein romantisches Date mit meiner Lebenspartnerin. Merci :-)";;129;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25323;3;20:00:00;05.08.2026;;Aline;Spycher;0041798807175;aline.spycher@outlook.com;Abgeschlossen;"30.07.2026 10:37";"Wir feiern einen Geburtstag, wäre es möglich den Tisch dezent/ schlicht zu dekorieren.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25427;10;21:15:00;05.08.2026;;Stefan;Wigger;0041797862127;info@stefan-wigger.ch;Storniert;"05.08.2026 15:59";"Gerne draussen wenn möglich";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25171;3;11:45:00;06.08.2026;;Raphaela;Fichtinger;0041794793929;r.fichtinger@icloud.com;Abgeschlossen;"21.07.2026 07:08";;;12;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25418;2;12:00:00;06.08.2026;;Dario;Schaller;0041796763441;dario.schaller@hotmail.com;Abgeschlossen;"05.08.2026 08:19";;;114;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25433;2;12:00:00;06.08.2026;;Philippe;Senn;0041788092273;philippe.senn@gmx.ch;Abgeschlossen;"06.08.2026 09:49";;;16;;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25431;2;12:45:00;06.08.2026;;Leana;Jungen;0041792806828;leana.jungen@outlook.com;Abgeschlossen;"06.08.2026 08:02";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25400;4;18:15:00;06.08.2026;;Mike;Hebeisen;0041798223500;m.hebeisen@gmail.com;Abgeschlossen;"04.08.2026 07:44";"Bei schönem Wetter gerne draussen, sofern möglich. Vielen Dank - wir freuen uns.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25341;4;18:30:00;06.08.2026;;Alina;Durtschi;0041798881938;du.alina@gmx.de;Abgeschlossen;"31.07.2026 08:52";"bitte einen schönen Tisch in einem Ecken, wir feiern Geburtstag, merciii";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25434;2;18:30:00;06.08.2026;;Lara;Moser;0041791055716;laerimo07@gmail.com;Abgeschlossen;"06.08.2026 11:02";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25429;4;19:00:00;06.08.2026;;;Mendim;;;Abgeschlossen;"05.08.2026 18:40";;draussen;;;;Terrasse;
+"Oliv Restaurant & Bar";25441;2;19:00:00;06.08.2026;;Isabelle;Bachor;0041792399729;isabelle.bachor@gmx.de;Abgeschlossen;"06.08.2026 16:19";"Bitte draussen";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25443;3;19:00:00;06.08.2026;;;Sigfrid;;;Abgeschlossen;"06.08.2026 18:26";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25387;3;19:15:00;06.08.2026;;Daniel;Blatter;0041797476740;blatterd@gmail.com;Abgeschlossen;"02.08.2026 20:56";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25432;5;19:30:00;06.08.2026;;Justyna;Lazinka;0041795702611;jlazinka@hotmail.com;Abgeschlossen;"06.08.2026 09:09";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25444;2;19:45:00;06.08.2026;;Herwin;Dängeli;0041794560424;w10.5.2@hotmail.com;Abgeschlossen;"06.08.2026 18:49";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25442;2;12:00:00;07.08.2026;;Diellza;Morava;0041765771714;diellza.morava@valiant.ch;Abgeschlossen;"06.08.2026 16:24";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25452;2;12:15:00;07.08.2026;;;Pilip;;;Abgeschlossen;"07.08.2026 11:31";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25209;5;13:00:00;07.08.2026;;Sandra;Moroni;0041763880664;sandra.moroni@phnmsbern.ch;Abgeschlossen;"23.07.2026 16:19";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";16493;90;16:00:00;07.08.2026;BWD;Karin;Greischberger;;;Storniert;"08.09.2025 15:04";;"prov. LZ folgt /17:00-18:00 Apero
+2 x Band Einsatz
+18:00-20:00";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25457;1;18:00:00;07.08.2026;;Laura;Huwyler;0041792864166;laura-huwyler@bluewin.ch;Abgeschlossen;"07.08.2026 15:31";"Sitzplatz draussen";;114;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25296;6;18:30:00;07.08.2026;;Alena;Gasser;0041798594861;agasser@belponline.ch;Abgeschlossen;"28.07.2026 12:57";;;"120, 121, 122";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25447;2;18:45:00;07.08.2026;;Selini;Tsimachidis;0041794810199;t.selini@gmx.ch;Abgeschlossen;"06.08.2026 20:27";"Falls möglich, draussen am Rand";;134;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25454;2;18:45:00;07.08.2026;;thalita;bühler;0041799034180;thalita.buehler@outlook.de;Abgeschlossen;"07.08.2026 13:40";;;119;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25458;2;18:45:00;07.08.2026;;Raphael;Müller;0041797000600;sf@printmyshirt.ch;Abgeschlossen;"07.08.2026 16:44";"Oben im Restaurant mit kleinem Hund";;129;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25417;10;19:00:00;07.08.2026;;Erika;Walther;0041798562513;walther.erika@bluewin.ch;Abgeschlossen;"04.08.2026 20:52";"Wenn möglich einen Tisch am Schatten draussen.";;"135, 136, 137, 138";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25435;3;19:00:00;07.08.2026;;Alexandra;Marti;0041795105201;marti.alexandra90@gmail.com;Abgeschlossen;"06.08.2026 11:06";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25453;4;19:00:00;07.08.2026;;Christa;Fanger;0041798318360;christazenga@gmail.com;Abgeschlossen;"07.08.2026 11:44";;;"126, 127";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25407;2;19:15:00;07.08.2026;;"Nils Lüdi";;0041765421218;;Abgeschlossen;"04.08.2026 15:53";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25438;2;19:30:00;07.08.2026;;Manuel;Meer;0041782544160;manuel.meer04@gmail.com;Abgeschlossen;"06.08.2026 13:32";"Wir möchten draussen sitzen, wenns möglich ist.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25455;2;20:00:00;07.08.2026;;omar;Hussein;0041763367231;ouking@hotmail.de;Abgeschlossen;"07.08.2026 14:02";"Draussen. danke!";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25459;3;20:00:00;07.08.2026;;;Nikllas;;;Abgeschlossen;"07.08.2026 17:53";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25460;2;20:00:00;07.08.2026;;Adonis;Raymond;0041797796681;adonisraymond@hotmail.com;Abgeschlossen;"07.08.2026 18:52";"Tisch draussen.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25406;1;21:00:00;07.08.2026;;;Walk-In;;;Abgeschlossen;"04.08.2026 15:32";;Amadeo;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23139;16;11:00:00;08.08.2026;;Corinne;George;;corinne.george@gmx.ch;Abgeschlossen;"13.04.2026 15:51";;;"4, 9, 8, 6, 7, 5, 10";;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25376;5;11:30:00;08.08.2026;;Fanny;Plattner;0041798941005;fanny.plattner@gmail.com;Storniert;"01.08.2026 23:23";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25377;10;12:00:00;08.08.2026;;Jeiflyn;Fichter;0033634092910;jeiflyn@yahoo.com;Abgeschlossen;"02.08.2026 08:01";"Plus 1 high chair for a baby please";;"29, 30, 31, 32, 33";;;"Restaurant & Bar";Restaurant
+"Oliv Restaurant & Bar";25469;3;17:00:00;08.08.2026;;Bettina;Kandé;0041788091800;bkande@bluewin.ch;Abgeschlossen;"08.08.2026 14:50";;;"104, 103";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25463;3;18:00:00;08.08.2026;;Noé;Thüler;0041793079805;thuelernoe@gmail.com;Abgeschlossen;"08.08.2026 09:23";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25450;2;18:45:00;08.08.2026;;Marc;Naegeli;0041765129319;marc.nageli@gmail.com;Abgeschlossen;"07.08.2026 11:07";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25461;2;19:00:00;08.08.2026;;Luana;Testa;0041797777124;zoe.sybesma@icloud.com;Abgeschlossen;"07.08.2026 19:25";"wenn möglich draussen";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25472;2;19:00:00;08.08.2026;;Noah;Hediger;0041774311144;hedigernisha@gmail.com;Abgeschlossen;"08.08.2026 16:05";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25475;2;19:00:00;08.08.2026;;Philippe;Millioud;0041794872772;phil.millioud@bluewin.ch;Abgeschlossen;"08.08.2026 17:24";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25446;2;19:15:00;08.08.2026;;Rosa;Zbinden;0041795749545;rosa.zbinden@outlook.com;Abgeschlossen;"06.08.2026 20:11";;;120;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25467;4;19:30:00;08.08.2026;;;sofia;0041764069467;;Abgeschlossen;"08.08.2026 11:55";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25470;3;19:30:00;08.08.2026;;;Nik;00447710424163;;Abgeschlossen;"08.08.2026 15:27";;drinnen;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25474;5;19:45:00;08.08.2026;;Ruslan;Badretdinov;0041782177637;bdrtdnv@gmail.com;Abgeschlossen;"08.08.2026 17:22";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25468;4;20:00:00;08.08.2026;;Yara;Niederl;0041767616040;yara.niederl@gmail.com;Abgeschlossen;"08.08.2026 13:20";;;"112, 120";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25473;2;20:00:00;08.08.2026;;Lianne;Richaud;0041774908175;liannerichaud@bluewin.ch;Abgeschlossen;"08.08.2026 16:53";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25479;4;20:30:00;08.08.2026;;Leandro;Blanco;0041782656513;blancoleandro2015@gmail.com;Abgeschlossen;"08.08.2026 19:13";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25478;3;21:00:00;08.08.2026;;Laurin;Studer;0041775236609;laurin.studer@icloud.com;Abgeschlossen;"08.08.2026 18:23";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25448;3;11:30:00;09.08.2026;;Nicole;Kunz;0041797384053;nicolepkunz@gmail.com;Abgeschlossen;"06.08.2026 22:04";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25477;5;11:30:00;09.08.2026;;Baanuja;Rajakulendran;0041791797498;brajakulendran@gmail.com;Abgeschlossen;"08.08.2026 18:05";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25445;4;12:00:00;09.08.2026;;Niko;Barua;0041792426944;;Abgeschlossen;"06.08.2026 20:04";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25485;7;17:30:00;09.08.2026;;Christine;Barth;0041786383776;mail@christine-barth.ch;Bestätigt;"09.08.2026 12:21";;;"136, 137, 138";;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25256;4;18:00:00;09.08.2026;;Cedric;Beer;0041774960360;cedricbeer@outlook.com;Bestätigt;"25.07.2026 21:52";;;112;;;"Restaurant & Bar";Terrasse
+"Oliv Restaurant & Bar";25486;4;18:30:00;09.08.2026;;;Nefeer;0041792052106;;Bestätigt;"09.08.2026 13:11";;;"106, 107";;;Terrasse;Terrasse
+"Oliv Restaurant & Bar";25481;2;18:45:00;09.08.2026;;Laszlo;Szatmari;0041793619623;l.szatmari09@gmail.com;Bestätigt;"08.08.2026 21:00";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25487;5;19:00:00;09.08.2026;;Erick;Cabral;0041786641717;erickcabral3@hotmail.com;Bestätigt;"09.08.2026 14:06";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25490;2;19:00:00;09.08.2026;;luca;valencia;0041768162404;Luca05@sunrise.ch;Bestätigt;"09.08.2026 17:05";date;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25489;2;19:15:00;09.08.2026;;Simon;Brand;0041787440285;simubrand@hotmail.com;Bestätigt;"09.08.2026 14:57";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25492;4;20:00:00;09.08.2026;;Barbara;;0041792435466;;Bestätigt;"09.08.2026 19:42";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25496;4;12:00:00;10.08.2026;;Wenzlinger;;0041774791542;;Bestätigt;"10.08.2026 10:54";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25403;3;13:30:00;10.08.2026;;Carol;Frey;0041793091989;carolfrey@bluewin.ch;Bestätigt;"04.08.2026 10:38";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25503;2;18:00:00;10.08.2026;;Tharanyah;Kathirgamu;0041794103247;k.tharanyah@hotmail.com;Bestätigt;"10.08.2026 16:06";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25495;4;18:30:00;10.08.2026;;Sude;Eraslan;0041789609603;sudeeraslan28@gmail.com;Bestätigt;"10.08.2026 10:37";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25476;3;19:00:00;10.08.2026;;Sandra;Oberli;0041794498838;sandraoberli2@hotmail.com;Bestätigt;"08.08.2026 18:02";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25504;2;19:00:00;10.08.2026;;Jan-Hendrik;Doppstadt;0041794282979;Jan-Hendrik.Doppstadt@roche.com;Bestätigt;"10.08.2026 16:09";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25498;6;20:00:00;10.08.2026;;;Walk-In;;;Bestätigt;"10.08.2026 13:03";;"Geburtstag t115";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25494;2;11:45:00;11.08.2026;;Christoph;Greiner;0041763961730;christoph.greiner@gmx.ch;Bestätigt;"10.08.2026 07:58";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25482;2;12:30:00;11.08.2026;;Sabrina-Valentina;Florea;0041762784507;sabrinutzasabry12@gmail.com;Bestätigt;"09.08.2026 09:45";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25500;19;15:45:00;11.08.2026;;Seraina;Meyer;0041799506151;;Bestätigt;"10.08.2026 13:55";;apero;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25501;4;18:30:00;11.08.2026;;Alex;Neukomm;0041774660552;alexneukomm@yahoo.com;Bestätigt;"10.08.2026 15:47";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25502;8;19:15:00;11.08.2026;;;Radosh;0041764000997;;Bestätigt;"10.08.2026 15:53";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25456;2;19:45:00;11.08.2026;;John;Kashef;0041764286425;1johnkashef@gmail.com;Bestätigt;"07.08.2026 15:06";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";22114;42;12:45:00;12.08.2026;Phoenix;Marion;Boillet;;;Bestätigt;"09.03.2026 12:36";;"Menu CHF 30.- per person
+Pizza menu of the week
+One scoop of ice cream with whipped cream
+One soft drink
+ 
+Allergies/Dietary requirements
+Koç Sara No pork
+Oymak Berfin No pork
+Python Yasmina No pork
+Baraty Khayrullah No pork
+Bakir Rümeysa No pork
+Gary-Bobo Mélissa Gluten free
+
+Per Rechnung wird bezahlt. Pharmacies Benu SA
+Formation
+Marion Boillet
+Waldeggstrasse 51
+3097 Liebefeld";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25012;2;19:00:00;12.08.2026;;Giana;Rohrbach;0041795817385;giana.r@bluemail.ch;Storniert;"09.07.2026 14:45";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25439;6;11:45:00;13.08.2026;;Damian;Fischer;0041765622060;damian.fischer@tamedia.ch;Bestätigt;"06.08.2026 15:17";"Danke für einen schönen Tisch - Wir freuen uns!";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25499;2;11:45:00;13.08.2026;;Martin;Ryter;0041795458779;martinryter@gmx.ch;Bestätigt;"10.08.2026 13:45";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25391;7;12:00:00;13.08.2026;;Nadja;Berger;0041797848219;n.berger@smartit.ch;Bestätigt;"03.08.2026 12:01";"bitte runder Tisch";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25402;2;12:00:00;13.08.2026;;Livia;Brahier;0041792782458;livia.brahier@suisse.ing;Bestätigt;"04.08.2026 10:32";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25493;2;18:15:00;13.08.2026;;"Cam Phuong";Jäger-Ho;0041762214545;nijaeger@epost.ch;Bestätigt;"09.08.2026 22:30";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25465;2;18:30:00;13.08.2026;;Sina;Hänni;0041799646401;shaenni0@gmail.com;Bestätigt;"08.08.2026 11:11";"Wenn möglich drinnen";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";19915;70;19:30:00;13.08.2026;"Kunstmuseum Bern";Nadja;Imhof;;nadja.imhof@kunstmuseumbern.ch;Storniert;"23.12.2025 16:31";;"40 - 70 PAX - EG- Kunstmuseum Bern - provisorisch Kontakt mit Joana";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25123;6;20:00:00;13.08.2026;;Katja;Carrillo;0041792631765;katja.carrillo@gmail.com;Bestätigt;"17.07.2026 09:06";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25480;8;19:15:00;14.08.2026;;Etienne;Feuz;0041799618877;eti.f@hotmail.com;Bestätigt;"08.08.2026 20:04";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25361;30;20:00:00;14.08.2026;;Aladino;Burgene;0041791220479;;Bestätigt;"31.07.2026 20:59";;"Geburtstag wenn möglich draussen / Mendim";;;;Terrasse;
+"Oliv Restaurant & Bar";25471;8;12:00:00;15.08.2026;;Irina;Mattenberger;0041796741994;irinasalzmann@gmail.com;Bestätigt;"08.08.2026 16:04";"7 Personen sind Rollstuhlfahrer";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25436;4;12:30:00;15.08.2026;;Cornelia;Piller;0041774398878;piller@vsao.ch;Bestätigt;"06.08.2026 11:56";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25430;4;19:00:00;15.08.2026;;Janine;Wyss;0041795103661;tschaniin@hotmail.com;Bestätigt;"05.08.2026 19:57";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25484;3;19:00:00;15.08.2026;;Lina;Clerc;0041775230473;clerclina@hotmail.com;Bestätigt;"09.08.2026 11:50";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25491;4;18:00:00;16.08.2026;;Christoph;Felder;0041797546551;;Bestätigt;"09.08.2026 19:09";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25497;11;11:30:00;17.08.2026;;Wühtrich;;0041796971722;;Bestätigt;"10.08.2026 10:55";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24854;2;12:00:00;18.08.2026;;Cristina;Carone;0041763810441;info@revistoren.ch;Bestätigt;"30.06.2026 10:39";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25095;6;12:00:00;18.08.2026;;Antoine;Martin;0041794876276;antoine.martin@snb.ch;Bestätigt;"15.07.2026 10:04";"Bitte einen ruhigen Tisch";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25415;2;12:00:00;18.08.2026;;Mentor;Latifi;0041797505500;mentifi@gmail.com;Bestätigt;"04.08.2026 19:49";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25466;2;12:15:00;18.08.2026;;Stefan;Blaser;0041797193779;blaserstefan@yahoo.de;Bestätigt;"08.08.2026 11:26";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25505;2;17:30:00;18.08.2026;;Manuela;Labreuche;0041792116101;manuela@labreuche.ch;Bestätigt;"10.08.2026 16:32";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25437;2;18:00:00;18.08.2026;;Jasmin;Brenzikofer;0041763090875;jasmin.brenzikofer@icloud.com;Bestätigt;"06.08.2026 12:24";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23554;7;18:30:00;18.08.2026;;Marius;Brülhart;0041787112396;mbrulhrt@yahoo.com;Bestätigt;"29.04.2026 10:40";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24998;2;11:30:00;19.08.2026;;Martin;Schertenleib;0041793783780;martin.schertenleib@valiant.ch;Bestätigt;"08.07.2026 14:41";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24986;14;12:00:00;19.08.2026;;Daniela;Herger;;daniela.herger@hslu.ch;Bestätigt;"07.07.2026 17:34";;"Werden a la carte bestellen.
+
+Per Rechnung an: 
+Hochschule Luzern
+Rechnungswesen
+Postfach 2968
+Werftestrasse 4
+6002 Luzern
+ 
+Daniela Herger
+daniela.herger@hslu.ch";;;;Terrasse;
+"Oliv Restaurant & Bar";25311;8;12:15:00;19.08.2026;;Esther;Luttropp;0041782004497;e.luttropp@bfu.ch;Bestätigt;"29.07.2026 10:42";"Bitte Tisch für Herrn Cavegn, BFU reservieren";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24999;15;18:00:00;19.08.2026;;;Roux;0041796782927;;Bestätigt;"08.07.2026 15:33";;"Geschäftsessen a la carte
+Bei schönem Wetter draussen
+(Isabelle)";;;;Terrasse;
+"Oliv Restaurant & Bar";25289;17;18:00:00;19.08.2026;;Paola;Luciani;0041763466284;paola.luciani@unibe.ch;Bestätigt;"28.07.2026 10:18";;Prov.;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25299;2;18:15:00;19.08.2026;;Sabrina;Grossenbacher;0041791244073;sabrina.grossenbacher@bern.ch;Bestätigt;"28.07.2026 16:31";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25329;7;12:00:00;20.08.2026;;Ena;Munkovic;0041767104120;e.munkovic@careerplus.ch;Bestätigt;"30.07.2026 14:44";"Wir sind Arbeitskollegen und unser Chef hat etwas zu Feiern Könnt ihr ihm eventuell etwas schönes Vorbereiten :)";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25044;3;18:00:00;22.08.2026;;Kristina;Adler;0041786264801;;Bestätigt;"11.07.2026 21:59";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25295;6;20:00:00;22.08.2026;;Jennifer;Ligeti;0041793686140;jennifer.bisig@hotmail.com;Bestätigt;"28.07.2026 12:15";"Bei schönen Wetter wenn möglich ein Tisch im Aussenbereich";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25483;10;20:00:00;22.08.2026;;Joya;Bohnenblust;0041789200257;bojoya@gmail.com;Bestätigt;"09.08.2026 10:22";Geburtstagsfeier;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24539;6;12:00:00;23.08.2026;;Nevis;Hänzi;0041798972367;nevis.haenzi@gmail.com;Bestätigt;"09.06.2026 19:49";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25039;2;18:30:00;23.08.2026;;Arie;"de Groot";0031653775625;arie@embedit.nl;Bestätigt;"11.07.2026 15:28";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23956;1;19:45:00;23.08.2026;;Andreas;Weiss;00491728135815;bayweiss@hotmail.com;Bestätigt;"14.05.2026 17:20";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24984;14;12:30:00;25.08.2026;IPT-Stiftung;Lise;Delaloye;;saskia.raboud@fondation-ipt.ch;Bestätigt;"07.07.2026 14:08";;"Haben wirklich nur 1 Stunde für alles! Kein Dessert, keine Vorspeise. Werden sehr wahrscheinlich das Mittagsmenu nehmen.";;;;Terrasse;
+"Oliv Restaurant & Bar";24917;3;18:45:00;25.08.2026;;Gisela;Wartenweiler;0041798106031;gwa@gmx.ch;Bestätigt;"03.07.2026 09:48";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24899;2;11:30:00;26.08.2026;;Stefan;Regli;0041768393457;leitungms@post.ch;Bestätigt;"02.07.2026 09:08";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25339;4;12:00:00;26.08.2026;;Fabienne;Rebsamen;0041799482665;fabienne.rebsamen@bdo.ch;Bestätigt;"31.07.2026 07:29";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24993;12;19:00:00;26.08.2026;Diaconis;Ursula;Spahr;;ursula.spahr@diaconis.ch;Storniert;"08.07.2026 11:38";;"Bei schönem Wetter draussen.";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25333;2;19:00:00;26.08.2026;;Christian;Mader;0041793531275;c.mader@wirzholzbau.ch;Bestätigt;"30.07.2026 18:10";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24775;20;19:30:00;27.08.2026;;Weber;Adrian;0041789392666;;Bestätigt;"24.06.2026 11:19";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25206;2;18:00:00;29.08.2026;;Michèle;Fischer;0041774159770;michele.fischer@ggs.ch;Bestätigt;"23.07.2026 13:55";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24597;18;18:30:00;29.08.2026;;Kathrin;Kreienbühl;0041792890209;;Bestätigt;"12.06.2026 14:57";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23574;8;19:45:00;29.08.2026;;Géraldine;Hêche;0041788087481;gheche59@gmail.com;Bestätigt;"30.04.2026 06:43";"-Junggesellenabschied-
+—> Zeit: 19:45/20:00  würden wir kommen.
+Hoffe das passt für Sie.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24337;2;13:30:00;30.08.2026;;Carly;Gartner;0017809208515;carly.lund@me.com;Bestätigt;"01.06.2026 01:48";"We look forward to seeing you. 😊";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25401;8;18:15:00;31.08.2026;;;Cohnen;;;Bestätigt;"04.08.2026 10:30";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25389;9;18:00:00;01.09.2026;;Beat;Döös;0041792048737;beat.doeoes@swisscom.com;Bestätigt;"03.08.2026 10:12";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25449;8;18:45:00;01.09.2026;;Manuela;Mazenauer;0041788751807;manuela_p76@hotmail.com;Bestätigt;"07.08.2026 09:36";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24964;17;17:00:00;02.09.2026;;Duray;Khan;;duray.khan@bucherhydraulics.com;Bestätigt;"06.07.2026 16:05";;14-17Pax;;;;Terrasse;
+"Oliv Restaurant & Bar";25280;5;18:15:00;04.09.2026;;Thomas;Waehli;0041799156235;thomas.waehli@adnovum.ch;Bestätigt;"27.07.2026 10:38";"Bei schönem Wetter gerne draussen. vielen Dank.";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23585;45;18:30:00;04.09.2026;;christa;"van der Veer";0041795135660;christa.vanderveer@gmail.com;Storniert;"30.04.2026 16:08";;"Prov. Angebot UG Exklusiv Mindestkonsumation CHF 6K";;;;Bar;
+"Oliv Restaurant & Bar";25025;9;17:15:00;05.09.2026;;andrea;berchtold;0041799150295;andrea.bld22@gmail.com;Bestätigt;"10.07.2026 14:04";;"Polterabend 9 Frauen";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25440;17;22:15:00;05.09.2026;;Alisha;Baljoska;0041798887181;;Bestätigt;"06.08.2026 15:48";;Trinken;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25464;2;12:15:00;07.09.2026;;Christoph;Würgler;0041787482625;christoph.wuergler@equilas.ch;Bestätigt;"08.08.2026 10:14";"Tisch 28, sofern es draussen zu kühl wäre. Vielen Dank. Bis bald. Christoph";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";17800;9;12:30:00;09.09.2026;;Markus;Balmer;0041795528551;balmer@edk.ch;Bestätigt;"27.10.2025 11:36";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23584;27;13:00:00;09.09.2026;"AEW Energie";liam;Isler;;liam.isler@aew.ch;Bestätigt;"30.04.2026 15:49";;"Prov. Lehrlingsessen";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25426;17;11:30:00;10.09.2026;;Helena;Arabin;0041787162344;;Bestätigt;"05.08.2026 14:05";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24555;40;19:15:00;12.09.2026;"Tscharnergut Apotheke";Soucaina;hobballah;;info@tscharnergut-apotheke.ch;Bestätigt;"10.06.2026 14:37";;"LZ Folgt";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24997;22;19:30:00;12.09.2026;;Vanessa;Probst;;sinja.kipfer@gmail.com;Bestätigt;"08.07.2026 14:38";;"a la Carte bis jetzt!";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24080;7;19:00:00;13.09.2026;"AO Foundation";Denia;Schönbächler;;denia.schoenbaechler@aofoundation.org;Bestätigt;"19.05.2026 13:16";;"Rechnungsadresse: 
+
+AO Foundation I GES EMEA, Clavadelerstrasse 1, 7270 Davos Platz, Schweiz";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25413;12;19:15:00;14.09.2026;;Leonie;Birri;;leonie.birri@bernerbauern.ch;Bestätigt;"04.08.2026 18:17";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25331;18;18:00:00;15.09.2026;Sanitas;Sina;Hänzi;;sina.haenzi@sanitas.com;Bestätigt;"30.07.2026 17:18";;"Gerne teile ich Ihnen noch die Rechnungsadresse mit:
+ 
+Sanitas Management AG
+Länggassstrasse 7
+3001 Bern
+
+sina.haenzi@sanitas.com";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24666;30;19:00:00;17.09.2026;"Wenger Plattner";Cäcilia;Brand;;caecilia.brand@wenger-plattner.ch;Storniert;"16.06.2026 14:24";;"Prov. Zusage, LZ fehlt";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25408;6;19:15:00;18.09.2026;;Samira;Bläsing;0041764239862;samira.blaesing@innova.ch;Bestätigt;"04.08.2026 16:37";"Wir freuen uns :-)";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25177;2;20:00:00;20.09.2026;;Kim;Lauper;0041795673994;kim_lauper@yahoo.de;Bestätigt;"21.07.2026 09:59";"Wir haben Hochzeitstag wenn möglich romantischer oder ruhiger Tisch Tisch";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";16810;60;18:00:00;29.09.2026;Globetrotter;Marchesi;Lukas;;lukas.marchesi@globetrotter.ch;Bestätigt;"22.09.2025 18:00";;"LZ folgt";;;;Bar;
+"Oliv Restaurant & Bar";25231;2;12:00:00;30.09.2026;Huawei;Manuel;Kuffer;0041766565840;manuel.kueffer@gmail.com;Bestätigt;"24.07.2026 18:13";;;;;;Terrasse;
+"Oliv Restaurant & Bar";25011;100;18:00:00;07.10.2026;;;Walk-In;;;Bestätigt;"09.07.2026 13:24";;Rexha;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23210;85;18:30:00;08.10.2026;Penergetic;barbara;meier;;b.meier@penergetic.com;Bestätigt;"15.04.2026 15:12";;"Prov. 85 Personen
+
+Budget pro Person 80.--";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24965;100;18:00:00;15.10.2026;;Rexha;Vaudoise;;;Bestätigt;"06.07.2026 16:25";;;;;;Terrasse;
+"Oliv Restaurant & Bar";24962;9;17:30:00;16.10.2026;;Nadine;Roth;0041797724952;nadine.roth@hotmail.com;Bestätigt;"06.07.2026 13:35";"Reservierung Lounge";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24961;9;18:30:00;16.10.2026;;Nadine;Roth;0041797724952;nadine.roth@hotmail.com;Bestätigt;"06.07.2026 13:33";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23364;8;12:00:00;20.10.2026;;Ruth;Gambon;;;Bestätigt;"21.04.2026 14:18";;"6-8 Personen
+Wunsch Tisch 38";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25264;8;19:45:00;23.10.2026;;Sandra;Suter;0041794330408;sandrasuter@hotmail.com;Bestätigt;"26.07.2026 15:48";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24919;3;12:00:00;27.10.2026;;Björn;Siegenthaler;0041797539850;bjoern.siegenthaler@goldbachneo.com;Bestätigt;"03.07.2026 11:04";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24568;7;12:15:00;28.10.2026;;Regionalgefängnis;Bern;0041794521870;karin.hopp@be.ch;Bestätigt;"11.06.2026 08:58";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";19916;50;19:30:00;29.10.2026;"Kunstmuseum Bern";Nadja;Imhof;;nadja.imhof@kunstmuseumbern.ch;Storniert;"23.12.2025 16:33";;"ca 50 PAX - EG - Kunstmuseum Bern - Kontakt mit Joana / nicht Exklusiv";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25451;2;11:30:00;02.11.2026;;Alexandra;Rohrer;0041796672785;alexandra.rohrer@vtg.admin.ch;Bestätigt;"07.08.2026 11:17";"Ruhigen Mittag-Tisch für 2 PAX";;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";16521;90;18:00:00;04.11.2026;Post;Jovaide;Kaufmann;;;Bestätigt;"09.09.2025 18:32";;"prov. LZ folgt";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25273;4;19:45:00;06.11.2026;;;trachsel;0041792032023;;Bestätigt;"26.07.2026 20:23";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";23811;10;12:00:00;09.11.2026;;Karin;Bachem;0041793578116;karin.bachem@valiant.ch;Bestätigt;"08.05.2026 13:30";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25488;1;18:00:00;11.11.2026;;Sarah;Dallmaier;0041795505353;;Bestätigt;"09.08.2026 14:31";;"UG 1 exklusiv";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";22608;19;11:00:00;23.11.2026;;künzle;bernadette;0041799040061;praesidentin@fgniederwil.ch;Bestätigt;"24.03.2026 11:33";;"Prov. EG max. 19 Pax";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25109;150;17:00:00;23.11.2026;;;Walk-In;;;Bestätigt;"16.07.2026 13:27";;"Service7000 & BTS
+Party";;;;Bar;
+"Oliv Restaurant & Bar";23928;15;12:30:00;28.11.2026;;Marianne;Maurer;0041797120318;maurer_marianne@hotmail.com;Storniert;"13.05.2026 13:35";;"15-20pax T4 (13.05.26, t24 mit mann) klassenzusammenkunft (Mendim)";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";16700;100;17:00:00;04.12.2026;IB+;Viviane;Mifsud;;;Storniert;"17.09.2025 08:49";;"prov. LZ folgt Itten + Brechbühl AG";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";19526;80;18:00:00;04.12.2026;"KPMG AG";Marylai;Trinh;;marylaitrinh@kpmg.com;Bestätigt;"10.12.2025 16:50";;"prov. LZ folgt";220;;;Bar;Bar
+"Oliv Restaurant & Bar";20023;40;18:00:00;04.12.2026;;Nadja;Oester;;nadja.oester@sanacare.ch;Storniert;"27.12.2025 14:51";;"prov LZ folgt";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";21507;30;18:00:00;05.12.2026;;;Walk-In;;;Bestätigt;"17.02.2026 17:00";;"Sven Gubler (Mergim) PROV. U1";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24662;25;18:30:00;05.12.2026;;savo;hertig;0041793434517;savohertig@savo.ch;Bestätigt;"16.06.2026 14:00";;"LZ Menu noch offen.";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";22483;32;18:00:00;08.12.2026;SNF;angela;loder;;angela.loder@snf.ch;Bestätigt;"20.03.2026 12:35";;"Prov. Menu gesendet.
+
+Wollen für sich sein.";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25022;10;18:00:00;10.12.2026;"Alpen Pharma AG";weisen;ly;0041788472521;weisen.ly@alpenpharma.com;Bestätigt;"10.07.2026 11:42";;"LZ folgt oder a la carte";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";19700;160;18:00:00;11.12.2026;;Susanne;Furrer;0041786023883;susanne.furrer@insel.ch;Bestätigt;"17.12.2025 06:56";;"LZ folgt Exklusiv Dito 2024";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24820;16;19:00:00;12.12.2026;;;Justina;;;Bestätigt;"27.06.2026 15:05";;UG;;;Suki;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25089;6;12:15:00;15.12.2026;;Carsten;Bosse;0041766696970;carsten.bosse@gmx.ch;Bestätigt;"14.07.2026 19:58";;;;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";24665;60;18:00:00;17.12.2026;AK34;sofija;jakovljevic;;sofija.jakovljevic@ak34.ch;Bestätigt;"16.06.2026 14:18";;"Prov. Zusage";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";19825;20;12:00:00;19.12.2026;;Rainer;Willa;0041791946787;rainer.willa@gmx.ch;Bestätigt;"20.12.2025 18:00";;"Privatanlass im UG 20-30 PAX meldet sich im November für Details 12-16 Uhr";;;;"Restaurant & Bar";
+"Oliv Restaurant & Bar";25462;10;20:00:00;25.12.2026;;Stefan;Schärer;0041793704883;stefan.schaerer@bern.ch;Bestätigt;"07.08.2026 21:35";;;;;;"Restaurant & Bar";
