@@ -580,6 +580,232 @@ function ReportTable({
   );
 }
 
+/**
+ * Kompakte 2-Wochen-Tabelle der Wochenübersicht: zwei ISO-Wochen nebeneinander,
+ * je Woche Ist | Budget | Δ (Δ CHF gross, Δ% klein darunter). Feste Spalten-
+ * breiten (table-fixed), damit 2 Wochen × (Ist+Budget+Δ) auch im PDF-Hochformat
+ * sauber passen. Skeleton (Zeilen/Reihenfolge/Kinder) = NEUERE Woche (rowsB);
+ * die ältere Woche (rowsA) wird per Zeilen-ID zugeordnet — fehlende Zeilen
+ * bleiben leer (leer statt 0).
+ */
+export function ZweiWochenTable({ rowsA, rowsB, headerA, subA, headerB, subB, testid, onDrill }: {
+  rowsA: MrRow[] | null;
+  rowsB: MrRow[];
+  headerA: string; subA?: string | null;
+  headerB: string; subB?: string | null;
+  testid: string;
+  onDrill?: (rowId: string) => void;
+}) {
+  const byIdA = new Map<string, MrRow>();
+  for (const r of rowsA ?? []) if (r.type === 'data' && r.id) byIdA.set(r.id, r);
+  const childrenBy = new Map<string, MrRow[]>();
+  for (const r of rowsB) {
+    if (r.type === 'data' && r.childOf) {
+      const list = childrenBy.get(r.childOf) ?? [];
+      list.push(r);
+      childrenBy.set(r.childOf, list);
+    }
+  }
+  const mains = rowsB.filter(r => !(r.type === 'data' && r.childOf));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+
+  /** Wochen-Werte einer Zeile (null-Zeile = ganze Wochenspalte leer). */
+  const pickW = (row: MrRow | undefined) => row ? {
+    ist: row.week, budget: row.budget, devBudget: row.weekBudget, vj: row.vj,
+    istPax: row.weekPax, istShare: row.sharePct?.week ?? null,
+    pct: row.pctOfRevenue?.week ?? null,
+    wkq: row.wkqInline ? row.wkqInline.week : null,
+  } : null;
+
+  /** Die drei Zellen (Ist | Budget | Δ) einer Woche — Flags aus der Skeleton-Zeile. */
+  const wochenZellen = (skel: MrRow, src: MrRow | undefined, keyPrefix: string) => {
+    const p = pickW(src);
+    if (!p) {
+      return (
+        <>
+          <td className="px-2 py-1.5" />
+          <td className="px-2 py-1.5" />
+          <td className="px-2 py-1.5" />
+        </>
+      );
+    }
+    // Δ-Logik identisch zur Report-Tabelle (deltaPp / deltaVsVj / Standard).
+    let dev: number | null = null;
+    let inverted = !!skel.deltaInverted;
+    const devAbsBase = (skel.deltaVsVj || skel.sharePct) ? p.vj : p.devBudget;
+    const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
+    if (skel.deltaPp) {
+      dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
+      inverted = true;
+    } else if (skel.deltaVsVj || skel.sharePct) {
+      dev = p.ist !== null && p.vj !== null && p.vj > 0 ? ((p.ist - p.vj) / p.vj) * 100 : null;
+    } else {
+      dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
+        ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;
+    }
+    const devClass = dev === null ? undefined
+      : (inverted ? dev <= 0 : dev >= 0) ? 'text-emerald-600' : 'text-red-600';
+    const warnClass = skel.warnAbove != null && p.ist !== null && p.ist > skel.warnAbove
+      ? 'text-red-600 font-semibold' : undefined;
+    const tintClass = skel.tint === 'green' ? 'text-emerald-600 dark:text-emerald-400'
+      : skel.tint === 'red' ? 'text-red-600 dark:text-red-400' : undefined;
+    const wkqGut = p.wkq?.pct != null && p.wkq.ziel != null ? p.wkq.pct <= p.wkq.ziel : null;
+    return (
+      <>
+        <td className={cn('px-2 py-1.5 text-right tabular-nums', tintClass, warnClass)}
+          data-testid={`${keyPrefix}-ist-${skel.id}`}>
+          {fmtCell(p.ist, skel.fmt, p.istPax)}
+          {skel.sharePct && p.ist !== null && p.istShare !== null ? (
+            <span className="block text-[10px] font-normal text-muted-foreground">
+              {p.istShare.toFixed(1)} % {skel.shareHint ?? 'Anteil Gäste IN'}
+            </span>
+          ) : null}
+          {p.wkq && p.wkq.pct != null ? (
+            <span className={cn('block text-[10px] font-normal tabular-nums',
+              wkqGut ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+              WKQ {p.wkq.pct.toFixed(1)} %
+            </span>
+          ) : null}
+        </td>
+        <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground"
+          data-testid={`${keyPrefix}-budget-${skel.id}`}>
+          {fmtCell(p.budget, skel.fmt)}
+        </td>
+        {/* Δ kompakt: Hauptwert = absolute Differenz (CHF/PP), darunter klein Δ%. */}
+        <td className={cn('px-2 py-1.5 text-right tabular-nums text-xs', devClass)}
+          data-testid={`${keyPrefix}-delta-${skel.id}`}>
+          {skel.deltaPp
+            ? fmtDevPp(dev)
+            : skel.fmt === 'pct'
+              ? fmtDevPp(devAbs)
+              : devAbs === null ? '' : `${devAbs >= 0 ? '+' : '−'}${fmtCell(Math.abs(devAbs), skel.fmt) ?? ''}`}
+          {!skel.deltaPp && skel.fmt !== 'pct' && dev !== null ? (
+            <span className="block text-[9px] font-normal text-muted-foreground">
+              {fmtDev(dev)}{(skel.deltaVsVj || skel.sharePct) ? ' vs. VJ' : ''}
+            </span>
+          ) : null}
+        </td>
+      </>
+    );
+  };
+
+  const colCount = 7;
+  const wochenKopf = (label: string, sub?: string | null) => (
+    <>
+      <th className="px-2 py-2 text-right font-semibold" colSpan={3}>
+        {label}
+        {sub ? <span className="block normal-case font-normal">{sub}</span> : null}
+      </th>
+    </>
+  );
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
+      <table className="w-full table-fixed text-sm" data-testid={testid}>
+        <colgroup>
+          <col className="w-[200px]" />
+          <col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[84px]" />
+          <col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[84px]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="px-2 py-2 text-left font-semibold" rowSpan={2}>Kennzahl</th>
+            {wochenKopf(headerA, subA)}
+            {wochenKopf(headerB, subB)}
+          </tr>
+          <tr className="border-b bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th className="px-2 py-1 text-right font-semibold">Ist</th>
+            <th className="px-2 py-1 text-right font-semibold">Budget</th>
+            <th className="px-2 py-1 text-right font-semibold">Δ</th>
+            <th className="px-2 py-1 text-right font-semibold">Ist</th>
+            <th className="px-2 py-1 text-right font-semibold">Budget</th>
+            <th className="px-2 py-1 text-right font-semibold">Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {mains.map((row, i) => {
+            if (row.type === 'empty') {
+              return <tr key={`e${i}`}><td colSpan={colCount} className="h-3 bg-muted/20" /></tr>;
+            }
+            const children = row.id ? (childrenBy.get(row.id) ?? []) : [];
+            const isOpen = !!row.id && expanded.has(row.id);
+            const srcA = row.id ? byIdA.get(row.id) : undefined;
+            const parentTr = (
+              <tr
+                key={row.id ?? `d${i}`}
+                className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}
+                data-testid={`row2w-${row.id ?? i}`}
+              >
+                <td className="px-2 py-1.5">
+                  {children.length > 0 ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-left hover:underline"
+                      onClick={() => setExpanded(prev => {
+                        const next = new Set(prev);
+                        if (row.id) { if (next.has(row.id)) next.delete(row.id); else next.add(row.id); }
+                        return next;
+                      })}
+                      aria-expanded={isOpen}
+                      data-testid={`button-toggle2w-${row.id}`}
+                    >
+                      {isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                      {row.label}
+                    </button>
+                  ) : onDrill && row.id && DRILLABLE_ROW_IDS.has(row.id) ? (
+                    <button
+                      type="button"
+                      className="text-left hover:underline underline-offset-2 decoration-dotted"
+                      onClick={() => onDrill(row.id!)}
+                      data-testid={`button-drill2w-${row.id}`}
+                      title="Zugrunde liegende Reservationen anzeigen"
+                    >
+                      {row.label}
+                    </button>
+                  ) : row.label}
+                </td>
+                {wochenZellen(row, srcA, 'wa')}
+                {wochenZellen(row, row, 'wb')}
+              </tr>
+            );
+            if (children.length === 0 || !isOpen) return parentTr;
+            return (
+              <Fragment key={`g-${row.id}`}>
+                {parentTr}
+                {children.map(child => {
+                  const ca = child.id ? byIdA.get(child.id) : undefined;
+                  const cA = pickW(ca), cB = pickW(child);
+                  const kindZelle = (p: ReturnType<typeof pickW>, key: string) => (
+                    <Fragment key={key}>
+                      <td className="px-2 py-1 text-right tabular-nums text-xs">
+                        {p ? fmtCell(p.ist, child.fmt) : ''}
+                        {p && p.pct !== null && (
+                          <span className="ml-1 text-[10px] text-muted-foreground">· {p.pct.toFixed(1)} %</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right tabular-nums text-xs text-muted-foreground">
+                        {p ? fmtCell(p.budget, child.fmt) : ''}
+                      </td>
+                      <td className="px-2 py-1" />
+                    </Fragment>
+                  );
+                  return (
+                    <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row2w-${child.id}`}>
+                      <td className="px-2 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
+                      {kindZelle(cA, 'a')}
+                      {kindZelle(cB, 'b')}
+                    </tr>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** «Zeilen anordnen»-Umschalter + «Standard wiederherstellen» (Bearbeiten-Modus). */
 function RowOrderControls({
   editMode, onToggle, onReset, disabled,
@@ -724,6 +950,32 @@ export default function MonatsreportPage() {
   }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick]);
 
   useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
+
+  // ── Vorwoche für die 2-Wochen-Ansicht der Wochenübersicht ──────────────────
+  // Nur laden, wenn der Woche-Tab aktiv ist (ladeMonatsreport ist teuer);
+  // Fenster = [Vorwoche, gewählte Woche]. Fehler → Vorwochen-Spalte leer.
+  const [datenPrev, setDatenPrev] = useState<MonatsreportDaten | null>(null);
+  const [loadingPrev, setLoadingPrev] = useState(false);
+  useEffect(() => {
+    if (activeTab !== 'woche' || !daten?.weekFrom || ratesLoading || !rates) {
+      setDatenPrev(null);
+      return;
+    }
+    const mo = new Date(Number(daten.weekFrom.slice(0, 4)),
+      Number(daten.weekFrom.slice(5, 7)) - 1, Number(daten.weekFrom.slice(8, 10)));
+    mo.setDate(mo.getDate() - ((mo.getDay() + 6) % 7) - 7); // Montag der Vorwoche
+    const { week, year: kwYear } = isoWeekOf(mo);
+    let alive = true;
+    // Sofort invalidieren: nie die neue Woche mit einer stalen Vorwoche mischen.
+    setDatenPrev(null);
+    setLoadingPrev(true);
+    ladeMonatsreport(mo.getFullYear(), mo.getMonth() + 1, tenantId, tenantKey, rates, heute,
+      { kind: 'kw', kw: week, kwYear })
+      .then(d => { if (alive) setDatenPrev(d); })
+      .catch(() => { if (alive) setDatenPrev(null); })
+      .finally(() => { if (alive) setLoadingPrev(false); });
+    return () => { alive = false; };
+  }, [activeTab, daten?.weekFrom, tenantId, tenantKey, rates, ratesLoading, heute, budgetReloadTick]);
 
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
   /** Wochen-Navigation: springt genau eine ISO-KW weiter/zurück (auch über
@@ -1112,6 +1364,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             {/* Capture-only: schlichte Zeitraum-Zeile anstelle der Controls (nur im PDF sichtbar) */}
             <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-woche">
               {MONATE[month - 1]} {year}
+              {datenPrev?.weekLabel ? ` · ${datenPrev.weekLabel}` : ''}
               {daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}
               {wocheRange ? ` ${wocheRange}` : ''}
             </div>
@@ -1148,13 +1401,15 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
-                onClick={() => setShowVj(v => !v)}
-                data-testid="button-toggle-vj-woche"
-              >
-                Vorjahr {showVj ? 'ein' : 'aus'}
-              </Button>
+              {editRows && (
+                <Button
+                  variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
+                  onClick={() => setShowVj(v => !v)}
+                  data-testid="button-toggle-vj-woche"
+                >
+                  Vorjahr {showVj ? 'ein' : 'aus'}
+                </Button>
+              )}
               <RowOrderControls
                 editMode={editRows}
                 onToggle={() => setEditRows(v => !v)}
@@ -1177,7 +1432,9 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               </div>
             )}
             {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
-            {!loading && daten && (
+            {/* «Zeilen anordnen» weiter über die 1-Wochen-Tabelle (Drag & Drop);
+                Normalansicht = kompakte 2-Wochen-Tabelle (Vorwoche + Woche). */}
+            {!loading && daten && editRows && (
               <ReportTable
                 rows={orderedRows}
                 granularity="woche"
@@ -1193,10 +1450,31 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 showVj={showVj}
               />
             )}
+            {!loading && daten && !editRows && (
+              <>
+                {loadingPrev && (
+                  <p className="text-xs text-muted-foreground">Lade Vorwoche …</p>
+                )}
+                <ZweiWochenTable
+                  rowsA={datenPrev?.rows ?? null}
+                  rowsB={orderedRows}
+                  headerA={datenPrev?.weekLabel ?? 'Vorwoche'}
+                  subA={datenPrev?.weekFrom && datenPrev?.weekTo
+                    ? `${fmtDate(datenPrev.weekFrom)}–${fmtDate(datenPrev.weekTo)}`
+                    : null}
+                  headerB={daten?.weekLabel ?? 'Woche'}
+                  subB={wocheRange}
+                  testid="table-wochenuebersicht"
+                  onDrill={(id) => openDrill(id, 'woche')}
+                />
+              </>
+            )}
 
             <p className="pdf-footnote text-xs text-muted-foreground">
-              Woche = volle ISO-Woche ({daten?.weekLabel ?? '—'}
-              {wocheRange ? `, ${wocheRange}` : ''}), auch über Monatsgrenzen — jeder Tag zieht
+              Ansicht = die gewählte Woche ({daten?.weekLabel ?? '—'}
+              {wocheRange ? `, ${wocheRange}` : ''}) plus die Vorwoche nebeneinander, je Woche
+              Ist / Budget / Δ; die Pfeile schieben das 2-Wochen-Fenster eine KW vor/zurück ·
+              Woche = volle ISO-Woche, auch über Monatsgrenzen — jeder Tag zieht
               Ist und Budget aus seinem eigenen Monat; nur die laufende Woche ist auf die Ist-Tage
               bis heute geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · Warenkosten total:
               Ist = erfasste Lieferantenrechnungen (netto), Soll = WEQ × Ist-Netto-Umsatz ·

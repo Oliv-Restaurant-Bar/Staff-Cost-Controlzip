@@ -42,6 +42,8 @@ export default function UeberstundenPage() {
   const [loadError, setLoadError] = useState(false);
   const [parked, setParked] = useState<ParkedHoursEntry[]>([]);
   const [selEmp, setSelEmp] = useState<string | null>(null);
+  /** Standard-Ansicht = Wochenübersicht (MA × KW); Monatsübersicht per Umschalter. */
+  const [ansicht, setAnsicht] = useState<'woche' | 'monat'>('woche');
 
   // Absenz-Editor (staged → Vorschau → Speichern; einstufiges Rückgängig)
   const [editMonat, setEditMonat] = useState(() => new Date().getMonth() + 1);
@@ -69,6 +71,16 @@ export default function UeberstundenPage() {
   useEffect(() => { void reload(); setStaged({}); setSelEmp(null); }, [reload]);
 
   const erg = daten?.ergebnis ?? null;
+  /** Gerechnete MA (mit Eintrittsdatum) vs. Hinweis-Liste (ohne Eintritt). */
+  const gerechnet = useMemo(() => (erg?.mitarbeiter ?? []).filter(m => !m.ohneEintritt), [erg]);
+  const ohneEintritt = useMemo(() => (erg?.mitarbeiter ?? []).filter(m => m.ohneEintritt), [erg]);
+  /** Wochen-Spalten (alle MA haben identische Wochenliste): nur bis heute. */
+  const wochenSpalten = useMemo(
+    () => (gerechnet[0]?.wochen ?? []).filter(w => w.monday <= heute).map(w => ({ label: w.label, monday: w.monday })),
+    [gerechnet, heute],
+  );
+  /** Monats-Spalten: ab Konto-Start (2026 → Jul–Dez), sonst ganzes Jahr. */
+  const startMonatIdx = year === Number(UEBERSTUNDEN_START.slice(0, 4)) ? Number(UEBERSTUNDEN_START.slice(5, 7)) - 1 : 0;
   const sel = erg?.mitarbeiter.find(m => m.id === selEmp) ?? null;
   const selAbsenzen = (selEmp && daten?.absenzen.entries[selEmp]) || {};
 
@@ -174,28 +186,85 @@ export default function UeberstundenPage() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center justify-between">
-                <span>Monats-Saldi &amp; laufendes Konto</span>
+              <CardTitle className="text-base flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <span>{ansicht === 'woche' ? 'Wochen-Saldi' : 'Monats-Saldi'} &amp; laufendes Konto</span>
+                  <span className="inline-flex rounded border overflow-hidden text-xs font-normal">
+                    <button
+                      className={`px-2 py-0.5 ${ansicht === 'woche' ? 'bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}`}
+                      onClick={() => setAnsicht('woche')}
+                      data-testid="button-ansicht-woche"
+                    >Wochen</button>
+                    <button
+                      className={`px-2 py-0.5 border-l ${ansicht === 'monat' ? 'bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}`}
+                      onClick={() => setAnsicht('monat')}
+                      data-testid="button-ansicht-monat"
+                    >Monate</button>
+                  </span>
+                </span>
                 <span data-testid="text-total-laufend" className={saldoClass(erg.totalLaufend)}>
                   Total laufend: {fmtH(erg.totalLaufend)}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
-              {erg.mitarbeiter.length === 0 ? (
+              {gerechnet.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Keine Fix-Mitarbeiter im gewählten Jahr.</p>
+              ) : ansicht === 'woche' ? (
+                <table className="text-xs w-full">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left py-1 pr-2">Mitarbeiter</th>
+                      <th className="text-right pr-2">Pensum</th>
+                      {wochenSpalten.map(w => (
+                        <th key={w.monday} className="text-right px-1 whitespace-nowrap">
+                          <div>{w.label}</div>
+                          <div className="font-normal">{w.monday.slice(8, 10)}.{w.monday.slice(5, 7)}.</div>
+                        </th>
+                      ))}
+                      <th className="text-right pl-2 font-semibold">Laufend</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gerechnet.map(m => {
+                      const byMonday = new Map(m.wochen.map(w => [w.monday, w]));
+                      return (
+                        <tr
+                          key={m.id}
+                          className={`border-t cursor-pointer hover:bg-muted/50 ${selEmp === m.id ? 'bg-muted/60' : ''}`}
+                          onClick={() => { setSelEmp(m.id); setStaged({}); }}
+                          data-testid={`row-emp-${m.id}`}
+                        >
+                          <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
+                          <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
+                          {wochenSpalten.map(ws => {
+                            const s = byMonday.get(ws.monday)?.saldo ?? null;
+                            return (
+                              <td key={ws.monday} className={`text-right px-1 tabular-nums ${saldoClass(s)}`} data-testid={`cell-${m.id}-${ws.monday}`}>
+                                {s === null ? '–' : s.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                              </td>
+                            );
+                          })}
+                          <td className={`text-right pl-2 tabular-nums font-semibold ${saldoClass(m.laufend)}`}>
+                            {fmtH(m.laufend)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               ) : (
                 <table className="text-xs w-full">
                   <thead>
                     <tr className="text-muted-foreground">
                       <th className="text-left py-1 pr-2">Mitarbeiter</th>
                       <th className="text-right pr-2">Pensum</th>
-                      {MONATE.map(m => <th key={m} className="text-right px-1">{m}</th>)}
+                      {MONATE.slice(startMonatIdx).map(m => <th key={m} className="text-right px-1">{m}</th>)}
                       <th className="text-right pl-2 font-semibold">Laufend</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {erg.mitarbeiter.map(m => (
+                    {gerechnet.map(m => (
                       <tr
                         key={m.id}
                         className={`border-t cursor-pointer hover:bg-muted/50 ${selEmp === m.id ? 'bg-muted/60' : ''}`}
@@ -204,7 +273,7 @@ export default function UeberstundenPage() {
                       >
                         <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
                         <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
-                        {m.monatsSaldo.map((s, i) => (
+                        {m.monatsSaldo.slice(startMonatIdx).map((s, i) => (
                           <td key={i} className={`text-right px-1 tabular-nums ${saldoClass(s)}`}>
                             {s === null ? '–' : s.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                           </td>
@@ -218,8 +287,13 @@ export default function UeberstundenPage() {
                 </table>
               )}
               <p className="text-[11px] text-muted-foreground mt-2">
-                «–» = keine Datenbasis (kein Mirus-Import / keine Absenz in der Periode). Laufend = Summe ab {UEBERSTUNDEN_START.split('-').reverse().join('.')}.
+                «–» = keine Datenbasis oder ausserhalb der Anstellung (Eintritt/Austritt). Konto ab {UEBERSTUNDEN_START.split('-').reverse().join('.')} — frühere Zeiträume werden nicht gezeigt; die erste Woche zählt nur Tage ab Konto-Start (anteiliges Soll). Klick auf einen Mitarbeiter öffnet die Wochen-Details.
               </p>
+              {ohneEintritt.length > 0 && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1" data-testid="text-ohne-eintritt">
+                  Ohne Eintrittsdatum im Personalstamm (nicht gerechnet, bitte nachtragen): {ohneEintritt.map(m => m.name).join(', ')}
+                </p>
+              )}
             </CardContent>
           </Card>
 

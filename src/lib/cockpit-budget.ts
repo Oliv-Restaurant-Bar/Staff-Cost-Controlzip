@@ -745,6 +745,13 @@ export function ratioBudget(kpiId: string, tenantId: TenantId, b: BasisBudgets):
 }
 
 /**
+ * Ziel-Personalkostenquote für das abgeleitete WOCHEN-Budget (Spec 08/2026):
+ * PK-Wochen-Budget = 40 % × Netto-Umsatz-Budget der Woche, PKQ-Budget = 40 %
+ * konstant. Spiegelt die harte Obergrenze der Personalkosten-Seite (40 %).
+ */
+export const PK_WOCHEN_ZIELQUOTE_PCT = 40;
+
+/**
  * Komfort: alle aufgelösten Budgets einer Periode (Basis via periodenBudget,
  * Ratios mit Override-Vorrang). `weekDays` gesetzt → Wochenauflösung
  * (Wochen-Overrides greifen), sonst [fromIso..toIso].
@@ -760,6 +767,11 @@ export function resolveCockpitBudgets(
    *  Cockpit-Budget entfernt; Umsatz-Budget = ER-/P&L-Budget). Ohne Angabe
    *  bleiben die Ratio-Budgets ohne direkten Override null. */
   erNettoMonate?: (number | null)[] | null,
+  /** Opt-in (NUR Wochenübersicht des Monatsreports): fehlendes PK-Budget der
+   *  Woche als 40 % × Netto-Wochenbudget ableiten (PKQ dadurch konstant 40 %).
+   *  Bewusst KEIN Default — andere Wochen-Aufrufer (z.B. Wochenverlauf)
+   *  behalten ihr bisheriges Verhalten (leer statt abgeleitet). */
+  pkZielFallback = false,
 ): Record<string, number | null> {
   const out: Record<string, number | null> = {};
   const get = (id: string) => blob?.positions[id];
@@ -786,14 +798,33 @@ export function resolveCockpitBudgets(
     ? r2((nettoVal - (out['take_away_umsatz'] ?? 0)) * mwstDivisorStandard()
         + (out['take_away_umsatz'] ?? 0) * mwstDivisorTakeaway())
     : null;
+  // Personalkosten-Wochen-Budget (Spec 08/2026): ohne direkte PK-Position gilt
+  // in der WOCHEN-Auflösung die Zielquote 40 % × Netto-Budget der Woche; die
+  // Personalquote wird damit automatisch konstant 40 % (Ratio pk/netto).
+  if (pkZielFallback && weekDays && out['personalkosten'] == null && nettoVal !== null) {
+    out['personalkosten'] = r2(nettoVal * (PK_WOCHEN_ZIELQUOTE_PCT / 100));
+  }
   const basis: BasisBudgets = {
     netto: nettoVal,
     ta: out['take_away_umsatz'], gaeste: out['gaeste_in'],
     stunden: out['prod_stunden'], pk: out['personalkosten'],
   };
+  // Direkte Overrides auf Ratio-Zeilen sind VERHÄLTNIS-Werte: sie bleiben über
+  // alle Perioden KONSTANT (nie pro rata teilen — sonst wird z.B. ein
+  // Ø-Verkauf-Monatswert 29 zur Wochen-«Quote» 6.55). Auflösung deshalb immer
+  // mit Quoten-Semantik (tagesgewichteter Mittelwert / KW-Override ungekürzt),
+  // unabhängig von der Anzeige-Einheit (chf bei Ø-Verkauf/Produktivität).
+  const valKonstant = (id: string): number | null => {
+    const pos = get(id);
+    if (!pos) return null;
+    const quotePos: CockpitBudgetPosition = { ...pos, unit: 'pct' };
+    return weekDays
+      ? wochenBudget(quotePos, weekDays)
+      : periodenBudget(quotePos, fromIso, toIso);
+  };
   for (const def of COCKPIT_BUDGET_KPIS) {
     if (def.kind !== 'ratio') continue;
-    const override = val(def.id); // direkte Eingabe auf der Ratio-Zeile
+    const override = valKonstant(def.id); // direkte Eingabe auf der Ratio-Zeile
     out[def.id] = override !== null ? override : ratioBudget(def.id, tenantId, basis);
   }
   return out;

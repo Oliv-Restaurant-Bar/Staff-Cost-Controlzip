@@ -16,6 +16,7 @@ const ALLE_MONATE = new Set(Array.from({ length: 12 }, (_, i) => i + 1));
 function ma(over: Partial<UeMitarbeiterInput>): UeMitarbeiterInput {
   return {
     id: 'e1', name: 'Test', wochenSollH: 42, fixMonate: ALLE_MONATE,
+    contractStart: '2026-01-01', // Tests: Eintritt vorhanden (fehlend → ohneEintritt)
     istStunden: {}, absenzen: {}, ...over,
   };
 }
@@ -105,10 +106,21 @@ describe('Monats-Split & laufendes Konto', () => {
     expect(mo).toBe('2026-06-29');
     const r = berechneUeberstundenJahr(2026, [ma({ istStunden: ist })], wochen(mo), '2026-12-31');
     const e = r.mitarbeiter[0];
-    expect(e.monatsSaldo[5]).toBeCloseTo(0, 6); // Juni
-    expect(e.monatsSaldo[6]).toBeCloseTo(0, 6); // Juli
-    // Laufend startet 01.07. → Juni-Tage zählen NICHT ins Konto
+    // Konto-Start 01.07.: Juni-Tage der KW 27 zählen NIRGENDS (weder Soll noch Ist)
+    expect(e.monatsSaldo[5]).toBeNull();        // Juni: vor Konto-Start → leer
+    expect(e.monatsSaldo[6]).toBeCloseTo(0, 6); // Juli (Mi–Fr, Soll = Ist)
     expect(e.laufend).toBeCloseTo(0, 6);
+    // KW 27 mit anteiligem Soll: nur 3 Juli-Wochentage (Mi–Fr) → 25.2, nie −42-Basis
+    const w = e.wochen.find(w => w.monday === mo)!;
+    expect(w.soll).toBeCloseTo(25.2, 6);
+    expect(w.ist).toBeCloseTo(25.2, 6);
+  });
+
+  it('Wochenliste beginnt mit der Konto-Start-Woche (KW 27) — nichts davor', () => {
+    const r = berechneUeberstundenJahr(2026, [ma({})], wochen(), '2026-12-31');
+    const wochenListe = r.mitarbeiter[0].wochen;
+    expect(wochenListe[0].monday).toBe('2026-06-29'); // Woche des 01.07.
+    expect(wochenListe.some(w => w.monday < '2026-06-29')).toBe(false);
   });
 
   it('laufendes Konto kumuliert nur ab Juli 2026', () => {
@@ -120,8 +132,37 @@ describe('Monats-Split & laufendes Konto', () => {
     for (let i = 0; i < 5; i++) ist[`2026-07-${String(6 + i).padStart(2, '0')}`] = 9.4; // +1/Tag = +5
     const r = berechneUeberstundenJahr(2026, [ma({ istStunden: ist })], wochen(juniMo, juliMo), '2026-12-31');
     const e = r.mitarbeiter[0];
-    expect(e.monatsSaldo[5]).toBeCloseTo(10, 6);
+    expect(e.monatsSaldo[5]).toBeNull(); // Juni liegt vor dem Konto-Start → leer
     expect(e.laufend).toBeCloseTo(5, 6);
+  });
+
+  it('Eintritt 01.08. (Abdii-Fall): Juli leer, Laufend erst ab August', () => {
+    const juliMo = '2026-07-06', augMo = '2026-08-03';
+    const ist: Record<string, number> = {};
+    for (let i = 0; i < 5; i++) ist[`2026-08-0${3 + i}`] = 9.4; // +1/Tag = +5
+    const r = berechneUeberstundenJahr(2026, [ma({
+      contractStart: '2026-08-01', istStunden: ist,
+    })], wochen(juliMo, augMo), '2026-12-31');
+    const e = r.mitarbeiter[0];
+    const juliWoche = e.wochen.find(w => w.monday === juliMo)!;
+    expect(juliWoche.soll).toBeNull();  // vor Eintritt: kein Soll, kein −42
+    expect(juliWoche.saldo).toBeNull();
+    expect(e.monatsSaldo[6]).toBeNull(); // Juli leer
+    expect(e.monatsSaldo[7]).toBeCloseTo(5, 6);
+    expect(e.laufend).toBeCloseTo(5, 6); // nur ab August
+    expect(e.ohneEintritt).toBe(false);
+  });
+
+  it('OHNE Eintrittsdatum: nicht gerechnet (alles leer), nur Hinweis-Flag', () => {
+    const ist: Record<string, number> = { '2026-08-03': 8.4 };
+    const r = berechneUeberstundenJahr(2026, [ma({
+      contractStart: null, istStunden: ist,
+    })], wochen(MO), '2026-12-31');
+    const e = r.mitarbeiter[0];
+    expect(e.ohneEintritt).toBe(true);
+    expect(e.laufend).toBeNull();
+    expect(e.wochen.every(w => w.soll === null && w.saldo === null)).toBe(true);
+    expect(r.totalLaufend).toBeNull(); // kein unterstelltes Voll-Soll im Total
   });
 
   it('Monat = Σ seiner (anteiligen) Wochen', () => {
@@ -172,6 +213,19 @@ describe('Monats-Split & laufendes Konto', () => {
     expect(r.mitarbeiter.find(m => m.id === 'a')!.laufend).toBeCloseTo(5, 6);
     expect(r.mitarbeiter.find(m => m.id === 'b')!.laufend).toBeCloseTo(-42, 6);
     expect(r.totalLaufend).toBeCloseTo(-37, 6);
+  });
+});
+
+describe('Jahre vor dem Konto-Start', () => {
+  it('2025: explizit leeres Ergebnis (keine Wochen, alles null)', () => {
+    const r = berechneUeberstundenJahr(2025, [ma({
+      istStunden: { '2025-08-04': 8.4 },
+    })], wochen('2025-08-04'), '2026-12-31');
+    const e = r.mitarbeiter[0];
+    expect(e.wochen).toHaveLength(0);
+    expect(e.monatsSaldo.every(s => s === null)).toBe(true);
+    expect(e.laufend).toBeNull();
+    expect(r.totalLaufend).toBeNull();
   });
 });
 

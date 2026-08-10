@@ -1204,7 +1204,9 @@ export async function ladeMonatsreport(
       const tage = wocheTage.filter(d0 => d0.slice(0, 4) === ys);
       return {
         tage,
-        res: resolveCockpitBudgets(blobY, tenantId, tage[0], tage[tage.length - 1], tage, erY),
+        // pkZielFallback: NUR hier (Wochenübersicht) — fehlendes PK-Wochen-
+        // budget = 40 % × Netto-Wochenbudget (PKQ-Budget damit konstant 40 %).
+        res: resolveCockpitBudgets(blobY, tenantId, tage[0], tage[tage.length - 1], tage, erY, true),
       };
     }));
     if (segs.length === 1) {
@@ -1735,6 +1737,18 @@ export async function ladeMonatsreport(
   // Der TA-ANTEIL bleibt bewusst brutto ÷ brutto (unveränderte Ist-Quote).
   const taNettoM = taM !== null ? r2(mTa / mwstDivisorTakeaway()) : null;
   const taNettoW = taW !== null ? r2(wTa / mwstDivisorTakeaway()) : null;
+  /**
+   * Abgeleitetes TA-Gäste-Budget: TA-Umsatz-Budget ÷ Ø-TA-Umsatz-pro-TA-Gast
+   * (Ist-Verhältnis derselben Periode). null ohne Budget oder ohne belastbares
+   * Ist-Verhältnis (nie ÷ 0, leer statt 0).
+   */
+  const taGaesteBudget = (
+    umsatzBudget: number | null, istUmsatz: number | null, istGaeste: number | null,
+  ): number | null =>
+    umsatzBudget !== null && istUmsatz !== null && istUmsatz > 0
+      && istGaeste !== null && istGaeste > 0
+      ? Math.round(umsatzBudget / (istUmsatz / istGaeste))
+      : null;
 
   // ── Vorjahres-WOCHE: Anzeigewerte der «Vorjahr (Woche)»-Spalte ─────────────
   // Absolutwerte = Summe über die VJ-Woche; Quoten/Prozente = über die Woche
@@ -1846,6 +1860,12 @@ export async function ladeMonatsreport(
       ...d('gaeste_take_away', 'Gäste Take Away', {
         month: taMonth, week: taWeek,
         vj: null, vjMonth: taVjMonth,
+        // Abgeleitetes TA-Gäste-Budget (Spec 08/2026): TA-Umsatz-Budget der
+        // Periode ÷ Ø-TA-Umsatz-pro-TA-Gast (IST-Verhältnis derselben Periode).
+        // Verhältnis nur bei beiden Ist-Quellen > 0 (nie ÷ 0, leer statt 0).
+        monthBudget: taGaesteBudget(ckMk('take_away_umsatz'), taNettoM, taMonth),
+        weekBudget: taGaesteBudget(ckWk('take_away_umsatz'), taNettoW, taWeek),
+        budget: taGaesteBudget(ckWk('take_away_umsatz'), taNettoW, taWeek),
       }, { fmt: 'count' }),
       // Anteil an ALLEN Gästen: TA ÷ (Gäste IN + Gäste TA). Ohne Gäste-IN-Basis
       // null (nie ÷ 0) — parallel zur umsatzbasierten Zeile «Take Away Anteil».

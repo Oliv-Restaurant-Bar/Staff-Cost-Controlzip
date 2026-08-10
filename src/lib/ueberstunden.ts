@@ -158,7 +158,12 @@ export interface UeMitarbeiterInput {
   wochenSollH: number;
   /** Monate (1–12), in denen der MA als FIX zählt (Lohnart-SSOT je Monat). */
   fixMonate: ReadonlySet<number>;
-  /** Eintritt/Austritt (ISO) — Tage ausserhalb zählen nicht. */
+  /**
+   * Eintritt/Austritt (ISO) — Tage ausserhalb zählen nicht (weder Soll noch
+   * Ist). FEHLENDER Eintritt (null/undefined) ⇒ MA wird NICHT gerechnet
+   * (kein unterstelltes Voll-Soll), sondern nur als Hinweis geführt
+   * (ohneEintritt=true, alle Werte leer).
+   */
   contractStart?: string | null;
   employmentEndDate?: string | null;
   /** Ist-Arbeitsstunden je ISO-Datum (MIRUS). */
@@ -191,6 +196,8 @@ export interface UeMitarbeiterErgebnis {
   monatsSaldo: Array<number | null>;
   /** Laufendes Konto ab Juli 2026 bis heute (null = gar keine Datenbasis). */
   laufend: number | null;
+  /** true = kein Eintrittsdatum im Personalstamm — nicht gerechnet, nur Hinweis. */
+  ohneEintritt: boolean;
 }
 
 export interface UeJahresErgebnis {
@@ -215,17 +222,34 @@ export function berechneUeberstundenJahr(
   const yearStart = `${year}-01-01`;
   const yearEnd = `${year}-12-31`;
   const ende = heute < yearEnd ? heute : yearEnd;
+  // Konto-Start: vor dem 01.07.2026 wird NICHTS gezeigt/gezählt (kein Übertrag).
+  // Jahre komplett vor dem Konto-Start → explizit leeres Ergebnis (keine Wochen).
+  if (yearEnd < UEBERSTUNDEN_START) {
+    return {
+      year,
+      mitarbeiter: mitarbeiter.map(emp => ({
+        id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
+        wochen: [], monatsSaldo: Array(12).fill(null), laufend: null,
+        ohneEintritt: !emp.contractStart,
+      })),
+      totalLaufend: null,
+    };
+  }
+  const kontoStart = yearStart > UEBERSTUNDEN_START ? yearStart : UEBERSTUNDEN_START;
 
-  // Wochenliste des Jahres: alle ISO-Wochen, deren Tage das Jahr berühren.
-  const firstMonday = mondayOf(yearStart);
+  // Wochenliste: ISO-Wochen ab der Woche des Konto-Starts (KW27 enthält den
+  // 01.07. — ihre Juni-Tage zählen NICHT ⇒ anteiliges Soll) bis Jahresende.
+  const firstMonday = mondayOf(kontoStart);
   const mondays: string[] = [];
   for (let m = firstMonday; m <= yearEnd; m = addDays(m, 7)) mondays.push(m);
 
   const ergebnisse: UeMitarbeiterErgebnis[] = mitarbeiter.map(emp => {
     const tagesSoll = emp.wochenSollH / 5;
-    /** Zählt der Tag für diesen MA? (Jahr, ≤heute, FIX-Monat, Anstellung) */
+    const ohneEintritt = !emp.contractStart;
+    /** Zählt der Tag für diesen MA? (Konto-Start, ≤heute, FIX-Monat, Anstellung) */
     const eligible = (day: string): boolean => {
-      if (day < yearStart || day > ende) return false;
+      if (ohneEintritt) return false; // kein Eintrittsdatum → nie Voll-Soll unterstellen
+      if (day < kontoStart || day > ende) return false;
       const monat = Number(day.slice(5, 7));
       if (!emp.fixMonate.has(monat)) return false;
       if (emp.contractStart && day < emp.contractStart) return false;
@@ -270,7 +294,7 @@ export function berechneUeberstundenJahr(
 
     return {
       id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
-      wochen, monatsSaldo, laufend,
+      wochen, monatsSaldo, laufend, ohneEintritt,
     };
   });
 
@@ -308,9 +332,12 @@ export async function ladeUeberstundenJahr(
   // FIX-Zuordnung je Monat (Lohnart-SSOT) — nur Monate ≤ heute laden.
   const heuteJahr = Number(heute.slice(0, 4));
   const maxMonat = year < heuteJahr ? 12 : year > heuteJahr ? 0 : Number(heute.slice(5, 7));
+  // Konto startet 01.07.2026 → im Startjahr Monate vor Juli gar nicht laden.
+  const startJahr = Number(UEBERSTUNDEN_START.slice(0, 4));
+  const minMonat = year < startJahr ? 13 : year === startJahr ? Number(UEBERSTUNDEN_START.slice(5, 7)) : 1;
   const fixMonate = new Map<string, Set<number>>();
   const empById = new Map<string, Employee>();
-  for (let m = 1; m <= maxMonat; m++) {
+  for (let m = minMonat; m <= maxMonat; m++) {
     const { employees } = await applyEffectiveWagesForMonth(emps, year, m, tenantId);
     for (const e of employees) {
       if (!isEmployeeActiveInMonth(e, year, m) || !pkHasFixedSalary(e)) continue;
@@ -322,7 +349,8 @@ export async function ladeUeberstundenJahr(
 
   // Ist-Stunden aller Monate (parallel) + Wochen mit Datenbasis (Mandanten-weit).
   const monthResults = await Promise.all(
-    Array.from({ length: maxMonat }, (_, i) => loadActualHoursForMonth(new Date(year, i, 15), tenantId)),
+    Array.from({ length: Math.max(0, maxMonat - minMonat + 1) },
+      (_, i) => loadActualHoursForMonth(new Date(year, minMonat - 1 + i, 15), tenantId)),
   );
   const istProEmp = new Map<string, Record<string, number>>();
   const wochenMitDaten = new Set<string>();
@@ -357,7 +385,7 @@ export async function ladeUeberstundenJahr(
       name: e.name ?? id,
       wochenSollH: typeof e.weeklyHours === 'number' && e.weeklyHours > 0 ? e.weeklyHours : VOLLZEIT_WOCHE_H,
       fixMonate: monate,
-      contractStart: (e as { contractStart?: string | null }).contractStart ?? null,
+      contractStart: e.contractStart ?? null,
       employmentEndDate: e.employmentEndDate ?? null,
       istStunden: istProEmp.get(id) ?? {},
       absenzen: absenzen.entries[id] ?? {},
