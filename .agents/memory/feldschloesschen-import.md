@@ -32,3 +32,10 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 - `erkenneDokumenttyp(text, belegart)` (profil-pdf-parse.ts): Kopfzone = erste 25 nicht-leere Zeilen; «Sammel-/Monatsrechnung» → monatsrechnung; Nicht-Rechnung (AB/Offerte/Bestellung) → lieferschein; «Lieferschein»-Überschrift ohne «Rechnung» im Kopf → lieferschein; sonst null.
 - `erkenneBelegart` prüft ebenfalls Kopfzone ZUERST (AB-Kopf + «Rechnung» im Fusstext bleibt AB); ohne Kopf-Signal zählt der Gesamttext.
 - Jahres-ZIP-Import bucht Anhang-Lieferungen mit `quelle:'monatsrechnung'` (final, ersetzt provisorische).
+
+## Konto-Splits aus der Faktura-eigenen «Zusammenfassung MwSt.» + FIBU pro Lieferant (Aug 2026)
+- `parseFsSammelrechnung` liest im Anhang je Faktura die eigene ZSF nach `fakturaKategorien[fakturaNr]` (zsfModus; «Endbetrag CHF» geht weiter an die bestehenden Handler, globale kategorien bleiben sauber).
+- `kontoSplitsAusFsKategorien`: Bier→4030, Spirituosen→4040, Mineralwasser/Andere alk. freie→4050, Wein→4020, Leergut/Ladungsträger + reine 0%-Kategorien→'Depot' (neutral), Mietmaterial/Recycling/Zu-/Abschläge→4701, unbekannt→'offen' (nie raten). Brutto = n81·1.081+n26·1.026+n00.
+- Import: `FsImportRechnung.fsKategorien` übersteuert die Positions-Kontierung NUR wenn ΣZSF-Netto ≈ Buchungs-Netto (±0.10), sonst sichtbarer Hinweis + Positions-Fallback. UI übergibt die ZSF nur bei Fakturen mit GENAU EINEM Anhang-LS (Buchung=pro LS, ZSF=pro Faktura; 1:n nicht eindeutig aufteilbar).
+- FIBU-Konto-Abgleich: `buildKontoAbgleich({lieferantZeilen})` löst FS-Rechnungen (supplierName) und Journal-Buchungen (text-RX) aus dem Pro-Konto-Vergleich und aggregiert sie in eine `~Feldschlösschen`-Zeile — FIBU bucht FS pauschal ~4030, Pro-Konto wäre systematisch rot. Depot-Splits UND reine Depot-Einzelkonto-Rechnungen bleiben neutral separat (Review-Fund).
+- **Why:** User-Vorgabe 08/2026: Kontierung folgt der Rechnungs-eigenen ZSF; Kontrolle Juli Oliv (7 FS-Rechnungen): 4030 4'538.00 · 4040 2'789.30 · 4050 7'450.77 · Leergut 1'186 + Logistik 165 raus. Juli-Oliv-`kred_*`-Einträge (Σ 15'728.54 ganz auf 4030) brauchen die Oliv-Juli-Monatsrechnung (PDF) zum Finalisieren.

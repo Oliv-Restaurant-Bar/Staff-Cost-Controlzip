@@ -106,6 +106,10 @@ export const DEFAULT_FS_KATEGORIEN_MAPPING: WarengruppenMapping = [
   { gruppe: 'Wein', konto: '4020' },
   { gruppe: 'Andere Güter', konto: '4701' },
   { gruppe: 'Zu-/Abschläge', konto: '4701' },
+  // Weitere Kategorien der «Zusammenfassung MwSt.» — NICHT Wareneinsatz:
+  { gruppe: 'Mietmaterial', konto: '4701' },
+  { gruppe: 'Recyclinggebühren', konto: '4701' },
+  { gruppe: 'POS-Promo Material', konto: '4701' },
 ];
 
 /** Effektives Mapping: gespeicherte Tabelle ∪ FS-Standards (gespeicherte Gruppen gewinnen). */
@@ -393,6 +397,8 @@ export interface FsSammelrechnung {
   endbetrag: number | null;
   fakturen: FsFaktura[];
   kategorien: FsKategorieSumme[];   // globale «Zusammenfassung MwSt.»
+  /** «Zusammenfassung MwSt.» der EINZELNEN Fakturen im Anhang (Beleg-Nr → Kategorien). */
+  fakturaKategorien: Record<string, FsKategorieSumme[]>;
   anhangLieferscheine: FsAnhangLieferschein[];
   failureReason?: string;
   debug: { seiten: number; fakturaZeilen: number; anhangSeiten: number };
@@ -401,6 +407,7 @@ export interface FsSammelrechnung {
 export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
   const out: FsSammelrechnung = {
     nr: '', datum: '', endbetrag: null, fakturen: [], kategorien: [],
+    fakturaKategorien: {},
     anhangLieferscheine: [],
     debug: { seiten: Math.max(0, ...zeilen.map(z => z.page)), fakturaZeilen: 0, anhangSeiten: 0 },
   };
@@ -412,6 +419,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
   let pendingText = '';
   let pfandGeliefert = 0;               // Σ Pfand-Spalte der Positionszeilen
   let anhangModus: 'positionen' | 'leergutrueckgabe' | 'zuabschlaege' = 'positionen';
+  let zsfModus = false;                 // «Zusammenfassung MwSt.» der aktuellen Einzel-Faktura
 
   const pushLs = () => {
     if (aktLs) {
@@ -484,11 +492,34 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
     // ── Anhang: einzelne Rechnungen mit Lieferschein-Positionslisten ──
     if (k.includes('rechnung:') && !k.includes('sammelrechnung:')) {
       pushLs();
+      zsfModus = false;
       aktFaktura = z.cells[z.cells.length - 1] ?? '';
       continue;
     }
+    // «Zusammenfassung MwSt.» der Einzel-Faktura: Kategorien je Beleg-Nr sammeln
+    // (massgeblich für die Kontierung — Werte wie auf der Rechnung ausgewiesen).
+    if (k.startsWith('zusammenfassungmwst')) { zsfModus = true; continue; }
+    if (zsfModus) {
+      if (k.startsWith('totalbrutto')) { zsfModus = false; continue; }
+      if (k.startsWith('endbetragchf')) {
+        zsfModus = false; // echte «Endbetrag CHF»-Zeile den bestehenden Handlern überlassen
+      } else {
+        const idxNetto = z.cells.findIndex(c => /^Nettowert$/i.test(c));
+        if (idxNetto > 0 && aktFaktura) {
+          const name = z.cells.slice(0, idxNetto).join(' ').trim();
+          const nums = z.cells.slice(idxNetto + 1).map(parseChf).filter((n): n is number => n !== null);
+          if (nums.length >= 4 && name && !/^endbetrag$/i.test(name)) {
+            (out.fakturaKategorien[aktFaktura] ??= []).push({
+              name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3],
+            });
+          }
+        }
+        continue; // MwSt-/Total-/Kopfzeilen der Zusammenfassung überspringen
+      }
+    }
     if (k.startsWith('lieferschein')) {
       pushLs();
+      zsfModus = false;
       // «Lieferschein | 479114588 | vom | 02.06.2026»
       const nr = z.cells.find(c => /^\d{8,10}$/.test(c)) ?? '';
       const dat = z.cells.map(c => parseDatumCH(c)).find(d => d !== null) ?? '';
@@ -768,6 +799,50 @@ export function fsAnhangAlsRechnung(ls: FsAnhangLieferschein): ParsedCsvRechnung
     mwstTotal: Math.round(mwst * 100) / 100,
     bruttoTotal: Math.round((netto + mwst) * 100) / 100,
   };
+}
+
+// ── Konto-Splits direkt aus der «Zusammenfassung MwSt.» (massgeblich) ────────
+
+/**
+ * Kontierung je Kategorie der Rechnungs-eigenen «Zusammenfassung MwSt.»:
+ * Warenkategorien über das Warengruppen-Mapping (Bier→4030, Spirituosen→4040,
+ * Wein→4020, alkoholfreie→4050, Zu-/Abschläge/Mietmaterial etc.→4701),
+ * 0%-Kategorien (Leergut, Ladungsträger) → neutrales Pseudo-Konto «Depot».
+ * Unbekannte Kategorien → «offen» (nie raten), Namen in `offen` gemeldet.
+ * Rückgabe-Summe = Σ nettoTotal aller nicht-leeren Kategorien.
+ */
+export function kontoSplitsAusFsKategorien(
+  kategorien: FsKategorieSumme[],
+  mapping: WarengruppenMapping,
+): { splits: Array<{ warenkonto: string; amountNet: number; amountGross: number }>; offen: string[] } {
+  const effektiv = mitFsDefaults(mapping);
+  const proKonto = new Map<string, { net: number; gross: number }>();
+  const offen: string[] = [];
+  for (const kat of kategorien) {
+    const leer = Math.abs(kat.nettoTotal) < 0.005
+      && Math.abs(kat.netto81) < 0.005 && Math.abs(kat.netto26) < 0.005 && Math.abs(kat.netto00) < 0.005;
+    if (leer) continue;
+    const name = kat.name.trim();
+    const nurNull = Math.abs(kat.netto81) < 0.005 && Math.abs(kat.netto26) < 0.005;
+    let konto: string;
+    if (/^(leergut|ladungsträger|pfand)$/i.test(name)) konto = 'Depot';
+    else {
+      const regel = effektiv.find(r => r.gruppe.trim().toLowerCase() === name.toLowerCase());
+      if (regel) konto = regel.konto;
+      else if (nurNull) konto = 'Depot';        // reine 0%-Kategorie = Pfand-artig
+      else { konto = 'offen'; offen.push(name); } // nie raten
+    }
+    const gross = kat.netto81 * 1.081 + kat.netto26 * 1.026 + kat.netto00;
+    const cur = proKonto.get(konto) ?? { net: 0, gross: 0 };
+    cur.net += kat.nettoTotal; cur.gross += gross;
+    proKonto.set(konto, cur);
+  }
+  const splits = [...proKonto.entries()].map(([warenkonto, v]) => ({
+    warenkonto,
+    amountNet: Math.round(v.net * 100) / 100,
+    amountGross: Math.round(v.gross * 100) / 100,
+  }));
+  return { splits, offen };
 }
 
 // ── Kategorien-Gegenprobe (Zusammenfassung MwSt vs. erfasste Konto-Summen) ───

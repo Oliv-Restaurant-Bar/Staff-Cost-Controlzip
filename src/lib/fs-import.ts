@@ -26,7 +26,7 @@ import {
   positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
   type ParsedCsvRechnung, type PreisAenderung,
 } from '@/lib/waren-positionen';
-import { mitFsDefaults } from '@/lib/feldschloesschen';
+import { mitFsDefaults, kontoSplitsAusFsKategorien, type FsKategorieSumme } from '@/lib/feldschloesschen';
 import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
 import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat } from '@/lib/waren-db';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -35,6 +35,13 @@ export interface FsImportRechnung {
   r: ParsedCsvRechnung;
   nettoOffiziell?: number | null;
   bruttoOffiziell?: number | null;
+  /**
+   * Kategorien der Rechnungs-eigenen «Zusammenfassung MwSt.» — wenn gesetzt,
+   * ist SIE massgeblich für die Konto-Splits (statt der Positions-Klassifizierung).
+   * Nur übergeben, wenn die Zusammenfassung genau diese eine Buchung deckt
+   * (Faktura mit genau einem Lieferschein bzw. Ganz-Rechnung).
+   */
+  fsKategorien?: FsKategorieSumme[];
 }
 
 export interface FsImportErgebnis {
@@ -120,7 +127,7 @@ export async function kernImportiereFsRechnungen(
   };
   // Sortiert nach Lieferdatum, damit die Preis-Historie chronologisch wächst.
   const sortiert = [...rechnungen].sort((a, b) => a.r.datum.localeCompare(b.r.datum));
-  for (const { r, nettoOffiziell, bruttoOffiziell } of sortiert) {
+  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
     const lief = lieferant.trim().toLowerCase();
@@ -265,7 +272,23 @@ export async function kernImportiereFsRechnungen(
       vorhanden ? posCache.get(vorhandenMonat)?.[vorhanden.id] : undefined,
     );
     offen += positionen.filter(p => p.status === 'offen').length;
-    const splits = kontoSplitsAusPositionen(positionen);
+    // Konto-Splits: die Rechnungs-eigene «Zusammenfassung MwSt.» ist massgeblich,
+    // wenn übergeben; sonst Positions-Klassifizierung. Weicht die Zusammenfassung
+    // vom Buchungs-Netto ab (>0.10), fällt der Import SICHTBAR auf Positionen zurück.
+    let splits = kontoSplitsAusPositionen(positionen);
+    if (fsKategorien && fsKategorien.length > 0) {
+      const ausZsf = kontoSplitsAusFsKategorien(fsKategorien, mapping);
+      const zielNetto = nettoOffiziell ?? r.nettoTotal;
+      const zsfNetto = ausZsf.splits.reduce((a, s) => a + s.amountNet, 0);
+      if (Math.abs(zsfNetto - zielNetto) <= 0.10) {
+        splits = ausZsf.splits;
+        if (ausZsf.offen.length > 0) {
+          hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: unbekannte Kategorie(n) «${ausZsf.offen.join('», «')}» in der Zusammenfassung MwSt. — als «offen» kontiert, bitte Zuordnung ergänzen.`);
+        }
+      } else {
+        hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Zusammenfassung MwSt. (${zsfNetto.toFixed(2)}) deckt das Buchungs-Netto (${zielNetto.toFixed(2)}) nicht — Kontierung aus Positionen übernommen.`);
+      }
+    }
     const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? opts?.defaultKonto ?? '4030';
     const aenderungen = berechnePreisAenderungen(r, lieferant, hist, schwelle);
     alleAenderungen.push(...aenderungen);

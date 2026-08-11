@@ -565,7 +565,12 @@ export default function WarenrechnungenPage() {
   const kontoAbgleich = useMemo(() => {
     if (tab !== 'abgleich') return [];
     const kontoNamen = Object.fromEntries(warenkonten.map(k => [k.value, k.label]));
-    return buildKontoAbgleich({ invoices: entries, journal, kontoNamen, relevanteKonten: warenkonten.map(k => k.value) });
+    return buildKontoAbgleich({
+      invoices: entries, journal, kontoNamen, relevanteKonten: warenkonten.map(k => k.value),
+      // Feldschlösschen: FIBU bucht pauschal (grob 4030), Erfassung splittet nach
+      // Zusammenfassung MwSt. (4030/4040/4050) → PRO LIEFERANT vergleichen.
+      lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
+    });
   }, [tab, entries, journal, warenkonten]);
 
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
@@ -3840,7 +3845,7 @@ export default function WarenrechnungenPage() {
                           {kontoAbgleich.map(z => (
                             <tr key={z.konto} className="border-b border-border/40" data-testid={`konto-abgleich-${z.konto}`}>
                               <td className="px-4 py-2">
-                                <span className="font-mono font-semibold">{z.konto}</span>
+                                <span className="font-mono font-semibold">{z.konto.startsWith('~') ? z.konto.slice(1) : z.konto}</span>
                                 {z.bezeichnung && <span className="text-xs text-muted-foreground ml-2">{z.bezeichnung}</span>}
                               </td>
                               <td className="px-4 py-2 text-right tabular-nums">{z.erfasst !== 0 ? `CHF ${fmtChf(z.erfasst)}` : <span className="opacity-40">—</span>}</td>

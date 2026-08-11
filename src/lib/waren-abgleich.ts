@@ -305,13 +305,43 @@ export function buildKontoAbgleich(input: {
    * Kontoblatt gelistet (kann bei grossen FIBU-Exporten fluten).
    */
   relevanteKonten?: string[];
+  /**
+   * Lieferanten, die PRO LIEFERANT statt pro Konto verglichen werden (eine
+   * Sammelzeile über alle Konten). Grund: die FIBU bucht z.B. Feldschlösschen
+   * pauschal auf 4030, während die Erfassung nach Zusammenfassung MwSt.
+   * splittet (4030/4040/4050) — ein Pro-Konto-Vergleich wäre systematisch rot.
+   * Rechnungen matchen über supplierName, Journal-Buchungen über den Buchungstext.
+   */
+  lieferantZeilen?: Array<{ name: string; rx: RegExp }>;
 }): KontoAbgleichZeile[] {
+  const lieferantZeile = (supplierOrText: string): string | null => {
+    for (const l of input.lieferantZeilen ?? []) {
+      if (l.rx.test(supplierOrText)) return l.name;
+    }
+    return null;
+  };
   const erfasst = new Map<string, number>();
   const add = (konto: string | undefined, net: number) => {
     const k = (konto ?? '').trim() || 'ohne';
     erfasst.set(k, (erfasst.get(k) ?? 0) + net);
   };
   for (const inv of input.invoices) {
+    // Pro-Lieferant-Zeile: gesamte Rechnung (alle Splits) in die Sammelzeile —
+    // Pseudo-Splits («Depot») bleiben aussen vor (neutral, nie FIBU-relevant).
+    const lz = lieferantZeile(inv.supplierName ?? '');
+    if (lz) {
+      if (inv.kontoSplits && inv.kontoSplits.length > 0) {
+        for (const s of inv.kontoSplits) {
+          if (s.warenkonto === 'Depot') add('Depot', s.amountNet);
+          else add(`~${lz}`, s.amountNet);
+        }
+      } else if (inv.warenkonto === 'Depot') {
+        add('Depot', inv.amountNet); // reine Depot-/Leergut-Rechnung bleibt neutral
+      } else {
+        add(`~${lz}`, inv.amountNet);
+      }
+      continue;
+    }
     if (inv.kontoSplits && inv.kontoSplits.length > 0) {
       for (const s of inv.kontoSplits) add(s.warenkonto, s.amountNet);
     } else {
@@ -320,9 +350,15 @@ export function buildKontoAbgleich(input: {
   }
 
   const gebucht = new Map<string, { sum: number; name: string | null }>();
+  const gebuchtLieferant = new Map<string, number>();
   for (const e of input.journal ?? []) {
     const k = String(e.accountNumber ?? '').replace(/^0+/, '').trim();
     if (!k) continue;
+    const lz = lieferantZeile(e.text ?? '');
+    if (lz) {
+      gebuchtLieferant.set(lz, (gebuchtLieferant.get(lz) ?? 0) + buchungsBetrag(e));
+      continue;
+    }
     const cur = gebucht.get(k) ?? { sum: 0, name: e.accountName ?? null };
     cur.sum += buchungsBetrag(e);
     if (!cur.name && e.accountName) cur.name = e.accountName;
@@ -332,6 +368,20 @@ export function buildKontoAbgleich(input: {
   const istNumerisch = (k: string) => Number.isFinite(parseInt(k, 10)) && /^\d+$/.test(k);
   const zeilen: KontoAbgleichZeile[] = [];
   for (const [konto, sum] of erfasst) {
+    // Pro-Lieferant-Sammelzeile («~Name»): gegen Σ Journal-Buchungen dieses
+    // Lieferanten über ALLE Konten vergleichen (FIBU bucht z.B. pauschal 4030).
+    if (konto.startsWith('~')) {
+      const name = konto.slice(1);
+      const jSum = gebuchtLieferant.get(name);
+      zeilen.push({
+        konto,
+        bezeichnung: `${name} (pro Lieferant, alle Konten)`,
+        erfasst: Math.round(sum * 100) / 100,
+        gebucht: jSum !== undefined ? Math.round(jSum * 100) / 100 : null,
+        diff: jSum !== undefined ? Math.round((sum - jSum) * 100) / 100 : null,
+      });
+      continue;
+    }
     const numerisch = istNumerisch(konto);
     const j = numerisch ? gebucht.get(konto.replace(/^0+/, '')) : undefined;
     zeilen.push({
@@ -340,6 +390,18 @@ export function buildKontoAbgleich(input: {
       erfasst: Math.round(sum * 100) / 100,
       gebucht: j ? Math.round(j.sum * 100) / 100 : null,
       diff: j ? Math.round((sum - j.sum) * 100) / 100 : null,
+    });
+  }
+  // Lieferanten, die NUR im Journal vorkommen (gebucht, aber nichts erfasst):
+  for (const [name, sum] of gebuchtLieferant) {
+    if (zeilen.some(z => z.konto === `~${name}`)) continue;
+    if (Math.abs(sum) < 0.005) continue;
+    zeilen.push({
+      konto: `~${name}`,
+      bezeichnung: `${name} (pro Lieferant, alle Konten)`,
+      erfasst: 0,
+      gebucht: Math.round(sum * 100) / 100,
+      diff: Math.round((0 - sum) * 100) / 100,
     });
   }
   // Konten, die NUR im Journal vorkommen (gebucht, aber nichts erfasst) —

@@ -65,6 +65,50 @@ describe('buildKontoAbgleich', () => {
     expect(zeilen.map(z => z.konto).sort()).toEqual(['4020', '4030']); // 6040/5000 raus
   });
 
+  it('lieferantZeilen: Rechnungen + Journal-Buchungen des Lieferanten in EINER Zeile (alle Konten)', () => {
+    const zeilen = buildKontoAbgleich({
+      invoices: [
+        inv({ id: 'fs1', supplierName: 'Feldschlösschen', kontoSplits: [
+          { warenkonto: '4030', amountNet: 4538, amountGross: 4905.58 },
+          { warenkonto: '4040', amountNet: 2789.3, amountGross: 3015.23 },
+          { warenkonto: '4050', amountNet: 7450.77, amountGross: 8054.28 },
+          { warenkonto: 'Depot', amountNet: 1186, amountGross: 1186 },
+        ] }),
+        inv({ id: 'tg1', supplierName: 'Transgourmet', warenkonto: '4030', amountNet: 111 }),
+      ],
+      journal: [
+        { ...buchung('4030', 14700), text: 'Feldschlösschen Getränke AG Monatsrechnung' },
+        { ...buchung('4030', 111), text: 'Transgourmet' },
+      ],
+      lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
+    });
+    const fs = zeilen.find(z => z.konto === '~Feldschlösschen')!;
+    // Depot bleibt aussen vor (neutral): 4538 + 2789.30 + 7450.77 = 14778.07
+    expect(fs).toMatchObject({ erfasst: 14778.07, gebucht: 14700, diff: 78.07 });
+    // 4030 enthält NUR noch Transgourmet — FS wurde herausgelöst
+    expect(zeilen.find(z => z.konto === '4030')).toMatchObject({ erfasst: 111, gebucht: 111, diff: 0 });
+    expect(zeilen.find(z => z.konto === 'Depot')).toMatchObject({ erfasst: 1186, gebucht: null });
+  });
+
+  it('lieferantZeilen: reine Depot-Rechnung (Einzelkonto) bleibt neutral, keine Lieferantenzeile', () => {
+    const zeilen = buildKontoAbgleich({
+      invoices: [inv({ id: 'fs2', supplierName: 'Feldschlösschen', warenkonto: 'Depot', amountNet: 185.4 })],
+      journal: [],
+      lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
+    });
+    expect(zeilen.find(z => z.konto === 'Depot')).toMatchObject({ erfasst: 185.4, gebucht: null, diff: null });
+    expect(zeilen.some(z => z.konto === '~Feldschlösschen')).toBe(false);
+  });
+
+  it('lieferantZeilen: nur-Journal-Lieferant erscheint sichtbar (erfasst 0)', () => {
+    const zeilen = buildKontoAbgleich({
+      invoices: [],
+      journal: [{ ...buchung('4030', 500), text: 'Feldschlösschen' }],
+      lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
+    });
+    expect(zeilen.find(z => z.konto === '~Feldschlösschen')).toMatchObject({ erfasst: 0, gebucht: 500, diff: -500 });
+  });
+
   it('Haben (Gutschriften) mindern gebucht (Soll − Haben)', () => {
     const zeilen = buildKontoAbgleich({
       invoices: [],

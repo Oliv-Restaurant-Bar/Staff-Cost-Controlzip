@@ -32,6 +32,7 @@ import {
   fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, findeNaheRechnung,
   sammelrechnungZuHistorie,
   type FsLieferschein, type FsSammelrechnung, type FakturaAbgleich,
+  type FsAnhangLieferschein, type FsKategorieSumme,
 } from '@/lib/feldschloesschen';
 import {
   berechnePreisAenderungen, aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
@@ -50,7 +51,7 @@ import {
   erstelleWarenImportSnapshot, saveWarenImportUndo,
   type InvoiceEntry, type Supplier,
 } from '@/lib/waren-db';
-import { kernImportiereFsRechnungen } from '@/lib/fs-import';
+import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { FsHistorienEintrag } from '@/lib/feldschloesschen';
@@ -102,10 +103,24 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
     [suppliers],
   );
 
+  /**
+   * Kategorien der Faktura-eigenen «Zusammenfassung MwSt.» für einen Anhang-
+   * Lieferschein — NUR wenn die Faktura genau diesen einen Lieferschein hat
+   * (sonst ist die Zusammenfassung nicht eindeutig auf die Buchung aufteilbar;
+   * dann bleibt die Positions-Klassifizierung massgeblich).
+   */
+  const fsKategorienFuerLs = (a: FsAnhangLieferschein, s?: FsSammelrechnung | null): FsKategorieSumme[] | undefined => {
+    if (!s) return undefined;
+    const kats = s.fakturaKategorien[a.fakturaNr];
+    if (!kats || kats.length === 0) return undefined;
+    const geschwister = s.anhangLieferscheine.filter(x => x.fakturaNr === a.fakturaNr);
+    return geschwister.length === 1 ? kats : undefined;
+  };
+
   // ── Gemeinsame Import-Pipeline (Lieferschein & Anhang-Übernahme) ──────────
   // Kern in src/lib/fs-import.ts (testbar); hier nur die gebundene Variante.
   const kernImportiereRechnungen = async (
-    rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
+    rechnungen: FsImportRechnung[],
     opts?: { quelle?: 'monatsrechnung' },
   ) => {
     // In der Vorschau gesetzte Kontierungen MERKEN (Artikel→Konto, pro Mandant)
@@ -120,7 +135,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
 
   /** Wie kern…, aber mit eigenem Undo-Datensatz (Typ «fs»). */
   const importiereRechnungen = async (
-    rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
+    rechnungen: FsImportRechnung[],
     undoLabel = 'Feldschlösschen-PDF',
     opts?: { quelle?: 'monatsrechnung' },
   ) => {
@@ -309,7 +324,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       }
       if (zuImportieren.length === 0) return;
       const res = await importiereRechnungen(
-        zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a) })),
+        zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a), fsKategorien: fsKategorienFuerLs(a, sammel) })),
         'Monatsrechnung: fehlende Lieferungen ergänzt',
         { quelle: 'monatsrechnung' },
       );
@@ -355,7 +370,12 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       // Sammelrechnungs-Lieferungen sind MASSGEBLICH (Monatsrechnung, final)
       // — nie als einfache provisorische Lieferscheine buchen.
       const res = lieferungen.length > 0
-        ? await kernImportiereRechnungen(lieferungen.map(a => ({ r: fsAnhangAlsRechnung(a) })), { quelle: 'monatsrechnung' })
+        ? await kernImportiereRechnungen(
+            lieferungen.map(a => ({
+              r: fsAnhangAlsRechnung(a),
+              fsKategorien: fsKategorienFuerLs(a, zipVorschau.find(s => s.anhangLieferscheine.includes(a))),
+            })),
+            { quelle: 'monatsrechnung' })
         : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[], bereitsFinal: 0, ueberschrieben: 0 };
       const teile: string[] = [];
       for (const [jahr, eintraege] of proJahr) {

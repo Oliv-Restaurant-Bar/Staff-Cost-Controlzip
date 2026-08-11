@@ -5,8 +5,9 @@ import {
   parseFsLieferschein, parseFsSammelrechnung, fsKategorie,
   fsLieferscheinAlsRechnung, fsAnhangAlsRechnung, matchFakturen,
   kategorienGegenprobe, mitFsDefaults, sammelrechnungZuHistorie, findeNaheRechnung,
+  kontoSplitsAusFsKategorien,
   DEFAULT_FS_KATEGORIEN_MAPPING,
-  type FsZeile,
+  type FsZeile, type FsKategorieSumme,
 } from '../feldschloesschen';
 
 /** Test-Helfer: «a | b | c»-Strings → FsZeile (wie toFsZeilen aus GnPdfLines). */
@@ -86,6 +87,21 @@ const SAMMEL = zeilen([
   [3, 'Zu-/Abschläge | 15.00'],
   [3, 'Mehrwertsteuer | 319.06'],
   [3, 'Endbetrag CHF | 4\'258.00'],
+  // Letzte Seite der Einzel-Faktura: eigene «Zusammenfassung MwSt.»
+  [4, 'Datum / Beleg-Nr. | Seite'],
+  [4, '04.06.2026 / 87717597 | 2/2'],
+  [4, 'Zusammenfassung MwSt.'],
+  [4, '8.1% | 2.6% | 0.0%'],
+  [4, 'Umsatz | Umsatz | Umsatz netto | Zeilentotal'],
+  [4, 'Bier | Nettowert | 3\'923.92 | 0.00 | 0.00 | 3\'923.92'],
+  [4, 'MwSt | 317.84 | 0.00 | 0.00 | 317.84'],
+  [4, 'Total | 4\'241.76 | 0.00 | 0.00 | 4\'241.76'],
+  [4, 'Zu-/Abschläge | Nettowert | 15.00 | 0.00 | 0.00 | 15.00'],
+  [4, 'MwSt | 1.22 | 0.00 | 0.00 | 1.22'],
+  [4, 'Total | 16.21 | 0.00 | 0.00 | 16.21'],
+  [4, 'Endbetrag | 3\'938.92 | 0.00 | 0.00 | 3\'938.92'],
+  [4, 'MwSt | 319.05 | 0.00 | 0.00 | 319.05'],
+  [4, 'Total Brutto | 4\'257.97 | 0.00 | 0.00 | 4\'257.97'],
 ]);
 
 describe('parseChf / parseDatumCH', () => {
@@ -215,6 +231,54 @@ describe('parseFsSammelrechnung', () => {
     // Rundungs-Ausgleich: Brutto = offizieller Endbetrag
     const r = fsAnhangAlsRechnung(a);
     expect(r.bruttoTotal).toBeCloseTo(4258, 2);
+  });
+  it('liest die Faktura-eigene «Zusammenfassung MwSt.» (fakturaKategorien)', () => {
+    const kats = s.fakturaKategorien['87717597'];
+    expect(kats).toBeDefined();
+    expect(kats.map(k => k.name)).toEqual(['Bier', 'Zu-/Abschläge']);
+    expect(kats.find(k => k.name === 'Bier')?.netto81).toBe(3923.92);
+    expect(kats.find(k => k.name === 'Zu-/Abschläge')?.nettoTotal).toBe(15);
+    // Endbetrag-/MwSt-/Total-Zeilen werden NICHT als Kategorien gesammelt
+    expect(kats.some(k => /endbetrag|total|mwst/i.test(k.name))).toBe(false);
+    // globale Kategorien bleiben unberührt (keine Pollution)
+    expect(s.kategorien.find(k => k.name === 'Bier')?.nettoTotal).toBe(5259.12);
+    // «Endbetrag CHF» der Faktura bleibt korrekt geparst
+    expect(s.anhangLieferscheine[0].fakturaEndbetrag).toBe(4258);
+  });
+});
+
+describe('kontoSplitsAusFsKategorien', () => {
+  const kat = (name: string, n81: number, n26 = 0, n00 = 0): FsKategorieSumme =>
+    ({ name, netto81: n81, netto26: n26, netto00: n00, nettoTotal: n81 + n26 + n00 });
+  it('kontiert Warenkategorien nach Mapping, 0%-Kategorien auf Depot', () => {
+    const { splits, offen } = kontoSplitsAusFsKategorien([
+      kat('Bier', 452), kat('Mineralwasser', 0, 1156.44), kat('Spirituosen', 195.13),
+      kat('Wein', 100), kat('Zu-/Abschläge', 76.95), kat('Leergut', 0, 0, 185.40),
+      kat('Mietmaterial', 20), kat('Recyclinggebühren', 5),
+    ], []);
+    expect(offen).toEqual([]);
+    const m = Object.fromEntries(splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['4030']).toBe(452);
+    expect(m['4050']).toBe(1156.44);
+    expect(m['4040']).toBe(195.13);
+    expect(m['4020']).toBe(100);
+    expect(m['4701']).toBeCloseTo(101.95, 2); // Zu-/Abschläge + Mietmaterial + Recycling
+    expect(m['Depot']).toBe(185.4);
+    // Brutto: 8.1%- und 2.6%-Anteile hochgerechnet, 0% unverändert
+    expect(splits.find(s2 => s2.warenkonto === 'Depot')?.amountGross).toBe(185.4);
+    expect(splits.find(s2 => s2.warenkonto === '4030')?.amountGross).toBeCloseTo(488.61, 2);
+  });
+  it('unbekannte Kategorie → «offen», nie raten; leere Kategorien übersprungen', () => {
+    const { splits, offen } = kontoSplitsAusFsKategorien([
+      kat('Bier', 100), kat('Völlig Neu', 50), kat('Wein', 0, 0, 0),
+    ], []);
+    expect(offen).toEqual(['Völlig Neu']);
+    expect(splits.find(s2 => s2.warenkonto === 'offen')?.amountNet).toBe(50);
+    expect(splits.some(s2 => s2.warenkonto === '4020')).toBe(false);
+  });
+  it('eigenes Mapping übersteuert die Defaults', () => {
+    const { splits } = kontoSplitsAusFsKategorien([kat('Bier', 100)], [{ gruppe: 'Bier', konto: '4099' }]);
+    expect(splits[0].warenkonto).toBe('4099');
   });
 });
 

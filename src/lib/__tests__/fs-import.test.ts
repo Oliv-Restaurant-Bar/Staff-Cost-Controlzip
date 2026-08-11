@@ -51,6 +51,34 @@ describe('kernImportiereFsRechnungen', () => {
     expect(monat[0].date).toBe('2026-07-30');
   });
 
+  it('fsKategorien (Zusammenfassung MwSt.) übersteuern die Positions-Kontierung', async () => {
+    const r = rechnung('L-Z1', '2026-07-10');
+    // Netto der Rechnung: 300 — ZSF splittet auf Bier + Spirituosen
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      r,
+      fsKategorien: [
+        { name: 'Bier', netto81: 200, netto26: 0, netto00: 0, nettoTotal: 200 },
+        { name: 'Spirituosen', netto81: 100, netto26: 0, netto00: 0, nettoTotal: 100 },
+      ],
+    }], { quelle: 'monatsrechnung' });
+    expect(res.hinweise).toEqual([]);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    const m = Object.fromEntries((monat[0].kontoSplits ?? []).map(s => [s.warenkonto, s.amountNet]));
+    expect(m).toEqual({ '4030': 200, '4040': 100 });
+  });
+
+  it('fsKategorien mit abweichender Summe → sichtbarer Hinweis, Fallback auf Positionen', async () => {
+    const r = rechnung('L-Z2', '2026-07-11'); // Netto 300, ganz Bier
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      r,
+      fsKategorien: [{ name: 'Bier', netto81: 150, netto26: 0, netto00: 0, nettoTotal: 150 }],
+    }], { quelle: 'monatsrechnung' });
+    expect(res.hinweise.some(h => /deckt das Buchungs-Netto/.test(h))).toBe(true);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat[0].warenkonto ?? monat[0].kontoSplits?.[0]?.warenkonto).toBe('4030'); // aus Positionen
+    expect(monat[0].amountNet).toBe(300);
+  });
+
   it('echter Lieferschein ersetzt provisorische Lieferung (AB) über die Monatsgrenze — ohne Waisen', async () => {
     // 1) provisorisch (Auftragsbestätigung), Ende Juli
     await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('77123', '2026-07-31', 30) }], { quelle: 'auftragsbestaetigung' });
