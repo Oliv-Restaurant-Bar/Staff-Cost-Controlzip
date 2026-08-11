@@ -24,3 +24,7 @@ description: Buchungszeilen-Dedupe im Journal-Writer + einmalige Bereinigung mit
   5004) und FibuMatchState (erklärte Differenzen) bleiben unangetastet.
 - Testfeste Juli-Kontrollwerte in `journal-dedupe.test.ts` (Ambro 8'568.39 …,
   Umbuchung −1'830 einfach; Strict behält 27 Duplikate).
+- **Direkte KV-Reparatur** (wenn UI nicht praktikabel): app_settings via Supabase-
+  Mgmt-API-SQL, aber IMMER dem App-Muster folgen — Undo-Snapshot zuerst upserten,
+  dann dedupliziert schreiben; Oliv-Keys unpräfixiert. Clients holen den Stand beim
+  Laden aus dem KV (loadJournalEntriesFromDB überschreibt localStorage).
