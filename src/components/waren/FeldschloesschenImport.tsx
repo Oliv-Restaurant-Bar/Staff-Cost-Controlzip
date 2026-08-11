@@ -29,7 +29,7 @@ import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import {
   toFsZeilen, detectFsPdfTyp, istFeldschloesschenPdf,
   parseFsLieferschein, parseFsSammelrechnung, parseFsFaktura, fsFakturenAlsRechnungen,
-  fsLieferscheinAlsRechnung, kontoSplitsAusFsKategorien,
+  fsLieferscheinAlsRechnung, kontoSplitsAusFsKategorien, fsKontoVorschlag,
   fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, findeNaheRechnung,
   sammelrechnungZuHistorie,
   type FsLieferschein, type FsSammelrechnung, type FakturaAbgleich,
@@ -37,14 +37,14 @@ import {
 } from '@/lib/feldschloesschen';
 import {
   berechnePreisAenderungen, aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
-  DEFAULT_WARENGRUPPEN_MAPPING,
+  DEFAULT_WARENGRUPPEN_MAPPING, KONTO_OPTIONEN,
   type ArtikelKontenMapping, type ParsedCsvRechnung, type PreisAenderung, type WarengruppenMapping,
 } from '@/lib/waren-positionen';
 import { mitFsDefaults } from '@/lib/feldschloesschen';
 import {
   PositionenKontierungListe, effektiveArtikelKonten, offeneAnzahl,
 } from '@/components/waren/PositionenKontierungVorschau';
-import { loadWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
+import { loadWarengruppenMapping, saveWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
 import {
   loadMonthInvoices, loadPreisHistorie,
   loadPreisSchwelle, loadRechnungsPositionen,
@@ -96,6 +96,9 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
   const [fsMapping, setFsMapping] = useState<WarengruppenMapping>(mitFsDefaults(DEFAULT_WARENGRUPPEN_MAPPING));
   const [artikelKonten, setArtikelKonten] = useState<ArtikelKontenMapping>({});
   const [kontoOverrides, setKontoOverrides] = useState<ArtikelKontenMapping>({});
+  /** ZSF-Kategorie (lowercase) → gewähltes Konto: Kontierung unbekannter
+   * «Zusammenfassung MwSt.»-Kategorien direkt in der Einzelrechnungs-Vorschau. */
+  const [katOverrides, setKatOverrides] = useState<Record<string, string>>({});
   const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -230,7 +233,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
       if (neueLs.length > 0) {
         setLieferscheine(neueLs);
         setAusgewaehlt(new Set(neueLs.map(l => l.lieferungNr)));
-        setEinzelFakturen(null);
+        setEinzelFakturen(null); setKatOverrides({});
         setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
       }
       if (neueFakturen.length > 0) {
@@ -240,12 +243,28 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
           const gesehen = new Set<string>();
           return alle.filter(s => { if (gesehen.has(s.nr)) return false; gesehen.add(s.nr); return true; });
         });
+        // Unbekannte ZSF-Kategorien der neuen Fakturen: Konto-Dropdown vorbelegen
+        // (Material → 4701, sonst leer = Nutzer MUSS wählen, Buchen bleibt gesperrt).
+        setKatOverrides(prev => {
+          const next = { ...prev };
+          for (const s of neueFakturen) {
+            const { offen } = kontoSplitsAusFsKategorien(s.fakturaKategorien[s.nr] ?? [], fsMapping);
+            for (const name of offen) {
+              const k = name.trim().toLowerCase();
+              if (next[k] === undefined) {
+                const vorschlag = fsKontoVorschlag(name);
+                if (vorschlag) next[k] = vorschlag;
+              }
+            }
+          }
+          return next;
+        });
         setLieferscheine(null); setAusgewaehlt(new Set());
         setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
       }
       if (neueSammel) {
         setLieferscheine(null); setAusgewaehlt(new Set());
-        setEinzelFakturen(null);
+        setEinzelFakturen(null); setKatOverrides({});
         setGegenprobeZeilen(null);
         setSammel(neueSammel);
         setUebernommen(new Set());
@@ -336,16 +355,69 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
     }
   };
 
+  // ── Teil A2: Kontierung unbekannter ZSF-Kategorien in der Vorschau ────────
+  /** Mapping inkl. Vorschau-Zuordnungen — Overrides stehen VORNE und gewinnen. */
+  const fsMappingMitKatOverrides = useMemo<WarengruppenMapping>(
+    () => [...Object.entries(katOverrides).map(([gruppe, konto]) => ({ gruppe, konto })), ...fsMapping],
+    [katOverrides, fsMapping],
+  );
+  /** Alle unbekannten ZSF-Kategorien der Vorschau (ohne Overrides, dedupliziert). */
+  const offeneKatNamen = useMemo(() => {
+    if (!einzelFakturen) return [] as string[];
+    const namen = new Map<string, string>();
+    for (const s of einzelFakturen) {
+      const { offen } = kontoSplitsAusFsKategorien(s.fakturaKategorien[s.nr] ?? [], fsMapping);
+      for (const n of offen) namen.set(n.trim().toLowerCase(), n);
+    }
+    return [...namen.values()];
+  }, [einzelFakturen, fsMapping]);
+  /** Nach Overrides noch offene Kategorien — sperrt den Buchen-Button. */
+  const einzelFakturenOffen = useMemo(
+    () => offeneKatNamen.filter(n => !katOverrides[n.trim().toLowerCase()]).length,
+    [offeneKatNamen, katOverrides],
+  );
+  /** Konto-Optionen: Standardliste + Konten der Mandanten-Tabelle (wie «Positionen kontieren»). */
+  const kontoOptionen = useMemo(() => {
+    const m = new Map(KONTO_OPTIONEN.map(o => [o.konto, o.label]));
+    for (const r of fsMapping) {
+      const k = r.konto.trim();
+      if (/^\d{4}$/.test(k) && !m.has(k)) m.set(k, `${k} ${r.gruppe}`);
+    }
+    return [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([konto, label]) => ({ konto, label }));
+  }, [fsMapping]);
+
   // ── Teil A2: einzelne Faktura-PDFs buchen (ersetzt Kreditoren-Übernahme) ──
   const importiereEinzelFakturen = async () => {
     if (!einzelFakturen || einzelFakturen.length === 0) return;
+    // NIE mit offener Position buchen: jede ZSF-Kategorie braucht ein Konto.
+    if (einzelFakturenOffen > 0) {
+      toast.error(`${einzelFakturenOffen} Kategorie${einzelFakturenOffen === 1 ? '' : 'n'} ohne Konto — bitte zuerst in der Vorschau zuordnen.`);
+      return;
+    }
     setBusy(true);
     try {
+      // Gewählte Kategorie→Konto-Zuordnungen ZUERST als Regel merken (Mandanten-
+      // Tabelle, gespeicherte Gruppen gewinnen künftig automatisch) — der Import-
+      // Kern lädt die Tabelle frisch und wendet sie in diesem Lauf bereits an.
+      // NUR die tatsächlich offenen Kategorien persistieren, nie die FS-Defaults.
+      const neueRegeln = offeneKatNamen
+        .map(n => ({ gruppe: n, konto: katOverrides[n.trim().toLowerCase()] }))
+        .filter(r => !!r.konto);
+      if (neueRegeln.length > 0) {
+        // Merge-Basis IMMER frisch laden (nie UI-State): sonst könnte ein Buchen
+        // vor Abschluss des initialen Ladens die Mandanten-Tabelle mit den
+        // Defaults überschreiben und bestehende Regeln löschen (Review-Fund).
+        const frisch = await loadWarengruppenMapping(tenantId);
+        const vorhanden = new Set(neueRegeln.map(r => r.gruppe.trim().toLowerCase()));
+        const neueTabelle = [...frisch.filter(r => !vorhanden.has(r.gruppe.trim().toLowerCase())), ...neueRegeln];
+        await saveWarengruppenMapping(tenantId, neueTabelle);
+        setFsMapping(mitFsDefaults(neueTabelle));
+      }
       const rechnungen = einzelFakturen.flatMap(fsFakturenAlsRechnungen);
       const res = await importiereRechnungen(rechnungen, 'Feldschlösschen-Einzelrechnungen', { quelle: 'monatsrechnung' });
       toast.success(`${rechnungen.length} Faktura/Fakturen gebucht: ${res.neu} neu · ${res.ersetzt} ersetzt${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
       for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
-      setEinzelFakturen(null);
+      setEinzelFakturen(null); setKatOverrides({});
       onImported();
     } catch (e) {
       toast.error(`Import fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
@@ -691,14 +763,14 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
             <span className="font-medium">
               {einzelFakturen.length} Einzelrechnung{einzelFakturen.length === 1 ? '' : 'en'} · Lieferant: {lieferant} · Kontierung aus «Zusammenfassung MwSt.»
             </span>
-            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setEinzelFakturen(null)}>
+            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => { setEinzelFakturen(null); setKatOverrides({}); }}>
               <X className="h-3 w-3 mr-0.5" /> Verwerfen
             </Button>
           </div>
           <div className="max-h-56 overflow-y-auto space-y-1">
             {einzelFakturen.map(s => {
               const kats = s.fakturaKategorien[s.nr] ?? [];
-              const { splits, offen } = kontoSplitsAusFsKategorien(kats, fsMapping);
+              const { splits, offen } = kontoSplitsAusFsKategorien(kats, fsMappingMitKatOverrides);
               return (
                 <div key={s.nr} className="rounded border border-border/50 px-2 py-1.5 tabular-nums" data-testid={`fs-faktura-${s.nr}`}>
                   <div className="flex flex-wrap items-center gap-2">
@@ -715,7 +787,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                     ))}
                     {offen.length > 0 && (
                       <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> unbekannt: {offen.join(', ')}
+                        <AlertTriangle className="h-3 w-3" /> offen: {offen.join(', ')}
                       </span>
                     )}
                   </div>
@@ -723,8 +795,44 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
               );
             })}
           </div>
-          <div className="flex items-center justify-end">
-            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy}
+          {/* Unbekannte ZSF-Kategorien direkt in der Vorschau kontieren (analog «Positionen kontieren»).
+              Gewählte Zuordnung wird beim Buchen als Kategorie→Konto-Regel gemerkt. */}
+          {offeneKatNamen.length > 0 && (
+            <div className="rounded border border-border/50 bg-background/60 divide-y divide-border/30" data-testid="fs-faktura-kontierung">
+              {offeneKatNamen.map(name => {
+                const key = name.trim().toLowerCase();
+                const gewaehlt = katOverrides[key] ?? '';
+                return (
+                  <div key={key} className={cn('flex flex-wrap items-center gap-2 px-2 py-1', !gewaehlt && 'bg-amber-500/10')}>
+                    {!gewaehlt && <span className="text-amber-600 dark:text-amber-400 font-medium text-[10px] uppercase">offen</span>}
+                    <span className="truncate max-w-[240px]">{name}</span>
+                    <span className="text-muted-foreground text-[11px]">Kategorie «Zusammenfassung MwSt.»</span>
+                    <select
+                      className={cn('ml-auto h-6 w-64 rounded border bg-background px-1 text-[11px]',
+                        gewaehlt ? 'border-border' : 'border-amber-500/60 text-amber-700 dark:text-amber-400')}
+                      value={gewaehlt}
+                      onChange={e => { const v = e.target.value; if (v) setKatOverrides(o => ({ ...o, [key]: v })); }}
+                      data-testid={`fs-faktura-konto-${key.replace(/[^a-z0-9]+/g, '-')}`}>
+                      {!gewaehlt && <option value="">Konto wählen…</option>}
+                      {kontoOptionen.map(o => <option key={o.konto} value={o.konto}>{o.label}</option>)}
+                      {gewaehlt && !kontoOptionen.some(o => o.konto === gewaehlt) && <option value={gewaehlt}>{gewaehlt}</option>}
+                    </select>
+                  </div>
+                );
+              })}
+              <div className="px-2 py-1 text-[10px] text-muted-foreground">
+                Gewählte Konten werden beim Buchen als Kategorie-Zuordnung von {lieferant} gemerkt (gilt künftig automatisch).
+              </div>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            {einzelFakturenOffen > 0 && (
+              <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1" data-testid="fs-faktura-offen-warnung">
+                <AlertTriangle className="h-3 w-3" />
+                {einzelFakturenOffen} Kategorie{einzelFakturenOffen === 1 ? '' : 'n'} ohne Konto — Buchen gesperrt (nie mit offener Position buchen)
+              </span>
+            )}
+            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || einzelFakturenOffen > 0}
               onClick={() => void importiereEinzelFakturen()} data-testid="fs-faktura-import">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
               {einzelFakturen.length} Faktura/Fakturen buchen (ersetzt Kreditoren-Übernahme)

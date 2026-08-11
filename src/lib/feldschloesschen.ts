@@ -123,6 +123,16 @@ export function mitFsDefaults(mapping: WarengruppenMapping): WarengruppenMapping
   return [...mapping, ...DEFAULT_FS_KATEGORIEN_MAPPING.filter(r => !vorhanden.has(r.gruppe.toLowerCase()))];
 }
 
+/**
+ * Konto-VORSCHLAG für eine unbekannte ZSF-Kategorie (nur Vorbelegung des
+ * Dropdowns in der Vorschau — wird NIE automatisch gebucht, der Nutzer
+ * bestätigt/ändert vor dem Buchen): Material-Kategorien («Event Material»,
+ * «Mietmaterial» …) → 4701 Betriebsmaterial. Sonst kein Vorschlag (null).
+ */
+export function fsKontoVorschlag(kategorie: string): string | null {
+  return /material/i.test(kategorie) ? '4701' : null;
+}
+
 const SPIRITUOSEN_RX = /grappa|vodka|wodka|\bgin\b|whisk|\brum\b|likör|liqueur|aperitif|bitter|campari|aperol|tequila|amaretto|cognac|armagnac|calvados|ouzo|sambuca|limoncello|vermouth|vermut|kirsch\b|träsch|williamine|absinth|baileys|jägermeister|ramazzotti|averna|fernet|cynar|martini|spirituose|brand\b|obstbrand|zwetschgen|aprikosen|vieille prune/i;
 const WEIN_RX = /\bwein\b|prosecco|champagn|spumante|cava\b|riesling|merlot|pinot|chardonnay(?!.*grappa)|sauvignon|chasselas|dôle|federweiss|rosé\b|rioja|barolo|chianti|primitivo|amarone/i;
 // Moscht/Cider gehört laut FGG-Monatsrechnung («Zusammenfassung MwSt.») zu

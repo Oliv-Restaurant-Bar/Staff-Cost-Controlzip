@@ -5,7 +5,7 @@ import {
   parseFsLieferschein, parseFsSammelrechnung, fsKategorie,
   fsLieferscheinAlsRechnung, fsAnhangAlsRechnung, matchFakturen,
   kategorienGegenprobe, mitFsDefaults, sammelrechnungZuHistorie, findeNaheRechnung,
-  kontoSplitsAusFsKategorien, parseFsFaktura, fsFakturenAlsRechnungen,
+  kontoSplitsAusFsKategorien, fsKontoVorschlag, parseFsFaktura, fsFakturenAlsRechnungen,
   DEFAULT_FS_KATEGORIEN_MAPPING,
   type FsZeile, type FsKategorieSumme,
 } from '../feldschloesschen';
@@ -351,6 +351,24 @@ describe('kontoSplitsAusFsKategorien', () => {
   it('eigenes Mapping übersteuert die Defaults', () => {
     const { splits } = kontoSplitsAusFsKategorien([kat('Bier', 100)], [{ gruppe: 'Bier', konto: '4099' }]);
     expect(splits[0].warenkonto).toBe('4099');
+  });
+  // Kontrollwerte Rechnung 87750197 (08/2026): «Event Material» ist unbekannt →
+  // offen (Buchen gesperrt); nach Zuordnung Event Material → 4701 in der Vorschau
+  // (Regel im Mapping): 4701 = 375.00 (75 Zu-/Abschläge + 300 Event) · offen = 0.
+  it('Kontrollwerte 87750197: Event Material offen → nach Regel 4701 = 375.00', () => {
+    const kats = [kat('Bier', 452), kat('Zu-/Abschläge', 75), kat('Event Material', 300)];
+    const ohne = kontoSplitsAusFsKategorien(kats, []);
+    expect(ohne.offen).toEqual(['Event Material']);
+    expect(ohne.splits.find(s2 => s2.warenkonto === 'offen')?.amountNet).toBe(300);
+    const mit = kontoSplitsAusFsKategorien(kats, [{ gruppe: 'Event Material', konto: '4701' }]);
+    expect(mit.offen).toEqual([]);
+    const m = Object.fromEntries(mit.splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['4701']).toBeCloseTo(375, 2);
+  });
+  it('fsKontoVorschlag: Material-Kategorien → 4701, sonst kein Vorschlag', () => {
+    expect(fsKontoVorschlag('Event Material')).toBe('4701');
+    expect(fsKontoVorschlag('Mietmaterial')).toBe('4701');
+    expect(fsKontoVorschlag('Völlig Neu')).toBeNull();
   });
 });
 
