@@ -26,6 +26,7 @@ export type FinancialMetricId =
   | "net_revenue"
   | "total_cogs"
   | "total_cogs_einkauf"
+  | "total_cogs_direct"
   | "gross_profit_1"
   | "total_personnel"
   | "gross_profit_2"
@@ -135,6 +136,7 @@ export const FINANCIAL_METRICS: Record<FinancialMetricId, FinancialMetricDefinit
   net_revenue:        amountMetric("net_revenue"),
   total_cogs:         amountMetric("total_cogs"),
   total_cogs_einkauf: amountMetric("total_cogs_einkauf"),
+  total_cogs_direct:  amountMetric("total_cogs_direct"),
   gross_profit_1:     amountMetric("gross_profit_1"),
   total_personnel:    amountMetric("total_personnel"),
   gross_profit_2:     amountMetric("gross_profit_2"),
@@ -143,8 +145,10 @@ export const FINANCIAL_METRICS: Record<FinancialMetricId, FinancialMetricDefinit
   total_depreciation: amountMetric("total_depreciation"),
   ebit:               amountMetric("ebit"),
   // Quoten (%) — je Spalte aus denselben Rohbeträgen
-  // Einkaufs-WKQ: bewusst OHNE Lagerveränderung (4900) — Basis Wareneinkauf.
-  cogs_ratio:      ratioMetric("cogs_ratio",      "Warenkostenquote", "total_cogs_einkauf"),
+  // WKQ = DIREKTER Warenaufwand (Konten 4020–4070) ÷ Betriebsertrag netto.
+  // 4090/4701/4800 (übriger Warenaufwand) und 4900 (Lager) sind AUSGESCHLOSSEN —
+  // identisch mit der P&L-Zeile «Direkter Warenaufwand» und dem Waren-Analyse-Modul.
+  cogs_ratio:      ratioMetric("cogs_ratio",      "Warenkostenquote", "total_cogs_direct"),
   personnel_ratio: ratioMetric("personnel_ratio", "Personalquote",    "total_personnel"),
   ebitda_margin:   ratioMetric("ebitda_margin",   "EBITDA-Marge",     "ebitda"),
   ebit_margin:     ratioMetric("ebit_margin",     "EBIT-Marge",       "ebit"),
@@ -202,6 +206,7 @@ export const FINANCIAL_METRIC_DEPENDENCIES: Record<
   net_revenue:        [],
   total_cogs:         [],
   total_cogs_einkauf: [],
+  total_cogs_direct:  [],
   total_personnel:    [],
   total_opex:         [],
   total_depreciation: [],
@@ -209,7 +214,7 @@ export const FINANCIAL_METRIC_DEPENDENCIES: Record<
   gross_profit_2:     ['net_revenue', 'total_cogs', 'total_personnel'],
   ebitda:             ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex'],
   ebit:               ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'],
-  cogs_ratio:         ['total_cogs_einkauf', 'net_revenue'],
+  cogs_ratio:         ['total_cogs_direct', 'net_revenue'],
   personnel_ratio:    ['total_personnel', 'net_revenue'],
   ebitda_margin:      ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex'],
   ebit_margin:        ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'],

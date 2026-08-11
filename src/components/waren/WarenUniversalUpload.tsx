@@ -133,7 +133,7 @@ export function WarenUniversalUpload({ tenantId, tenantColor, onRoute }: {
           ? <Loader2 className="h-6 w-6 animate-spin" style={{ color: tenantColor }} />
           : <UploadCloud className="h-6 w-6" style={{ color: tenantColor }} />}
         <span className="text-sm font-medium">
-          {busy ? 'Dateien werden erkannt…' : 'Rechnung(en) / CSV hier ablegen'}
+          {busy ? 'Dateien werden erkannt…' : 'Beleg hochladen — Lieferant wird automatisch erkannt'}
         </span>
         <span className="text-[11px] text-muted-foreground">
           Lieferant wird automatisch erkannt (MWST-Nr / Name / Format) — auch gemischte Stapel.

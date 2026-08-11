@@ -3,8 +3,12 @@
  * Range-Zuordnung der Warenaufwandskonten zu den beiden Zwischentotalen
  * der Erfolgsrechnung:
  *
- *   Direkter Warenaufwand: Konten 4000–4070 (inklusive)
- *   Übriger Warenaufwand:  Konten 4071–4900 (inklusive)
+ *   Direkter Warenaufwand: Konten 4020–4070 (inklusive)
+ *   Übriger Warenaufwand:  Konten 4000–4019 und 4071–4899 (inklusive)
+ *
+ * (08/2026, Build-Befehl WKQ-direkt): Direkt = NUR 4020–4070 — identisch mit
+ * der Warenkostenquote-KPI und dem Waren-Analyse-Modul. Konten unterhalb 4020
+ * bleiben Warenaufwand (übrig), zählen aber nicht in den direkten Block.
  *
  * Regeln (Spez.):
  * - Zuordnung erfolgt AUSSCHLIESSLICH numerisch über die Kontonummer —
@@ -22,11 +26,14 @@
 export type WarenaufwandGruppe = 'direct' | 'uebrig';
 
 /** Kontobereich Direkter Warenaufwand (inklusive Grenzen). */
-export const WARENAUFWAND_DIRECT_MIN = 4000;
+export const WARENAUFWAND_DIRECT_MIN = 4020;
 export const WARENAUFWAND_DIRECT_MAX = 4070;
 
 /** Kontobereich Übriger Warenaufwand (inklusive Grenzen). 4900 (Veränderung
- *  Warenvorrat) gehört NICHT dazu — es ist eine eigene P&L-Zeile (cogs_lager). */
+ *  Warenvorrat) gehört NICHT dazu — es ist eine eigene P&L-Zeile (cogs_lager).
+ *  4000–4019 zählen ebenfalls als übrig (Warenaufwand, aber nicht direkt). */
+export const WARENAUFWAND_UEBRIG_LOW_MIN = 4000;
+export const WARENAUFWAND_UEBRIG_LOW_MAX = 4019;
 export const WARENAUFWAND_UEBRIG_MIN = 4071;
 export const WARENAUFWAND_UEBRIG_MAX = 4899;
 
@@ -59,8 +66,8 @@ export function normalizeWarenKonto(raw: string | number | null | undefined): nu
 
 /**
  * Klassifiziert eine Kontonummer:
- *   4000–4070 → 'direct'
- *   4071–4900 → 'uebrig'
+ *   4020–4070 → 'direct'
+ *   4000–4019, 4071–4899 → 'uebrig'
  *   ausserhalb / ungültig → null
  */
 export function classifyWarenaufwandKonto(
@@ -69,6 +76,7 @@ export function classifyWarenaufwandKonto(
   const n = normalizeWarenKonto(raw);
   if (n === null) return null;
   if (n >= WARENAUFWAND_DIRECT_MIN && n <= WARENAUFWAND_DIRECT_MAX) return 'direct';
+  if (n >= WARENAUFWAND_UEBRIG_LOW_MIN && n <= WARENAUFWAND_UEBRIG_LOW_MAX) return 'uebrig';
   if (n >= WARENAUFWAND_UEBRIG_MIN && n <= WARENAUFWAND_UEBRIG_MAX) return 'uebrig';
   return null;
 }

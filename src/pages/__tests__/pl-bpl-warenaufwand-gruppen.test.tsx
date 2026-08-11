@@ -2,7 +2,7 @@
 //
 // Testet die Warenaufwand-Gruppierung in der klassischen Budget-P&L-Ansicht
 // (computeBPLRows in PLView.tsx): Zeilen der Kategorie pl_goods_cost werden
-// nach numerischer Range geordnet (4000–4070 direkt / 4071–4900 übrig) und
+// nach numerischer Range geordnet (4020–4070 direkt / 4000–4019 u. 4071–4899 übrig) und
 // mit Zwischentotal-Zeilen «Direkter/Übriger Warenaufwand» versehen.
 // Leere Gruppen erhalten KEIN Zwischentotal (fehlend ≠ 0).
 import { describe, it, expect } from 'vitest';
@@ -56,11 +56,11 @@ describe('computeBPLRows — Warenaufwand-Zwischentotale (klassische Ansicht)', 
     const budget = makeBudget([
       // absichtlich «verkehrte» sortOrder: übrig-Konto zuerst
       makeItem({ id: 'i-4080', accountNumber: '4080', label: 'Verpackung', sortOrder: 1, monthlyValues: monthly(100) }),
-      makeItem({ id: 'i-4000', accountNumber: '4000', label: 'Einkauf Food', sortOrder: 2, monthlyValues: monthly(500) }),
+      makeItem({ id: 'i-4060', accountNumber: '4060', label: 'Einkauf Food', sortOrder: 2, monthlyValues: monthly(500) }),
       makeItem({ id: 'i-4020', accountNumber: '4020', label: 'Einkauf Getränke', sortOrder: 3, monthlyValues: monthly(300) }),
     ]);
     const rec = makeRecord([
-      { categoryId: '4000', label: 'Einkauf Food', amount: 520 },
+      { categoryId: '4060', label: 'Einkauf Food', amount: 520 },
       { categoryId: '4080', label: 'Verpackung', amount: 90 },
     ]);
     const rows = computeBPLRows(budget, rec, 0);
@@ -69,13 +69,13 @@ describe('computeBPLRows — Warenaufwand-Zwischentotale (klassische Ansicht)', 
     expect(goods[0].isCategory).toBe(true); // Kategorie-Header behält Gesamt
 
     const ids = goods.slice(1).map(r => r.itemId);
-    // direkt-Block (4000, 4020) → Subtotal direkt → übrig-Block (4080) → Subtotal übrig
-    expect(ids).toEqual(['i-4000', 'i-4020', 'subtotal_direct', 'i-4080', 'subtotal_uebrig']);
+    // direkt-Block (4020, 4060) → Subtotal direkt → übrig-Block (4080) → Subtotal übrig
+    expect(ids).toEqual(['i-4060', 'i-4020', 'subtotal_direct', 'i-4080', 'subtotal_uebrig']);
 
     const subDirect = goods.find(r => r.itemId === 'subtotal_direct')!;
     expect(subDirect.isGroupSubtotal).toBe(true);
     expect(subDirect.itemLabel).toBe('Direkter Warenaufwand');
-    expect(subDirect.values.actual).toBe(520);       // nur 4000 hat Ist
+    expect(subDirect.values.actual).toBe(520);       // nur 4060 hat Ist
     expect(subDirect.values.budget).toBe(800);       // 500 + 300
 
     const subUebrig = goods.find(r => r.itemId === 'subtotal_uebrig')!;
@@ -89,9 +89,9 @@ describe('computeBPLRows — Warenaufwand-Zwischentotale (klassische Ansicht)', 
 
   it('lässt das Zwischentotal einer leeren Gruppe weg (fehlend ≠ 0)', () => {
     const budget = makeBudget([
-      makeItem({ id: 'i-4000', accountNumber: '4000', label: 'Einkauf Food', monthlyValues: monthly(500) }),
+      makeItem({ id: 'i-4060', accountNumber: '4060', label: 'Einkauf Food', monthlyValues: monthly(500) }),
     ]);
-    const rec = makeRecord([{ categoryId: '4000', label: 'Einkauf Food', amount: 480 }]);
+    const rec = makeRecord([{ categoryId: '4060', label: 'Einkauf Food', amount: 480 }]);
     const rows = computeBPLRows(budget, rec, 0);
 
     const ids = rows.filter(r => r.catId === 'pl_goods_cost').map(r => r.itemId);
@@ -101,7 +101,7 @@ describe('computeBPLRows — Warenaufwand-Zwischentotale (klassische Ansicht)', 
 
   it('interne Positionen erscheinen im Block, zählen aber nicht ins Zwischentotal', () => {
     const budget = makeBudget([
-      makeItem({ id: 'i-4000', accountNumber: '4000', label: 'Einkauf Food', monthlyValues: monthly(500) }),
+      makeItem({ id: 'i-4060', accountNumber: '4060', label: 'Einkauf Food', monthlyValues: monthly(500) }),
       makeItem({ id: 'i-4050', accountNumber: '4050', label: 'Interne Verrechnung', isInternal: true, monthlyValues: monthly(999) }),
     ]);
     const rows = computeBPLRows(budget, makeRecord([]), 0);
@@ -115,10 +115,10 @@ describe('computeBPLRows — Warenaufwand-Zwischentotale (klassische Ansicht)', 
 
   it('Ist-Konten ohne Budget-Position (actual_*) werden ebenfalls einsortiert', () => {
     const budget = makeBudget([
-      makeItem({ id: 'i-4000', accountNumber: '4000', label: 'Einkauf Food', monthlyValues: monthly(500) }),
+      makeItem({ id: 'i-4060', accountNumber: '4060', label: 'Einkauf Food', monthlyValues: monthly(500) }),
     ]);
     const rec = makeRecord([
-      { categoryId: '4000', label: 'Einkauf Food', amount: 480 },
+      { categoryId: '4060', label: 'Einkauf Food', amount: 480 },
       { categoryId: '4072', label: 'Sonstiger Warenaufwand', amount: 60 }, // kein Budget-Item
     ]);
     const rows = computeBPLRows(budget, rec, 0);

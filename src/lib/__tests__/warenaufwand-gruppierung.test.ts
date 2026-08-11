@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * Spez-Tests Warenaufwand-Zwischentotale — numerische Range-Zuordnung (SSoT).
- * Direkter Warenaufwand: 4000–4070 inkl. · Übriger Warenaufwand: 4071–4900 inkl.
+ * Direkter Warenaufwand: 4020–4070 inkl. · Übriger: 4000–4019 und 4071–4899 inkl.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -17,9 +17,12 @@ import {
 } from '../warenaufwand-gruppierung';
 
 describe('classifyWarenaufwandKonto — Bereichsgrenzen', () => {
-  it('1. Untergrenze 4000 → direct', () => {
-    expect(classifyWarenaufwandKonto('4000')).toBe('direct');
-    expect(classifyWarenaufwandKonto(4000)).toBe('direct');
+  it('1. Untergrenze direkt = 4020; 4000/4019 → uebrig (Warenaufwand, nicht direkt)', () => {
+    expect(classifyWarenaufwandKonto('4020')).toBe('direct');
+    expect(classifyWarenaufwandKonto(4020)).toBe('direct');
+    expect(classifyWarenaufwandKonto('4019')).toBe('uebrig');
+    expect(classifyWarenaufwandKonto('4000')).toBe('uebrig');
+    expect(classifyWarenaufwandKonto(4000)).toBe('uebrig');
   });
 
   it('2. Obergrenze 4070 → direct (inklusive)', () => {
@@ -76,20 +79,20 @@ describe('classifyWarenaufwandKonto — Normalisierung & Robustheit', () => {
     expect(classifyWarenaufwandKonto(Infinity)).toBeNull();
   });
 
-  it('10. Regressionsset Kontenplan: 4000/4020/4030/4040/4050/4060/4070 → direct', () => {
-    for (const k of ['4000', '4020', '4030', '4040', '4050', '4060', '4070']) {
+  it('10. Regressionsset Kontenplan: 4020/4030/4040/4050/4060/4070 → direct (KPI-Basis)', () => {
+    for (const k of ['4020', '4030', '4040', '4050', '4060', '4070']) {
       expect(classifyWarenaufwandKonto(k), `Konto ${k}`).toBe('direct');
     }
   });
 
-  it('11. Regressionsset Kontenplan: 4090/4701/4800 → uebrig', () => {
-    for (const k of ['4090', '4701', '4800']) {
+  it('11. Regressionsset Kontenplan: 4000/4010/4090/4701/4800 → uebrig (NICHT in der WKQ)', () => {
+    for (const k of ['4000', '4010', '4090', '4701', '4800']) {
       expect(classifyWarenaufwandKonto(k), `Konto ${k}`).toBe('uebrig');
     }
   });
 
   it('12. Bereichs-Konstanten decken lückenlos 4000–4899 ab (4900 = Lagerveränderung, separat)', () => {
-    expect(WARENAUFWAND_DIRECT_MIN).toBe(4000);
+    expect(WARENAUFWAND_DIRECT_MIN).toBe(4020);
     expect(WARENAUFWAND_DIRECT_MAX).toBe(4070);
     expect(WARENAUFWAND_UEBRIG_MIN).toBe(4071);
     expect(WARENAUFWAND_UEBRIG_MAX).toBe(4899);
@@ -114,14 +117,14 @@ describe('gruppiereWarenaufwandKonten', () => {
 
   it('13. teilt Zeilen korrekt in direct/uebrig/unzugeordnet', () => {
     const g = gruppiereWarenaufwandKonten(rows, r => r.konto);
-    expect(g.direct.map(r => r.konto)).toEqual(['4020', '4000']);
-    expect(g.uebrig.map(r => r.konto)).toEqual(['4800', '4071']);
+    expect(g.direct.map(r => r.konto)).toEqual(['4020']);
+    expect(g.uebrig.map(r => r.konto)).toEqual(['4800', '4000', '4071']);
     expect(g.unzugeordnet.map(r => r.konto)).toEqual(['4950', 'xxx']);
   });
 
   it('14. Eingabereihenfolge bleibt innerhalb der Gruppen erhalten', () => {
     const g = gruppiereWarenaufwandKonten(rows, r => r.konto);
-    expect(g.direct[0].konto).toBe('4020'); // kam vor 4000
+    expect(g.uebrig[0].konto).toBe('4800'); // kam vor 4000/4071
   });
 
   it('15. leere Eingabe → drei leere Gruppen (kein erfundenes CHF 0)', () => {

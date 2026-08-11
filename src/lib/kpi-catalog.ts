@@ -268,11 +268,11 @@ export const KPI_CATALOG: ReadonlyArray<KpiDefinition> = [
   D({
     id: 'warenquote',
     name: 'Warenquote',
-    beschreibung: 'Warenaufwand in Prozent des Nettoumsatzes.',
+    beschreibung: 'Direkter Warenaufwand (Konten 4020–4070) in Prozent des Betriebsertrags netto — ohne 4090/4701/4800 und Lagerveränderung.',
     einheit: 'pct',
     quelle: 'erfolgsrechnung',
     datenquelle: 'Financial-Metrics-Registry (Quote aus Rohwerten, EIN computePLForMonth)',
-    formel: 'Warenaufwand ÷ Nettoumsatz × 100',
+    formel: 'Direkter Warenaufwand (4020–4070) ÷ Betriebsertrag netto × 100',
     aktualisierung: 'Monatlich nach Kosten-/ER-Import (Sage)',
     verantwortlich: 'Küchenleitung',
     zielText: '≤ 30 % (Bank-Benchmark)',

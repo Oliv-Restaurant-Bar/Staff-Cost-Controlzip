@@ -38,7 +38,7 @@ import type { BudgetPLLineItem, BudgetPLCategory } from '@/types/budget';
 /**
  * Warenaufwand-Zeilen → Gruppen-Fallback nach Kontenzuordnung (nur wenn die
  * Kontonummer KEINE numerische Range-Zuordnung erlaubt): Küche/Getränke gelten
- * als direkt, Diverses als übrig. Die numerische Range (4000–4070 / 4071–4900)
+ * als direkt, Diverses als übrig. Die numerische Range (direkt 4020–4070 / übrig 4000–4019 u. 4071–4899)
  * ist die Single Source of Truth und gewinnt bei Konflikten.
  */
 const COGS_ROW_GROUP: Record<string, 'direct' | 'uebrig'> = {
@@ -183,7 +183,7 @@ export const PL_STRUCTURE: PLRowDef[] = [
     indent: 1, showPercent: false, valueRole: 'negative',
     categoryIds: ['wareneinsatz_bar', 'wareneinsatz_getraenke', 'warenaufwand_getraenke', 'beverage_cost'],
   },
-  // Zwischensumme direkter Warenaufwand (Küche + Getränke, Konten 4000–4070).
+  // Zwischensumme direkter Warenaufwand (Küche + Getränke, Konten 4020–4070).
   {
     id: 'total_cogs_direct', type: 'subtotal', label: 'Direkter Warenaufwand',
     indent: 0, showPercent: false, valueRole: 'negative',
@@ -416,7 +416,7 @@ export function buildBudgetByRowForMonth(
 
 /**
  * Baut die Budget-Aufteilung des Warenaufwands nach numerischer Range
- * (4000–4070 direkt / 4071–4900 übrig) für EINEN Monat. Mitgliedschaft
+ * (4020–4070 direkt / 4000–4019 u. 4071–4899 übrig) für EINEN Monat. Mitgliedschaft
  * identisch mit `buildBudgetByRowForMonth` (nur Positionen, die per
  * Kontonummer auf eine Warenaufwand-Zeile auflösen) — dadurch gilt immer:
  * direct + uebrig = Budget(cogs_food) + Budget(cogs_bev) + Budget(cogs_other).
@@ -718,7 +718,7 @@ export function computePLForMonth(
     }
   }
 
-  // Warenaufwand-Zwischentotale: numerische Range (4000–4070 / 4071–4900) ist
+  // Warenaufwand-Zwischentotale: numerische Range (4020–4070 direkt / 4000–4019 u. 4071–4899 übrig) ist
   // die Single Source of Truth. Wir sammeln Verschiebungen gegenüber der
   // kategoriebasierten Formel-Aufteilung + Datenqualitätshinweise (kein
   // stilles Ummappen — Konflikte werden sichtbar gemacht).

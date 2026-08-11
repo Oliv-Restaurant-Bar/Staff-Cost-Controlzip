@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // happy-dom (statt node) weil pl-engine transitiv den Supabase-Client lädt, der
 // `localStorage` beim Modul-Load braucht. Getestet wird die numerische
-// Range-SSoT der Warenaufwand-Zwischentotale (4000–4070 direkt / 4071–4900 übrig)
+// Range-SSoT der Warenaufwand-Zwischentotale (4020–4070 direkt / 4000–4019 u. 4071–4899 übrig)
 // in computePLForMonth/computePLForYear + buildCogsBudgetSplitForMonth.
 import { describe, it, expect } from 'vitest';
 import { computePLForMonth, computePLForYear, buildCogsBudgetSplitForMonth } from '@/lib/pl-engine';
@@ -29,7 +29,7 @@ function rowValue(res: PLMonthResult, rowId: string) {
 }
 
 // Default-Kontenplan (account-mapping-store):
-//   4000 → cogs_food      (Kontenzuordnung direkt,  Range direkt  → konsistent)
+//   4060 → cogs_food      (Kontenzuordnung direkt,  Range direkt  → konsistent)
 //   4090 → cogs_other     (Kontenzuordnung übrig,   Range übrig   → konsistent)
 //   4085 → Range-Regel 4000–4099 → cogs_food (direkt), numerisch aber 4071–4900 → übrig  → KONFLIKT
 //   4950 → Fallback 4000–4999 → cogs_other (übrig), numerisch ausserhalb 4000–4900       → WARNUNG (bleibt übrig)
@@ -38,7 +38,7 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
   it('konsistente Konten: direkt/übrig nach Range, keine Warnungen', () => {
     const rec = makeRecord({
       expenseCategories: [
-        { categoryId: '4000', label: 'Lebensmittel', amount: 1000 },
+        { categoryId: '4060', label: 'Lebensmittel', amount: 1000 },
         { categoryId: '4090', label: 'Übriger Handelswarenaufwand', amount: 200 },
       ],
     });
@@ -53,7 +53,7 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
     const rec = makeRecord({
       revenueActual: 10000,
       expenseCategories: [
-        { categoryId: '4000', label: 'Lebensmittel', amount: 1000 },
+        { categoryId: '4060', label: 'Lebensmittel', amount: 1000 },
         // 4085 mappt per Default-Range-Regel auf cogs_food (direkt),
         // numerisch liegt es aber in 4071–4900 (übrig) → Range gewinnt.
         { categoryId: '4085', label: 'Konfliktkonto', amount: 300 },
@@ -99,7 +99,7 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
       ],
       expenseCategoriesPreviousYear: [
         { categoryId: '4085', label: 'Konfliktkonto', amount: 250 },   // PY-Match
-        { categoryId: '4000', label: 'Lebensmittel', amount: 900 },    // PY-only, konsistent
+        { categoryId: '4060', label: 'Lebensmittel', amount: 900 },    // PY-only, konsistent
       ],
     });
     const res = computePLForMonth(rec);
@@ -111,7 +111,7 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
 
   it('cogsBudgetSplit-Override ersetzt die Budget-Aufteilung der Zwischentotale, Summe bleibt', () => {
     const rec = makeRecord({
-      expenseCategories: [{ categoryId: '4000', label: 'Lebensmittel', amount: 1000 }],
+      expenseCategories: [{ categoryId: '4060', label: 'Lebensmittel', amount: 1000 }],
     });
     const budgetByRow = new Map<string, number>([
       ['cogs_food', 800],
@@ -162,7 +162,7 @@ describe('computePLForYear — Warnungs-Aggregation', () => {
         id: `2026-${String(i + 1).padStart(2, '0')}`,
         month: i + 1,
         expenseCategories: i === 0
-          ? [{ categoryId: '4000', label: 'LM', amount: 500 }, { categoryId: '4085', label: 'K', amount: 100 }]
+          ? [{ categoryId: '4060', label: 'LM', amount: 500 }, { categoryId: '4085', label: 'K', amount: 100 }]
           : i === 1
             ? [{ categoryId: '4090', label: 'Übrig', amount: 200 }]
             : [],
@@ -204,14 +204,14 @@ describe('buildCogsBudgetSplitForMonth', () => {
     const budget = {
       plCategories: CATS,
       plLineItems: [
-        makeItem({ accountNumber: '4000', monthlyValues: M(2, 800) }),
+        makeItem({ accountNumber: '4060', monthlyValues: M(2, 800) }),
         // 4085 → plCategory cogs_food (direkt laut Zuordnung), Range → übrig
         makeItem({ accountNumber: '4085', monthlyValues: M(2, 300) }),
       ],
     };
     const split = buildCogsBudgetSplitForMonth(
       budget, 2,
-      lookup({ '4000': 'cogs_food', '4085': 'cogs_food' }),
+      lookup({ '4060': 'cogs_food', '4085': 'cogs_food' }),
     );
     expect(split).toEqual({ direct: 800, uebrig: 300 });
   });
@@ -233,13 +233,13 @@ describe('buildCogsBudgetSplitForMonth', () => {
       plLineItems: [
         makeItem({ accountNumber: '', monthlyValues: M(0, 500) }),               // keine Kontonummer
         makeItem({ accountNumber: '6000', monthlyValues: M(0, 500) }),           // kein Warenaufwand
-        makeItem({ accountNumber: '4000', monthlyValues: M(0, 0) }),             // 0-Wert
-        makeItem({ accountNumber: '4000', monthlyValues: M(0, 700), isInternal: true }), // intern
+        makeItem({ accountNumber: '4060', monthlyValues: M(0, 0) }),             // 0-Wert
+        makeItem({ accountNumber: '4060', monthlyValues: M(0, 700), isInternal: true }), // intern
       ],
     };
     const split = buildCogsBudgetSplitForMonth(
       budget, 0,
-      lookup({ '6000': 'other_operating', '4000': 'cogs_food' }),
+      lookup({ '6000': 'other_operating', '4060': 'cogs_food' }),
     );
     expect(split).toBeUndefined();
   });

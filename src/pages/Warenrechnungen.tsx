@@ -77,7 +77,9 @@ import {
   type ErVergleichStatus,
 } from '@/lib/warenkosten-quote';
 import { exportWarenkostenToExcel } from '@/lib/warenkosten-export';
-import { loadMonth, STORAGE_KEY as REPORTING_STORAGE_KEY, loadJournalEntriesFromDB } from '@/lib/reporting-store';
+import { loadMonth, STORAGE_KEY as REPORTING_STORAGE_KEY, loadJournalEntriesFromDB, saveJournalEntriesStrict } from '@/lib/reporting-store';
+import { analysiereJournalDubletten, dedupeJournalZeilen, JOURNAL_DEDUPE_UNDO_KEY, type JournalDedupeUndoSnapshot } from '@/lib/journal-dedupe';
+import { kvGet as kvGetRaw, kvSetStrict as kvSetStrictRaw } from '@/lib/supabase-kv';
 import {
   parseInvoiceText, extractPdfInvoiceText, findSupplierInText, matchSupplier,
   normalizeSupplierKey, type ErkannteRechnung,
@@ -128,7 +130,7 @@ import {
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp, UploadCloud,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
   Info,
 } from 'lucide-react';
@@ -395,6 +397,8 @@ export default function WarenrechnungenPage() {
   const fsImportRef  = useRef<((files: File[]) => void) | null>(null);
   /** Spezial-Import-Boxen (CSV/FS/Profil): eingeklappt, öffnen sich beim Routing. */
   const [spezialOpen, setSpezialOpen] = useState(false);
+  // Universal-Dropzone: dezent eingeklappt unter der Lieferanten-Übersicht.
+  const [uploadOpen, setUploadOpen] = useState(false);
   /** Manuelle Einzelerfassung: nur noch als eingeklappter Bereich. */
   const [manuellOpen, setManuellOpen] = useState(false);
   // Stapel-Spiegel + Selbstreferenz: nach einer Umleitung muss processPdf das
@@ -537,6 +541,101 @@ export default function WarenrechnungenPage() {
     () => buildAliasResolver(abgleich?.effektiveAliasGruppen ?? aliasGruppen),
     [abgleich, aliasGruppen],
   );
+
+  // ─── Journal-Dubletten (FIBU-Buchungszeilen 3× durch Mehrfach-Import) ──────
+  // Bereinigt NUR das Lieferanten-Journal (Buchungszeilen). Konto-Ansicht
+  // (expenseCategories, inkl. manuell angelegter Konten wie 5004) und
+  // erklärte Differenzen (FibuMatchState) werden NICHT berührt.
+  const journalDubletten = useMemo(
+    () => (journal && journal.length > 0 ? analysiereJournalDubletten(journal) : null),
+    [journal],
+  );
+  const [journalDedupeDialog, setJournalDedupeDialog] = useState(false);
+  const [journalDedupeBusy, setJournalDedupeBusy] = useState(false);
+  const [journalDedupeUndo, setJournalDedupeUndo] = useState<JournalDedupeUndoSnapshot | null>(null);
+  useEffect(() => {
+    if (tab !== 'abgleich') return;
+    let alive = true;
+    setJournalDedupeUndo(null);
+    kvGetRaw(tenantKey(JOURNAL_DEDUPE_UNDO_KEY))
+      .then(v => {
+        if (!alive) return;
+        const s = v as JournalDedupeUndoSnapshot | null;
+        // Undo nur für den gerade angezeigten Monat anbieten.
+        if (s && Array.isArray(s.entries) && s.year === year && s.month === month) setJournalDedupeUndo(s);
+      })
+      .catch(() => { /* kein Undo-Snapshot verfügbar */ });
+    return () => { alive = false; };
+  }, [tab, year, month, tenantKey]);
+
+  // KONTEXT-WACHE: Mandant/Monat können während awaits gewechselt werden —
+  // alle Schreibziele werden beim Aktionsstart EINGEFROREN (ctx), und
+  // UI-State wird nur aktualisiert, wenn der Kontext noch der aktive ist.
+  const journalCtxRef = useRef({ tenantId, year, month });
+  journalCtxRef.current = { tenantId, year, month };
+
+  const bereinigeJournalDubletten = async () => {
+    if (!canDelete) { toast.error('Keine Berechtigung zum Bereinigen.'); return; }
+    if (!journal || !journalDubletten || journalDubletten.entfernt === 0) return;
+    // Kontext + Daten beim Start einfrieren — nie Live-Closures nach await nutzen.
+    const ctx = { tenantId, year, month };
+    const undoKey = tenantKey(JOURNAL_DEDUPE_UNDO_KEY); // an ctx.tenantId gebunden
+    const vorher = journal;
+    const entfernt = journalDubletten.entfernt;
+    const istAktiv = () => {
+      const c = journalCtxRef.current;
+      return c.tenantId === ctx.tenantId && c.year === ctx.year && c.month === ctx.month;
+    };
+    setJournalDedupeBusy(true);
+    try {
+      // 1) Undo-Snapshot (Vorzustand) STRIKT sichern — erst dann bereinigen.
+      const snapshot: JournalDedupeUndoSnapshot = {
+        year: ctx.year, month: ctx.month, entries: vorher, entfernt,
+        bereinigtAm: new Date().toISOString(),
+      };
+      await kvSetStrictRaw(undoKey, snapshot);
+      // 2) Dedupliziert schreiben (localStorage + KV, wartend) — auf den
+      //    eingefrorenen Mandant+Monat, unabhängig von zwischenzeitlicher Navigation.
+      const { zeilen } = dedupeJournalZeilen(vorher);
+      await saveJournalEntriesStrict(ctx.year, ctx.month, zeilen, ctx.tenantId);
+      if (istAktiv()) {
+        setJournal(zeilen);
+        setJournalDedupeUndo(snapshot);
+      }
+      setJournalDedupeDialog(false);
+      toast.success(`${entfernt} Dublette${entfernt === 1 ? '' : 'n'} entfernt, ${zeilen.length} Zeilen bleiben.`);
+    } catch (err) {
+      toast.error(`Bereinigung fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setJournalDedupeBusy(false);
+    }
+  };
+
+  const undoJournalDedupe = async () => {
+    const snap = journalDedupeUndo;
+    if (!snap) return;
+    // Kontext einfrieren (Undo-Zeile ist ohnehin nur bei passendem Monat sichtbar).
+    const ctx = { tenantId, year, month };
+    const undoKey = tenantKey(JOURNAL_DEDUPE_UNDO_KEY);
+    const istAktiv = () => {
+      const c = journalCtxRef.current;
+      return c.tenantId === ctx.tenantId && c.year === ctx.year && c.month === ctx.month;
+    };
+    setJournalDedupeBusy(true);
+    try {
+      await saveJournalEntriesStrict(snap.year, snap.month, snap.entries, ctx.tenantId);
+      await kvSetStrictRaw(undoKey, null);
+      if (istAktiv()) {
+        setJournal(snap.entries);
+        setJournalDedupeUndo(null);
+      }
+      toast.success('Journal-Bereinigung rückgängig gemacht.');
+    } catch (err) {
+      toast.error(`Rückgängig fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setJournalDedupeBusy(false);
+    }
+  };
 
   // ─── Doppel-Bereinigung: doppelt erfasste Rechnungen (Vorschau + Löschen) ──
   const [dublettenGruppen, setDublettenGruppen] = useState<DublettenGruppe[] | null>(null);
@@ -1607,7 +1706,7 @@ export default function WarenrechnungenPage() {
       const eigene = routing.erkannt.filter(passt);
       const fremde = routing.erkannt.filter(z => !passt(z));
       if (fremde.length > 0) {
-        toast.error(`${fremde.length} Datei(en) gehören nicht zu ${erwartet.name} — abgewiesen. Bitte über «Rechnung(en) / CSV hier ablegen» hochladen.`, {
+        toast.error(`${fremde.length} Datei(en) gehören nicht zu ${erwartet.name} — abgewiesen. Bitte über «Beleg hochladen — Lieferant wird automatisch erkannt» hochladen.`, {
           description: fremde.slice(0, 3).map(f => `${f.file} → ${f.ziel}`).join(' · '),
         });
       }
@@ -2051,6 +2150,18 @@ export default function WarenrechnungenPage() {
                     <span>Lesezugriff – Erfassen, Bearbeiten und Löschen ist für diese Rolle nicht erlaubt.</span>
                   </div>
                 )}
+
+                {/* ── PRIMÄR: Lieferanten-Übersicht (benannte Lieferanten, Status, Direkt-Upload) ── */}
+                <WarenLieferantenUebersicht
+                  tenantId={tenantId}
+                  entries={entries}
+                  suppliers={suppliers}
+                  canEdit={canEdit}
+                  canUpload={canCreate}
+                  monthLabel={monthLabel}
+                  onUploadFor={handleUploadFor}
+                />
+
                 {canCreate && (
                 <section className="bg-card border border-border rounded-xl overflow-hidden">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
@@ -2059,19 +2170,35 @@ export default function WarenrechnungenPage() {
                   </div>
                   <div className="px-5 py-4 space-y-4">
 
-                    {/* ── EIN universeller Upload: erkennt Lieferant & Format automatisch ── */}
-                    <WarenUniversalUpload tenantId={tenantId} tenantColor={tenant.color}
-                      onRoute={handleUniversalRoute} />
+                    {/* ── Schnell-Weg: EINE smarte Universal-Dropzone, dezent & eingeklappt.
+                           Format-Buttons gibt es nicht mehr — Erkennung läuft automatisch
+                           über MWST-Nr/Profil; die Import-Boxen öffnen sich beim Routing. ── */}
+                    <button
+                      type="button"
+                      className="text-xs font-medium inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 hover:bg-muted/40 transition-colors"
+                      onClick={() => setUploadOpen(o => !o)}
+                      data-testid="button-toggle-upload"
+                    >
+                      {uploadOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <UploadCloud className="h-3.5 w-3.5" style={{ color: tenant.color }} />}
+                      Beleg hochladen — Lieferant wird automatisch erkannt
+                    </button>
+                    <div className={cn(!uploadOpen && 'hidden')}>
+                      <WarenUniversalUpload tenantId={tenantId} tenantColor={tenant.color}
+                        onRoute={handleUniversalRoute} />
+                    </div>
 
-                    {/* ── Spezial-Import-Boxen: eingeklappt; öffnen sich beim Routing ── */}
+                    {/* ── Import-Boxen (CSV · Feldschlösschen · Lieferanten-PDF): öffnen sich
+                           automatisch beim Routing; zusätzlich dezent aufklappbar, damit
+                           Importverlauf, Historie & «Rückgängig» ohne neuen Upload erreichbar
+                           bleiben. Kein Format-Chooser mehr — nur Verwaltung. ── */}
                     <button
                       type="button"
                       className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
                       onClick={() => setSpezialOpen(o => !o)}
-                      data-testid="button-toggle-spezialimport"
+                      data-testid="button-toggle-importverlauf"
                     >
                       {spezialOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                      Direkt-Import je Format (CSV · Feldschlösschen · Lieferanten-PDF)
+                      Importverlauf, Historie &amp; Rückgängig anzeigen
                     </button>
                     <div className={cn('space-y-4', !spezialOpen && 'hidden')}>
                       {/* ── CSV-Positionsimport (Transgourmet/Prodega) mit Preisüberwachung ── */}
@@ -2513,17 +2640,6 @@ export default function WarenrechnungenPage() {
                   </div>
                 </section>
                 )} {/* end canCreate */}
-
-                {/* ── Lieferanten-Übersicht: alle Lieferanten, Status & Direkt-Upload ── */}
-                <WarenLieferantenUebersicht
-                  tenantId={tenantId}
-                  entries={entries}
-                  suppliers={suppliers}
-                  canEdit={canEdit}
-                  canUpload={canCreate}
-                  monthLabel={monthLabel}
-                  onUploadFor={handleUploadFor}
-                />
 
                 {/* Letzte Einträge */}
                 {entries.length === 0 ? (
@@ -4415,6 +4531,31 @@ export default function WarenrechnungenPage() {
                           <InfoTip text={<span>Findet Rechnungen, die MEHRFACH erfasst wurden (z.B. Kreditoren-Übernahme + FIBU-Übernahme oder Sammelrechnung neben den Einzelrechnungen). Vorschau mit Auswahl — gelöscht wird erst nach Bestätigung; behalten wird immer der detaillierteste Beleg.</span>} />
                         </div>
                       )}
+
+                      {/* Journal-Dubletten: FIBU-Buchungszeilen durch Mehrfach-Import vervielfacht */}
+                      {canDelete && (journalDubletten?.entfernt ?? 0) > 0 && (
+                        <div className="border-t border-border/50 pt-3 flex items-center gap-2" data-testid="journal-dubletten-hinweis">
+                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                          <span className="text-xs text-amber-700 dark:text-amber-400">
+                            FIBU-Buchungszeilen mehrfach vorhanden: {journalDubletten!.entfernt} Dublette{journalDubletten!.entfernt === 1 ? '' : 'n'} (vermutlich Mehrfach-Import des Kostenblatts).
+                          </span>
+                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                            onClick={() => setJournalDedupeDialog(true)} data-testid="button-journal-dubletten">
+                            Bereinigen…
+                          </Button>
+                        </div>
+                      )}
+                      {journalDedupeUndo && (
+                        <div className="border-t border-border/50 pt-3 flex items-center gap-2" data-testid="journal-dedupe-undo-zeile">
+                          <span className="text-xs text-muted-foreground">
+                            Journal-Bereinigung vom {new Date(journalDedupeUndo.bereinigtAm).toLocaleString('de-CH')} ({journalDedupeUndo.entfernt} entfernt).
+                          </span>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={journalDedupeBusy}
+                            onClick={undoJournalDedupe} data-testid="button-journal-dedupe-undo">
+                            Rückgängig
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </section>
@@ -4735,6 +4876,43 @@ export default function WarenrechnungenPage() {
       </Dialog>
 
       {/* ── Dialog: FIBU-Übernahme Vorschau (vor dem Schreiben) ────────────── */}
+      {/* ── Journal-Dubletten (FIBU-Buchungszeilen): Vorschau-Dialog ────────── */}
+      <Dialog open={journalDedupeDialog} onOpenChange={o => { if (!journalDedupeBusy) setJournalDedupeDialog(o); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="dialog-journal-dubletten">
+          <DialogHeader>
+            <DialogTitle>FIBU-Buchungszeilen bereinigen — {month}.{year}</DialogTitle>
+            <DialogDescription>
+              Mehrfach importierte Kostenblätter haben Buchungszeilen vervielfacht. Gleiche Zeile
+              (Datum + Beleg + Konto + Betrag + Text) wird auf 1× reduziert. Konto-Ansicht (Erfasst vs. ER),
+              manuell angelegte Konten und erklärte Differenzen bleiben unberührt. Rückgängig ist möglich.
+            </DialogDescription>
+          </DialogHeader>
+          {journalDubletten && (
+            <>
+              <p className="text-sm font-medium" data-testid="journal-dedupe-summary">
+                {journalDubletten.entfernt} Dublette{journalDubletten.entfernt === 1 ? '' : 'n'} entfernt, {journalDubletten.verbleibend} Zeilen bleiben.
+              </p>
+              <div className="space-y-1 text-xs tabular-nums max-h-72 overflow-y-auto">
+                {journalDubletten.gruppen.slice(0, 40).map((g, i) => (
+                  <p key={i} data-testid={`journal-dublette-${i}`}>
+                    {g.anzahl}× — {g.beispiel.date} · {g.beispiel.text} · Konto {g.beispiel.accountNumber} · CHF {fmtChf((g.beispiel.soll ?? 0) - (g.beispiel.haben ?? 0))}
+                    <span className="text-muted-foreground"> → 1× behalten</span>
+                  </p>
+                ))}
+                {journalDubletten.gruppen.length > 40 && <p>… und {journalDubletten.gruppen.length - 40} weitere</p>}
+              </div>
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" disabled={journalDedupeBusy} onClick={() => setJournalDedupeDialog(false)}>Abbrechen</Button>
+            <Button size="sm" disabled={journalDedupeBusy || !journalDubletten || journalDubletten.entfernt === 0}
+              onClick={bereinigeJournalDubletten} data-testid="button-journal-dedupe-bestaetigen">
+              {journalDedupeBusy ? 'Bereinige…' : 'Bereinigen'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Doppel-Bereinigung: Vorschau-Dialog ─────────────────────────── */}
       <Dialog open={dublettenGruppen !== null} onOpenChange={o => { if (!o && !dublettenBusy) setDublettenGruppen(null); }}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="dialog-dubletten">

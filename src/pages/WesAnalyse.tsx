@@ -5,7 +5,9 @@
  * Vergleicht drei Quellen:
  *  1. Rezeptur   – theoretischer WES aus Rezepten × Verkaufsmengen
  *  2. Lieferanten – operativer WES aus erfassten Lieferscheinen/Rechnungen
- *  3. Buchhaltung – gebuchter WES aus Konten 4020–4090 (Sage-Import)
+ *  3. Buchhaltung – gebuchter WES aus Konten 4020–4070 (Sage-Import);
+ *     4090 (Diverses) wird nachrichtlich gezeigt, zählt aber NICHT in den WES
+ *     (identisch mit P&L «Direkter Warenaufwand» und der Warenkostenquote-KPI)
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -158,7 +160,10 @@ function buildMonthRow(year: number, monthIdx: number, storeKey: string = REPORT
     liefTotal:   lief.totalCost,
     buchFood,
     buchBeverage,
-    buchTotal:   buchFood + buchBeverage + buchOther,
+    // WES = NUR direkter Warenaufwand (4020–4070) — identisch mit der P&L-Zeile
+    // «Direkter Warenaufwand» und der Warenkostenquote-KPI. 4090/other bleibt
+    // in der Kontenliste sichtbar, zählt aber nicht ins Total.
+    buchTotal:   buchFood + buchBeverage,
     hasBuchData,
     byAccount:   byAccount.sort((a, b) => b.amount - a.amount),
   };
@@ -171,9 +176,8 @@ function chf(val: number): string {
 }
 
 // Vergleichs-Quote der WES-Analyse: stellt Rezept-/Lieferschein-/FIBU-Summen
-// (inkl. «Übriger Warenaufwand») demselben Umsatz gegenüber. BEWUSST breiter als
-// die zentrale Warenkostenquote (src/lib/warenkosten-quote.ts, nur Food+Beverage)
-// — Systemvergleich, nie mit der offiziellen Quote gleichsetzen.
+// demselben Umsatz gegenüber. FIBU-Summe = NUR direkter Warenaufwand 4020–4070
+// (identisch mit der Warenkostenquote-KPI der Erfolgsrechnung).
 function pct(cost: number, revenue: number): string {
   if (revenue <= 0) return '–';
   return ((cost / revenue) * 100).toFixed(1) + ' %';
@@ -296,7 +300,7 @@ export default function WesAnalyse() {
         <SourceCard
           number="3"
           title="Buchhaltung"
-          desc="Gebuchter WES aus Konten 4020–4090 (Sage-Import)"
+          desc="Gebuchter WES aus Konten 4020–4070 (Sage-Import; 4090 nachrichtlich, nicht im Total)"
           color="emerald"
           hasData={hasAnyBuchData}
         />
@@ -457,7 +461,7 @@ export default function WesAnalyse() {
           {!hasAnyBuchData ? (
             <NoDataHint>
               Keine Buchhaltungsdaten für {year} vorhanden. Importiere zuerst einen
-              Sage-Export über die Import-Zentrale (Konten 4020–4090).
+              Sage-Export über die Import-Zentrale (Konten 4020–4070; 4090 nur nachrichtlich).
             </NoDataHint>
           ) : (
             <>
@@ -539,7 +543,7 @@ Differenz Rezeptur vs. Lieferanten:
             title="Wo kommen die Daten her?"
             content={`Rezeptur: Modul «Produkte → Kalkulation» – dort hinterlegte Rezeptkosten × Verkaufszahlen aus dem Kassensystem.
 Lieferanten: Modul «Lieferanten» – dort manuell erfasste Lieferscheine und Rechnungen.
-Buchhaltung: Modul «Import-Zentrale» – importierter Sage-Kontoauszug mit Konten 4020–4090.`}
+Buchhaltung: Modul «Import-Zentrale» – importierter Sage-Kontoauszug, WES = Konten 4020–4070 (4090 nachrichtlich).`}
           />
         </div>
       )}

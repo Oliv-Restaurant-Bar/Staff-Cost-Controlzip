@@ -68,11 +68,11 @@ const lookupStub = (acct: string) => {
 // ─── Registry-Struktur ────────────────────────────────────────────────────────
 
 describe('Registry-Struktur', () => {
-  it('enthält genau die 14 vorgegebenen IDs mit korrektem kind/unit', () => {
-    expect(FINANCIAL_METRIC_IDS).toHaveLength(14);
+  it('enthält genau die 15 vorgegebenen IDs mit korrektem kind/unit', () => {
+    expect(FINANCIAL_METRIC_IDS).toHaveLength(15);
     const amounts = FINANCIAL_METRIC_IDS.filter(id => FINANCIAL_METRICS[id].kind === 'amount');
     const ratios  = FINANCIAL_METRIC_IDS.filter(id => FINANCIAL_METRICS[id].kind === 'ratio');
-    expect(amounts).toHaveLength(10);
+    expect(amounts).toHaveLength(11);
     expect(ratios).toEqual(['cogs_ratio', 'personnel_ratio', 'ebitda_margin', 'ebit_margin']);
     for (const id of amounts) expect(FINANCIAL_METRICS[id].unit).toBe('CHF');
     for (const id of ratios)  expect(FINANCIAL_METRICS[id].unit).toBe('%');
@@ -98,11 +98,11 @@ describe('Registry-Struktur', () => {
     }
   });
 
-  it('getAllFinancialMetricDefinitions: alle 14, stabile Reihenfolge, keine Duplikate', () => {
+  it('getAllFinancialMetricDefinitions: alle 15, stabile Reihenfolge, keine Duplikate', () => {
     const defs = getAllFinancialMetricDefinitions();
-    expect(defs).toHaveLength(14);
+    expect(defs).toHaveLength(15);
     expect(defs.map(d => d.id)).toEqual(FINANCIAL_METRIC_IDS);
-    expect(new Set(defs.map(d => d.id)).size).toBe(14);
+    expect(new Set(defs.map(d => d.id)).size).toBe(15);
   });
 });
 
@@ -389,5 +389,33 @@ describe('applyVjRevenueRule (Tagesansicht-VJ > reporting_v1)', () => {
       prevYearRecord: mkRec(2025, 1, { revenueActual: 61_000 }),
     }));
     expect(keep.revenuePreviousYear).toBe(42_000);
+  });
+});
+
+// ─── WKQ = DIREKTER Warenaufwand (4020–4070) — Kontrollwerte Juli 2026 ───────
+describe('cogs_ratio: Zähler = total_cogs_direct (ohne 4090/4701/4800/4900)', () => {
+  it('Übriger Warenaufwand (cogs_other) und Lager (cogs_lager) verändern die WKQ NICHT', () => {
+    const rec = mkRec(2026, 7, {
+      revenueActual: 260_175,
+      expenseCategories: [
+        { categoryId: 'food_cost', amount: 50_000, label: 'Küche' },
+        { categoryId: 'beverage_cost', amount: 29_749, label: 'Getränke' },
+        // Alles Folgende ist AUSSERHALB 4020–4070 → darf die Quote nicht bewegen:
+        { categoryId: 'warenaufwand_diverses', amount: 6_518, label: '4090/4701/4800' },
+        { categoryId: 'veraenderung_warenvorrat', amount: 1_000, label: '4900 Lager' },
+      ] as never,
+    });
+    const input = inputOf(computePLForMonth(rec, {
+      budgetByRow: new Map([['revenue_total', 250_000], ['cogs_food', 72_600]]),
+      prevYearByRow: new Map([['revenue_total', 293_754], ['cogs_food', 74_400]]),
+    }));
+    // Direkt 79'749 ≠ Einkauf 86'267 ≠ Einsatz 87'267 — Quote NUR auf direkt:
+    expect(getFinancialMetricValues('total_cogs_direct', input).actual).toBeCloseTo(79_749, 6);
+    expect(getFinancialMetricValues('total_cogs_einkauf', input).actual).toBeCloseTo(86_267, 6);
+    const v = getFinancialMetricValues('cogs_ratio', input);
+    expect(v.actual).toBeCloseTo((79_749 / 260_175) * 100, 10);   // 30.7 %
+    expect(v.actual!).toBeCloseTo(30.7, 1);
+    expect(v.budget!).toBeCloseTo(29.0, 1);                        // 72'600/250'000
+    expect(v.priorYear!).toBeCloseTo(25.3, 1);                     // 74'400/293'754
   });
 });

@@ -3376,6 +3376,9 @@ const PLViewPage = () => {
       tone={registryKpiTone(k.def.id, k.values, laborThreshold)}
       trend={registryKpiTrend(k.def, k.values)}
       sub={<>Budget {fmtMetricValue(k.values.budget, k.def.unit)} · VJ {fmtMetricValue(k.values.priorYear, k.def.unit)}</>}
+      info={k.def.id === 'cogs_ratio'
+        ? 'Warenkostenquote = direkter Warenaufwand (4020–4070) ÷ Betriebsertrag netto. Übriger Warenaufwand (4090, 4701, 4800) und Lagerveränderung (4900) sind ausgeschlossen — identisch mit der P&L-Zeile «Direkter Warenaufwand» und dem Waren-Analyse-Modul.'
+        : undefined}
       data-testid={`plview-kpi-${k.def.id}`}
     />
   );

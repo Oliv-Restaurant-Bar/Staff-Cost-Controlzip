@@ -42,6 +42,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth, notifyKVBackupProblem } from './supabase-kv';
 import { readLocalRecord } from './kv-blob-utils';
+import { dedupeJournalZeilen } from './journal-dedupe';
 import { sameCategorySet } from './annual-cost-preview';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
@@ -888,12 +889,19 @@ export function saveJournalEntries(
   tenantId: string = 'oliv',
 ): void {
   const key = journalMonthKey(year, month, tenantId);
-  let final: SageJournalEntry[];
+  let merged: SageJournalEntry[];
   if (mode === 'replace') {
-    final = entries;
+    merged = entries;
   } else {
-    final = [...loadJournalEntries(year, month, tenantId), ...entries];
+    merged = [...loadJournalEntries(year, month, tenantId), ...entries];
   }
+  // DUBLETTENSICHER (08/2026): Re-Importe desselben Kostenblatts dürfen NIE
+  // addieren — gleicher Schlüssel (Datum+Beleg+Konto+Soll+Haben+Text) = gleiche
+  // Zeile → nur 1× behalten. Gilt für replace UND Ergänzen (dort entstand die
+  // 3×-Aufblähung: prior + neu ohne Dedupe). saveJournalEntriesStrict bleibt
+  // bewusst verbatim (Undo/Restore muss den Vorzustand exakt zurückschreiben).
+  const { zeilen: final, entfernt } = dedupeJournalZeilen(merged);
+  if (entfernt > 0) console.log(`[Journal] ${entfernt} Dublette(n) beim Speichern entfernt: ${key}`);
   localStorage.setItem(key, JSON.stringify(final));
   // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
   // Offline/nicht konfiguriert → dezenter Hinweis; echter Fehler → Fehler-Toast + Retry.
