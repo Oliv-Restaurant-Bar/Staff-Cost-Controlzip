@@ -177,3 +177,46 @@ describe('sameCategorySet (Dirty-Check-Helfer)', () => {
     expect(sameCategorySet([], [])).toBe(true);
   });
 });
+
+// ─── Manuell geschützte Zeilen (Vorschau-Gruppe + Summary) ────────────────────
+
+import { sammleManuellGeschuetzt, zaehleImportZeilen, geschuetztKey } from '../annual-cost-preview';
+
+const mcat = (id: string, amount: number, quelle?: 'import' | 'manuell'): ExpenseCategory =>
+  ({ categoryId: id, label: `Konto ${id}`, amount, ...(quelle ? { quelle } : {}) });
+
+describe('sammleManuellGeschuetzt', () => {
+  it('listet nur numerische quelle=manuell-Zeilen; Importwert & abweichend korrekt', () => {
+    const bestehend = new Map<number, ExpenseCategory[]>([
+      [3, [mcat('5004', 4200, 'manuell'), mcat('4000', 100, 'import'), { categoryId: 'miete', label: 'Miete', amount: 900, quelle: 'manuell' }]],
+      [4, [mcat('5004', 4300, 'manuell')]],
+    ]);
+    const neu = new Map<number, ExpenseCategory[]>([
+      [3, [mcat('5004', 9999), mcat('4000', 100)]],
+      // Monat 4: 5004 fehlt in der Datei
+    ]);
+    const rows = sammleManuellGeschuetzt(neu, bestehend);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ month: 3, accountNumber: '5004', manuellerWert: 4200, importWert: 9999, abweichend: true });
+    expect(rows[1]).toMatchObject({ month: 4, importWert: null, abweichend: false });
+  });
+});
+
+describe('zaehleImportZeilen', () => {
+  it('zählt aktualisiert/geschützt/neu; Freigabe verschiebt geschützt → aktualisiert', () => {
+    const bestehend = new Map<number, ExpenseCategory[]>([
+      [1, [mcat('5004', 4200, 'manuell'), mcat('4000', 100)]],
+    ]);
+    const neu = new Map<number, ExpenseCategory[]>([
+      [1, [mcat('5004', 9999), mcat('4000', 150), mcat('6000', 50)]],
+    ]);
+    const diff = buildAnnualCostPreview(neu, bestehend);
+    const geschuetzt = sammleManuellGeschuetzt(neu, bestehend);
+
+    const s1 = zaehleImportZeilen(diff, geschuetzt, new Set());
+    expect(s1).toEqual({ aktualisiert: 1, geschuetzt: 1, neu: 1 });
+
+    const s2 = zaehleImportZeilen(diff, geschuetzt, new Set([geschuetztKey(1, '5004')]));
+    expect(s2).toEqual({ aktualisiert: 2, geschuetzt: 0, neu: 1 });
+  });
+});

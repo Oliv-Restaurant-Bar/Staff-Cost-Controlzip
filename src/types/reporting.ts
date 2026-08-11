@@ -30,6 +30,13 @@ export interface ExpenseCategory {
   label: string;
   /** Betrag in CHF */
   amount: number;
+  /**
+   * Herkunft der Zeile: 'import' = maschinell (Kostenblatt/Kontoblatt),
+   * 'manuell' = vom Benutzer gesetzt/geändert. Manuelle Zeilen werden vom
+   * Kosten-Import NIE überschrieben oder entfernt (Merge-Schutz).
+   * Fehlend (Altbestand) = wie 'import' behandelt.
+   */
+  quelle?: 'import' | 'manuell';
 }
 
 // ─── Standard-Kategorien ─────────────────────────────────────────────────────

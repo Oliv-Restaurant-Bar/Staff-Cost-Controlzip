@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isoWeekKeyOf, weekLabelOf, groupTotals, flagAnomalies, topInvoices,
   wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil, buildKontoDrilldown,
-  buildKorrekturVorschlaege, fmtChfText,
+  buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText,
 } from '@/lib/waren-analyse';
 import { buildWarenkostenExport, warenkostenExportFileName } from '@/lib/warenkosten-export';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -386,5 +386,149 @@ describe('Kontierungs-Check & Korrektur-Vorschläge', () => {
   });
   it('fmtChfText: de-CH-Apostroph-Format', () => {
     expect(fmtChfText(1852.39)).toBe("1'852.39");
+  });
+});
+
+// ─── Cross-Konto-Check: MwSt-Satz-Bündelung (Feldschlösschen Juli 2026, Oliv) ─
+// TESTFESTE WERTE aus dem Build-Befehl — als Regressionstest fest verankert.
+
+describe('buildMwstBuendelungBefunde — MwSt-Satz-Bündelung (Feldschlösschen 07/2026)', () => {
+  const je = (accountNumber: string, text: string, soll: number, haben = 0, belegNr?: string): SageJournalEntry => ({
+    date: '01.07.2026', text, accountNumber, accountName: '', soll, haben,
+    amount: Math.abs(soll - haben), ...(belegNr ? { belegNr } : {}),
+  } as unknown as SageJournalEntry);
+
+  // App-Split (netto, Wahrheit): 4030 4'538.00 · 4040 2'789.30 · 4050 7'736.85 · 4701 465.00
+  const entries = [
+    inv({ date: '2026-07-05', amountNet: 15529.15, supplierName: 'Feldschlösschen', kontoSplits: [
+      { warenkonto: '4030', amountNet: 4538.00, amountGross: 0 },
+      { warenkonto: '4040', amountNet: 2789.30, amountGross: 0 },
+      { warenkonto: '4050', amountNet: 7736.85, amountGross: 0 },
+      { warenkonto: '4701', amountNet: 465.00, amountGross: 0 },
+    ] }),
+    inv({ date: '2026-07-06', amountNet: 769.50, supplierName: 'Paul Ullrich', warenkonto: '4040' }),
+  ];
+  // FIBU: Treuhänder bündelt nach MwSt-Satz auf 4030 (brutto 15'529.15 Soll),
+  // dazu Doppelzahlungs-Gutschrift Beleg 1068 −2'075.75 → Netto 4030 = 13'453.40.
+  // 4040: FS-Anteil 596.68 + Paul Ullrich 769.50 (Total 1'366.18). 4050/4701: 0.
+  const journal = [
+    je('4030', 'Feldschlösschen Getränke AG Sammelr. 8.1%', 10726.85),
+    je('4030', 'Feldschlösschen Getränke AG Sammelr. 2.6%', 4802.30),
+    je('4030', 'Feldschlösschen Getränke AG Gutschrift Doppelzahlung', 0, 2075.75, '1068'),
+    je('4040', 'Feldschlösschen Getränke AG', 596.68),
+    je('4040', 'Paul Ullrich AG', 769.50),
+  ];
+  const base = { entries, journal, supplierNames: ['Feldschlösschen', 'Paul Ullrich'], aliases: {} };
+
+  it('EIN Befund für Feldschlösschen mit dem erwarteten Umbuchungs-Vorschlag', () => {
+    const befunde = buildMwstBuendelungBefunde(base);
+    expect(befunde).toHaveLength(1);
+    const b = befunde[0];
+    expect(b.lieferant).toBe('Feldschlösschen');
+    expect(b.ueberschussKonto).toBe('4030');
+    const um = Object.fromEntries(b.umbuchungen.map(u => [u.konto, u.delta]));
+    expect(um['4030']).toBeCloseTo(-8915.40, 2);
+    expect(um['4040']).toBeCloseTo(2192.62, 2);
+    expect(um['4050']).toBeCloseTo(7736.85, 2);
+    expect(um['4701']).toBeCloseTo(465.00, 2);
+    // Überschusskonto zuerst im Vorschlag
+    expect(b.umbuchungen[0].konto).toBe('4030');
+  });
+
+  it('Unerklärte Restdifferenz separat: Gutschrift Beleg 1068 −2\'075.75 auf 4030 — NICHT im Vorschlag', () => {
+    const b = buildMwstBuendelungBefunde(base)[0];
+    expect(b.restdifferenzen).toHaveLength(1);
+    expect(b.restdifferenzen[0]).toMatchObject({ konto: '4030', belegNr: '1068' });
+    expect(b.restdifferenzen[0].betrag).toBeCloseTo(-2075.75, 2);
+    // Kopiertext enthält NUR die Umbuchungen, keine Restdifferenz
+    expect(b.text).toContain('MwSt-Satz-Bündelung');
+    expect(b.text).toContain("8'915.40");
+    expect(b.text).toContain("+2'192.62");
+    expect(b.text).toContain("+7'736.85");
+    expect(b.text).toContain("+465.00");
+    expect(b.text).not.toContain("2'075.75");
+  });
+
+  it('Paul Ullrich (nur 4040, korrekt gebucht) erhält KEINEN Befund', () => {
+    const befunde = buildMwstBuendelungBefunde(base);
+    expect(befunde.some(b => b.lieferant === 'Paul Ullrich')).toBe(false);
+  });
+
+  it('Drilldown 4030/4040/4050: FS-Zeile trägt den Befund (typ=kontierung), keine Einzel-Hinweise', () => {
+    const befunde = buildMwstBuendelungBefunde(base);
+    for (const konto of ['4030', '4040', '4050']) {
+      const d = buildKontoDrilldown({ ...base, konto, buendelungen: befunde });
+      const fs = d.zeilen.find(z => z.lieferant === 'Feldschlösschen')!;
+      expect(fs.typ).toBe('kontierung');
+      expect(fs.buendelung).not.toBeNull();
+      expect(fs.splitHinweis).toBeNull();
+      expect(fs.kontierungsHinweis).toBeNull();
+    }
+    // Paul Ullrich auf 4040 bleibt unauffällig (ok)
+    const d4040 = buildKontoDrilldown({ ...base, konto: '4040', buendelungen: befunde });
+    expect(d4040.zeilen.find(z => z.lieferant === 'Paul Ullrich')!.typ).toBe('ok');
+  });
+
+  it('buildKorrekturVorschlaege: EIN konsolidierter Vorschlag statt Einzel-Abweichungen je Konto', () => {
+    const v = buildKorrekturVorschlaege(base);
+    const fsVorschlaege = v.filter(x => x.lieferant === 'Feldschlösschen');
+    expect(fsVorschlaege).toHaveLength(1);
+    expect(fsVorschlaege[0].typ).toBe('kontierung');
+    expect(fsVorschlaege[0].konto).toBe('4030');
+    expect(fsVorschlaege[0].betrag).toBeCloseTo(8915.40, 2);
+    expect(fsVorschlaege[0].text.split('\n').length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('ohne Journal: leere Befund-Liste (leer statt 0)', () => {
+    expect(buildMwstBuendelungBefunde({ ...base, journal: null })).toEqual([]);
+  });
+
+  it('Kontonamen fliessen in den Kopiertext ein', () => {
+    const b = buildMwstBuendelungBefunde({ ...base, kontoNamen: {
+      '4030': '4030 Bier', '4040': '4040 Spirituosen', '4050': '4050 Mineral', '4701': '4701 Betriebsmaterial',
+    } })[0];
+    expect(b.text).toContain('4030 Bier');
+    expect(b.text).toContain('4040 Spirituosen');
+    expect(b.text).toContain('4050 Mineral');
+    expect(b.text).toContain('4701 Betriebsmaterial');
+  });
+});
+
+describe('MwSt-Satz-Bündelung — Abgrenzung (Architect-Regressionen)', () => {
+  const je = (accountNumber: string, text: string, soll: number): SageJournalEntry => ({
+    date: '01.07.2026', text, accountNumber, accountName: '', soll, haben: 0,
+  } as unknown as SageJournalEntry);
+
+  it('Food-Muster (Überschuss auf 4060, Defizite 4070/4701) ist KEINE MwSt-Bündelung', () => {
+    const e = [inv({ date: '2026-07-03', amountNet: 3000, supplierName: 'Transgourmet', kontoSplits: [
+      { warenkonto: '4060', amountNet: 1000, amountGross: 0 },
+      { warenkonto: '4070', amountNet: 1500, amountGross: 0 },
+      { warenkonto: '4701', amountNet: 500, amountGross: 0 },
+    ] })];
+    const j = [je('4060', 'Transgourmet Schweiz AG', 3000)];
+    expect(buildMwstBuendelungBefunde({ entries: e, journal: j, supplierNames: ['Transgourmet'], aliases: {} })).toEqual([]);
+  });
+
+  it('unabhängige Abweichung desselben Lieferanten auf 4060 bleibt als Vorschlag sichtbar', () => {
+    // Beverage-Bündelung (4030 Überschuss, 4040/4050 Defizite) + separat
+    // fehlende Rechnung auf 4060 (FIBU 500, App 0).
+    const e = [inv({ date: '2026-07-05', amountNet: 3000, supplierName: 'Feldschlösschen', kontoSplits: [
+      { warenkonto: '4030', amountNet: 1000, amountGross: 0 },
+      { warenkonto: '4040', amountNet: 800, amountGross: 0 },
+      { warenkonto: '4050', amountNet: 1200, amountGross: 0 },
+    ] })];
+    const j = [
+      je('4030', 'Feldschlösschen Getränke AG', 3000),
+      je('4060', 'Feldschlösschen Getränke AG', 500),
+    ];
+    const base = { entries: e, journal: j, supplierNames: ['Feldschlösschen'], aliases: {} };
+    const befunde = buildMwstBuendelungBefunde(base);
+    expect(befunde).toHaveLength(1);
+    expect(befunde[0].umbuchungen.map(u => u.konto).sort()).toEqual(['4030', '4040', '4050']);
+    const v = buildKorrekturVorschlaege(base);
+    // EIN konsolidierter Bündelungs-Vorschlag …
+    expect(v.filter(x => x.typ === 'kontierung' && x.lieferant === 'Feldschlösschen')).toHaveLength(1);
+    // … UND die unabhängige 4060-Abweichung bleibt erhalten.
+    expect(v.some(x => x.konto === '4060' && x.lieferant === 'Feldschlösschen' && Math.abs(x.betrag - 500) < 0.01)).toBe(true);
   });
 });

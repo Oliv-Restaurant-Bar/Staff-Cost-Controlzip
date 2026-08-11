@@ -64,6 +64,9 @@ import {
 import {
   buildAnnualCostPreview,
   applyImportMode,
+  sammleManuellGeschuetzt,
+  zaehleImportZeilen,
+  geschuetztKey,
   type AnnualCostImportMode,
 } from '@/lib/annual-cost-preview';
 import { REPORTING_DATA_CHANGED_EVENT, notifyReportingDataChanged } from '@/lib/import-events';
@@ -1205,6 +1208,9 @@ const AnnualCostImportSection = () => {
   // Konfliktmodus + Monatsauswahl (nur für Modus «selective»)
   const [importMode, setImportMode] = useState<AnnualCostImportMode>('replace');
   const [selectedMonths, setSelectedMonths] = useState<Set<number>>(new Set());
+  // Manuell geschützte Zeilen, die der User EXPLIZIT freigibt («Importwert
+  // übernehmen») — Schlüssel `${month}|${accountNumber}`; Standard = geschützt.
+  const [uebernehmen, setUebernehmen] = useState<Set<string>>(new Set());
   // Vorjahres-Hardzahlen-Sperre (gemeinsamer Jahres-Lock, wie Umsatz/Personal)
   const [costLock, setCostLock] = useState<PriorYearLockState>({ locked: false });
   const [costLockLoading, setCostLockLoading] = useState(false);
@@ -1286,11 +1292,24 @@ const AnnualCostImportSection = () => {
     return applyImportMode(importMode, preview.categoriesByMonth, existingByMonth, selectedMonths);
   }, [preview, existingByMonth, importMode, selectedMonths]);
 
-  // Neue Datei / Tenant-Wechsel: Modus + Auswahl zurücksetzen
+  // Neue Datei / Tenant-Wechsel: Modus + Auswahl + Freigaben zurücksetzen
   useEffect(() => {
     setImportMode('replace');
     setSelectedMonths(new Set());
+    setUebernehmen(new Set());
   }, [result, reportingKey]);
+
+  /** Manuell geschützte Konto-Zeilen (quelle='manuell') mit Importwert daneben. */
+  const geschuetzteZeilen = useMemo(() => {
+    if (!preview) return [];
+    return sammleManuellGeschuetzt(preview.categoriesByMonth, existingByMonth);
+  }, [preview, existingByMonth]);
+
+  /** Kopfzeile «X Zeilen aktualisiert · Y manuell geschützt · Z neu». */
+  const zeilenSummary = useMemo(() => {
+    if (!diff) return null;
+    return zaehleImportZeilen(diff, geschuetzteZeilen, uebernehmen);
+  }, [diff, geschuetzteZeilen, uebernehmen]);
 
   const handleFile = async (file: File) => {
     const isPdf = /\.pdf$/i.test(file.name);
@@ -1405,10 +1424,10 @@ const AnnualCostImportSection = () => {
       } catch (err) {
         console.warn('[ANNUAL-IMPORTS] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
       }
-      const { monthsWritten, monthsCleared, monthsUnchanged, kvBackup } = replaceAnnualCostYear(
+      const { zeilenGeschuetzt, monthsWritten, monthsCleared, monthsUnchanged, kvBackup } = replaceAnnualCostYear(
         year,
         modeResult.effective,
-        { fileName },
+        { fileName, uebernehmen },
         reportingKey,
       );
       // Journal pro Monat ersetzen (Buchungszeilen → Lieferanten-FIBU-Abgleich);
@@ -1466,6 +1485,7 @@ const AnnualCostImportSection = () => {
         `Jahr ${year}: ${monthsWritten} Monate gespeichert` +
         (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : '') +
         (monthsUnchanged > 0 ? `, ${monthsUnchanged} Monate unverändert (kein Write)` : '') +
+        (zeilenGeschuetzt > 0 ? ` — ${zeilenGeschuetzt} manuell geschützte Zeile(n) unverändert erhalten` : '') +
         (modeResult.monthsSkipped.length > 0
           ? ` — ${modeResult.monthsSkipped.length} Datei-Monat(e) wegen Modus übersprungen`
           : ''),
@@ -1678,6 +1698,20 @@ const AnnualCostImportSection = () => {
 
       {result && preview && !saved && (
         <div className="space-y-2" data-testid="annual-import-preview">
+          {/* Kopfzeile: X aktualisiert · Y manuell geschützt · Z neu */}
+          {zeilenSummary && (
+            <p className="text-xs font-medium tabular-nums" data-testid="annual-import-zeilen-summary">
+              {zeilenSummary.aktualisiert} Zeilen aktualisiert
+              {' · '}
+              <span className={zeilenSummary.geschuetzt > 0 ? 'text-blue-700 dark:text-blue-400' : ''}>
+                {zeilenSummary.geschuetzt} manuell geschützt (nicht überschrieben)
+              </span>
+              {' · '}
+              <span className={zeilenSummary.neu > 0 ? 'text-green-700 dark:text-green-400' : ''}>
+                {zeilenSummary.neu} neu
+              </span>
+            </p>
+          )}
           {/* Jahr-Bestätigung + Zeitraum */}
           <div className="rounded border bg-muted/30 p-2 space-y-1">
             <p className="text-xs">
@@ -1754,6 +1788,73 @@ const AnnualCostImportSection = () => {
               </tbody>
             </table>
           </div>
+
+          {/* Manuell geschützte Zeilen: eigene Gruppe, Standard = geschützt lassen */}
+          {geschuetzteZeilen.length > 0 && (
+            <div
+              data-testid="annual-import-protected"
+              className="rounded border border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 p-2 space-y-1"
+            >
+              <p className="text-[11px] font-medium text-blue-800 dark:text-blue-300">
+                Manuell geschützt – nicht überschrieben ({geschuetzteZeilen.length} Zeile{geschuetzteZeilen.length === 1 ? '' : 'n'})
+              </p>
+              <p className="text-[10px] text-blue-800/80 dark:text-blue-300/80">
+                Diese Konten/Werte wurden von Hand gesetzt und bleiben beim Import erhalten.
+                Nur mit «Importwert übernehmen» wird die einzelne Zeile überschrieben
+                (danach wieder als manuell geführt).
+              </p>
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="py-0.5 pr-2 font-medium">Monat</th>
+                    <th className="py-0.5 pr-2 font-medium">Konto</th>
+                    <th className="py-0.5 pr-2 font-medium text-right">manuell</th>
+                    <th className="py-0.5 pr-2 font-medium text-right">Importwert</th>
+                    <th className="py-0.5 font-medium" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {geschuetzteZeilen.map(z => {
+                    const key = geschuetztKey(z.month, z.accountNumber);
+                    const frei = uebernehmen.has(key);
+                    return (
+                      <tr key={key} className="border-t border-blue-200/60 dark:border-blue-800/40" data-testid={`protected-row-${key}`}>
+                        <td className="py-0.5 pr-2">{MONTH_LABELS[z.month - 1]}</td>
+                        <td className="py-0.5 pr-2 max-w-[220px] truncate" title={`${z.accountNumber} ${z.label}`}>
+                          {z.accountNumber} {z.label}
+                        </td>
+                        <td className="py-0.5 pr-2 text-right tabular-nums font-medium">{fmtChf(Math.round(z.manuellerWert))}</td>
+                        <td className={cn(
+                          'py-0.5 pr-2 text-right tabular-nums',
+                          z.importWert === null && 'text-muted-foreground',
+                          z.abweichend && 'text-orange-700 dark:text-orange-400 font-medium',
+                        )}>
+                          {z.importWert === null ? 'fehlt in Datei' : fmtChf(Math.round(z.importWert))}
+                        </td>
+                        <td className="py-0.5 text-right">
+                          {z.importWert !== null && (
+                            <Button
+                              size="sm"
+                              variant={frei ? 'default' : 'outline'}
+                              className="h-5 px-2 text-[10px]"
+                              data-testid={`protected-uebernehmen-${key}`}
+                              onClick={() => setUebernehmen(prev => {
+                                const next = new Set(prev);
+                                if (next.has(key)) next.delete(key); else next.add(key);
+                                return next;
+                              })}
+                            >
+                              {frei ? 'Importwert wird übernommen' : 'Importwert übernehmen'}
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Validierungshinweise aus der Diff-Vorschau (reine Logik) */}
           {diff && diff.warnings.length > 0 && (

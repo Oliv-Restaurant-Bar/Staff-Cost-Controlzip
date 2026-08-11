@@ -1,0 +1,30 @@
+BUILD-BEFEHL — Manuelle Konten/Kontierungen beim Kosten-Import schützen (Mandanten Oliv + Beaulieu)
+
+Problem: Beim Import des Kostenblatts/der Kosten werden manuell hinzugefügte oder
+geänderte Konten und Zuordnungen überschrieben (z.B. mein selbst angelegtes Konto 5004).
+Das darf nie automatisch passieren.
+
+Anforderung:
+1. Jede Kontierung/Zuordnung und jedes Konto bekommt eine Quelle-Kennzeichnung:
+   quelle = 'import' (maschinell erkannt)  ODER  quelle = 'manuell' (von mir gesetzt/geändert).
+   - Lege ich ein Konto neu an (z.B. 5004) oder ändere ich eine automatische Zuordnung,
+     wird die Zeile automatisch quelle='manuell' markiert (Flag „manuell").
+2. Merge- statt Überschreib-Logik beim Import:
+   - Import aktualisiert NUR Zeilen mit quelle='import'.
+   - Alle Zeilen/Konten mit quelle='manuell' bleiben IMMER unverändert erhalten –
+     werden nie überschrieben, nie gelöscht, auch nicht wenn sie im neuen File fehlen.
+   - Mein Konto 5004 (und jedes andere manuell angelegte Konto) überlebt jeden Re-Import.
+3. Konfliktfall (Import bringt für eine manuell geschützte Zeile einen abweichenden Wert):
+   - In der Import-Vorschau als eigene Gruppe zeigen: „Manuell geschützt – nicht überschrieben"
+     mit beiden Werten nebeneinander (manuell | Importwert).
+   - Nur wenn ICH pro Zeile explizit „Importwert übernehmen" anklicke, wird sie überschrieben
+     (und danach wieder als quelle='manuell' geführt). Standard = geschützt lassen.
+4. Gilt getrennt pro Mandant (Oliv / Beaulieu) – Schutz-Flags nie mandantenübergreifend mischen.
+5. Bestehende Prinzipien beibehalten: dublettensicher (Ersetzen statt Addieren über den
+   robusten Schlüssel), Vorschau vor Import, Rückgängig/Undo, „leer statt 0".
+
+Zeig mir in der Import-Vorschau zuoberst eine Zeile:
+„X Zeilen aktualisiert · Y manuell geschützt (nicht überschrieben) · Z neu".
+
+Regressionstest: Konto 5004 manuell anlegen → Kostenblatt neu importieren →
+5004 muss unverändert bestehen bleiben und darf nicht aus dem Kontenplan verschwinden.

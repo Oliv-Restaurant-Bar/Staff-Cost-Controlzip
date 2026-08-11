@@ -286,6 +286,90 @@ export function buildAnnualCostPreview(
   };
 }
 
+// ─── Manuell geschützte Zeilen (quelle='manuell') ────────────────────────────
+
+export interface GeschuetzteZeile {
+  month: number;
+  accountNumber: string;
+  label: string;
+  /** Bestehender, manuell gesetzter Wert */
+  manuellerWert: number;
+  /** Wert aus der Import-Datei (null = Konto/Monat nicht in der Datei) */
+  importWert: number | null;
+  /** true = Datei bringt einen ABWEICHENDEN Wert (echter Konfliktfall) */
+  abweichend: boolean;
+}
+
+/** Schlüssel einer geschützten Zeile — identisch zum Schreib-Kern (`uebernehmen`). */
+export const geschuetztKey = (month: number, accountNumber: string) => `${month}|${accountNumber}`;
+
+/**
+ * Sammelt alle manuell geschützten Konto-Zeilen (numerisch, quelle='manuell')
+ * des Bestands und stellt den Importwert daneben (Konfliktgruppe der Vorschau
+ * «Manuell geschützt – nicht überschrieben»). Der Schutz selbst liegt im
+ * Schreib-Kern (mergeProtectedCats) — hier nur die Anzeige-Aufbereitung.
+ */
+export function sammleManuellGeschuetzt(
+  newByMonth: Map<number, ExpenseCategory[]>,
+  existingByMonth: Map<number, ExpenseCategory[]>,
+): GeschuetzteZeile[] {
+  const out: GeschuetzteZeile[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const fileMap = toAccountMap(newByMonth.get(m) ?? [], m, null);
+    for (const c of existingByMonth.get(m) ?? []) {
+      if (!isNumericAccount(c) || c.quelle !== 'manuell') continue;
+      const nv = fileMap.get(c.categoryId);
+      const importWert = nv ? nv.amount : null;
+      out.push({
+        month: m,
+        accountNumber: c.categoryId,
+        label: c.label,
+        manuellerWert: c.amount,
+        importWert,
+        abweichend: importWert !== null && importWert !== c.amount,
+      });
+    }
+  }
+  return out.sort((a, b) => a.accountNumber.localeCompare(b.accountNumber) || a.month - b.month);
+}
+
+export interface ImportZeilenSummary {
+  /** Zellen (Konto×Monat), die der Import verändert */
+  aktualisiert: number;
+  /** Manuell geschützte Zeilen, die NICHT überschrieben werden */
+  geschuetzt: number;
+  /** Neue Konto×Monat-Werte, die bisher fehlten */
+  neu: number;
+}
+
+/**
+ * Kopfzeile der Import-Vorschau:
+ * «X Zeilen aktualisiert · Y manuell geschützt (nicht überschrieben) · Z neu».
+ * Explizit freigegebene Zeilen (`uebernehmen`) zählen als aktualisiert.
+ */
+export function zaehleImportZeilen(
+  diff: AnnualCostPreview,
+  geschuetzteZeilen: GeschuetzteZeile[],
+  uebernehmen: ReadonlySet<string>,
+): ImportZeilenSummary {
+  const geschuetztKeys = new Set(
+    geschuetzteZeilen
+      .filter(z => !uebernehmen.has(geschuetztKey(z.month, z.accountNumber)))
+      .map(z => geschuetztKey(z.month, z.accountNumber)),
+  );
+  let aktualisiert = 0;
+  let neu = 0;
+  for (const row of diff.rows) {
+    for (const cell of row.cells) {
+      const key = geschuetztKey(cell.month, row.accountNumber);
+      if (geschuetztKeys.has(key)) continue; // geschützt → zählt nicht als Änderung
+      if (cell.status === 'neu') neu++;
+      else if (cell.status === 'ueberschreiben' || cell.status === 'entfernt') aktualisiert++;
+    }
+  }
+  return { aktualisiert, geschuetzt: geschuetztKeys.size, neu };
+}
+
 // ─── Konfliktmodi (Pre-Merge) ────────────────────────────────────────────────
 
 /**

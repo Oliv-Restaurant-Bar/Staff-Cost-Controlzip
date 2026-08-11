@@ -719,3 +719,130 @@ describe('assertYearScopedChanges — Abbruch bei Fremdjahr-Änderung', () => {
     expect(() => assertYearScopedChanges(before, after, 2024)).toThrow(/2025-01/);
   });
 });
+
+// ─── E. Merge-Schutz manueller Kontierungen (quelle='manuell') ────────────────
+
+describe('Merge-Schutz: manuell erfasste Konten überleben Re-Import', () => {
+  const mcat = (id: string, label: string, amount: number, quelle?: 'import' | 'manuell'): ExpenseCategory =>
+    ({ categoryId: id, label, amount, ...(quelle ? { quelle } : {}) });
+
+  function seedManual5004(year = 2025, month = 4) {
+    const rec = loadMonth(year, month, TEST_KEY);
+    saveMonth(
+      {
+        ...rec,
+        expenseCategories: [
+          mcat('5004', 'Aushilfslöhne (manuell)', 4200, 'manuell'),
+          mcat('4000', 'Wareneinsatz (alt)', 100, 'import'),
+        ],
+      },
+      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+    );
+  }
+
+  it('Regression: manuell angelegtes Konto 5004 überlebt Re-Import (replaceAnnualCostYear), auch wenn es in der Datei fehlt', () => {
+    seedManual5004();
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [4, [mcat('4000', 'Wareneinsatz', 800, 'import')]],
+    ]);
+    const res = replaceAnnualCostYear(2025, byMonth, {}, TEST_KEY);
+    expect(res.zeilenGeschuetzt).toBe(1);
+    const m4 = loadMonth(2025, 4, TEST_KEY);
+    const c5004 = m4.expenseCategories.find(c => c.categoryId === '5004');
+    expect(c5004?.amount).toBe(4200);
+    expect(c5004?.quelle).toBe('manuell');
+    expect(m4.expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(800);
+  });
+
+  it('Import mit KOLLIDIERENDEM Wert überschreibt manuelle Zeile NICHT (ohne Freigabe)', () => {
+    seedManual5004();
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [4, [mcat('5004', 'Aushilfslöhne FIBU', 9999, 'import')]],
+    ]);
+    replaceAnnualCostYear(2025, byMonth, {}, TEST_KEY);
+    const c5004 = loadMonth(2025, 4, TEST_KEY).expenseCategories.filter(c => c.categoryId === '5004');
+    expect(c5004).toHaveLength(1);
+    expect(c5004[0].amount).toBe(4200);
+    expect(c5004[0].quelle).toBe('manuell');
+  });
+
+  it('«Importwert übernehmen» (uebernehmen-Set) ersetzt gezielt EINE Zeile — Ergebnis wieder quelle=manuell', () => {
+    seedManual5004();
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [4, [mcat('5004', 'Aushilfslöhne FIBU', 9999, 'import')]],
+    ]);
+    const res = replaceAnnualCostYear(2025, byMonth, { uebernehmen: new Set(['4|5004']) }, TEST_KEY);
+    expect(res.zeilenGeschuetzt).toBe(0);
+    const c5004 = loadMonth(2025, 4, TEST_KEY).expenseCategories.filter(c => c.categoryId === '5004');
+    expect(c5004).toHaveLength(1);
+    expect(c5004[0].amount).toBe(9999);
+    expect(c5004[0].quelle).toBe('manuell');
+  });
+
+  it('uebernehmen-Key ist monatsscharf: Freigabe 4|5004 schützt 5|5004 weiterhin', () => {
+    seedManual5004(2025, 4);
+    seedManual5004(2025, 5);
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [4, [mcat('5004', 'FIBU', 9999, 'import')]],
+      [5, [mcat('5004', 'FIBU', 8888, 'import')]],
+    ]);
+    replaceAnnualCostYear(2025, byMonth, { uebernehmen: new Set(['4|5004']) }, TEST_KEY);
+    expect(loadMonth(2025, 4, TEST_KEY).expenseCategories.find(c => c.categoryId === '5004')?.amount).toBe(9999);
+    expect(loadMonth(2025, 5, TEST_KEY).expenseCategories.find(c => c.categoryId === '5004')?.amount).toBe(4200);
+  });
+
+  it('upsertCostMonths schützt manuelle Zeilen identisch (Mehrmonats-Kontoblatt)', () => {
+    seedManual5004(2025, 6);
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [6, [mcat('5004', 'FIBU', 7777, 'import'), mcat('4000', 'Wareneinsatz', 500, 'import')]],
+    ]);
+    const res = upsertCostMonths(2025, byMonth, {}, TEST_KEY);
+    expect(res.zeilenGeschuetzt).toBe(1);
+    const m6 = loadMonth(2025, 6, TEST_KEY);
+    expect(m6.expenseCategories.find(c => c.categoryId === '5004')?.amount).toBe(4200);
+    expect(m6.expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(500);
+  });
+
+  it('Legacy-Zeilen OHNE quelle-Flag werden wie Import behandelt (ersetzt)', () => {
+    const rec = loadMonth(2025, 7, TEST_KEY);
+    saveMonth(
+      { ...rec, expenseCategories: [mcat('6000', 'Legacy ohne Flag', 111)] },
+      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+    );
+    replaceAnnualCostYear(2025, new Map([[7, [mcat('6000', 'Neu', 222, 'import')]]]), {}, TEST_KEY);
+    expect(loadMonth(2025, 7, TEST_KEY).expenseCategories.find(c => c.categoryId === '6000')?.amount).toBe(222);
+  });
+
+  it('Dirty-Check bleibt No-op, wenn nur geschützte Zeilen existieren und die Datei den Monat nicht enthält', () => {
+    seedManual5004(2025, 8);
+    const res = replaceAnnualCostYear(2025, new Map([[8, [mcat('4000', 'W', 100, 'import')]]]), {}, TEST_KEY);
+    const updatedAt1 = loadMonth(2025, 8, TEST_KEY).updatedAt;
+    const res2 = replaceAnnualCostYear(2025, new Map([[8, [mcat('4000', 'W', 100, 'import')]]]), {}, TEST_KEY);
+    expect(res2.monthsUnchanged).toBeGreaterThanOrEqual(1);
+    expect(loadMonth(2025, 8, TEST_KEY).updatedAt).toBe(updatedAt1);
+    expect(res.zeilenGeschuetzt).toBe(1);
+  });
+});
+
+describe('removeAnnualCostYear — explizites Löschen entfernt auch manuelle Konten', () => {
+  it('entfernt ALLE numerischen Kategorien inkl. quelle=manuell (Schutz gilt nur für Imports)', () => {
+    const rec = loadMonth(2025, 9, TEST_KEY);
+    saveMonth(
+      {
+        ...rec,
+        expenseCategories: [
+          { categoryId: '5004', label: 'Aushilfslöhne (manuell)', amount: 4200, quelle: 'manuell' },
+          { categoryId: '4000', label: 'Wareneinsatz', amount: 800, quelle: 'import' },
+          { categoryId: 'miete', label: 'Miete (nicht-numerisch)', amount: 900 },
+        ],
+      },
+      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+    );
+    removeAnnualCostYear(2025, {}, TEST_KEY);
+    const cats = loadMonth(2025, 9, TEST_KEY).expenseCategories;
+    expect(cats.find(c => c.categoryId === '5004')).toBeUndefined();
+    expect(cats.find(c => c.categoryId === '4000')).toBeUndefined();
+    // Nicht-numerische Kategorien bleiben wie bisher erhalten
+    expect(cats.find(c => c.categoryId === 'miete')?.amount).toBe(900);
+  });
+});

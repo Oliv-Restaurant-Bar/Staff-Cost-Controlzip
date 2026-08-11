@@ -489,6 +489,13 @@ export interface KontoDrilldownZeile {
    * 'unklar' — App > FIBU (periodenfremd? in FIBU prüfen); null ohne Journal.
    */
   typ: 'ok' | 'kontierung' | 'zuordnung' | 'fehlende_rechnung' | 'unklar' | null;
+  /**
+   * Cross-Konto-Befund «MwSt-Satz-Bündelung» (z.B. Feldschlösschen: Treuhänder
+   * bündelt nach MwSt-Satz, fast alles auf 4030). Gesetzt, wenn der Lieferant
+   * Teil eines Bündelungs-Befunds ist und DIESES Konto beteiligt ist —
+   * die UI zeigt dann EINEN Befund statt Einzel-Abweichungen je Konto.
+   */
+  buendelung: MwstBuendelungBefund | null;
 }
 
 export interface KontoDrilldown {
@@ -502,24 +509,22 @@ export interface KontoDrilldown {
   hatJournal: boolean;
 }
 
-/**
- * Drilldown einer Konto-Differenz (Gegenüberstellung Erfasst vs. ER):
- * je Lieferant App-Betrag vs. FIBU-Betrag auf DIESEM Konto, inkl.
- * Konto-Split-Erkennung (z.B. Feldschlösschen: FIBU alles auf 4030,
- * App gesplittet auf 4030/4040/4050 → Zuordnung, kein Fehlbetrag).
- * Ohne Journal (nur ER-Totale) degradiert: nur App-Seite je Lieferant.
- */
-export function buildKontoDrilldown(input: {
+/** Gemeinsame Eingabe für Drilldown, Vorschläge und Bündelungs-Check. */
+interface LieferantKontenInput {
   entries: InvoiceEntry[];
   journal: SageJournalEntry[] | null;
-  konto: string;
   supplierNames: string[];
   aliases: SupplierAliasMap;
   aliasGruppen?: AliasGruppe[];
-}): KontoDrilldown {
-  const r2 = (x: number) => Math.round(x * 100) / 100;
-  const kontoNorm = String(normalizeWarenKonto(input.konto) ?? input.konto);
+}
 
+/**
+ * Gemeinsamer Aggregations-Kern: App- und FIBU-Beträge je Lieferant je Konto
+ * (direkte Warenkonten 4020–4070 + Non-Food 4090/4701), alias-kanonisiert.
+ * `kontoNorm` steuert nur, auf welchem Konto nicht zugeordnete FIBU-Buchungen
+ * gezählt werden (null = keine Zählung).
+ */
+function aggregiereLieferantKonten(input: LieferantKontenInput, kontoNorm: string | null) {
   // ── Journal auf direkte Konten filtern (alle 6 — für Split-Verteilungen) ──
   const direktJournal = (input.journal ?? []).filter(e => {
     const n = normalizeWarenKonto(String(e.accountNumber ?? ''));
@@ -564,6 +569,9 @@ export function buildKontoDrilldown(input: {
   // ── FIBU-Seite: Lieferant → Konto → Betrag (Soll−Haben) ──
   const fibuMap = new Map<string, Record<string, number>>();
   const fibuNonfoodMap = new Map<string, Record<string, number>>();
+  // FIBU-Einzelbuchungen je Lieferant (direkte Konten) — für die Erkennung
+  // unerklärter Restdifferenzen (z.B. Gutschriften) im Bündelungs-Check.
+  const fibuEintraege = new Map<string, SageJournalEntry[]>();
   let nichtZugeordnet = 0;
   if (hatJournal) {
     const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
@@ -577,7 +585,8 @@ export function buildKontoDrilldown(input: {
         const rec = fibuMap.get(canon) ?? {};
         rec[k] = (rec[k] ?? 0) + buchungsBetrag(e);
         fibuMap.set(canon, rec);
-      } else if (k === kontoNorm) {
+        fibuEintraege.set(canon, [...(fibuEintraege.get(canon) ?? []), e]);
+      } else if (kontoNorm !== null && k === kontoNorm) {
         nichtZugeordnet += buchungsBetrag(e);
       }
     }
@@ -592,6 +601,32 @@ export function buildKontoDrilldown(input: {
       }
     }
   }
+  return { appMap, appNonfoodMap, fibuMap, fibuNonfoodMap, fibuEintraege, nichtZugeordnet, hatJournal, resolve };
+}
+
+/**
+ * Drilldown einer Konto-Differenz (Gegenüberstellung Erfasst vs. ER):
+ * je Lieferant App-Betrag vs. FIBU-Betrag auf DIESEM Konto, inkl.
+ * Konto-Split-Erkennung (z.B. Feldschlösschen: FIBU alles auf 4030,
+ * App gesplittet auf 4030/4040/4050 → Zuordnung, kein Fehlbetrag).
+ * Ohne Journal (nur ER-Totale) degradiert: nur App-Seite je Lieferant.
+ * Optional `buendelungen`: Befunde des Cross-Konto-Checks — betroffene
+ * Lieferanten-Zeilen tragen dann den Befund statt Einzel-Abweichungen.
+ */
+export function buildKontoDrilldown(input: {
+  entries: InvoiceEntry[];
+  journal: SageJournalEntry[] | null;
+  konto: string;
+  supplierNames: string[];
+  aliases: SupplierAliasMap;
+  aliasGruppen?: AliasGruppe[];
+  buendelungen?: MwstBuendelungBefund[];
+}): KontoDrilldown {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const kontoNorm = String(normalizeWarenKonto(input.konto) ?? input.konto);
+
+  const { appMap, appNonfoodMap, fibuMap, fibuNonfoodMap, nichtZugeordnet, hatJournal } =
+    aggregiereLieferantKonten(input, kontoNorm);
 
   // ── Zeilen: Union der Lieferanten mit Betrag auf DIESEM Konto ──
   const namen = new Set<string>();
@@ -671,15 +706,27 @@ export function buildKontoDrilldown(input: {
       }
     }
 
+    // Cross-Konto-Befund (MwSt-Satz-Bündelung): ersetzt die Einzel-Klassifikation.
+    const buendelung = (input.buendelungen ?? []).find(b =>
+      b.lieferant === name && (b.ueberschussKonto === kontoNorm || b.umbuchungen.some(u => u.konto === kontoNorm)),
+    ) ?? null;
+
     let typ: KontoDrilldownZeile['typ'] = null;
     if (diff !== null) {
-      if (Math.abs(diff) <= 0.05) typ = 'ok';
+      if (buendelung) typ = 'kontierung';
+      else if (Math.abs(diff) <= 0.05) typ = 'ok';
       else if (kontierungsHinweis) typ = 'kontierung';
       else if (splitHinweis?.reineZuordnung) typ = 'zuordnung';
       else if (diff > 0) typ = 'fehlende_rechnung';
       else typ = 'unklar';
     }
-    return { lieferant: name, app, fibu, diff, splitHinweis, kontierungsHinweis, typ };
+    return {
+      lieferant: name, app, fibu, diff,
+      // Bei Bündelungs-Befund keine konkurrierenden Einzel-Hinweise anzeigen
+      splitHinweis: buendelung ? null : splitHinweis,
+      kontierungsHinweis: buendelung ? null : kontierungsHinweis,
+      typ, buendelung,
+    };
   }).sort((a, b) => Math.abs(b.diff ?? b.app) - Math.abs(a.diff ?? a.app));
 
   const appTotal = r2(zeilen.reduce((s, z) => s + z.app, 0));
@@ -695,6 +742,124 @@ export function buildKontoDrilldown(input: {
     nichtZugeordnet: hatJournal ? r2(nichtZugeordnet) : null,
     hatJournal,
   };
+}
+
+// ─── Cross-Konto-Check: MwSt-Satz-Bündelung (z.B. Feldschlösschen) ──────────
+
+export interface MwstBuendelungBefund {
+  lieferant: string;
+  /** Konto mit dem grossen FIBU-Überschuss (typisch 4030 Bier). */
+  ueberschussKonto: string;
+  /**
+   * Umbuchungs-Vorschlag je Konto: delta = App-Split − FIBU (App = Wahrheit).
+   * Überschusskonto negativ (Abbuchung), Defizit-Konten positiv (Zubuchung).
+   */
+  umbuchungen: { konto: string; delta: number }[];
+  /** App-Split je Konto (nur beteiligte Konten, gerundet). */
+  appJeKonto: Record<string, number>;
+  /** FIBU-Verbuchung je Konto (nur beteiligte Konten, gerundet). */
+  fibuJeKonto: Record<string, number>;
+  /**
+   * Unerklärte Restdifferenzen — NICHT Teil des Umbuchungs-Vorschlags:
+   * Einzelbuchungen mit negativem Betrag (Gutschriften, z.B. Doppelzahlung)
+   * auf dem Überschusskonto. Separat prüfen.
+   */
+  restdifferenzen: { konto: string; betrag: number; belegNr: string | null; text: string }[];
+  /** Kopierbarer, mehrzeiliger Umbuchungs-Vorschlag (ohne Restdifferenzen). */
+  text: string;
+}
+
+/** Mindestbetrag, ab dem ein Überschuss/Defizit als Bündelung zählt (CHF). */
+const BUENDELUNG_MIN_CHF = 100;
+
+/**
+ * Erkennt je Lieferant die «MwSt-Satz-Bündelung»: der Treuhänder bündelt die
+ * FIBU-Verbuchung nach MwSt-Satz (8.1 %/2.6 %) und bucht fast alles auf EIN
+ * Konto (z.B. 4030 Bier), während der App-Split (echte Produktgruppen) auf
+ * mehrere Geschwister-Konten (4030/4040/4050/4701) verteilt. Bedingungen:
+ * genau EIN Konto mit grossem FIBU-Überschuss, ≥2 Konten mit Defiziten, und
+ * Überschuss/Defizite erklären sich gegenseitig zu ≥50 %. Solche Lieferanten
+ * erhalten EINEN Befund statt Einzel-Abweichungen je Konto.
+ * Ohne Journal: leere Liste. Rein, deterministisch, mandantenneutral
+ * (Mandanten-Trennung über die Eingabedaten).
+ */
+export function buildMwstBuendelungBefunde(input: LieferantKontenInput & {
+  kontoNamen?: Record<string, string>;
+}): MwstBuendelungBefund[] {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const { appMap, appNonfoodMap, fibuMap, fibuNonfoodMap, fibuEintraege, hatJournal } =
+    aggregiereLieferantKonten(input, null);
+  if (!hatJournal) return [];
+  const lbl = (k: string) => {
+    const name = input.kontoNamen?.[k];
+    return name && name !== k ? `${k} ${name.replace(/^\d{4}\s*/, '')}` : k;
+  };
+
+  // MwSt-Satz-Bündelung ist ein GETRÄNKE-Muster: nur Beverage-Geschwister
+  // (4020–4050) plus Betriebsmaterial/Non-Food (4090/4701) sind beteiligt —
+  // Food-Konten (4060/4070) bleiben dem bestehenden Einzel-Konto-Check.
+  const eligible = (k: string) => DIREKT_BEVERAGE.has(Number(k)) || NONFOOD_SET.has(Number(k));
+
+  const namen = new Set<string>([...appMap.keys(), ...fibuMap.keys()]);
+  const out: MwstBuendelungBefund[] = [];
+  for (const name of namen) {
+    // Kombinierte Konto-Sicht: Beverage-Geschwister + Non-Food (4090/4701).
+    const app: Record<string, number> = { ...(appMap.get(name) ?? {}), ...(appNonfoodMap.get(name) ?? {}) };
+    const fibu: Record<string, number> = { ...(fibuMap.get(name) ?? {}), ...(fibuNonfoodMap.get(name) ?? {}) };
+    const konten = [...new Set([...Object.keys(app), ...Object.keys(fibu)])].filter(eligible).sort();
+    if (konten.length < 2) continue;
+
+    const deltas = konten
+      .map(k => ({ konto: k, delta: r2((app[k] ?? 0) - (fibu[k] ?? 0)) }))
+      .filter(d => Math.abs(d.delta) > 0.05);
+    const ueberschuesse = deltas.filter(d => d.delta < -BUENDELUNG_MIN_CHF); // FIBU > App
+    const defizite = deltas.filter(d => d.delta > 0.05);
+    // Genau EIN grosses Überschuss-Konto (auf einem Beverage-Konto) und
+    // ≥2 Defizit-Konten — sonst kein Bündelungs-Muster (Einzelfälle behandelt
+    // der bestehende Konto-Check).
+    if (ueberschuesse.length !== 1 || defizite.length < 2) continue;
+    if (!DIREKT_BEVERAGE.has(Number(ueberschuesse[0].konto))) continue;
+    const ueberschuss = -ueberschuesse[0].delta;
+    const defizitTotal = r2(defizite.reduce((s, d) => s + d.delta, 0));
+    if (defizitTotal < BUENDELUNG_MIN_CHF) continue;
+    // Gegenseitige Erklärung: mindestens die Hälfte (nie durch 0 teilen —
+    // beide Seiten sind hier > BUENDELUNG_MIN_CHF > 0).
+    if (Math.min(ueberschuss, defizitTotal) / Math.max(ueberschuss, defizitTotal) < 0.5) continue;
+
+    const ueberschussKonto = ueberschuesse[0].konto;
+    const umbuchungen = [
+      { konto: ueberschussKonto, delta: ueberschuesse[0].delta },
+      ...defizite.sort((a, b) => a.konto.localeCompare(b.konto)),
+    ];
+
+    // Unerklärte Restdifferenzen: Gutschriften (negative Einzelbuchungen) des
+    // Lieferanten auf dem Überschusskonto — separat ausweisen, nie in den
+    // Umbuchungs-Vorschlag mischen.
+    const restdifferenzen = (fibuEintraege.get(name) ?? [])
+      .filter(e => String(normalizeWarenKonto(String(e.accountNumber ?? ''))) === ueberschussKonto)
+      .map(e => ({ eintrag: e, betrag: r2(buchungsBetrag(e)) }))
+      .filter(x => x.betrag < -0.05)
+      .map(x => ({
+        konto: ueberschussKonto,
+        betrag: x.betrag,
+        belegNr: x.eintrag.belegNr?.trim() ? x.eintrag.belegNr.trim() : null,
+        text: (x.eintrag.text ?? '').trim(),
+      }))
+      .sort((a, b) => a.betrag - b.betrag);
+
+    const zeilen = umbuchungen.map(u =>
+      `  ${lbl(u.konto)}: ${u.delta > 0 ? '+' : '-'}${fmtChfText(Math.abs(u.delta))}`);
+    out.push({
+      lieferant: name,
+      ueberschussKonto,
+      umbuchungen,
+      appJeKonto: Object.fromEntries(umbuchungen.map(u => [u.konto, r2(app[u.konto] ?? 0)])),
+      fibuJeKonto: Object.fromEntries(umbuchungen.map(u => [u.konto, r2(fibu[u.konto] ?? 0)])),
+      restdifferenzen,
+      text: `Umbuchung ${name} (MwSt-Satz-Bündelung, App-Split massgebend):\n${zeilen.join('\n')}`,
+    });
+  }
+  return out.sort((a, b) => Math.abs(b.umbuchungen[0]?.delta ?? 0) - Math.abs(a.umbuchungen[0]?.delta ?? 0));
 }
 
 // ─── Korrektur-Vorschläge (für die Buchhaltung / den Treuhänder) ─────────────
@@ -737,10 +902,28 @@ export function buildKorrekturVorschlaege(input: {
   };
   const out: KorrekturVorschlag[] = [];
   const zuordnungGesehen = new Set<string>();
+
+  // Cross-Konto-Befunde (MwSt-Satz-Bündelung): EIN konsolidierter Vorschlag
+  // pro Lieferant; unterdrückt werden NUR die Einzel-Vorschläge auf den am
+  // Befund beteiligten Konten — unabhängige Abweichungen desselben Lieferanten
+  // auf anderen Konten (z.B. 4060/4070) bleiben sichtbar.
+  const buendelungen = buildMwstBuendelungBefunde(input);
+  const gebuendeltePaare = new Set(
+    buendelungen.flatMap(b => b.umbuchungen.map(u => `${b.lieferant}|${u.konto}`)),
+  );
+  for (const b of buendelungen) {
+    out.push({
+      typ: 'kontierung', lieferant: b.lieferant, konto: b.ueberschussKonto,
+      betrag: Math.abs(b.umbuchungen[0]?.delta ?? 0),
+      text: b.text,
+    });
+  }
+
   for (const konto of DIREKTE_WARENKONTEN) {
-    const d = buildKontoDrilldown({ ...input, konto });
+    const d = buildKontoDrilldown({ ...input, konto, buendelungen });
     if (!d.hatJournal) return [];
     for (const z of d.zeilen) {
+      if (gebuendeltePaare.has(`${z.lieferant}|${konto}`)) continue;
       if (z.typ === 'kontierung' && z.kontierungsHinweis) {
         const h = z.kontierungsHinweis;
         out.push({

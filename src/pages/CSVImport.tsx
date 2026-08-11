@@ -1145,8 +1145,9 @@ export default function CSVImportPage() {
         console.warn('[CSV-IMPORT] Undo-Snapshot (Mehrmonat) fehlgeschlagen (Import läuft weiter):', err);
       }
 
-      // Upsert je Konto+Monat — unveränderte Monate: kein Write («unverändert»)
-      const { monthsWritten, monthsUnchanged, kvBackup } = upsertCostMonths(
+      // Upsert je Konto+Monat — unveränderte Monate: kein Write («unverändert»);
+      // manuell erfasste Konto-Zeilen (quelle='manuell') bleiben geschützt.
+      const { monthsWritten, monthsUnchanged, zeilenGeschuetzt, kvBackup } = upsertCostMonths(
         targetYear,
         multiPreview.categoriesByMonth,
         {
@@ -1202,6 +1203,7 @@ export default function CSVImportPage() {
       const summary =
         `${monthsWritten} Monat(e) gespeichert` +
         (monthsUnchanged > 0 ? `, ${monthsUnchanged} unverändert (kein Write)` : '') +
+        (zeilenGeschuetzt > 0 ? `, ${zeilenGeschuetzt} manuell geschützte Zeile(n) unverändert erhalten` : '') +
         (journalMonths > 0 ? `, Journal in ${journalMonths} Monat(en) aktualisiert` : '');
       setSavedMultiInfo(`Jahr ${targetYear}: ${summary}`);
       setSavedMonth({ year: targetYear, month: months[0] });

@@ -1,0 +1,34 @@
+BUILD-BEFEHL — Cross-Konto-Kontierungs-Check „MwSt-Satz-Bündelung" (Mandant Oliv, Analyse-Drill-down)
+
+Kontext: Befehl F erkennt Kontierungsfehler pro Konto (z.B. Transgourmet auf 4060). Jetzt brauche
+ich die Erkennung ÜBER mehrere Geschwister-Konten hinweg für EINEN Lieferanten – typisch Feldschlösschen,
+wo der Treuhänder alles nur nach MwSt-Satz (8.1%/2.6%) bündelt und fast alles auf 4030 Bier bucht.
+
+Erkennungs-Logik (pro Lieferant, pro Mandant, pro Periode):
+1. Vergleiche je Konto den App-Split (aus den erfassten Rechnungen, echte Produktgruppen) mit der
+   FIBU-Verbuchung (aus Kostenblatt, je Lieferant je Konto).
+2. Wenn EIN Beverage-Konto einen grossen FIBU-Überschuss hat UND die Geschwister-Konten
+   (4030 Bier / 4040 Spirituosen / 4050 Mineral / 4701 Betriebsmaterial) entsprechende Defizite,
+   dann NICHT als einzelne „Abweichung" je Konto anzeigen, sondern als EINEN Befund:
+   Typ = KONTIERUNG (MwSt-Satz-Bündelung), Lieferant = Feldschlösschen.
+3. Umbuchungs-Vorschlag: pro Konto Delta = App-Split − FIBU. Buchung vom Überschuss-Konto (4030)
+   auf die Defizit-Konten (4040/4050/4701). App-Split ist die Wahrheitsquelle.
+4. Restdifferenz, die der Split NICHT erklärt (z.B. Doppelzahlungs-Gutschriften, in der App noch
+   nicht erfasste Rechnungen), separat ausweisen als „Unerklärte Restdifferenz – prüfen",
+   NICHT in den Umbuchungs-Vorschlag mischen.
+5. Kopierbarer Umbuchungs-Vorschlag (wie bei Transgourmet), Button „Kopieren".
+6. „leer statt 0", nie durch 0 teilen, Vorschau, mandantengetrennt.
+
+TESTFESTE WERTE (Feldschlösschen Juli 2026, Oliv) – als Regressionstest fest verankern:
+  App-Split (netto, Wahrheit):  4030 Bier 4'538.00 · 4040 Spir 2'789.30 · 4050 Mineral 7'736.85 · 4701 465.00
+  FIBU-Ist:                     4030 13'453.40 · 4040 FS-Anteil 596.68 (Total 1'366.18 inkl. Paul Ullrich 769.50) · 4050 0.00
+  Erwarteter Umbuchungs-Vorschlag:
+      4030 Bier  −8'915.40
+      4040 Spirituosen  +2'192.62
+      4050 Mineral  +7'736.85
+      4701 Betriebsmaterial  +465.00
+  Erwartete unerklärte Restdifferenz (separat): Doppelzahlungs-Gutschrift Beleg 1068 −2'075.75 auf 4030.
+
+Anzeige im Drill-down (4030/4040/4050 aufklappen):
+  Badge „KONTIERUNG · Feldschlösschen · MwSt-Satz-Bündelung", darunter der Vorschlag + „Kopieren",
+  und getrennt die Zeile „Unerklärte Restdifferenz −2'075.75 (Doppelzahlung) – prüfen".

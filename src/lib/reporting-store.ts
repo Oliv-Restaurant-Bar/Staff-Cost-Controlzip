@@ -350,6 +350,8 @@ export function deleteMonth(year: number, month: number, storeKey: string = STOR
 const NUMERIC_ACCOUNT_RE = /^\d{3,5}$/;
 
 export interface ReplaceAnnualCostResult {
+  /** Manuell geschützte Konto-Zeilen (Konto×Monat), die der Import NICHT angefasst hat */
+  zeilenGeschuetzt: number;
   /** Monate, die neue Kontodaten erhalten haben */
   monthsWritten: number;
   /** Monate, in denen nur alte Kontodaten entfernt wurden */
@@ -462,6 +464,36 @@ export function assertYearScopedChanges(
 }
 
 /**
+ * Merge-Schutz für manuell erfasste Konto-Zeilen (quelle='manuell'):
+ * - `geschuetzt` = numerische Bestandszeilen mit quelle='manuell', die NICHT
+ *   explizit per «Importwert übernehmen» freigegeben sind — sie bleiben
+ *   unverändert erhalten (auch wenn sie in der Datei fehlen).
+ * - `newCats` = Import-Zeilen OHNE die geschützten Konten; explizit
+ *   übernommene Zeilen werden danach wieder als quelle='manuell' geführt.
+ *
+ * `uebernehmen`-Schlüssel: `${month}|${accountNumber}`.
+ */
+function mergeProtectedCats(
+  existingCats: ExpenseCategory[],
+  importCats: ExpenseCategory[],
+  month: number,
+  uebernehmen?: ReadonlySet<string>,
+): { geschuetzt: ExpenseCategory[]; newCats: ExpenseCategory[] } {
+  const frei = uebernehmen ?? new Set<string>();
+  const geschuetzt = existingCats.filter(c =>
+    NUMERIC_ACCOUNT_RE.test(c.categoryId)
+    && c.quelle === 'manuell'
+    && !frei.has(`${month}|${c.categoryId}`));
+  const geschuetztIds = new Set(geschuetzt.map(c => c.categoryId));
+  const newCats = importCats
+    .filter(c => !geschuetztIds.has(c.categoryId))
+    .map(c => frei.has(`${month}|${c.categoryId}`) && NUMERIC_ACCOUNT_RE.test(c.categoryId)
+      ? { ...c, quelle: 'manuell' as const }
+      : c);
+  return { geschuetzt, newCats };
+}
+
+/**
  * Ersetzt für ein Geschäftsjahr in ALLEN 12 Monaten die numerischen
  * Konto-Kategorien (expenseCategories) durch die Daten eines
  * Jahres-Kontoblatt-Imports — idempotent:
@@ -479,7 +511,17 @@ export function assertYearScopedChanges(
 export function replaceAnnualCostYear(
   year: number,
   categoriesByMonth: Map<number, ExpenseCategory[]>,
-  opts: { fileName?: string; note?: string },
+  opts: {
+    fileName?: string;
+    note?: string;
+    uebernehmen?: ReadonlySet<string>;
+    /**
+     * NUR für das explizite Löschen (removeAnnualCostYear): hebt den
+     * Merge-Schutz manueller Zeilen auf, damit «Jahr entfernen» wirklich
+     * ALLE numerischen Konto-Kategorien entfernt. Imports setzen das NIE.
+     */
+    ignoreManualProtection?: boolean;
+  },
   storeKey: string = STORAGE_KEY,
 ): ReplaceAnnualCostResult {
   const before = loadAll(storeKey);
@@ -488,19 +530,31 @@ export function replaceAnnualCostYear(
   let monthsWritten = 0;
   let monthsCleared = 0;
   let monthsUnchanged = 0;
+  let zeilenGeschuetzt = 0;
   const touchedIds: string[] = [];
 
   for (let month = 1; month <= 12; month++) {
     const id = monthId(year, month);
     const existing = next[id];
-    const newCats = categoriesByMonth.get(month) ?? [];
+    const merged = opts.ignoreManualProtection
+      ? { geschuetzt: [] as ExpenseCategory[], newCats: categoriesByMonth.get(month) ?? [] }
+      : mergeProtectedCats(
+          existing?.expenseCategories ?? [], categoriesByMonth.get(month) ?? [], month, opts.uebernehmen);
+    const newCats = merged.newCats;
+    zeilenGeschuetzt += merged.geschuetzt.length;
     const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
 
     // Nichts zu ersetzen und nichts Neues → Monat nicht anfassen (keine leeren Records erzeugen)
-    if (newCats.length === 0 && !hadNumeric) continue;
+    if (newCats.length === 0 && merged.geschuetzt.length === 0 && !hadNumeric) continue;
 
     const rec = existing ?? createEmptyMonth(year, month);
-    const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+    // Nicht-numerische Kategorien UND manuell geschützte Konto-Zeilen bleiben
+    // IMMER erhalten — nie überschreiben, nie löschen (auch wenn sie in der
+    // Datei fehlen). Ausnahme: explizit «Importwert übernehmen» (opts.uebernehmen).
+    const keptManual = [
+      ...(rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId)),
+      ...merged.geschuetzt,
+    ];
 
     // Dirty-Check (verbindliche updatedAt-Regel): entspricht das Ergebnis
     // [manuelle + neue Konten] fachlich exakt dem Bestand, ist der Monat ein
@@ -575,7 +629,7 @@ export function replaceAnnualCostYear(
     return { failedMonths, lastError };
   })();
 
-  return { monthsWritten, monthsCleared, monthsUnchanged, kvBackup };
+  return { zeilenGeschuetzt, monthsWritten, monthsCleared, monthsUnchanged, kvBackup };
 }
 
 /**
@@ -591,7 +645,7 @@ export function replaceAnnualCostYear(
 export function upsertCostMonths(
   year: number,
   categoriesByMonth: Map<number, ExpenseCategory[]>,
-  opts: { fileName?: string; note?: string; source?: ImportSource },
+  opts: { fileName?: string; note?: string; source?: ImportSource; uebernehmen?: ReadonlySet<string> },
   storeKey: string = STORAGE_KEY,
 ): ReplaceAnnualCostResult {
   const before = loadAll(storeKey);
@@ -599,17 +653,25 @@ export function upsertCostMonths(
   const now = new Date().toISOString();
   let monthsWritten = 0;
   let monthsUnchanged = 0;
+  let zeilenGeschuetzt = 0;
   const touchedIds: string[] = [];
 
-  for (const [month, newCats] of categoriesByMonth.entries()) {
+  for (const [month, fileCats] of categoriesByMonth.entries()) {
     if (month < 1 || month > 12) continue;
     const id = monthId(year, month);
     const existing = next[id];
+    const merged = mergeProtectedCats(existing?.expenseCategories ?? [], fileCats, month, opts.uebernehmen);
+    const newCats = merged.newCats;
+    zeilenGeschuetzt += merged.geschuetzt.length;
     const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
-    if (newCats.length === 0 && !hadNumeric) continue;
+    if (newCats.length === 0 && merged.geschuetzt.length === 0 && !hadNumeric) continue;
 
     const rec = existing ?? createEmptyMonth(year, month);
-    const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+    // Manuell geschützte Konto-Zeilen bleiben IMMER erhalten (Merge-Schutz).
+    const keptManual = [
+      ...(rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId)),
+      ...merged.geschuetzt,
+    ];
 
     if (existing && sameCategorySet(existing.expenseCategories ?? [], [...keptManual, ...newCats])) {
       monthsUnchanged++;
@@ -669,7 +731,7 @@ export function upsertCostMonths(
     return { failedMonths, lastError };
   })();
 
-  return { monthsWritten, monthsCleared: 0, monthsUnchanged, kvBackup };
+  return { zeilenGeschuetzt, monthsWritten, monthsCleared: 0, monthsUnchanged, kvBackup };
 }
 
 /**
@@ -685,7 +747,12 @@ export function removeAnnualCostYear(
   return replaceAnnualCostYear(
     year,
     new Map(),
-    { note: opts.note ?? `Jahres-Kontoblatt ${year}: Konto-Kategorien entfernt` },
+    {
+      note: opts.note ?? `Jahres-Kontoblatt ${year}: Konto-Kategorien entfernt`,
+      // Explizites Löschen entfernt bewusst ALLE numerischen Konto-Kategorien —
+      // auch manuell erfasste (der Merge-Schutz gilt nur für Imports).
+      ignoreManualProtection: true,
+    },
     storeKey,
   );
 }

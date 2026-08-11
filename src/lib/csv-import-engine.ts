@@ -474,6 +474,7 @@ export function buildMonthRecord(
       categoryId: parsed.accountNumber,
       label: parsed.accountName,
       amount,
+      quelle: 'import',
     };
     expenseCategories.push(cat);
 
@@ -494,6 +495,7 @@ export function buildMonthRecord(
       categoryId: row.parsed.accountNumber,
       label: `[Unzugeordnet] ${row.parsed.accountName}`,
       amount: row.parsed.amount,
+      quelle: 'import',
     });
   }
 
@@ -541,6 +543,7 @@ export function buildExpenseCategoriesOnly(
       categoryId: parsed.accountNumber,
       label: parsed.accountName,
       amount,
+      quelle: 'import',
     });
   }
 
@@ -549,6 +552,7 @@ export function buildExpenseCategoriesOnly(
       categoryId: row.parsed.accountNumber,
       label: `[Unzugeordnet] ${row.parsed.accountName}`,
       amount: row.parsed.amount,
+      quelle: 'import',
     });
   }
 

@@ -1178,7 +1178,8 @@ const InlineIstCell = ({
       } else if (!row.isCategory && account) {
         const existing = loadYear(year, storeKey)[month - 1];
         const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
-        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account });
+        // quelle='manuell': vom Kosten-Import geschützt (Merge- statt Überschreib-Logik)
+        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? account, quelle: 'manuell' });
         saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
       // Betriebsertrag-Kategorie ohne einzelne Konten → revenueActual
       } else if (row.catId === 'pl_revenue' && row.isCategory) {
@@ -1754,7 +1755,8 @@ const BudgetPLDrilldownDialog = ({
       } else if (!row.isCategory && account) {
         const existing = loadYear(year, storeKey)[month - 1];
         const cats = (existing?.expenseCategories ?? []).filter(c => c.categoryId !== account);
-        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label });
+        // quelle='manuell': vom Kosten-Import geschützt (Merge- statt Überschreib-Logik)
+        cats.push({ categoryId: account, amount: num, label: row.itemLabel ?? label, quelle: 'manuell' });
         saveMonth({ year, month, expenseCategories: cats }, 'manual_entry', 'update', { note: `Manuelle Eingabe Konto ${account}` }, storeKey);
       // Betriebsertrag-Kategorie (kein einzelnes Konto) → revenueActual
       } else if (row.catId === 'pl_revenue' && row.isCategory) {

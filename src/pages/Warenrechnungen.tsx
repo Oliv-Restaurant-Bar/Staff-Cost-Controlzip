@@ -59,7 +59,7 @@ import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
-import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
+import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft,
@@ -1251,6 +1251,21 @@ export default function WarenrechnungenPage() {
       .catch(() => { if (alive) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); } });
     return () => { alive = false; };
   }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill, vorschlaegeOpen]);
+  // Cross-Konto-Check «MwSt-Satz-Bündelung» (z.B. Feldschlösschen): EIN Befund
+  // pro Lieferant über die Geschwister-Konten hinweg — statt Einzel-Abweichungen.
+  const buendelungsBefunde = useMemo(() => {
+    if (!analyseMonthKey || !analyseJournal) return [];
+    const namen: Record<string, string> = {};
+    for (const k of warenkonten) namen[k.value] = k.label;
+    return buildMwstBuendelungBefunde({
+      entries: analyseKPIs.periodEntries,
+      journal: analyseJournal,
+      supplierNames: suppliers.map(s => s.name),
+      aliases,
+      aliasGruppen,
+      kontoNamen: namen,
+    });
+  }, [analyseMonthKey, analyseJournal, analyseKPIs.periodEntries, suppliers, aliases, aliasGruppen, warenkonten]);
   const kontoDrilldown = useMemo(() => {
     if (!kontoDrill || !analyseMonthKey) return null;
     return buildKontoDrilldown({
@@ -1260,8 +1275,9 @@ export default function WarenrechnungenPage() {
       supplierNames: suppliers.map(s => s.name),
       aliases,
       aliasGruppen,
+      buendelungen: buendelungsBefunde,
     });
-  }, [kontoDrill, analyseMonthKey, analyseKPIs.periodEntries, analyseJournal, suppliers, aliases, aliasGruppen]);
+  }, [kontoDrill, analyseMonthKey, analyseKPIs.periodEntries, analyseJournal, suppliers, aliases, aliasGruppen, buendelungsBefunde]);
   // Korrektur-Vorschläge des Monats (alle Konten 4020–4070) — für die Buchhaltung.
   const korrekturVorschlaege = useMemo(() => {
     if (!vorschlaegeOpen || !analyseMonthKey || !analyseJournalGeladen || !analyseJournal) return null;
@@ -3267,7 +3283,12 @@ export default function WarenrechnungenPage() {
                                                     <td className="py-1 pr-2">
                                                       <span className="inline-flex items-center gap-1.5 flex-wrap">
                                                         {dz.lieferant}
-                                                        {dz.typ === 'kontierung' && <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-600/40">KONTIERUNG</Badge>}
+                                                        {dz.typ === 'kontierung' && dz.buendelung && (
+                                          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-600/40" data-testid={`buendelung-badge-${dz.lieferant}`}>
+                                            KONTIERUNG · {dz.buendelung.lieferant} · MwSt-Satz-Bündelung
+                                          </Badge>
+                                        )}
+                                        {dz.typ === 'kontierung' && !dz.buendelung && <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-600/40">KONTIERUNG</Badge>}
                                                         {dz.typ === 'fehlende_rechnung' && <Badge variant="outline" className="text-[9px] text-red-600 border-red-600/40">FEHLENDE RECHNUNG</Badge>}
                                                         {dz.typ === 'zuordnung' && <Badge variant="outline" className="text-[9px] text-muted-foreground">ZUORDNUNG — egal</Badge>}
                                                         {dz.typ === 'unklar' && <Badge variant="outline" className="text-[9px] text-muted-foreground">PRÜFEN</Badge>}
@@ -3297,7 +3318,37 @@ export default function WarenrechnungenPage() {
                                                       >Lieferant</button>
                                                     </td>
                                                   </tr>
-                                                  {dz.kontierungsHinweis && (
+                                                  {dz.buendelung && (
+                                    <tr>
+                                      <td colSpan={5} className="pb-1.5 pl-4">
+                                        <div className="text-[11px] text-amber-700 dark:text-amber-400 space-y-0.5" data-testid={`buendelung-detail-${dz.lieferant}`}>
+                                          <div>
+                                            FIBU bündelt nach MwSt-Satz auf {dz.buendelung.ueberschussKonto} — App-Split (echte Produktgruppen) ist massgebend.
+                                            Umbuchungs-Vorschlag:
+                                            {' '}<button
+                                              className="underline hover:text-foreground"
+                                              data-testid={`buendelung-copy-${dz.lieferant}`}
+                                              onClick={() => {
+                                                navigator.clipboard.writeText(dz.buendelung!.text)
+                                                  .then(() => toast.success('Umbuchungs-Vorschlag kopiert.'), () => toast.error('Kopieren fehlgeschlagen.'));
+                                              }}
+                                            >Kopieren</button>
+                                          </div>
+                                          <div className="tabular-nums whitespace-pre-line pl-2">
+                                            {dz.buendelung.umbuchungen.map(u =>
+                                              `${u.konto}: ${u.delta > 0 ? '+' : '-'}${fmtChfText(Math.abs(u.delta))}`).join('\n')}
+                                          </div>
+                                          {dz.buendelung.restdifferenzen.map((r, i) => (
+                                            <div key={i} className="text-red-600 dark:text-red-400" data-testid={`buendelung-rest-${dz.lieferant}-${i}`}>
+                                              Unerklärte Restdifferenz {fmtChfText(r.betrag)} auf {r.konto}
+                                              {r.belegNr ? ` (Beleg ${r.belegNr})` : ''}{r.text ? ` · ${r.text}` : ''} – prüfen (nicht Teil des Umbuchungs-Vorschlags)
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                  {dz.kontierungsHinweis && (
                                                     <tr>
                                                       <td colSpan={5} className="pb-1.5 pl-4">
                                                         <span className="text-[11px] text-amber-700 dark:text-amber-400">
