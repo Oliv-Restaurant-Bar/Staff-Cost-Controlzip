@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isoWeekKeyOf, weekLabelOf, groupTotals, flagAnomalies, topInvoices,
-  wochenWkq, analyseKpis,
+  wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil,
 } from '@/lib/waren-analyse';
 import { buildWarenkostenExport, warenkostenExportFileName } from '@/lib/warenkosten-export';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -95,8 +95,8 @@ describe('flagAnomalies', () => {
 describe('wochenWkq & topInvoices & analyseKpis', () => {
   it('WKQ je Woche mit Ampel, Wochen ohne Umsatz → null', () => {
     const list = [
-      inv({ date: '2026-07-06', amountNet: 350 }), // W28
-      inv({ date: '2026-07-13', amountNet: 200 }), // W29
+      inv({ date: '2026-07-06', amountNet: 350, warenkonto: '4060' }), // W28
+      inv({ date: '2026-07-13', amountNet: 200, warenkonto: '4060' }), // W29
     ];
     const rev = { '2026-07-06': 500, '2026-07-07': 500 }; // nur W28: 1000
     const rows = wochenWkq(list, rev, 30);
@@ -109,8 +109,8 @@ describe('wochenWkq & topInvoices & analyseKpis', () => {
   });
   it('analyseKpis: Anteile + Top-3', () => {
     const k = analyseKpis([
-      inv({ date: '2026-07-01', amountNet: 60, kategorie: 'Food', supplierName: 'A' }),
-      inv({ date: '2026-07-01', amountNet: 40, kategorie: 'Beverage', supplierName: 'B' }),
+      inv({ date: '2026-07-01', amountNet: 60, warenkonto: '4060', supplierName: 'A' }),
+      inv({ date: '2026-07-01', amountNet: 40, warenkonto: '4030', supplierName: 'B' }),
     ]);
     expect(k.totalNet).toBe(100);
     expect(k.foodSharePct).toBe(60);
@@ -156,17 +156,68 @@ describe('wochenWkq: split-bewusste WKQ-Basis (A1)', () => {
   });
 });
 
-describe('analyseKpis: relevantNet + unkontiert (A1/A2)', () => {
-  it('relevantNet = Food+Beverage (Konto autoritativ), unkontierte werden gezählt', () => {
+describe('analyseKpis: direkter Warenaufwand (Befehl 08/2026)', () => {
+  it('Hauptzahl = NUR Konten 4020–4070; übrige Konten & unkontiert separat', () => {
     const list = [
-      inv({ date: '2026-07-01', amountNet: 100, warenkonto: '4000' }), // Food
-      inv({ date: '2026-07-01', amountNet: 40, warenkonto: '4030' }), // Beverage
-      inv({ date: '2026-07-02', amountNet: 25, warenkonto: '4500' }), // Betrieb → nicht relevant
-      inv({ date: '2026-07-03', amountNet: 10 }), // unkontiert → zählt als Food + Hinweis
+      inv({ date: '2026-07-01', amountNet: 100, warenkonto: '4000' }), // NICHT direkt → übrig
+      inv({ date: '2026-07-01', amountNet: 40, warenkonto: '4030' }), // Bier → direkt/Beverage
+      inv({ date: '2026-07-01', amountNet: 60, warenkonto: '4060' }), // Küche → direkt/Food
+      inv({ date: '2026-07-02', amountNet: 25, warenkonto: '4500' }), // Betrieb → übrig
+      inv({ date: '2026-07-03', amountNet: 10 }), // unkontiert → NICHT in Hauptzahl
     ];
     const k = analyseKpis(list);
-    expect(k.relevantNet).toBeCloseTo(150, 2);
+    expect(k.totalNet).toBeCloseTo(100, 2);
+    expect(k.relevantNet).toBeCloseTo(100, 2);
+    expect(k.foodNet).toBeCloseTo(60, 2);
+    expect(k.beverageNet).toBeCloseTo(40, 2);
+    expect(k.uebrigNet).toBeCloseTo(125, 2);
+    expect(k.unkontiertNet).toBeCloseTo(10, 2);
     expect(k.unkontiert).toBe(1);
-    expect(k.totalNet).toBeCloseTo(175, 2);
+    expect(k.foodSharePct).toBe(60);
+  });
+});
+
+describe('direkterWarenaufwand & buildDirektKontoVergleich', () => {
+  const list = [
+    inv({ date: '2026-07-01', amountNet: 200, warenkonto: '4020' }),
+    inv({ date: '2026-07-02', amountNet: 80, kontoSplits: [
+      { warenkonto: '4060', amountNet: 50, amountGross: 51 },
+      { warenkonto: '4090', amountNet: 20, amountGross: 21 },
+      { warenkonto: 'Depot', amountNet: 10, amountGross: 10 },
+    ] }),
+    inv({ date: '2026-07-03', amountNet: 30, warenkonto: '40200' }), // 5-stellig → 4020
+  ];
+  it('Splits pro Konto, Depot neutral, 5-stellige Konten normalisiert', () => {
+    const d = direkterWarenaufwand(list);
+    expect(d.jeKonto['4020']).toBeCloseTo(230, 2);
+    expect(d.jeKonto['4060']).toBeCloseTo(50, 2);
+    expect(d.direktNet).toBeCloseTo(280, 2);
+    expect(d.uebrigNet).toBeCloseTo(20, 2); // 4090
+    expect(d.unkontiertNet).toBeCloseTo(0, 2); // Depot neutral
+  });
+  it('Gegenüberstellung: Differenz = ER − erfasst, fehlendes ER-Konto = 0', () => {
+    const v = buildDirektKontoVergleich(list, { '4020': 250, '4060': 50 }, { '4020': '4020 Wein' });
+    const z4020 = v.zeilen.find(z => z.konto === '4020')!;
+    expect(z4020.label).toBe('4020 Wein');
+    expect(z4020.erfasst).toBeCloseTo(230, 2);
+    expect(z4020.diff).toBeCloseTo(20, 2);
+    expect(v.zeilen.find(z => z.konto === '4030')!.er).toBe(0);
+    expect(v.totalErfasst).toBeCloseTo(280, 2);
+    expect(v.totalEr).toBeCloseTo(300, 2);
+    expect(v.totalDiff).toBeCloseTo(20, 2);
+    expect(v.zeilen).toHaveLength(6);
+  });
+  it('nurDirektAnteil: Splits anteilig reduziert, Nicht-Direktes entfernt', () => {
+    const p = nurDirektAnteil(list.concat(inv({ date: '2026-07-04', amountNet: 99, warenkonto: '4090' })));
+    expect(p).toHaveLength(3); // 4090-Rechnung raus
+    const split = p.find(e => e.kontoSplits)!;
+    expect(split.amountNet).toBeCloseTo(50, 2); // nur 4060-Anteil, 4090/Depot raus
+    expect(split.kontoSplits).toHaveLength(1);
+  });
+  it('ohne ER-Daten: er/diff null (nie stille 0)', () => {
+    const v = buildDirektKontoVergleich(list, null);
+    expect(v.zeilen.every(z => z.er === null && z.diff === null)).toBe(true);
+    expect(v.totalEr).toBeNull();
+    expect(v.totalDiff).toBeNull();
   });
 });

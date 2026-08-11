@@ -7,10 +7,9 @@
  */
 
 import type { InvoiceEntry, Warenkonto } from './waren-db';
-import {
-  kategorieOf, computeWarenkostenTotals, zaehleUnkontierte, WARENKOSTEN_GRENZE_DEFAULT,
-} from './warenkosten-quote';
-import { nurWarenAnteil } from './waren-klassen';
+import { zaehleUnkontierte } from './warenkosten-quote';
+import { PSEUDO_KONTO_PFAND } from './waren-klassen';
+import { normalizeWarenKonto } from './warenaufwand-gruppierung';
 
 export type AnalyseDim = 'supplier' | 'konto' | 'week' | 'month';
 
@@ -182,6 +181,155 @@ export function flagAnomalies(
   return rows;
 }
 
+// ─── Direkter Warenaufwand (= Erfolgsrechnung, Konten 4020–4070) ─────────────
+
+/**
+ * EINZIGE Warenkosten-Definition der Analyse (Befehl 08/2026):
+ * Direkter Warenaufwand = Konten 4020 Wein · 4030 Bier · 4040 Spirituosen ·
+ * 4050 Mineral · 4060 Küche · 4070 Kaffee/Tee — identisch zur Position
+ * «Direkter Warenaufwand» der Erfolgsrechnung. Betriebs-/übrige Konten
+ * (4090, 4701, 4800/4801 …) und unkontierte Positionen zählen NICHT in die
+ * Hauptzahl/WKQ — sie werden separat ausgewiesen (Transparenz-Hinweis).
+ */
+export const DIREKTE_WARENKONTEN = ['4020', '4030', '4040', '4050', '4060', '4070'] as const;
+const DIREKT_SET = new Set<number>(DIREKTE_WARENKONTEN.map(Number));
+const DIREKT_BEVERAGE = new Set([4020, 4030, 4040, 4050]);
+
+export interface DirekterAufwand {
+  /** Σ netto Konten 4020–4070 — die EINE Warenkosten-Zahl der Analyse. */
+  direktNet: number;
+  /** Netto je Konto (nur 4020–4070, normalisierte 4-stellige Nummer). */
+  jeKonto: Record<string, number>;
+  /** Food-Anteil (4060 Küche + 4070 Kaffee/Tee). */
+  foodNet: number;
+  /** Beverage-Anteil (4020–4050). */
+  beverageNet: number;
+  /** Übrige kontierte Konten (4090, 4701, 48xx, …) — NICHT in der Hauptzahl. */
+  uebrigNet: number;
+  /** Unkontierte Anteile (kein numerisches Konto, ohne Depot) — NICHT in der Hauptzahl. */
+  unkontiertNet: number;
+  unkontiertCount: number;
+}
+
+/** Direkter Warenaufwand über kontoShares (Splits zählen pro Konto, Depot neutral). */
+export function direkterWarenaufwand(entries: InvoiceEntry[]): DirekterAufwand {
+  const jeKonto: Record<string, number> = {};
+  let direkt = 0, food = 0, bev = 0, uebrig = 0, unkNet = 0, unkCount = 0;
+  for (const e of entries) {
+    for (const s of kontoShares(e)) {
+      const roh = (s.konto ?? '').trim();
+      if (roh === PSEUDO_KONTO_PFAND) continue; // Depot/Pfand: neutral
+      const n = normalizeWarenKonto(roh);
+      if (n !== null && DIREKT_SET.has(n)) {
+        const k = String(n);
+        jeKonto[k] = (jeKonto[k] ?? 0) + s.net;
+        direkt += s.net;
+        if (DIREKT_BEVERAGE.has(n)) bev += s.net; else food += s.net;
+      } else if (n !== null) {
+        uebrig += s.net;
+      } else {
+        unkNet += s.net;
+        unkCount += 1;
+      }
+    }
+  }
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  for (const k of Object.keys(jeKonto)) jeKonto[k] = r2(jeKonto[k]);
+  return {
+    direktNet: r2(direkt), jeKonto, foodNet: r2(food), beverageNet: r2(bev),
+    uebrigNet: r2(uebrig), unkontiertNet: r2(unkNet), unkontiertCount: unkCount,
+  };
+}
+
+/** Netto-Anteil einer einzelnen Rechnung am direkten Warenaufwand. */
+export function direktAnteilNet(e: InvoiceEntry): number {
+  return direkterWarenaufwand([e]).direktNet;
+}
+
+function istDirektKonto(konto: string | undefined): boolean {
+  const roh = (konto ?? '').trim();
+  if (roh === PSEUDO_KONTO_PFAND) return false;
+  const n = normalizeWarenKonto(roh);
+  return n !== null && DIREKT_SET.has(n);
+}
+
+/**
+ * Rechnungen auf ihren DIREKTEN Warenaufwand-Anteil (4020–4070) projiziert:
+ * amountNet/amountGross anteilig, Split-Listen auf direkte Konten gefiltert,
+ * Einträge ohne direkten Anteil entfernt. Damit rechnen ALLE Analyse-Sichten
+ * (Lieferanten/Konto/Wochen-Gruppen, Anomalien, Top-Rechnungen) auf derselben
+ * einen Definition wie KPI-Box und WKQ.
+ */
+export function nurDirektAnteil(entries: InvoiceEntry[]): InvoiceEntry[] {
+  const out: InvoiceEntry[] = [];
+  for (const e of entries) {
+    if (e.kontoSplits && e.kontoSplits.length > 0) {
+      const direkt = e.kontoSplits.filter(s => istDirektKonto(s.warenkonto));
+      if (direkt.length === 0) continue;
+      if (direkt.length === e.kontoSplits.length) { out.push(e); continue; }
+      out.push({
+        ...e,
+        kontoSplits: direkt,
+        amountNet: direkt.reduce((s, x) => s + (Number.isFinite(x.amountNet) ? x.amountNet : 0), 0),
+        amountGross: direkt.reduce((s, x) => s + (Number.isFinite(x.amountGross) ? x.amountGross : 0), 0),
+      });
+      continue;
+    }
+    if (istDirektKonto(e.warenkonto)) out.push(e);
+  }
+  return out;
+}
+
+// ─── Gegenüberstellung Erfolgsrechnung je Konto ──────────────────────────────
+
+export interface DirektKontoZeile {
+  konto: string;         // '4020' … '4070'
+  label: string;         // Kontobezeichnung
+  erfasst: number;       // Σ netto aus der App (Rechnungen/Splits)
+  er: number | null;     // Erfolgsrechnung/Buchhaltung — null ohne ER-Daten
+  diff: number | null;   // er − erfasst
+}
+
+export interface DirektKontoVergleich {
+  zeilen: DirektKontoZeile[];
+  totalErfasst: number;
+  totalEr: number | null;
+  totalDiff: number | null;
+}
+
+/**
+ * Tabelle je Konto 4020–4070: Erfasst (App) | Erfolgsrechnung | Differenz,
+ * plus Summenzeile «Direkter Warenaufwand». `erJeKonto` = ER-Beträge je
+ * Konto (null = keine ER-Daten im Zeitraum → keine Differenzen, nie stille 0;
+ * fehlendes Konto bei vorhandener ER = 0, dort wurde nichts gebucht).
+ */
+export function buildDirektKontoVergleich(
+  entries: InvoiceEntry[],
+  erJeKonto: Record<string, number> | null,
+  kontoNamen?: Record<string, string>,
+): DirektKontoVergleich {
+  const d = direkterWarenaufwand(entries);
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const zeilen: DirektKontoZeile[] = DIREKTE_WARENKONTEN.map(k => {
+    const erfasst = d.jeKonto[k] ?? 0;
+    const er = erJeKonto ? r2(erJeKonto[k] ?? 0) : null;
+    return {
+      konto: k,
+      label: kontoNamen?.[k] ?? k,
+      erfasst,
+      er,
+      diff: er === null ? null : r2(er - erfasst),
+    };
+  });
+  const totalEr = erJeKonto ? r2(zeilen.reduce((s, z) => s + (z.er ?? 0), 0)) : null;
+  return {
+    zeilen,
+    totalErfasst: d.direktNet,
+    totalEr,
+    totalDiff: totalEr === null ? null : r2(totalEr - d.direktNet),
+  };
+}
+
 // ─── WKQ je Woche ─────────────────────────────────────────────────────────────
 
 export interface WochenWkqRow {
@@ -195,18 +343,15 @@ export interface WochenWkqRow {
 }
 
 /**
- * WKQ je ISO-Woche: Warenkosten (netto) ÷ Netto-Umsatz derselben Woche.
+ * WKQ je ISO-Woche: DIREKTER Warenaufwand (Konten 4020–4070, netto) ÷
+ * Netto-Umsatz derselben Woche — dieselbe Basis wie alle Analyse-KPIs.
  * revenueByDate: ISO-Datum → Netto-Umsatz. Wochen ohne Umsatz → wkq null.
  */
 export function wochenWkq(
   entries: InvoiceEntry[],
   revenueByDate: Record<string, number>,
   zielPct: number,
-  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
 ): WochenWkqRow[] {
-  // DIESELBE Basis wie die Haupt-WKQ: split-bewusster Waren-Anteil
-  // (nurWarenAnteil) + relevantNet (Food/Beverage) — NIE das rohe volle
-  // Rechnungsnetto (das enthielte Betriebskosten/Pfand/Sonstiges).
   const proWoche = new Map<string, InvoiceEntry[]>();
   for (const e of entries) {
     const wk = isoWeekKeyOf(e.date);
@@ -214,7 +359,7 @@ export function wochenWkq(
   }
   const waren = new Map<string, number>();
   for (const [wk, list] of proWoche) {
-    waren.set(wk, computeWarenkostenTotals(nurWarenAnteil(list, grenze), grenze).relevantNet);
+    waren.set(wk, direkterWarenaufwand(list).direktNet);
   }
   const umsatz = new Map<string, number>();
   for (const [date, rev] of Object.entries(revenueByDate)) {
@@ -241,37 +386,46 @@ export function wochenWkq(
 // ─── Kennzahlen-Kopf ─────────────────────────────────────────────────────────
 
 export interface AnalyseKpis {
+  /** Hauptzahl = DIREKTER Warenaufwand (Konten 4020–4070) — eine Definition für alles. */
   totalNet: number;
-  foodNet: number;
-  beverageNet: number;
-  /** WKQ-Basis (Food+Beverage, split-bewusst) — identisch zur Haupt-WKQ. */
+  foodNet: number;      // 4060 + 4070
+  beverageNet: number;  // 4020–4050
+  /** WKQ-Basis — identisch mit totalNet (direkter Warenaufwand). */
   relevantNet: number;
-  /** Unkontierte Einträge/Splits, die als Warenkosten mitzählen (Transparenz). */
+  /** Übrige kontierte Konten (4090/4701/48xx …) — NICHT in Hauptzahl/Quote. */
+  uebrigNet: number;
+  /** Unkontierte Anteile — NICHT in Hauptzahl/Quote (nur Hinweis). */
+  unkontiertNet: number;
+  /** Unkontierte Einträge/Splits (Transparenz-Hinweis). */
   unkontiert: number;
-  /** Anteil Food/Beverage am Total in % (null wenn Total 0). */
+  /** Anteil Food/Beverage am direkten Warenaufwand in % (null wenn 0). */
   foodSharePct: number | null;
   beverageSharePct: number | null;
   top3: { label: string; totalNet: number }[];
 }
 
-export function analyseKpis(
-  entries: InvoiceEntry[],
-  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
-): AnalyseKpis {
-  const total = entries.reduce((s, e) => s + e.amountNet, 0);
-  // WKQ-Basis wie überall: split-bewusster Waren-Anteil, Food/Bev via
-  // kategorieOf (Konto autoritativ) — nie rohes Rechnungsnetto.
-  const totals = computeWarenkostenTotals(nurWarenAnteil(entries, grenze), grenze);
-  const food = totals.foodNet, bev = totals.beverageNet;
-  const top3 = groupTotals(entries, 'supplier').slice(0, 3)
-    .map(r => ({ label: r.key, totalNet: r.totalNet }));
+export function analyseKpis(entries: InvoiceEntry[]): AnalyseKpis {
+  // EINE Definition für alle Analyse-Zahlen: direkter Warenaufwand 4020–4070.
+  const d = direkterWarenaufwand(entries);
+  // Top-3-Kostentreiber auf derselben Basis (direkt-Anteil je Lieferant).
+  const proLieferant = new Map<string, number>();
+  for (const e of entries) {
+    const anteil = direktAnteilNet(e);
+    if (anteil <= 0) continue;
+    const k = supplierKeyOf(e);
+    proLieferant.set(k, (proLieferant.get(k) ?? 0) + anteil);
+  }
   const r2 = (x: number) => Math.round(x * 100) / 100;
+  const top3 = [...proLieferant.entries()]
+    .sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([label, totalNet]) => ({ label, totalNet: r2(totalNet) }));
   return {
-    totalNet: r2(total), foodNet: r2(food), beverageNet: r2(bev),
-    relevantNet: r2(totals.relevantNet),
+    totalNet: d.direktNet, foodNet: d.foodNet, beverageNet: d.beverageNet,
+    relevantNet: d.direktNet,
+    uebrigNet: d.uebrigNet, unkontiertNet: d.unkontiertNet,
     unkontiert: zaehleUnkontierte(entries),
-    foodSharePct: total > 0 ? Math.round((food / total) * 1000) / 10 : null,
-    beverageSharePct: total > 0 ? Math.round((bev / total) * 1000) / 10 : null,
+    foodSharePct: d.direktNet > 0 ? Math.round((d.foodNet / d.direktNet) * 1000) / 10 : null,
+    beverageSharePct: d.direktNet > 0 ? Math.round((d.beverageNet / d.direktNet) * 1000) / 10 : null,
     top3,
   };
 }

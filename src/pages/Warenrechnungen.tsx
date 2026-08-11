@@ -59,6 +59,7 @@ import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
+import { direkterWarenaufwand, buildDirektKontoVergleich, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft,
@@ -1101,24 +1102,26 @@ export default function WarenrechnungenPage() {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
     const totalRev  = Object.entries(analysisRevenue).filter(([k]) => k <= effectiveTo).reduce((s, [, v]) => s + v, 0);
     const periodEntries = analysisEntries.filter(e => e.date <= effectiveTo);
-    // Kontoklassen: Warenkosten-Anteile (4000–Grenze) für Total/Quote;
-    // Betriebskosten-Anteile (> Grenze) separat — NIE in der WKQ.
-    const totals = computeWarenkostenTotals(nurWarenAnteil(periodEntries, warenGrenze), warenGrenze);
-    const betriebCost  = sumBetriebNet(periodEntries, warenGrenze);
-    const totalCost    = totals.totalNet;     // Warenkosten inkl. Sonstiges – Gesamtanzeige
-    const relevantCost = totals.relevantNet;  // Food+Beverage – alleinige Quotenbasis
+    // EINE Definition für ALLE Analyse-Zahlen (Befehl 08/2026): direkter
+    // Warenaufwand = Konten 4020–4070 (= ER-Position). Übrige Konten
+    // (4090/4701/48xx …) und Unkontiertes NIE in Hauptzahl/WKQ — nur Hinweis.
+    const d = direkterWarenaufwand(periodEntries);
+    const totalCost    = d.direktNet;   // Hauptzahl = direkter Warenaufwand
+    const relevantCost = d.direktNet;   // WKQ-Basis = dieselbe Zahl
     const pct = warenkostenQuote(relevantCost, totalRev);
     console.log(`[WAREN-ANALYSE] mode: ${analyseMode}`);
     console.log(`[WAREN-ANALYSE] range: ${analyseDates.from} – ${effectiveTo}`);
     console.log(`[WAREN-ANALYSE] revenue total: CHF ${totalRev.toFixed(0)}`);
-    console.log(`[WAREN-ANALYSE] cost total (inkl. Sonstiges): CHF ${totalCost.toFixed(0)}`);
-    console.log(`[WAREN-ANALYSE] cost relevant (Food+Bev): CHF ${relevantCost.toFixed(0)}`);
+    console.log(`[WAREN-ANALYSE] direkter Warenaufwand (4020–4070): CHF ${totalCost.toFixed(0)}`);
     console.log(`[WAREN-ANALYSE] cost pct: ${pct !== null ? pct.toFixed(1) + '%' : '–'}`);
     return {
-      totalRev, totalCost, relevantCost, betriebCost, pct, effectiveTo,
-      foodCost: totals.foodNet, beverageCost: totals.beverageNet, sonstigeCost: totals.sonstigeNet,
+      totalRev, totalCost, relevantCost, betriebCost: d.uebrigNet, pct, effectiveTo,
+      foodCost: d.foodNet, beverageCost: d.beverageNet,
+      sonstigeCost: d.uebrigNet + d.unkontiertNet,
+      unkontiertNet: d.unkontiertNet, unkontiertCount: d.unkontiertCount,
+      periodEntries,
     };
-  }, [analysisEntries, analysisRevenue, analyseDates, analyseMode, todayStr, warenGrenze]);
+  }, [analysisEntries, analysisRevenue, analyseDates, analyseMode, todayStr]);
 
   /**
    * Abgleich berechnete Warenkosten (operativ, Food+Beverage) ↔ Erfolgsrechnung
@@ -1134,11 +1137,20 @@ export default function WarenrechnungenPage() {
     const [ty, tm, td] = analyseDates.to.split('-').map(Number);
     let cogsFood = 0, cogsBev = 0, cogsOther = 0, netRev = 0;
     let anyEr = false;
+    // ER-Betrag je direktes Warenkonto (4020–4070) — für die Gegenüberstellung.
+    const erJeKonto: Record<string, number> = {};
     let y = fy, m = fm;
     // Über alle Kalendermonate des Analyse-Zeitraums summieren.
     while (y < ty || (y === ty && m <= tm)) {
       const record = loadMonth(y, m, sk);
       if (record.expenseCategories.length > 0) anyEr = true;
+      for (const cat of record.expenseCategories) {
+        const k = (cat.categoryId ?? '').trim();
+        const k4 = /^\d{5}$/.test(k) ? k.slice(0, 4) : k;
+        if ((DIREKTE_WARENKONTEN as readonly string[]).includes(k4)) {
+          erJeKonto[k4] = (erJeKonto[k4] ?? 0) + (cat.amount ?? 0);
+        }
+      }
       const pl = computePLForMonth(record);
       const val = (id: string) => pl.rows.find(r => r.def.id === id)?.values.actual ?? 0;
       cogsFood  += val('cogs_food');
@@ -1161,10 +1173,65 @@ export default function WarenrechnungenPage() {
     const monthAligned =
       fd === 1 && td === lastDayToMonth && (ty < cy || (ty === cy && tm < cm));
     console.log(`[WAREN-ER] hasEr: ${v.hasEr} · aligned: ${monthAligned} · calc ${v.calcQuote?.toFixed(1) ?? '–'}% · er ${v.erQuote?.toFixed(1) ?? '–'}% · diffPp ${v.diffPp?.toFixed(2) ?? '–'}`);
-    return { ...v, monthAligned };
+    return { ...v, monthAligned, erJeKonto: anyEr ? erJeKonto : null };
     // tenantKey ist nicht memoisiert; tenantId triggert korrektes Neuladen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analyseDates, analyseKPIs.foodCost, analyseKPIs.beverageCost, tenantId, todayStr]);
+
+  // ─── Gegenüberstellung ER je Konto (4020–4070) ────────────────────────────
+  const kontoVergleich = useMemo(() => {
+    const namen: Record<string, string> = {};
+    for (const k of warenkonten) namen[k.value] = k.label;
+    return buildDirektKontoVergleich(
+      analyseKPIs.periodEntries,
+      erVergleich.monthAligned ? erVergleich.erJeKonto : null,
+      namen,
+    );
+  }, [analyseKPIs.periodEntries, erVergleich.monthAligned, erVergleich.erJeKonto, warenkonten]);
+
+  // Erklär-Markierungen der Konto-Differenzen: gleicher Monats-Blob wie der
+  // FIBU-Abgleich (`waren_fibu_matches_<YYYY-MM>_v1`), Namespace `konto:<nr>`.
+  // Abschliessen nur in der Einmonats-Sicht (mehrmonatig kein eindeutiger Blob).
+  const analyseMonthKey = analyseMode === 'month' && erVergleich.monthAligned
+    ? `${aYear}-${String(aMonth).padStart(2, '0')}` : null;
+  const [kontoErklaert, setKontoErklaert] = useState<Record<string, ErklaerteDifferenz>>({});
+  const [kontoErklaertGeladen, setKontoErklaertGeladen] = useState(false);
+  useEffect(() => {
+    if (tab !== 'analyse' || !analyseMonthKey) { setKontoErklaert({}); setKontoErklaertGeladen(false); return; }
+    let alive = true;
+    setKontoErklaert({}); setKontoErklaertGeladen(false);
+    loadFibuMatchState(tenantId, analyseMonthKey)
+      .then(st => { if (alive) { setKontoErklaert(st.erklaert); setKontoErklaertGeladen(true); } })
+      .catch(() => { if (alive) setKontoErklaertGeladen(true); });
+    return () => { alive = false; };
+  }, [tab, tenantId, analyseMonthKey]);
+  /**
+   * Read-modify-write auf FRISCHEM Stand, SERIALISIERT über dieselbe Kette
+   * wie der FIBU-Tab (`fibuSaveChain`) — parallele Saves auf denselben
+   * Monats-Blob können sich so nicht gegenseitig überschreiben. Ist der
+   * Analyse-Monat gleich dem FIBU-Monat, wird auch dessen State gespiegelt.
+   */
+  const persistKontoErklaert = useCallback((
+    mutate: (erk: Record<string, ErklaerteDifferenz>) => Record<string, ErklaerteDifferenz>,
+  ): Promise<boolean> => {
+    if (!analyseMonthKey) return Promise.resolve(false);
+    const mk = analyseMonthKey;
+    const run = fibuSaveChain.current.then(async (): Promise<boolean> => {
+      try {
+        const fresh = await loadFibuMatchState(tenantId, mk);
+        const next = { ...fresh, erklaert: mutate(fresh.erklaert) };
+        await saveFibuMatchState(tenantId, mk, next);
+        setKontoErklaert(next.erklaert);
+        if (mk === fibuMonthKey) { fibuStateRef.current = next; setFibuState(next); }
+        return true;
+      } catch (e) {
+        toast.error(`Speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
+      }
+    });
+    fibuSaveChain.current = run.catch(() => undefined);
+    return run;
+  }, [tenantId, analyseMonthKey, fibuMonthKey]);
 
   // Lieferanten-Auswertung: GESAMT-Total über ALLE Konten (Waren + Betrieb) —
   // für den vollständigen Vergleich mit Buchhaltung/Kontoblatt — plus die
@@ -2833,7 +2900,6 @@ export default function WarenrechnungenPage() {
                     konten={warenkonten}
                     zielPct={zielWkqPct}
                     periodLabel={analyseRangeLabel}
-                    warenGrenze={warenGrenze}
                     onOpenReceipt={openReceipt}
                   />
                 )}
@@ -2847,13 +2913,13 @@ export default function WarenrechnungenPage() {
                       variant="default"
                     />
                     <KpiBox
-                      label="Warenkosten netto" Icon={ShoppingCart}
+                      label="Direkter Warenaufwand netto" Icon={ShoppingCart}
                       value={analyseKPIs.totalCost > 0 ? `CHF ${fmtChf(analyseKPIs.totalCost)}` : '–'}
                       variant="default"
-                      sub={analyseKPIs.totalCost > 0 ? `davon relevant (Food+Bev): CHF ${fmtChf(analyseKPIs.relevantCost)}` : undefined}
-                      sub2={analyseKPIs.betriebCost > 0
-                        ? `Betriebskosten (≥ ${warenGrenze + 1}): CHF ${fmtChf(analyseKPIs.betriebCost)} · nicht in Quote`
-                        : analyseKPIs.sonstigeCost > 0 ? `Sonstiges: CHF ${fmtChf(analyseKPIs.sonstigeCost)} · nicht in Quote` : undefined}
+                      sub="Konten 4020–4070 (= Erfolgsrechnung)"
+                      sub2={analyseKPIs.betriebCost > 0 || analyseKPIs.unkontiertNet !== 0
+                        ? `nicht enthalten: übrige Konten CHF ${fmtChf(analyseKPIs.betriebCost)}${analyseKPIs.unkontiertNet !== 0 ? ` · unkontiert CHF ${fmtChf(analyseKPIs.unkontiertNet)}` : ''}`
+                        : undefined}
                     />
                     <KpiBox
                       label="Warenkosten % · Stand aktuell" Icon={BarChart3}
@@ -2965,11 +3031,11 @@ export default function WarenrechnungenPage() {
                     {erVergleich.monthAligned && (
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
                         <span>
-                          Relevant (Food+Bev):{' '}
+                          Direkter Warenaufwand (4020–4070):{' '}
                           <span className="font-medium text-foreground tabular-nums">CHF {fmtChf(analyseKPIs.relevantCost)}</span>
                         </span>
                         <span>
-                          Sonstiges (nicht in Quote):{' '}
+                          Übrige Konten/unkontiert (nicht in Quote):{' '}
                           <span className="font-medium text-foreground tabular-nums">CHF {fmtChf(analyseKPIs.sonstigeCost)}</span>
                         </span>
                         <span className="sm:ml-auto">
@@ -2980,6 +3046,123 @@ export default function WarenrechnungenPage() {
                             <span className="text-amber-600 dark:text-amber-400">kein FIBU-Umsatz</span>
                           )}
                         </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Gegenüberstellung je Konto (4020–4070) ──────────────── */}
+                {!rangeLoading && erVergleich.monthAligned && (
+                  <div className="bg-card border border-border rounded-xl p-4 space-y-3" data-testid="konto-vergleich-panel">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <BarChart3 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm font-semibold text-foreground">Erfasst vs. Erfolgsrechnung je Konto</span>
+                      <InfoTip
+                        text={
+                          <span>
+                            Direkter Warenaufwand je Konto (4020–4070): links das in der App erfasste
+                            Netto (Rechnungen inkl. Splits), rechts der Betrag der Erfolgsrechnung,
+                            dazu die Differenz (ER&nbsp;−&nbsp;erfasst). Differenzen können mit einem
+                            Grund erklärt und abgeschlossen werden.
+                          </span>
+                        }
+                      />
+                    </div>
+                    {kontoVergleich.totalEr === null ? (
+                      <HintBox tone="info" title="Keine Erfolgsrechnung importiert">
+                        Für diesen Zeitraum liegen keine FIBU-Werte je Konto vor.
+                      </HintBox>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-xs text-muted-foreground">
+                              <th className="text-left font-medium py-1 pr-2">Konto</th>
+                              <th className="text-right font-medium py-1 px-2">Erfasst (App)</th>
+                              <th className="text-right font-medium py-1 px-2">Erfolgsrechnung</th>
+                              <th className="text-right font-medium py-1 px-2">Differenz</th>
+                              <th className="text-left font-medium py-1 pl-2">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="tabular-nums">
+                            {kontoVergleich.zeilen.map(z => {
+                              const key = `konto:${z.konto}`;
+                              const erklaertInfo = kontoErklaertGeladen ? kontoErklaert[key] : undefined;
+                              const abweichung = z.diff !== null && Math.abs(z.diff) > 0.05;
+                              return (
+                                <tr key={z.konto} className={cn('border-t border-border/60',
+                                  erklaertInfo ? 'bg-emerald-500/5' : abweichung && 'bg-red-500/5')}
+                                  data-testid={`konto-vergleich-row-${z.konto}`}>
+                                  <td className="py-1.5 pr-2">{z.label}</td>
+                                  <td className="text-right px-2">CHF {fmtChf(z.erfasst)}</td>
+                                  <td className="text-right px-2">{z.er !== null ? `CHF ${fmtChf(z.er)}` : '–'}</td>
+                                  <td className={cn('text-right px-2',
+                                    abweichung && !erklaertInfo && 'text-red-600 dark:text-red-400 font-medium')}>
+                                    {z.diff !== null ? fmtChf(z.diff) : '–'}
+                                  </td>
+                                  <td className="py-1.5 pl-2">
+                                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                      {erklaertInfo ? (
+                                        <>
+                                          <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40 inline-flex items-center gap-1" data-testid={`konto-erklaert-${z.konto}`}>
+                                            <Info className="h-3 w-3" /> abgeschlossen
+                                          </Badge>
+                                          <span className="text-[11px] text-muted-foreground max-w-[22rem]"
+                                            title={[erklaerGrundLabel(erklaertInfo.grund), erklaertInfo.notiz].filter(Boolean).join(' — ')}>
+                                            {erklaerGrundLabel(erklaertInfo.grund)}
+                                            {erklaertInfo.betrag !== null && <> · CHF {fmtChf(erklaertInfo.betrag)}</>}
+                                            {erklaertInfo.notiz && <> — {erklaertInfo.notiz}</>}
+                                          </span>
+                                        </>
+                                      ) : abweichung ? (
+                                        <Badge variant="outline" className="text-[10px] text-red-600 border-red-600/40">Abweichung</Badge>
+                                      ) : z.diff !== null ? (
+                                        <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40">OK</Badge>
+                                      ) : (
+                                        <span className="text-[10px] text-muted-foreground">—</span>
+                                      )}
+                                      {canEdit && analyseMonthKey && kontoErklaertGeladen && z.diff !== null && (
+                                        <ErklaertMarkierung
+                                          lieferant={z.label}
+                                          info={erklaertInfo}
+                                          aktuelleDiff={z.diff}
+                                          onSave={async info => {
+                                            const ok = await persistKontoErklaert(erk => ({ ...erk, [key]: info }));
+                                            if (ok) toast.success(`${z.label}: Differenz als erklärt markiert.`);
+                                            return ok;
+                                          }}
+                                          onRemove={async () => {
+                                            const ok = await persistKontoErklaert(erk => {
+                                              const { [key]: _weg, ...rest } = erk;
+                                              return rest;
+                                            });
+                                            if (ok) toast.success(`${z.label}: Markierung aufgehoben.`);
+                                            return ok;
+                                          }}
+                                        />
+                                      )}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            <tr className="border-t border-border font-semibold">
+                              <td className="py-1.5 pr-2">Direkter Warenaufwand (Summe)</td>
+                              <td className="text-right px-2">CHF {fmtChf(kontoVergleich.totalErfasst)}</td>
+                              <td className="text-right px-2">{kontoVergleich.totalEr !== null ? `CHF ${fmtChf(kontoVergleich.totalEr)}` : '–'}</td>
+                              <td className={cn('text-right px-2',
+                                kontoVergleich.totalDiff !== null && Math.abs(kontoVergleich.totalDiff) > 0.05 && 'text-red-600 dark:text-red-400')}>
+                                {kontoVergleich.totalDiff !== null ? fmtChf(kontoVergleich.totalDiff) : '–'}
+                              </td>
+                              <td className="pl-2" />
+                            </tr>
+                          </tbody>
+                        </table>
+                        {!analyseMonthKey && (
+                          <p className="text-[11px] text-muted-foreground/70 mt-1">
+                            Abschliessen (erklären) ist nur in der Einmonats-Sicht möglich.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>

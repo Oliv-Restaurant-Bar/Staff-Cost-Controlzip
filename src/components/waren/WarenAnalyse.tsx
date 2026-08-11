@@ -14,7 +14,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import type { InvoiceEntry, Warenkonto } from '@/lib/waren-db';
 import {
-  groupTotals, flagAnomalies, topInvoices, wochenWkq, analyseKpis,
+  groupTotals, flagAnomalies, topInvoices, wochenWkq, analyseKpis, nurDirektAnteil,
   isoWeekKeyOf, kontoShares, supplierKeyOf,
   type AnalyseDim,
 } from '@/lib/waren-analyse';
@@ -36,31 +36,32 @@ interface Props {
   konten: Warenkonto[];
   zielPct: number;
   periodLabel: string;
-  /** Kontoklassen-Grenze (4000–Grenze = Warenkosten) — gleiche Basis wie die Haupt-WKQ. */
-  warenGrenze?: number;
   onOpenReceipt?: (path: string) => void;
 }
 
-export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, warenGrenze, onOpenReceipt }: Props) {
+export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, onOpenReceipt }: Props) {
   const [dim, setDim] = useState<AnalyseDim>('supplier');
   const [drill, setDrill] = useState<string | null>(null);
 
+  // ALLE Sichten dieses Blocks auf der EINEN Definition: direkter
+  // Warenaufwand 4020–4070 (Splits anteilig, Depot/übrige Konten raus).
+  const direktEntries = useMemo(() => nurDirektAnteil(entries), [entries]);
   const rows = useMemo(
-    () => flagAnomalies(groupTotals(entries, dim, konten), entries, dim),
-    [entries, dim, konten],
+    () => flagAnomalies(groupTotals(direktEntries, dim, konten), direktEntries, dim),
+    [direktEntries, dim, konten],
   );
-  const kpis = useMemo(() => analyseKpis(entries, warenGrenze), [entries, warenGrenze]);
-  const tops = useMemo(() => topInvoices(entries, 8), [entries]);
+  const kpis = useMemo(() => analyseKpis(entries), [entries]);
+  const tops = useMemo(() => topInvoices(direktEntries, 8), [direktEntries]);
   const wkqRows = useMemo(
-    () => wochenWkq(entries, revenueByDate, zielPct, warenGrenze),
-    [entries, revenueByDate, zielPct, warenGrenze],
+    () => wochenWkq(entries, revenueByDate, zielPct),
+    [entries, revenueByDate, zielPct],
   );
   const totalRevenue = useMemo(
     () => Object.values(revenueByDate).reduce((s, v) => s + (Number.isFinite(v) && v > 0 ? v : 0), 0),
     [revenueByDate],
   );
-  // WKQ auf der relevanten Basis (Food+Beverage, split-bewusst) — identisch
-  // zur Haupt-WKQ, NIE das rohe Total (das enthält Betrieb/Pfand/Sonstiges).
+  // WKQ auf dem DIREKTEN Warenaufwand (Konten 4020–4070 = Erfolgsrechnung) —
+  // Betriebs-/übrige Konten und Unkontiertes zählen NIE in die Quote.
   const gesamtWkq = totalRevenue > 0 && kpis.relevantNet > 0 ? (kpis.relevantNet / totalRevenue) * 100 : null;
   const foodWkq = totalRevenue > 0 && kpis.foodNet > 0 ? (kpis.foodNet / totalRevenue) * 100 : null;
   const bevWkq = totalRevenue > 0 && kpis.beverageNet > 0 ? (kpis.beverageNet / totalRevenue) * 100 : null;
@@ -70,7 +71,8 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
 
   const drillEntries = useMemo(() => {
     if (!drill) return [];
-    return entries
+    // Drilldown auf derselben Basis wie die Gruppen (direkte Anteile).
+    return direktEntries
       .filter(e => {
         if (dim === 'supplier') return supplierKeyOf(e) === drill;
         if (dim === 'konto') return kontoShares(e).some(s => s.konto === drill);
@@ -78,7 +80,7 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
         return e.date.slice(0, 7) === drill;
       })
       .sort((a, b) => b.amountNet - a.amountNet);
-  }, [entries, dim, drill]);
+  }, [direktEntries, dim, drill]);
 
   const anomalien = rows.filter(r => r.flagged);
 
@@ -114,8 +116,15 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
       {/* Kennzahlen-Kopf */}
       <div className="px-5 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-b border-border/50 text-xs">
         <div>
-          <div className="text-muted-foreground">Warenkosten total</div>
+          <div className="text-muted-foreground">Direkter Warenaufwand (4020–4070)</div>
           <div className="text-sm font-bold tabular-nums">CHF {fmtChf(kpis.totalNet)}</div>
+          {(kpis.uebrigNet > 0 || kpis.unkontiertNet !== 0) && (
+            <div className="text-[10px] text-muted-foreground" data-testid="direkt-hinweis">
+              nicht enthalten:{kpis.uebrigNet > 0 ? ` Betriebs-/übrige Konten CHF ${fmtChf(kpis.uebrigNet)}` : ''}
+              {kpis.uebrigNet > 0 && kpis.unkontiertNet !== 0 ? ' ·' : ''}
+              {kpis.unkontiertNet !== 0 ? ` unkontiert CHF ${fmtChf(kpis.unkontiertNet)}` : ''}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-muted-foreground">WKQ vs. Ziel {zielPct.toFixed(0)} %</div>
@@ -127,7 +136,7 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
           {kpis.unkontiert > 0 && (
             <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid="wkq-unkontiert-hinweis">
               <AlertTriangle className="h-3 w-3 shrink-0" />
-              enthält {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'}
+              {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'} — nicht in der Quote
             </div>
           )}
         </div>
