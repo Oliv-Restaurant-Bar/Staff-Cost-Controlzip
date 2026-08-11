@@ -272,6 +272,7 @@ function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, 
   // Menge und Betrag dürfen NEGATIV sein (Retouren-Block, z.B. «-36 75 cl»);
   // negative Positionen werden mitgeführt und subtrahieren sich im Total.
   const zeileRe = /^\s*\d{1,3}\s+(\d[\w-]*)\s+(-?\d+)\s+(.+?)\s+([\d’'.,]+)\s+(?:(\d{1,2})\s+)?(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  if (bloecke.length === 0) return parseTerravignaAB(lines, profil, mwstSatz);
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
     for (let i = 0; i < b.zeilen.length; i++) {
@@ -289,6 +290,54 @@ function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, 
     }
     return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
   }).filter(l => l.positionen.length > 0);
+}
+
+/**
+ * Terravigna AUFTRAGSBESTÄTIGUNG (keine «Lieferungsnr.»-Blöcke): EINE
+ * provisorische Lieferung übers ganze Dokument.
+ * - Nr = Auftragsbestätigungs-Nr (Upsert-Identität beim Re-Import).
+ * - Datum = «Lieferdatum» (Feld kann LEER sein) → Fallback «Belegdatum».
+ * - Positionszeile «1  21111-24-075  12 75 cl  Wein  14.50  [Rab%]  [8.1|2.6]  174.00»
+ *   — MwSt-Satz JE POSITION (8.1 Wein / 2.6 alkoholfrei), Spalte optional.
+ */
+function parseTerravignaAB(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const text = lines.join('\n');
+  // NUR echte Auftragsbestätigungen: eine RECHNUNG ohne erkannte
+  // «Lieferungsnr.»-Blöcke darf NIE über eine bloss referenzierte AB-Nr
+  // als Lieferung geparst werden (falsche Upsert-Identität/Historie).
+  if (erkenneBelegart(text) !== 'auftragsbestaetigung') return [];
+  const nr = suche(text, [/Auftragsbest(?:ä|ae)tigung\s*(?:Nr\.?\s*)?:?\s*(\d{4,10})/i]);
+  const datum = parseDatumCH(suche(text, [/Lieferdatum[ \t]+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '')
+    ?? parseDatumCH(suche(text, [/Belegdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
+  if (!nr || !datum) return [];
+  // Optionale Spalten zwischen Preis und Betrag: Rabatt-% (ganzzahlig)
+  // und/oder MwSt-Satz (8.1/2.6 — nur diese beiden, sonst kapert eine
+  // Preisspalte den Satz). Betrag MUSS Rappen haben (QR-Zahlteil-Schutz).
+  const abZeileRe = /^\s*\d{1,3}\s+(\d[\w-]*)\s+(-?\d+)\s+(.+?)\s+([\d’'.,]+)\s+(?:(\d{1,2})\s+)?(?:(8\.1|2\.6)\s*%?\s+)?(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  const positionen: WarenPosition[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = abZeileRe.exec(lines[i]);
+    if (!m) continue;
+    const menge = Number(m[2]);
+    const betrag = parseBetrag(m[7]) ?? 0;
+    const preis = menge > 0 ? rundung2(betrag / menge) : 0;
+    const posSatz = m[6] ? Number(m[6]) : mwstSatz;
+    // Mittelteil «75 cl  Chardonnay Réserve» = Einheit + INLINE-Bezeichnung;
+    // ohne erkennbare Einheit: Bezeichnung ggf. auf der Folgezeile (wie Rechnung).
+    const mitte = /^([\d.,]*\s*(?:cl|lt?|kg|stk?|fl|kt))\b\s*(.*)$/i.exec(m[3].trim());
+    let einheit = m[3].trim();
+    let bezeichnung = '';
+    if (mitte) { einheit = mitte[1].trim(); bezeichnung = mitte[2].trim(); }
+    if (!bezeichnung) {
+      const naechste = (lines[i + 1] ?? '').trim();
+      bezeichnung = naechste && !abZeileRe.test(lines[i + 1]) && !/^Total|^Gesamt/i.test(naechste)
+        ? naechste : m[1];
+    }
+    positionen.push(position(profil.kategorie, posSatz,
+      { artNr: m[1], bezeichnung, menge, einheit, preis, positionspreis: betrag }));
+  }
+  if (positionen.length === 0) return [];
+  return [baueLieferung(profil.name, nr, datum, positionen, mwstSatz)];
 }
 
 /** Zelle in \s{2,}-getrennte Spalten teilen (Zeilenrekonstruktion verbindet
@@ -521,14 +570,22 @@ const KOPF_PARSER: Record<string, KopfParser> = {
   // rutishauser-Parser entfernt (Altlast, kein Lieferant mehr, 08/2026).
   terravigna: (text) => {
     const netto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*ohne\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]);
-    // Gemischte MwSt-Sätze möglich (z.B. 8.1% + 2.6%): Brutto DIREKT aus dem
-    // Beleg lesen («Total CHF inkl. MwSt.») und MwSt = Brutto − Netto — nie
-    // aus einem Einzelsatz zurückrechnen.
-    const brutto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*inkl\\.?\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]);
+    // Gemischte MwSt-Sätze möglich (z.B. 8.1% Wein + 2.6% alkoholfrei): Brutto
+    // DIREKT aus dem Beleg lesen («Total CHF inkl. MwSt.», ältere Layouts
+    // «Gesamtbetrag CHF») und MwSt = Brutto − Netto — nie aus einem
+    // Einzelsatz zurückrechnen.
+    const brutto = sucheBetrag(text, [
+      new RegExp(`Total\\s*CHF\\s*inkl\\.?\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i'),
+      new RegExp(`Gesamtbetrag\\s*CHF\\s+(${BETRAG_RE.source})`, 'i'),
+    ]);
     return {
       ...generischerKopf(text),
       rechnungsNr: suche(text, [/Rechnung\s+(\d{4,10})/i]),
       rechnungsdatum: parseDatumCH(suche(text, [/Belegdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? ''),
+      // Auftragsbestätigung: Feld «Lieferdatum» kann LEER sein — nur ein
+      // tatsächlich vorhandenes Datum lesen (sonst Fallback auf Belegdatum
+      // im AB-Lieferungs-Parser).
+      lieferdatum: parseDatumCH(suche(text, [/Lieferdatum[ \t]+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? ''),
       netto,
       mwst: netto !== null && brutto !== null
         ? rundung2(brutto - netto)

@@ -1,0 +1,19 @@
+TERRAVIGNA AG                                       Restaurant & Bar Oliv
+Weinhandlung                                        Murtenstrasse 6
+CHE-108.008.709 MWST                                3202 Frauenkappelen
+
+
+                     Verkauf Auftragsbestätigung 145313
+
+Kunden-Nr. 50956                                    Belegdatum 31.07.26
+Lieferdatum 02.08.26
+
+Pos  Artikel        Menge          Bezeichnung                 Preis   Rab.%   MwSt   Betrag
+1    21111-24-075   60 75 cl       Chardonnay Réserve          24.00           8.1    1'440.00
+2    21354-23-075   36 75 cl       Pinot Noir Tradition        28.90           8.1    1'040.40
+3    21500-24-075   13 75 cl       Merlot del Ticino           12.25           8.1    159.29
+4    30001-00-100   24 100 cl      Mineralwasser San Clemente  4.46            2.6    107.11
+
+                                       Total CHF ohne MwSt.                    2'746.80
+                                       MwSt.                                   216.60
+                                       Total CHF inkl. MwSt.                   2'963.40

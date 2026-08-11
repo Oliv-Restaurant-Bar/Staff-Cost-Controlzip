@@ -50,6 +50,7 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 
 ## Profil-Lernen ohne MWST-Nr
 - `lerneProfil` leitet ohne MWST-Nr automatisch Namens-Tokens ab (lowercase, Wörter ≥3 Zeichen) → `findeProfilImText` erkennt den Lieferanten beim Re-Import; bestehende Tokens/IBAN nie überschreiben. Lernen ist KUMULATIV — Import-Undo rollt Profile bewusst nicht zurück.
+- Terravigna-AB Stufe 2 (08/2026): keine «Lieferungsnr.»-Blöcke ⇒ parseTerravignaAB baut EINE Lieferung (Nr=AB-Nr, Datum=Lieferdatum||Belegdatum — Feld kann LEER sein); Positionszeile mit optionaler Rab.%- UND MwSt-Spalte (nur `8.1|2.6`, sonst kapert Preisspalte den Satz), MwSt je Position; Fallback ist HART auf erkenneBelegart==='auftragsbestaetigung' begrenzt — Rechnungen ohne erkannte Blöcke mit referenzierter AB-Nr dürfen NIE als AB-Lieferung geparst werden (falsche Upsert-Identität).
 - AB→Rechnung (Terravigna): Dokumente tragen KEINE gemeinsame Referenz (Rechnung nennt die AB-Nr. nicht). fs-import ersetzt eine provisorische AB nur bei GENAU EINEM Kandidaten im Fenster (Toleranz max(0.10, 1 % Brutto)); Matcher generell in zwei Pässen: exakte Referenz VOR Datum+Betrag.
 
 ## Caporaso & Monatsrechnung-Flag (08/2026)

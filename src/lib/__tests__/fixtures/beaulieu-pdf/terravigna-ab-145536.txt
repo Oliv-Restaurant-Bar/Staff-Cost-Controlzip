@@ -1,0 +1,17 @@
+TERRAVIGNA AG                                       Restaurant & Bar Oliv
+Weinhandlung                                        Murtenstrasse 6
+CHE-108.008.709 MWST                                3202 Frauenkappelen
+
+
+                     Verkauf Auftragsbestätigung 145536
+
+Kunden-Nr. 50956                                    Belegdatum 08.08.26
+Lieferdatum
+
+Pos  Artikel        Menge          Bezeichnung                 Preis   Rab.%   MwSt   Betrag
+1    21402-24-075   12 75 cl       Sauvignon Blanc             24.00           8.1    288.00
+2    21610-23-075   8 75 cl        Barbera d'Asti              17.80           8.1    142.40
+
+                                       Total CHF ohne MwSt.                    430.40
+                                       8.1% MwSt.                              34.85
+                                       Total CHF inkl. MwSt.                   465.25

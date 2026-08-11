@@ -57,6 +57,89 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.hinweise[0]).toContain('provisorische Lieferung');
     expect(r.hinweise.join(' ')).not.toContain('wird nicht gebucht');
   });
+  it('Terravigna AB 145313: Positionen, MwSt je Position, Lieferdatum 02.08.26', () => {
+    const r = parse('terravigna-ab-145313.txt');
+    expect(r.belegart).toBe('auftragsbestaetigung');
+    expect(r.profil?.id).toBe('terravigna');
+    expect(r.rechnungsNr).toBe('145313');
+    expect(r.netto).toBe(2746.8);
+    expect(r.brutto).toBe(2963.4);
+    expect(r.mwst).toBe(216.6);
+    expect(r.lieferdatum).toBe('2026-08-02');
+    expect(r.dokumenttyp).toBe('lieferschein');
+    // Stufe 2: EINE Lieferung, AB-Nr = Identität, Positionen für die Historie.
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].rechnungsNr).toBe('145313');
+    expect(r.lieferungen[0].datum).toBe('2026-08-02');
+    expect(r.lieferungen[0].positionen).toHaveLength(4);
+    expect(r.lieferungen[0].nettoTotal).toBe(2746.8);
+    // Keine Summen-Warnung (Positionssumme = Netto).
+    expect(r.hinweise.join(' ')).not.toContain('Positionssumme');
+    const p1 = r.lieferungen[0].positionen[0];
+    expect(p1.artNr).toBe('21111-24-075');
+    expect(p1.menge).toBe(60);
+    expect(p1.einheit).toBe('75 cl');
+    expect(p1.bezeichnung).toBe('Chardonnay Réserve');
+    expect(p1.preis).toBe(24);
+    expect(p1.positionspreis).toBe(1440);
+    // MwSt je Position: 8.1 % Wein, 2.6 % alkoholfrei.
+    expect(p1.mwstBetrag).toBeCloseTo(116.64, 2);
+    const mineral = r.lieferungen[0].positionen[3];
+    expect(mineral.mwstBetrag).toBeCloseTo(2.78, 2);
+  });
+  it('Terravigna AB 145536: Feld «Lieferdatum» leer → Fallback Belegdatum 08.08.26', () => {
+    const r = parse('terravigna-ab-145536.txt');
+    expect(r.rechnungsNr).toBe('145536');
+    expect(r.netto).toBe(430.4);
+    expect(r.brutto).toBe(465.25);
+    expect(r.lieferdatum).toBe('2026-08-08');
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].datum).toBe('2026-08-08');
+    expect(r.lieferungen[0].positionen).toHaveLength(2);
+    expect(r.lieferungen[0].nettoTotal).toBe(430.4);
+  });
+  it('Terravigna AB 145095 (altes Layout ohne MwSt-Spalte): Stufe 2 weiterhin ok', () => {
+    const r = parse('terravigna-ab-145095.txt');
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].rechnungsNr).toBe('145095');
+    expect(r.lieferungen[0].datum).toBe('2026-07-28'); // Belegdatum-Fallback
+    expect(r.lieferungen[0].positionen).toHaveLength(3);
+    expect(r.lieferungen[0].nettoTotal).toBe(828.39);
+    expect(r.lieferungen[0].positionen[0].bezeichnung).toBe('Chardonnay Réserve');
+  });
+  it('Terravigna RECHNUNG ohne Lieferungsnr.-Blöcke: referenzierte AB-Nr erzeugt KEINE Lieferung', () => {
+    // Rechnung, deren «Lieferungsnr.»-Blöcke nicht erkannt werden, aber eine
+    // AB-Nr referenziert — darf NIE als AB-Lieferung geparst werden.
+    const text = [
+      'TERRAVIGNA AG', 'CHE-108.008.709 MWST', '',
+      'Rechnung 211999', 'Belegdatum 31.08.26',
+      'Gemäss Auftragsbestätigung 145313',
+      'Pos  Artikel        Menge          Bezeichnung        Preis   Betrag',
+      '1    21111-24-075   12 75 cl       Chardonnay         14.50   174.00',
+      "Total CHF ohne MwSt.  174.00", 'Total CHF inkl. MwSt.  188.09',
+    ].join('\n');
+    const r = parseProfilPdf(text, P);
+    expect(r.belegart).toBe('rechnung');
+    expect(r.lieferungen).toHaveLength(0);
+    expect(r.rechnungsNr).toBe('211999');
+  });
+  it('Terravigna AB: Rabatt-% UND MwSt-Spalte kombiniert', () => {
+    const text = [
+      'TERRAVIGNA AG', 'CHE-108.008.709 MWST', '',
+      'Verkauf Auftragsbestätigung 145600',
+      'Belegdatum 10.08.26', 'Lieferdatum 12.08.26',
+      '1    21111-24-075   12 75 cl   Chardonnay Réserve   17.06   15   8.1   174.00',
+      "Total CHF ohne MwSt.  174.00", 'Total CHF inkl. MwSt.  188.09',
+    ].join('\n');
+    const r = parseProfilPdf(text, P);
+    expect(r.lieferungen).toHaveLength(1);
+    const p = r.lieferungen[0].positionen[0];
+    expect(p.positionspreis).toBe(174);
+    expect(p.preis).toBe(14.5); // effektiver Stückpreis nach Rabatt
+    expect(p.mwstBetrag).toBeCloseTo(14.09, 2);
+    expect(r.lieferungen[0].datum).toBe('2026-08-12');
+  });
   it('Belegart-Sperre bleibt für Profile OHNE AB-als-Lieferschein', () => {
     // Gleicher AB-Text, aber ohne Terravigna-MWST-Nr ⇒ Profil ohne Ausnahme.
     const text = fx('terravigna-ab-145095.txt').replace(/108\.008\.709/g, '219.630.115');
