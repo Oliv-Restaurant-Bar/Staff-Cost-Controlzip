@@ -683,6 +683,12 @@ export interface MrRow {
    */
   deltaVsVj?: boolean;
   /**
+   * Δ%-Basis der Zeile (Ist-Netto-Umsatz) — Warenkosten-Zeilen: Δ% =
+   * (Ist − Soll) ÷ Basis, entspricht der PP-Abweichung der WKQ zum Ziel
+   * (NICHT mehr ÷ Soll). null = keine Basis → Δ% leer («leer statt 0»).
+   */
+  deltaPctBasis?: { month: number | null; week: number | null };
+  /**
    * Begleit-«Personen»-Werte für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»).
    * Pro Spalte parallel zu month/week/vjMonth; null = kein Zusatzwert.
    * Nur bei fmt='countPax' relevant, sonst undefined.
@@ -1724,35 +1730,33 @@ export async function ladeMonatsreport(
         : r2(quoteMonat);
     }
     if (wkqW && sollWoche != null && wNet > 0) wkqW.ziel = r2((sollWoche / wNet) * 100);
-    // WKQ unter dem BUDGET-Wert: Budget-Warenkosten total ÷ Budget-Netto-
-    // Umsatz (ER-Budget des Monats = Food+Beverage-Budget, da Food+Bev =
-    // Netto per SSOT-Invariante); fehlt das ER-Budget bzw. für die Woche
-    // (kein Wochen-Umsatzbudget) dient der Ist-Netto — die Basis, auf der
-    // das Soll gerechnet wurde. «leer statt 0», nie ÷ 0.
+    // WKQ unter dem BUDGET-Wert: Soll ÷ IST-Netto-Umsatz derselben Spalte —
+    // per Konstruktion die wirksame Ziel-WKQ (z.B. konstant 24.0 %), NIE auf
+    // einer anderen Umsatzbasis (Budget-Umsatz) gerechnet. «leer statt 0»,
+    // nie ÷ 0.
     const pctVon = (chf: number | null, basis: number | null): number | null =>
       chf != null && basis != null && basis > 0 ? r2((chf / basis) * 100) : null;
-    const erBudgetMonat = ((): number | null => {
-      const v = weqJahrCtx[String(year)]?.er?.[m0];
-      return typeof v === 'number' && v > 0 ? v : null;
-    })();
-    const totalBudgetM = ckMk('wareneinsatz') ?? sollMonat;
-    const totalBudgetW = ckWk('wareneinsatz') ?? sollWoche;
-    if (wkqM) wkqM.budgetPct = pctVon(totalBudgetM, erBudgetMonat ?? (mNetV != null && mNet > 0 ? mNet : null));
-    if (wkqW) wkqW.budgetPct = pctVon(totalBudgetW, wNetV != null && wNet > 0 ? wNet : null);
+    const totalBasisM = mNetV != null && mNet > 0 ? mNet : null;
+    const totalBasisW = wNetV != null && wNet > 0 ? wNet : null;
+    if (wkqM) wkqM.budgetPct = pctVon(sollMonat, totalBasisM);
+    if (wkqW) wkqW.budgetPct = pctVon(sollWoche, totalBasisW);
     const totalRow: MrRow = {
       ...d('warenkosten_total', 'Warenkosten total (Ist) vs. Wareneinsatz (Soll)', {
         month: monthTotal, week: weekTotal,
-        // Budget LIVE aus der Budget-Eingabe (Cockpit-Position «wareneinsatz»,
-        // pro rata wie alle Cockpit-Budgets); nur ohne Eintrag greift die
-        // bisherige Soll-Rechnung (WEQ-Quote × Ist-Netto). Leer statt 0.
-        monthBudget: ckMk('wareneinsatz') ?? sollMonat,
-        weekBudget: ckWk('wareneinsatz') ?? sollWoche,
-        budget: ckWk('wareneinsatz') ?? sollWoche,
+        // Soll = Ziel-WKQ × IST-Netto-Umsatz — GLEICHE Logik wie Food/
+        // Beverage, damit Total-Soll = Food-Soll + Beverage-Soll gilt.
+        // Das Cockpit-Budget «wareneinsatz» steuert die QUOTE (÷ ER-Budget,
+        // s. weqQuotePct), wird aber nicht mehr direkt als Soll angezeigt.
+        monthBudget: sollMonat,
+        weekBudget: sollWoche,
+        budget: sollWoche,
       }, { bold: true, deltaInverted: true, ckId: 'wareneinsatz' }),
       wkqInline: {
         month: wkqM,
         week: wkqW,
       },
+      // Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz (PP-Abweichung der WKQ zum Ziel).
+      deltaPctBasis: { month: totalBasisM, week: totalBasisW },
     };
     // ── Warenkosten je Kategorie: FOOD (Küche) / BEVERAGE (Bar) ────────────
     // Ist = Kategorie-Anteile der erfassten Warenrechnungen; Soll = wirksame
@@ -1793,6 +1797,11 @@ export async function ladeMonatsreport(
         wkqInline: {
           month: mitBudget(wkq(istM, umsMV, umsM), sollM, umsMV, umsM),
           week: mitBudget(wkq(istW, umsWV, umsW), sollW, umsWV, umsW),
+        },
+        // Δ% = (Ist − Soll) ÷ Ist-Kategorie-Umsatz (PP-Abweichung zum Ziel).
+        deltaPctBasis: {
+          month: umsMV != null && umsM > 0 ? umsM : null,
+          week: umsWV != null && umsW > 0 ? umsW : null,
         },
       };
     };
@@ -2730,7 +2739,9 @@ export async function ladeWochenverlauf(
     rows.push({
       id: 'warenkosten_total',
       label: 'Warenkosten total', fmt: 'chf', bold: true,
-      budgetValues: wochenBudgets.map(b => b['wareneinsatz'] ?? null),
+      // Platzhalter — wird unten in BEIDEN Modi durch Food-Soll + Bev-Soll
+      // ersetzt (Quote × IST-Netto der KW), nie Cockpit-Budget-CHF direkt.
+      budgetValues: weeks.map(() => null),
       budgetInverted: true,
       values: weekInv.map(list => (list.length > 0 ? r2(sumInvoicesNet(list)) : null)),
       wkqValues: weekInv.map((list, i) => {
@@ -2794,9 +2805,11 @@ export async function ladeWochenverlauf(
       const n = katNetOf(i, kat);
       return q !== null && n !== null ? r2(n * (q / 100)) : null;
     };
-    // Modus 'kategorie': Total-Soll der KW = Food-Soll + Bev-Soll (leer, wenn
-    // beide leer). Modus 'gesamt': Cockpit-Wareneinsatz-Budget (unverändert).
-    if (katModusWv) {
+    // Total-Soll der KW = Food-Soll + Bev-Soll in BEIDEN Modi (leer, wenn
+    // beide leer) — Quote × IST-Netto, gleiche Basis wie der Monatsreport;
+    // damit gilt auch im Verlauf Total-Soll = Food-Soll + Beverage-Soll und
+    // nie mehr ein Cockpit-Budget-CHF auf Budget-Umsatz-Basis.
+    {
       const totalWvRow = rows.find(rw => rw.id === 'warenkosten_total');
       if (totalWvRow) {
         totalWvRow.budgetValues = weeks.map((_, i) => {

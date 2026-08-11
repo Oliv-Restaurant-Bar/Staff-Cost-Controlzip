@@ -352,6 +352,12 @@ function ReportTable({
               // als dezente Unterzeile unter der Zahl (Ist + Vorjahr).
               dev = p.ist !== null && p.vj !== null && p.vj > 0
                 ? ((p.ist - p.vj) / p.vj) * 100 : null;
+            } else if (row.deltaPctBasis) {
+              // Warenkosten-Zeilen: Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz —
+              // entspricht der PP-Abweichung der WKQ zum Ziel (nicht ÷ Soll).
+              const basis = granularity === 'monat' ? row.deltaPctBasis.month : row.deltaPctBasis.week;
+              dev = devAbs !== null && basis !== null && basis > 0
+                ? (devAbs / basis) * 100 : null;
             } else {
               dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
                 ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;
@@ -705,6 +711,13 @@ export function WochenTable({ cols, testid, onDrill }: {
       inverted = true;
     } else if (useVj) {
       dev = p.ist !== null && p.vj !== null && p.vj > 0 ? ((p.ist - p.vj) / p.vj) * 100 : null;
+    } else if (src?.deltaPctBasis) {
+      // Warenkosten-Zeilen: Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz der Woche
+      // (PP-Abweichung der WKQ zum Ziel, nicht ÷ Soll) — Basis aus der
+      // QUELL-Zeile der Spalte, nie aus dem Skeleton (andere Woche!).
+      const basis = src.deltaPctBasis.week;
+      dev = devAbs !== null && basis !== null && basis > 0
+        ? (devAbs / basis) * 100 : null;
     } else {
       dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
         ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;

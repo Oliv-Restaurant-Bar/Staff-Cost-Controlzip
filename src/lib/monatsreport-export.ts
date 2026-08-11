@@ -58,8 +58,15 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
     || (row.sharePct && (devBudget == null || row.fmt === 'countPax')));
   const devBase = vsVj ? vj : devBudget;
   const devAbs = ist !== null && devBase !== null ? ist - devBase : null;
-  const dev = ist !== null && devBase !== null && devBase > 0
-    ? ((ist - devBase) / devBase) * 100 : null;
+  // Warenkosten-Zeilen (deltaPctBasis): Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz
+  // (PP-Abweichung der WKQ zum Ziel) — wie die Bildschirmtabelle, nicht ÷ Soll.
+  const pctBasis = row.deltaPctBasis
+    ? (granularity === 'monat' ? row.deltaPctBasis.month : row.deltaPctBasis.week)
+    : null;
+  const dev = row.deltaPctBasis
+    ? (devAbs !== null && pctBasis !== null && pctBasis > 0 ? (devAbs / pctBasis) * 100 : null)
+    : ist !== null && devBase !== null && devBase > 0
+      ? ((ist - devBase) / devBase) * 100 : null;
   const istWarn = row.warnAbove != null && ist !== null && ist > row.warnAbove;
   // Kosten-Zeilen (deltaInverted): über Budget (dev>0) = schlecht/rot.
   const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
