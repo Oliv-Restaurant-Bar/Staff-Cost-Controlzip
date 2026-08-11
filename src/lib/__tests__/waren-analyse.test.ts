@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isoWeekKeyOf, weekLabelOf, groupTotals, flagAnomalies, topInvoices,
   wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil, buildKontoDrilldown,
+  buildKorrekturVorschlaege, fmtChfText,
 } from '@/lib/waren-analyse';
 import { buildWarenkostenExport, warenkostenExportFileName } from '@/lib/warenkosten-export';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -289,5 +290,101 @@ describe('buildKontoDrilldown', () => {
     expect(fs.fibu).toBeNull();
     expect(fs.diff).toBeNull();
     expect(fs.splitHinweis).toBeNull();
+    expect(fs.typ).toBeNull();
+  });
+  it('typ-Klassifikation: ok / zuordnung / fehlende_rechnung', () => {
+    const d = buildKontoDrilldown(input);
+    expect(d.zeilen.find(z => z.lieferant === 'Brauerei X')!.typ).toBe('ok');
+    expect(d.zeilen.find(z => z.lieferant === 'Feldschlösschen')!.typ).toBe('zuordnung');
+    const d2 = buildKontoDrilldown({ ...input, journal: [jl('4030', 'Brauerei X', 500)], entries: [entries[1]] });
+    expect(d2.zeilen.find(z => z.lieferant === 'Brauerei X')!.typ).toBe('fehlende_rechnung');
+  });
+  it('unklar: App erfasst, FIBU (noch) nicht gebucht → diff negativ', () => {
+    const d = buildKontoDrilldown({ ...input, journal: [jl('4030', 'Irgendwas anderes', 10)], entries: [entries[1]] });
+    const bx = d.zeilen.find(z => z.lieferant === 'Brauerei X')!;
+    expect(bx.diff).toBeCloseTo(-200, 2);
+    expect(bx.typ).toBe('unklar');
+  });
+});
+
+describe('Kontierungs-Check & Korrektur-Vorschläge', () => {
+  const jl = (accountNumber: string, text: string, soll: number): SageJournalEntry => ({
+    date: '01.07.2026', text, accountNumber, accountName: '', soll, haben: 0, betrag: soll,
+  } as unknown as SageJournalEntry);
+  // Transgourmet-Fall (Juli Oliv): App 4060 31'440.94 + 4701 3'856.64;
+  // FIBU 4060 33'293.33 (Non-Food ~1'852.39 falsch auf 4060), FIBU 4701 = Rest.
+  const entries = [
+    inv({ date: '2026-07-03', amountNet: 35297.58, supplierName: 'Transgourmet', kontoSplits: [
+      { warenkonto: '4060', amountNet: 31440.94, amountGross: 0 },
+      { warenkonto: '4701', amountNet: 3856.64, amountGross: 0 },
+    ] }),
+    inv({ date: '2026-07-04', amountNet: 8568.39, supplierName: 'Ambro', warenkonto: '4060' }),
+  ];
+  const journal = [
+    jl('4060', 'Transgourmet Schweiz AG', 33293.33),
+    jl('4701', 'Transgourmet Schweiz AG', 2004.25),
+    jl('4060', 'Ambro', 8568.39),
+  ];
+  const base = { entries, journal, supplierNames: ['Transgourmet', 'Ambro'], aliases: {} };
+  it('erkennt Non-Food fälschlich auf Warenkonto (typ=kontierung, Betrag ≈ 1852.39)', () => {
+    const d = buildKontoDrilldown({ ...base, konto: '4060' });
+    const tg = d.zeilen.find(z => z.lieferant === 'Transgourmet')!;
+    expect(tg.diff).toBeCloseTo(1852.39, 2);
+    expect(tg.typ).toBe('kontierung');
+    expect(tg.kontierungsHinweis).not.toBeNull();
+    expect(tg.kontierungsHinweis!.betrag).toBeCloseTo(1852.39, 2);
+    expect(tg.kontierungsHinweis!.vonKonto).toBe('4060');
+    expect(tg.kontierungsHinweis!.nachKonto).toBe('4701');
+    expect(d.zeilen.find(z => z.lieferant === 'Ambro')!.typ).toBe('ok');
+  });
+  it('KEIN Kontierungs-Verdacht, wenn FIBU das Non-Food voll gebucht hat', () => {
+    const d = buildKontoDrilldown({
+      ...base, konto: '4060',
+      journal: [jl('4060', 'Transgourmet Schweiz AG', 33293.33), jl('4701', 'Transgourmet Schweiz AG', 3856.64)],
+    });
+    const tg = d.zeilen.find(z => z.lieferant === 'Transgourmet')!;
+    expect(tg.kontierungsHinweis).toBeNull();
+    expect(tg.typ).toBe('fehlende_rechnung');
+  });
+  it('buildKorrekturVorschlaege: kopierbarer Umbuchungs-Text, Kontierung zuerst', () => {
+    const v = buildKorrekturVorschlaege({ ...base, kontoNamen: { '4060': '4060 Küche', '4701': '4701 Betriebsmaterial' } });
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0].typ).toBe('kontierung');
+    expect(v[0].text).toBe("Umbuchung Transgourmet: CHF 1'852.39 von 4060 Küche -> 4701 Betriebsmaterial");
+  });
+  it('Defizit wird nur EINMAL zugeteilt: zwei positive Konto-Diffs, Vorschläge ≤ Defizit', () => {
+    // App: 4060 900 + 4070 900 + 4701 100 (Non-Food); FIBU: 4060 1000, 4070 1000, kein 4701.
+    // Non-Food-Defizit = 100, aber Diffs +100 auf ZWEI Konten → nur eine Zuteilung.
+    const e = [inv({ date: '2026-07-03', amountNet: 1900, supplierName: 'Transgourmet', kontoSplits: [
+      { warenkonto: '4060', amountNet: 900, amountGross: 0 },
+      { warenkonto: '4070', amountNet: 900, amountGross: 0 },
+      { warenkonto: '4701', amountNet: 100, amountGross: 0 },
+    ] })];
+    const j = [jl('4060', 'Transgourmet Schweiz AG', 1000), jl('4070', 'Transgourmet Schweiz AG', 1000)];
+    const v = buildKorrekturVorschlaege({ entries: e, journal: j, supplierNames: ['Transgourmet'], aliases: {} });
+    const kont = v.filter(x => x.typ === 'kontierung');
+    expect(kont.reduce((s, x) => s + x.betrag, 0)).toBeCloseTo(100, 2);
+    // Das andere Konto bleibt als fehlende Rechnung ausgewiesen.
+    expect(v.some(x => x.typ === 'fehlende_rechnung' && Math.abs(x.betrag - 100) < 0.01)).toBe(true);
+  });
+  it('nachKonto = Konto mit dem Non-Food-DEFIZIT, nicht grösster App-Betrag', () => {
+    // App: 4090 500 (in FIBU voll gebucht) + 4701 200 (in FIBU fehlend) + 4060 800; FIBU 4060 1000.
+    const e = [inv({ date: '2026-07-03', amountNet: 1500, supplierName: 'Transgourmet', kontoSplits: [
+      { warenkonto: '4060', amountNet: 800, amountGross: 0 },
+      { warenkonto: '4090', amountNet: 500, amountGross: 0 },
+      { warenkonto: '4701', amountNet: 200, amountGross: 0 },
+    ] })];
+    const j = [jl('4060', 'Transgourmet Schweiz AG', 1000), jl('4090', 'Transgourmet Schweiz AG', 500)];
+    const d = buildKontoDrilldown({ entries: e, journal: j, konto: '4060', supplierNames: ['Transgourmet'], aliases: {} });
+    const tg = d.zeilen.find(z => z.lieferant === 'Transgourmet')!;
+    expect(tg.typ).toBe('kontierung');
+    expect(tg.kontierungsHinweis!.nachKonto).toBe('4701');
+    expect(tg.kontierungsHinweis!.betrag).toBeCloseTo(200, 2);
+  });
+  it('buildKorrekturVorschlaege: leer ohne Journal', () => {
+    expect(buildKorrekturVorschlaege({ ...base, journal: null })).toEqual([]);
+  });
+  it('fmtChfText: de-CH-Apostroph-Format', () => {
+    expect(fmtChfText(1852.39)).toBe("1'852.39");
   });
 });

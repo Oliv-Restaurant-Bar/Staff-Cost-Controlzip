@@ -197,6 +197,9 @@ export function flagAnomalies(
  */
 export const DIREKTE_WARENKONTEN = ['4020', '4030', '4040', '4050', '4060', '4070'] as const;
 const DIREKT_SET = new Set<number>(DIREKTE_WARENKONTEN.map(Number));
+/** Non-Food-/Betriebskonten für den Kontierungs-Check (App bucht hier, FIBU fälschlich auf Warenkonto). */
+export const NONFOOD_KONTEN = ['4090', '4701'] as const;
+const NONFOOD_SET = new Set<number>(NONFOOD_KONTEN.map(Number));
 const DIREKT_BEVERAGE = new Set([4020, 4030, 4040, 4050]);
 
 export interface DirekterAufwand {
@@ -463,6 +466,29 @@ export interface KontoDrilldownZeile {
      */
     reineZuordnung: boolean;
   } | null;
+  /**
+   * Kontierungs-Check: die App bucht bei diesem Lieferanten Non-Food auf
+   * 4701/4090, die FIBU hat (annähernd) diesen Betrag zusätzlich auf DIESEM
+   * Warenkonto → vermutlicher Kontierungs-Fehler, Umbuchung vorschlagen.
+   */
+  kontierungsHinweis: {
+    /** Vermutlich falsch kontierter Betrag (auf diesem Warenkonto). */
+    betrag: number;
+    vonKonto: string;  // dieses Warenkonto (z.B. '4060')
+    nachKonto: string; // Non-Food-Zielkonto der App (z.B. '4701')
+    /** App-Betrag auf dem Non-Food-Konto (Kontext für den Hinweis). */
+    appNonfood: number;
+    /** FIBU-Betrag auf den Non-Food-Konten (0 wenn dort nichts gebucht). */
+    fibuNonfood: number;
+  } | null;
+  /**
+   * Klassifikation der Differenz:
+   * 'ok' — exakt (±0.05); 'kontierung' — Umbuchung in FIBU nötig;
+   * 'zuordnung' — Konto-Split, Total stimmt, keine Korrektur;
+   * 'fehlende_rechnung' — FIBU > App, in App nachtragen;
+   * 'unklar' — App > FIBU (periodenfremd? in FIBU prüfen); null ohne Journal.
+   */
+  typ: 'ok' | 'kontierung' | 'zuordnung' | 'fehlende_rechnung' | 'unklar' | null;
 }
 
 export interface KontoDrilldown {
@@ -499,6 +525,11 @@ export function buildKontoDrilldown(input: {
     const n = normalizeWarenKonto(String(e.accountNumber ?? ''));
     return n !== null && DIREKT_SET.has(n);
   });
+  // Non-Food-Konten (4090/4701) separat — nur für den Kontierungs-Check.
+  const nonfoodJournal = (input.journal ?? []).filter(e => {
+    const n = normalizeWarenKonto(String(e.accountNumber ?? ''));
+    return n !== null && NONFOOD_SET.has(n);
+  });
   const hatJournal = direktJournal.length > 0;
 
   const effektiveGruppen = [
@@ -507,24 +538,32 @@ export function buildKontoDrilldown(input: {
   ];
   const resolve = buildAliasResolver(effektiveGruppen);
 
-  // ── App-Seite: Lieferant → Konto → Netto (nur direkte Konten) ──
+  // ── App-Seite: Lieferant → Konto → Netto (direkte + Non-Food-Konten) ──
   const appMap = new Map<string, Record<string, number>>();
+  const appNonfoodMap = new Map<string, Record<string, number>>();
   for (const e of input.entries) {
     const canon = resolve(e.supplierName);
     for (const s of kontoShares(e)) {
       const roh = (s.konto ?? '').trim();
       if (roh === PSEUDO_KONTO_PFAND) continue;
       const n = normalizeWarenKonto(roh);
-      if (n === null || !DIREKT_SET.has(n)) continue;
-      const rec = appMap.get(canon) ?? {};
+      if (n === null) continue;
       const k = String(n);
-      rec[k] = (rec[k] ?? 0) + s.net;
-      appMap.set(canon, rec);
+      if (DIREKT_SET.has(n)) {
+        const rec = appMap.get(canon) ?? {};
+        rec[k] = (rec[k] ?? 0) + s.net;
+        appMap.set(canon, rec);
+      } else if (NONFOOD_SET.has(n)) {
+        const rec = appNonfoodMap.get(canon) ?? {};
+        rec[k] = (rec[k] ?? 0) + s.net;
+        appNonfoodMap.set(canon, rec);
+      }
     }
   }
 
   // ── FIBU-Seite: Lieferant → Konto → Betrag (Soll−Haben) ──
   const fibuMap = new Map<string, Record<string, number>>();
+  const fibuNonfoodMap = new Map<string, Record<string, number>>();
   let nichtZugeordnet = 0;
   if (hatJournal) {
     const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
@@ -540,6 +579,16 @@ export function buildKontoDrilldown(input: {
         fibuMap.set(canon, rec);
       } else if (k === kontoNorm) {
         nichtZugeordnet += buchungsBetrag(e);
+      }
+    }
+    for (const e of nonfoodJournal) {
+      const k = String(normalizeWarenKonto(String(e.accountNumber ?? '')));
+      const hit = barausgabenLieferant(e.text) ?? findSupplierInText(e.text ?? '', matchNamen, input.aliases, resolve);
+      if (hit) {
+        const canon = resolve(hit);
+        const rec = fibuNonfoodMap.get(canon) ?? {};
+        rec[k] = (rec[k] ?? 0) + buchungsBetrag(e);
+        fibuNonfoodMap.set(canon, rec);
       }
     }
   }
@@ -575,7 +624,62 @@ export function buildKontoDrilldown(input: {
         };
       }
     }
-    return { lieferant: name, app, fibu, diff, splitHinweis };
+    // Kontierungs-Check: FIBU hat MEHR auf diesem Warenkonto, und der App
+    // fehlt (annähernd) derselbe Betrag auf ihren Non-Food-Konten in der FIBU
+    // → Non-Food vermutlich falsch aufs Warenkonto gebucht (Umbuchung nötig).
+    // Defizit wird PRO Non-Food-Konto ermittelt (richtiges Zielkonto) und
+    // über die positiven Konto-Differenzen nur EINMAL zugeteilt — die Summe
+    // der Vorschläge über alle 6 Konten kann das Defizit nie übersteigen.
+    let kontierungsHinweis: KontoDrilldownZeile['kontierungsHinweis'] = null;
+    const appNonfoodRec = appNonfoodMap.get(name) ?? {};
+    const fibuNonfoodRec = fibuNonfoodMap.get(name) ?? {};
+    const appNonfood = r2(Object.values(appNonfoodRec).reduce((a, b) => a + b, 0));
+    if (hatJournal && diff !== null && diff > 0.05 && appNonfood > 0.05 && !(splitHinweis?.reineZuordnung)) {
+      const fibuNonfood = r2(Object.values(fibuNonfoodRec).reduce((a, b) => a + b, 0));
+      // Defizit je Non-Food-Konto: App gebucht, in FIBU (teilweise) fehlend.
+      const defizite = Object.entries(appNonfoodRec)
+        .map(([k, v]) => [k, r2(v - (fibuNonfoodRec[k] ?? 0))] as const)
+        .filter(([, d]) => d > 0.05)
+        .sort((a, b) => b[1] - a[1]);
+      const nonfoodFehlt = r2(defizite.reduce((s, [, d]) => s + d, 0));
+      if (nonfoodFehlt > 0.05) {
+        // Zuteilung: Defizit sequenziell auf die positiven Differenzen ALLER
+        // direkten Konten verteilen (grösste zuerst, dann Kontonummer) —
+        // deterministisch identisch für jeden buildKontoDrilldown-Aufruf.
+        const direktDiffs = DIREKTE_WARENKONTEN
+          .map(k => [k, r2((fibuJeKonto[k] ?? 0) - (appJeKonto[k] ?? 0))] as const)
+          .filter(([, d]) => d > 0.05)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+        let rest = nonfoodFehlt;
+        let zugeteilt = 0;
+        for (const [k, d] of direktDiffs) {
+          const take = Math.min(d, rest);
+          rest = r2(rest - take);
+          if (k === kontoNorm) { zugeteilt = r2(take); break; }
+          if (rest <= 0) break;
+        }
+        // Nur wenn der zugeteilte Betrag die Konto-Differenz grösstenteils erklärt.
+        if (zugeteilt > 0.05 && zugeteilt >= diff * 0.5) {
+          kontierungsHinweis = {
+            betrag: zugeteilt,
+            vonKonto: kontoNorm,
+            nachKonto: defizite[0][0],
+            appNonfood,
+            fibuNonfood,
+          };
+        }
+      }
+    }
+
+    let typ: KontoDrilldownZeile['typ'] = null;
+    if (diff !== null) {
+      if (Math.abs(diff) <= 0.05) typ = 'ok';
+      else if (kontierungsHinweis) typ = 'kontierung';
+      else if (splitHinweis?.reineZuordnung) typ = 'zuordnung';
+      else if (diff > 0) typ = 'fehlende_rechnung';
+      else typ = 'unklar';
+    }
+    return { lieferant: name, app, fibu, diff, splitHinweis, kontierungsHinweis, typ };
   }).sort((a, b) => Math.abs(b.diff ?? b.app) - Math.abs(a.diff ?? a.app));
 
   const appTotal = r2(zeilen.reduce((s, z) => s + z.app, 0));
@@ -591,4 +695,79 @@ export function buildKontoDrilldown(input: {
     nichtZugeordnet: hatJournal ? r2(nichtZugeordnet) : null,
     hatJournal,
   };
+}
+
+// ─── Korrektur-Vorschläge (für die Buchhaltung / den Treuhänder) ─────────────
+
+export interface KorrekturVorschlag {
+  typ: 'kontierung' | 'fehlende_rechnung' | 'zuordnung' | 'unklar';
+  lieferant: string;
+  konto: string;
+  betrag: number;
+  /** Kopierbarer Ein-Zeilen-Text für die Buchhaltung. */
+  text: string;
+}
+
+/** CHF-Betrag im de-CH-Format (1'852.39) für kopierbare Texte. */
+export function fmtChfText(x: number): string {
+  // de-CH liefert U+2019 (’) als Tausendertrenner — für kopierbare Texte den
+  // geraden Apostroph verwenden (Buchhaltungs-Software-tauglich).
+  return x.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).replace(/\u2019/g, "'");
+}
+
+/**
+ * Alle offenen Korrektur-Vorschläge des Monats über ALLE direkten Konten
+ * (4020–4070): pro abweichendem Lieferant×Konto ein konkreter, kopierbarer
+ * Vorschlag, klassifiziert als KONTIERUNG (Umbuchung in FIBU) |
+ * FEHLENDE RECHNUNG (in App nachtragen) | ZUORDNUNG (Konto-Split, Total
+ * stimmt — nur Hinweis) | UNKLAR (App > FIBU, prüfen). Zuordnungs-Fälle
+ * werden pro Lieferant nur EINMAL gelistet. Ohne Journal: leere Liste.
+ */
+export function buildKorrekturVorschlaege(input: {
+  entries: InvoiceEntry[];
+  journal: SageJournalEntry[] | null;
+  supplierNames: string[];
+  aliases: SupplierAliasMap;
+  aliasGruppen?: AliasGruppe[];
+  kontoNamen?: Record<string, string>;
+}): KorrekturVorschlag[] {
+  const lbl = (k: string) => {
+    const name = input.kontoNamen?.[k];
+    return name && name !== k ? `${k} ${name.replace(/^\d{4}\s*/, '')}` : k;
+  };
+  const out: KorrekturVorschlag[] = [];
+  const zuordnungGesehen = new Set<string>();
+  for (const konto of DIREKTE_WARENKONTEN) {
+    const d = buildKontoDrilldown({ ...input, konto });
+    if (!d.hatJournal) return [];
+    for (const z of d.zeilen) {
+      if (z.typ === 'kontierung' && z.kontierungsHinweis) {
+        const h = z.kontierungsHinweis;
+        out.push({
+          typ: 'kontierung', lieferant: z.lieferant, konto, betrag: h.betrag,
+          text: `Umbuchung ${z.lieferant}: CHF ${fmtChfText(h.betrag)} von ${lbl(h.vonKonto)} -> ${lbl(h.nachKonto)}`,
+        });
+      } else if (z.typ === 'fehlende_rechnung' && z.diff !== null) {
+        out.push({
+          typ: 'fehlende_rechnung', lieferant: z.lieferant, konto, betrag: z.diff,
+          text: `Fehlende Rechnung ${z.lieferant}: CHF ${fmtChfText(z.diff)} auf ${lbl(konto)} — Beleg in der App nachtragen`,
+        });
+      } else if (z.typ === 'zuordnung') {
+        if (zuordnungGesehen.has(z.lieferant)) continue;
+        zuordnungGesehen.add(z.lieferant);
+        out.push({
+          typ: 'zuordnung', lieferant: z.lieferant, konto, betrag: 0,
+          text: `Zuordnung ${z.lieferant}: Kontenverteilung weicht ab, Total im direkten Warenaufwand stimmt — keine Korrektur nötig`,
+        });
+      } else if (z.typ === 'unklar' && z.diff !== null) {
+        out.push({
+          typ: 'unklar', lieferant: z.lieferant, konto, betrag: z.diff,
+          text: `Prüfen ${z.lieferant}: CHF ${fmtChfText(Math.abs(z.diff))} auf ${lbl(konto)} in der App erfasst, in der FIBU (noch) nicht gebucht — periodenfremd?`,
+        });
+      }
+    }
+  }
+  // Sortierung: Kontierung zuerst, dann fehlende Rechnungen, dann Rest; je Betrag absteigend.
+  const rang: Record<KorrekturVorschlag['typ'], number> = { kontierung: 0, fehlende_rechnung: 1, unklar: 2, zuordnung: 3 };
+  return out.sort((a, b) => rang[a.typ] - rang[b.typ] || Math.abs(b.betrag) - Math.abs(a.betrag));
 }

@@ -59,7 +59,7 @@ import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
-import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
+import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft,
@@ -1235,12 +1235,14 @@ export default function WarenrechnungenPage() {
 
   // ── Konto-Drilldown: Woraus besteht die Differenz? (nur Einmonats-Sicht) ──
   const [kontoDrill, setKontoDrill] = useState<string | null>(null);
+  const [vorschlaegeOpen, setVorschlaegeOpen] = useState(false);
   const [analyseJournal, setAnalyseJournal] = useState<SageJournalEntry[] | null>(null);
   const [analyseJournalGeladen, setAnalyseJournalGeladen] = useState(false);
-  useEffect(() => { setKontoDrill(null); }, [analyseMonthKey, tenantId]);
+  useEffect(() => { setKontoDrill(null); setVorschlaegeOpen(false); }, [analyseMonthKey, tenantId]);
   useEffect(() => {
-    // LAZY: Journal erst laden, wenn eine Konto-Zeile aufgeklappt wird.
-    if (tab !== 'analyse' || !analyseMonthKey || !kontoDrill) { setAnalyseJournal(null); setAnalyseJournalGeladen(false); return; }
+    // LAZY: Journal erst laden, wenn eine Konto-Zeile oder die
+    // Korrektur-Vorschläge aufgeklappt werden.
+    if (tab !== 'analyse' || !analyseMonthKey || (!kontoDrill && !vorschlaegeOpen)) { setAnalyseJournal(null); setAnalyseJournalGeladen(false); return; }
     if (!journalVerfuegbarFuerTenant(tenantId)) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); return; }
     let alive = true;
     setAnalyseJournal(null); setAnalyseJournalGeladen(false);
@@ -1248,7 +1250,7 @@ export default function WarenrechnungenPage() {
       .then(j => { if (alive) { setAnalyseJournal(j); setAnalyseJournalGeladen(true); } })
       .catch(() => { if (alive) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); } });
     return () => { alive = false; };
-  }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill]);
+  }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill, vorschlaegeOpen]);
   const kontoDrilldown = useMemo(() => {
     if (!kontoDrill || !analyseMonthKey) return null;
     return buildKontoDrilldown({
@@ -1260,6 +1262,20 @@ export default function WarenrechnungenPage() {
       aliasGruppen,
     });
   }, [kontoDrill, analyseMonthKey, analyseKPIs.periodEntries, analyseJournal, suppliers, aliases, aliasGruppen]);
+  // Korrektur-Vorschläge des Monats (alle Konten 4020–4070) — für die Buchhaltung.
+  const korrekturVorschlaege = useMemo(() => {
+    if (!vorschlaegeOpen || !analyseMonthKey || !analyseJournalGeladen || !analyseJournal) return null;
+    const namen: Record<string, string> = {};
+    for (const k of warenkonten) namen[k.value] = k.label;
+    return buildKorrekturVorschlaege({
+      entries: analyseKPIs.periodEntries,
+      journal: analyseJournal,
+      supplierNames: suppliers.map(s => s.name),
+      aliases,
+      aliasGruppen,
+      kontoNamen: namen,
+    });
+  }, [vorschlaegeOpen, analyseMonthKey, analyseJournalGeladen, analyseJournal, analyseKPIs.periodEntries, suppliers, aliases, aliasGruppen, warenkonten]);
 
   // Lieferanten-Auswertung: GESAMT-Total über ALLE Konten (Waren + Betrieb) —
   // für den vollständigen Vergleich mit Buchhaltung/Kontoblatt — plus die
@@ -3228,10 +3244,35 @@ export default function WarenrechnungenPage() {
                                               </tr>
                                             </thead>
                                             <tbody className="tabular-nums">
-                                              {kontoDrilldown.zeilen.map(dz => (
+                                              {/* Exakt übereinstimmende Lieferanten zusammengefasst */}
+                                              {(() => {
+                                                const ok = kontoDrilldown.zeilen.filter(x => x.typ === 'ok');
+                                                if (ok.length === 0) return null;
+                                                const okSum = ok.reduce((s, x) => s + x.app, 0);
+                                                return (
+                                                  <tr className="border-t border-border/40 text-muted-foreground" data-testid="konto-drilldown-ok-summary">
+                                                    <td className="py-1 pr-2" title={ok.map(x => `${x.lieferant} (${fmtChf(x.app)})`).join(', ')}>
+                                                      ✓ {ok.length} Lieferant{ok.length === 1 ? '' : 'en'} exakt übereinstimmend
+                                                    </td>
+                                                    <td className="text-right px-2">CHF {fmtChf(okSum)}</td>
+                                                    <td className="text-right px-2">CHF {fmtChf(okSum)}</td>
+                                                    <td className="text-right px-2">0.00</td>
+                                                    <td className="pl-2" />
+                                                  </tr>
+                                                );
+                                              })()}
+                                              {kontoDrilldown.zeilen.filter(dz => dz.typ !== 'ok').map(dz => (
                                                 <Fragment key={dz.lieferant}>
                                                   <tr className="border-t border-border/40">
-                                                    <td className="py-1 pr-2">{dz.lieferant}</td>
+                                                    <td className="py-1 pr-2">
+                                                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                                        {dz.lieferant}
+                                                        {dz.typ === 'kontierung' && <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-600/40">KONTIERUNG</Badge>}
+                                                        {dz.typ === 'fehlende_rechnung' && <Badge variant="outline" className="text-[9px] text-red-600 border-red-600/40">FEHLENDE RECHNUNG</Badge>}
+                                                        {dz.typ === 'zuordnung' && <Badge variant="outline" className="text-[9px] text-muted-foreground">ZUORDNUNG — egal</Badge>}
+                                                        {dz.typ === 'unklar' && <Badge variant="outline" className="text-[9px] text-muted-foreground">PRÜFEN</Badge>}
+                                                      </span>
+                                                    </td>
                                                     <td className="text-right px-2">CHF {fmtChf(dz.app)}</td>
                                                     <td className="text-right px-2">{dz.fibu !== null ? `CHF ${fmtChf(dz.fibu)}` : '–'}</td>
                                                     <td className={cn('text-right px-2',
@@ -3256,6 +3297,24 @@ export default function WarenrechnungenPage() {
                                                       >Lieferant</button>
                                                     </td>
                                                   </tr>
+                                                  {dz.kontierungsHinweis && (
+                                                    <tr>
+                                                      <td colSpan={5} className="pb-1.5 pl-4">
+                                                        <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                                                          Möglicher Kontierungs-Fehler: ~CHF {fmtChf(dz.kontierungsHinweis.betrag)} Non-Food vermutlich
+                                                          falsch auf {dz.kontierungsHinweis.vonKonto} statt {dz.kontierungsHinweis.nachKonto} gebucht
+                                                          {' '}(App auf {dz.kontierungsHinweis.nachKonto}: CHF {fmtChf(dz.kontierungsHinweis.appNonfood)}, FIBU Non-Food: CHF {fmtChf(dz.kontierungsHinweis.fibuNonfood)}).
+                                                          {' '}<button
+                                                            className="underline hover:text-foreground"
+                                                            onClick={() => {
+                                                              const t = `Umbuchung ${dz.lieferant}: CHF ${fmtChfText(dz.kontierungsHinweis!.betrag)} von ${dz.kontierungsHinweis!.vonKonto} -> ${dz.kontierungsHinweis!.nachKonto}`;
+                                                              navigator.clipboard.writeText(t).then(() => toast.success('Umbuchungs-Vorschlag kopiert.'), () => toast.error('Kopieren fehlgeschlagen.'));
+                                                            }}
+                                                          >Umbuchungs-Vorschlag kopieren</button>
+                                                        </span>
+                                                      </td>
+                                                    </tr>
+                                                  )}
                                                   {dz.splitHinweis && (
                                                     <tr>
                                                       <td colSpan={5} className="pb-1.5 pl-4">
@@ -3312,6 +3371,70 @@ export default function WarenrechnungenPage() {
                           <p className="text-[11px] text-muted-foreground/70 mt-1">
                             Abschliessen (erklären) ist nur in der Einmonats-Sicht möglich.
                           </p>
+                        )}
+                        {/* ── Korrektur-Vorschläge des Monats (für den Treuhänder) ── */}
+                        {analyseMonthKey && (
+                          <div className="mt-3 space-y-2">
+                            <button
+                              onClick={() => setVorschlaegeOpen(o => !o)}
+                              className="text-xs text-muted-foreground hover:text-foreground underline"
+                              data-testid="korrektur-vorschlaege-toggle"
+                            >
+                              {vorschlaegeOpen ? 'Korrektur-Vorschläge ausblenden' : 'Korrektur-Vorschläge für die Buchhaltung anzeigen'}
+                            </button>
+                            {vorschlaegeOpen && (
+                              <div className="space-y-1.5" data-testid="korrektur-vorschlaege-panel">
+                                {!analyseJournalGeladen ? (
+                                  <p className="text-xs text-muted-foreground">Lade FIBU-Buchungen…</p>
+                                ) : korrekturVorschlaege === null ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    Keine FIBU-Buchungszeilen für diesen Monat — Vorschläge brauchen das importierte Kontoblatt/Journal.
+                                  </p>
+                                ) : korrekturVorschlaege.length === 0 ? (
+                                  <p className="text-xs text-emerald-600 dark:text-emerald-400">Keine offenen Differenzen — nichts zu korrigieren.</p>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-foreground">
+                                        {korrekturVorschlaege.length} offene{korrekturVorschlaege.length === 1 ? 'r' : ''} Punkt{korrekturVorschlaege.length === 1 ? '' : 'e'} ({aMonth}/{aYear})
+                                      </span>
+                                      <button
+                                        className="text-[11px] text-muted-foreground hover:text-foreground underline"
+                                        data-testid="korrektur-vorschlaege-copy-all"
+                                        onClick={() => {
+                                          const txt = korrekturVorschlaege.map(v => `• ${v.text}`).join('\n');
+                                          navigator.clipboard.writeText(`Korrekturen Warenaufwand ${String(aMonth).padStart(2, '0')}/${aYear}:\n${txt}`)
+                                            .then(() => toast.success('Alle Vorschläge kopiert.'), () => toast.error('Kopieren fehlgeschlagen.'));
+                                        }}
+                                      >Alle kopieren</button>
+                                    </div>
+                                    <ul className="space-y-1">
+                                      {korrekturVorschlaege.map((v, i) => (
+                                        <li key={`${v.typ}-${v.lieferant}-${v.konto}-${i}`} className="flex items-start gap-2 text-[11px]">
+                                          <Badge variant="outline" className={cn('text-[9px] flex-shrink-0 mt-px',
+                                            v.typ === 'kontierung' && 'text-amber-600 border-amber-600/40',
+                                            v.typ === 'fehlende_rechnung' && 'text-red-600 border-red-600/40',
+                                            (v.typ === 'zuordnung' || v.typ === 'unklar') && 'text-muted-foreground')}>
+                                            {v.typ === 'kontierung' ? 'KONTIERUNG' : v.typ === 'fehlende_rechnung' ? 'FEHLENDE RECHNUNG' : v.typ === 'zuordnung' ? 'ZUORDNUNG — egal' : 'PRÜFEN'}
+                                          </Badge>
+                                          <span className="text-muted-foreground">{v.text}</span>
+                                          <button
+                                            className="text-muted-foreground/70 hover:text-foreground underline flex-shrink-0"
+                                            onClick={() => navigator.clipboard.writeText(v.text).then(() => toast.success('Kopiert.'), () => toast.error('Kopieren fehlgeschlagen.'))}
+                                          >kopieren</button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                    <p className="text-[11px] text-muted-foreground/70">
+                                      Nach der Korrektur in der Buchhaltung: korrigiertes Kontoblatt erneut hochladen — die
+                                      Gegenüberstellung aktualisiert sich, erledigte Differenzen verschwinden. Bewusst
+                                      stehengelassene Fälle (Leergut, periodenfremd …) über das Erklär-Dropdown abschliessen.
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
