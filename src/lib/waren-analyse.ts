@@ -10,6 +10,10 @@ import type { InvoiceEntry, Warenkonto } from './waren-db';
 import { zaehleUnkontierte } from './warenkosten-quote';
 import { PSEUDO_KONTO_PFAND } from './waren-klassen';
 import { normalizeWarenKonto } from './warenaufwand-gruppierung';
+import type { SageJournalEntry } from '@/types/reporting';
+import { barausgabenLieferant, barausgabenAliasGruppen, buchungsBetrag } from './waren-abgleich';
+import { findSupplierInText, type SupplierAliasMap } from './waren-pdf-erkennung';
+import { buildAliasResolver, type AliasGruppe } from './waren-alias-gruppen';
 
 export type AnalyseDim = 'supplier' | 'konto' | 'week' | 'month';
 
@@ -427,5 +431,164 @@ export function analyseKpis(entries: InvoiceEntry[]): AnalyseKpis {
     foodSharePct: d.direktNet > 0 ? Math.round((d.foodNet / d.direktNet) * 1000) / 10 : null,
     beverageSharePct: d.direktNet > 0 ? Math.round((d.beverageNet / d.direktNet) * 1000) / 10 : null,
     top3,
+  };
+}
+
+// ─── Konto-Drilldown: Woraus besteht die Differenz? ──────────────────────────
+
+export interface KontoDrilldownZeile {
+  lieferant: string;
+  /** App-Netto auf DIESEM Konto (kontoShares, alias-kanonisiert). */
+  app: number;
+  /** FIBU (Soll−Haben) auf diesem Konto; null ohne Journal-Daten. */
+  fibu: number | null;
+  /** fibu − app (nur mit Journal). */
+  diff: number | null;
+  /**
+   * Konto-Split-Hinweis: gesetzt, wenn die Differenz auf diesem Konto
+   * (grösstenteils) eine ZUORDNUNGS-Differenz ist — der Lieferant wird in App
+   * und FIBU auf UNTERSCHIEDLICHE direkte Konten verteilt, das Total über
+   * alle 4020–4070 stimmt aber (annähernd) überein. Enthält beide
+   * Verteilungen für die Anzeige «+X hier, gegengleich −Y auf …».
+   */
+  splitHinweis: {
+    appJeKonto: Record<string, number>;
+    fibuJeKonto: Record<string, number>;
+    /** Gesamt-Differenz des Lieferanten über ALLE direkten Konten. */
+    totalDiff: number;
+    /**
+     * true = Total gleicht sich (bis Rundung) aus → REINE Zuordnung, kein
+     * Fehlbetrag. false = nur teilweiser Ausgleich — es bleibt ein echter
+     * Restbetrag (totalDiff), der separat auszuweisen ist.
+     */
+    reineZuordnung: boolean;
+  } | null;
+}
+
+export interface KontoDrilldown {
+  konto: string;
+  zeilen: KontoDrilldownZeile[];
+  appTotal: number;
+  fibuTotal: number | null;
+  diffTotal: number | null;
+  /** FIBU-Buchungen auf diesem Konto ohne Lieferanten-Zuordnung (Summe). */
+  nichtZugeordnet: number | null;
+  hatJournal: boolean;
+}
+
+/**
+ * Drilldown einer Konto-Differenz (Gegenüberstellung Erfasst vs. ER):
+ * je Lieferant App-Betrag vs. FIBU-Betrag auf DIESEM Konto, inkl.
+ * Konto-Split-Erkennung (z.B. Feldschlösschen: FIBU alles auf 4030,
+ * App gesplittet auf 4030/4040/4050 → Zuordnung, kein Fehlbetrag).
+ * Ohne Journal (nur ER-Totale) degradiert: nur App-Seite je Lieferant.
+ */
+export function buildKontoDrilldown(input: {
+  entries: InvoiceEntry[];
+  journal: SageJournalEntry[] | null;
+  konto: string;
+  supplierNames: string[];
+  aliases: SupplierAliasMap;
+  aliasGruppen?: AliasGruppe[];
+}): KontoDrilldown {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const kontoNorm = String(normalizeWarenKonto(input.konto) ?? input.konto);
+
+  // ── Journal auf direkte Konten filtern (alle 6 — für Split-Verteilungen) ──
+  const direktJournal = (input.journal ?? []).filter(e => {
+    const n = normalizeWarenKonto(String(e.accountNumber ?? ''));
+    return n !== null && DIREKT_SET.has(n);
+  });
+  const hatJournal = direktJournal.length > 0;
+
+  const effektiveGruppen = [
+    ...barausgabenAliasGruppen(direktJournal),
+    ...(input.aliasGruppen ?? []),
+  ];
+  const resolve = buildAliasResolver(effektiveGruppen);
+
+  // ── App-Seite: Lieferant → Konto → Netto (nur direkte Konten) ──
+  const appMap = new Map<string, Record<string, number>>();
+  for (const e of input.entries) {
+    const canon = resolve(e.supplierName);
+    for (const s of kontoShares(e)) {
+      const roh = (s.konto ?? '').trim();
+      if (roh === PSEUDO_KONTO_PFAND) continue;
+      const n = normalizeWarenKonto(roh);
+      if (n === null || !DIREKT_SET.has(n)) continue;
+      const rec = appMap.get(canon) ?? {};
+      const k = String(n);
+      rec[k] = (rec[k] ?? 0) + s.net;
+      appMap.set(canon, rec);
+    }
+  }
+
+  // ── FIBU-Seite: Lieferant → Konto → Betrag (Soll−Haben) ──
+  const fibuMap = new Map<string, Record<string, number>>();
+  let nichtZugeordnet = 0;
+  if (hatJournal) {
+    const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
+    const erfassteNamen = input.entries.map(e => e.supplierName);
+    const matchNamen = [...new Set([...input.supplierNames, ...gruppenAliasNamen, ...erfassteNamen])];
+    for (const e of direktJournal) {
+      const k = String(normalizeWarenKonto(String(e.accountNumber ?? '')));
+      const hit = barausgabenLieferant(e.text) ?? findSupplierInText(e.text ?? '', matchNamen, input.aliases, resolve);
+      if (hit) {
+        const canon = resolve(hit);
+        const rec = fibuMap.get(canon) ?? {};
+        rec[k] = (rec[k] ?? 0) + buchungsBetrag(e);
+        fibuMap.set(canon, rec);
+      } else if (k === kontoNorm) {
+        nichtZugeordnet += buchungsBetrag(e);
+      }
+    }
+  }
+
+  // ── Zeilen: Union der Lieferanten mit Betrag auf DIESEM Konto ──
+  const namen = new Set<string>();
+  for (const [name, rec] of appMap) if (Math.abs(rec[kontoNorm] ?? 0) > 0.005) namen.add(name);
+  for (const [name, rec] of fibuMap) if (Math.abs(rec[kontoNorm] ?? 0) > 0.005) namen.add(name);
+
+  const zeilen: KontoDrilldownZeile[] = [...namen].map(name => {
+    const appJeKonto = appMap.get(name) ?? {};
+    const fibuJeKonto = fibuMap.get(name) ?? {};
+    const app = r2(appJeKonto[kontoNorm] ?? 0);
+    const fibu = hatJournal ? r2(fibuJeKonto[kontoNorm] ?? 0) : null;
+    const diff = fibu === null ? null : r2(fibu - app);
+
+    // Split-Erkennung: Konto-Differenz vorhanden, aber Lieferanten-Total
+    // über alle direkten Konten (annähernd) ausgeglichen → reine Zuordnung.
+    let splitHinweis: KontoDrilldownZeile['splitHinweis'] = null;
+    if (hatJournal && diff !== null && Math.abs(diff) > 0.05) {
+      const appTotal = Object.values(appJeKonto).reduce((a, b) => a + b, 0);
+      const fibuTotal = Object.values(fibuJeKonto).reduce((a, b) => a + b, 0);
+      const totalDiff = r2(fibuTotal - appTotal);
+      if (Math.abs(totalDiff) < Math.abs(diff) - 0.05) {
+        const clean = (rec: Record<string, number>) => {
+          const out: Record<string, number> = {};
+          for (const [k, v] of Object.entries(rec)) if (Math.abs(v) > 0.005) out[k] = r2(v);
+          return out;
+        };
+        splitHinweis = {
+          appJeKonto: clean(appJeKonto), fibuJeKonto: clean(fibuJeKonto), totalDiff,
+          reineZuordnung: Math.abs(totalDiff) <= 0.05,
+        };
+      }
+    }
+    return { lieferant: name, app, fibu, diff, splitHinweis };
+  }).sort((a, b) => Math.abs(b.diff ?? b.app) - Math.abs(a.diff ?? a.app));
+
+  const appTotal = r2(zeilen.reduce((s, z) => s + z.app, 0));
+  const fibuTotal = hatJournal
+    ? r2(zeilen.reduce((s, z) => s + (z.fibu ?? 0), 0) + nichtZugeordnet)
+    : null;
+  return {
+    konto: kontoNorm,
+    zeilen,
+    appTotal,
+    fibuTotal,
+    diffTotal: fibuTotal === null ? null : r2(fibuTotal - appTotal),
+    nichtZugeordnet: hatJournal ? r2(nichtZugeordnet) : null,
+    hatJournal,
   };
 }

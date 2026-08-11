@@ -2,10 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   isoWeekKeyOf, weekLabelOf, groupTotals, flagAnomalies, topInvoices,
-  wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil,
+  wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil, buildKontoDrilldown,
 } from '@/lib/waren-analyse';
 import { buildWarenkostenExport, warenkostenExportFileName } from '@/lib/warenkosten-export';
 import type { InvoiceEntry } from '@/lib/waren-db';
+import type { SageJournalEntry } from '@/types/reporting';
 
 let seq = 0;
 function inv(partial: Partial<InvoiceEntry> & { date: string; amountNet: number }): InvoiceEntry {
@@ -219,5 +220,74 @@ describe('direkterWarenaufwand & buildDirektKontoVergleich', () => {
     expect(v.zeilen.every(z => z.er === null && z.diff === null)).toBe(true);
     expect(v.totalEr).toBeNull();
     expect(v.totalDiff).toBeNull();
+  });
+});
+
+describe('buildKontoDrilldown', () => {
+  const jl = (accountNumber: string, text: string, soll: number): SageJournalEntry => ({
+    date: '01.07.2026', text, accountNumber, accountName: '', soll, haben: 0, betrag: soll,
+  } as unknown as SageJournalEntry);
+  const entries = [
+    // Feldschlösschen: App splittet 4030/4050
+    inv({ date: '2026-07-01', amountNet: 900, supplierName: 'Feldschlösschen', kontoSplits: [
+      { warenkonto: '4030', amountNet: 600, amountGross: 620 },
+      { warenkonto: '4050', amountNet: 300, amountGross: 310 },
+    ] }),
+    inv({ date: '2026-07-02', amountNet: 200, supplierName: 'Brauerei X', warenkonto: '4030' }),
+  ];
+  const journal = [
+    jl('4030', 'Feldschlösschen Getränke AG', 900), // FIBU alles auf 4030
+    jl('4030', 'Brauerei X', 200),
+    jl('4030', 'Unbekannter Text ohne Lieferant', 50),
+  ];
+  const input = {
+    entries, journal, konto: '4030',
+    supplierNames: ['Feldschlösschen', 'Brauerei X'],
+    aliases: {},
+  };
+  it('je Lieferant App vs. FIBU auf dem Konto, Split-Hinweis bei Zuordnungs-Differenz', () => {
+    const d = buildKontoDrilldown(input);
+    expect(d.hatJournal).toBe(true);
+    const fs = d.zeilen.find(z => z.lieferant === 'Feldschlösschen')!;
+    expect(fs.app).toBeCloseTo(600, 2);
+    expect(fs.fibu).toBeCloseTo(900, 2);
+    expect(fs.diff).toBeCloseTo(300, 2);
+    // Total über alle direkten Konten gleich (900=900) → reiner Konto-Split
+    expect(fs.splitHinweis).not.toBeNull();
+    expect(fs.splitHinweis!.totalDiff).toBeCloseTo(0, 2);
+    expect(fs.splitHinweis!.reineZuordnung).toBe(true);
+    expect(fs.splitHinweis!.appJeKonto).toEqual({ '4030': 600, '4050': 300 });
+    expect(fs.splitHinweis!.fibuJeKonto).toEqual({ '4030': 900 });
+    const bx = d.zeilen.find(z => z.lieferant === 'Brauerei X')!;
+    expect(bx.diff).toBeCloseTo(0, 2);
+    expect(bx.splitHinweis).toBeNull();
+    expect(d.nichtZugeordnet).toBeCloseTo(50, 2);
+    expect(d.fibuTotal).toBeCloseTo(1150, 2);
+    expect(d.diffTotal).toBeCloseTo(350, 2);
+  });
+  it('teilweiser Ausgleich → Split-Hinweis mit reineZuordnung=false und Restbetrag', () => {
+    // FIBU 4030=1000, App 4030=600 + 4050=300 → Konto-Diff +400, Rest +100 echt
+    const d = buildKontoDrilldown({ ...input, journal: [jl('4030', 'Feldschlösschen Getränke AG', 1000)], entries: [entries[0]] });
+    const fs = d.zeilen.find(z => z.lieferant === 'Feldschlösschen')!;
+    expect(fs.diff).toBeCloseTo(400, 2);
+    expect(fs.splitHinweis).not.toBeNull();
+    expect(fs.splitHinweis!.reineZuordnung).toBe(false);
+    expect(fs.splitHinweis!.totalDiff).toBeCloseTo(100, 2);
+  });
+  it('echter Fehlbetrag (Total weicht ab) → KEIN Split-Hinweis', () => {
+    const d = buildKontoDrilldown({ ...input, journal: [jl('4030', 'Brauerei X', 500)], entries: [entries[1]] });
+    const bx = d.zeilen.find(z => z.lieferant === 'Brauerei X')!;
+    expect(bx.diff).toBeCloseTo(300, 2);
+    expect(bx.splitHinweis).toBeNull();
+  });
+  it('ohne Journal degradiert: fibu/diff null, nur App-Seite', () => {
+    const d = buildKontoDrilldown({ ...input, journal: null });
+    expect(d.hatJournal).toBe(false);
+    expect(d.fibuTotal).toBeNull();
+    expect(d.nichtZugeordnet).toBeNull();
+    const fs = d.zeilen.find(z => z.lieferant === 'Feldschlösschen')!;
+    expect(fs.fibu).toBeNull();
+    expect(fs.diff).toBeNull();
+    expect(fs.splitHinweis).toBeNull();
   });
 });

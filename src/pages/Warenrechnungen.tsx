@@ -59,7 +59,7 @@ import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
-import { direkterWarenaufwand, buildDirektKontoVergleich, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
+import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft,
@@ -1233,6 +1233,34 @@ export default function WarenrechnungenPage() {
     return run;
   }, [tenantId, analyseMonthKey, fibuMonthKey]);
 
+  // ── Konto-Drilldown: Woraus besteht die Differenz? (nur Einmonats-Sicht) ──
+  const [kontoDrill, setKontoDrill] = useState<string | null>(null);
+  const [analyseJournal, setAnalyseJournal] = useState<SageJournalEntry[] | null>(null);
+  const [analyseJournalGeladen, setAnalyseJournalGeladen] = useState(false);
+  useEffect(() => { setKontoDrill(null); }, [analyseMonthKey, tenantId]);
+  useEffect(() => {
+    // LAZY: Journal erst laden, wenn eine Konto-Zeile aufgeklappt wird.
+    if (tab !== 'analyse' || !analyseMonthKey || !kontoDrill) { setAnalyseJournal(null); setAnalyseJournalGeladen(false); return; }
+    if (!journalVerfuegbarFuerTenant(tenantId)) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); return; }
+    let alive = true;
+    setAnalyseJournal(null); setAnalyseJournalGeladen(false);
+    loadJournalEntriesFromDB(aYear, aMonth, tenantId)
+      .then(j => { if (alive) { setAnalyseJournal(j); setAnalyseJournalGeladen(true); } })
+      .catch(() => { if (alive) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); } });
+    return () => { alive = false; };
+  }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill]);
+  const kontoDrilldown = useMemo(() => {
+    if (!kontoDrill || !analyseMonthKey) return null;
+    return buildKontoDrilldown({
+      entries: analyseKPIs.periodEntries,
+      journal: analyseJournal,
+      konto: kontoDrill,
+      supplierNames: suppliers.map(s => s.name),
+      aliases,
+      aliasGruppen,
+    });
+  }, [kontoDrill, analyseMonthKey, analyseKPIs.periodEntries, analyseJournal, suppliers, aliases, aliasGruppen]);
+
   // Lieferanten-Auswertung: GESAMT-Total über ALLE Konten (Waren + Betrieb) —
   // für den vollständigen Vergleich mit Buchhaltung/Kontoblatt — plus die
   // Aufschlüsselung «davon Warenkosten / davon Betriebskosten».
@@ -1408,6 +1436,7 @@ export default function WarenrechnungenPage() {
     if (analyseMode === 'ytd')         return `ytd_${aRangeYear}`;
     return `year_${aRangeYear}`;
   })();
+  const [forecastOpen, setForecastOpen] = useState(false);
   const forecastRev      = forecastRevs[forecastKey] ?? 0;         // nur der Zusatzumsatz
   const forecastTotal    = analyseKPIs.totalRev + forecastRev;     // aktuell + zusatz
   const forecastPct      = forecastRev > 0 && analyseKPIs.relevantCost > 0 && forecastTotal > 0
@@ -2677,31 +2706,27 @@ export default function WarenrechnungenPage() {
 
             {/* ── Tab: Analyse ──────────────────────────────────────────── */}
             {tab === 'analyse' && (
-              <div className="space-y-5">
+              <div className="space-y-3">
 
                 {/* ── Zeitraum-Auswahl ─────────────────────────────────────── */}
                 <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  <div className="flex flex-wrap gap-1 p-2 border-b border-border bg-muted/20">
-                    {([
-                      ['week',        'Woche'],
-                      ['month',       'Monat'],
-                      ['multi_month', 'Mehrere Monate'],
-                      ['year',        'Jahr'],
-                      ['ytd',         'YTD'],
-                    ] as [AnalyseMode, string][]).map(([m, label]) => (
-                      <button
-                        key={m}
-                        onClick={() => setAnalyseMode(m)}
-                        className={cn(
-                          'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-                          analyseMode === m
-                            ? 'bg-foreground text-background shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2 p-2 bg-muted/20">
+                    <select
+                      value={analyseMode}
+                      onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
+                      data-testid="analyse-mode-select"
+                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      {([
+                        ['week',        'Woche'],
+                        ['month',       'Monat'],
+                        ['multi_month', 'Mehrere Monate'],
+                        ['year',        'Jahr'],
+                        ['ytd',         'YTD'],
+                      ] as [AnalyseMode, string][]).map(([m, label]) => (
+                        <option key={m} value={m}>{label}</option>
+                      ))}
+                    </select>
                     <div className="ml-auto flex items-center gap-3">
                       {canExport && (
                         <button
@@ -2727,7 +2752,7 @@ export default function WarenrechnungenPage() {
                   </div>
 
                   {/* Range Picker */}
-                  <div className="px-4 py-3 flex items-center gap-3 flex-wrap">
+                  <div className="px-3 py-2 border-t border-border flex items-center gap-2 flex-wrap">
                     {analyseMode === 'week' && (
                       <>
                         <button onClick={prevAWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors"><ChevronLeft className="h-4 w-4" /></button>
@@ -2781,18 +2806,36 @@ export default function WarenrechnungenPage() {
                   </div>
                 </div>
 
-                {/* ── Forecast Zusatzumsatz ────────────────────────────────── */}
+                {/* ── Forecast Zusatzumsatz (einklappbar) ──────────────────── */}
+                {!(forecastOpen || forecastRev > 0) ? (
+                  <button
+                    onClick={() => setForecastOpen(true)}
+                    data-testid="forecast-toggle"
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Forecast eingeben
+                  </button>
+                ) : (
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   {/* Header */}
                   <div className="flex items-center gap-2">
                     <TrendingUp className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                     <span className="text-sm font-semibold text-foreground">Erwarteter Zusatzumsatz bis Ende {analyseMode === 'week' ? 'Woche' : analyseMode === 'month' ? 'Monat' : analyseMode === 'year' ? 'Jahr' : 'Zeitraum'}</span>
-                    {forecastRev > 0 && (
+                    <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+                      {forecastRev > 0 && (
+                        <button
+                          onClick={() => updateForecastRev(forecastKey, 0)}
+                          className="text-xs text-muted-foreground hover:text-foreground underline"
+                        >zurücksetzen</button>
+                      )}
                       <button
-                        onClick={() => updateForecastRev(forecastKey, 0)}
-                        className="ml-auto text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0"
-                      >zurücksetzen</button>
-                    )}
+                        onClick={() => setForecastOpen(false)}
+                        disabled={forecastRev > 0}
+                        title={forecastRev > 0 ? 'Zuerst zurücksetzen' : 'Einklappen'}
+                        className="text-xs text-muted-foreground hover:text-foreground underline disabled:opacity-30 disabled:cursor-not-allowed"
+                      >einklappen</button>
+                    </div>
                   </div>
 
                   {/* Eingabe-Zeile */}
@@ -2891,6 +2934,7 @@ export default function WarenrechnungenPage() {
                     </p>
                   )}
                 </div>
+                )}
 
                 {/* ── Anomalie-Analyse (Lieferant/Konto/Woche/Monat) ───────── */}
                 {!rangeLoading && (
@@ -3090,17 +3134,29 @@ export default function WarenrechnungenPage() {
                               const erklaertInfo = kontoErklaertGeladen ? kontoErklaert[key] : undefined;
                               const abweichung = z.diff !== null && Math.abs(z.diff) > 0.05;
                               return (
-                                <tr key={z.konto} className={cn('border-t border-border/60',
-                                  erklaertInfo ? 'bg-emerald-500/5' : abweichung && 'bg-red-500/5')}
+                                <Fragment key={z.konto}>
+                                <tr className={cn('border-t border-border/60',
+                                  erklaertInfo ? 'bg-emerald-500/5' : abweichung && 'bg-red-500/5',
+                                  analyseMonthKey && 'cursor-pointer hover:bg-muted/40')}
+                                  onClick={() => { if (analyseMonthKey) setKontoDrill(d => d === z.konto ? null : z.konto); }}
                                   data-testid={`konto-vergleich-row-${z.konto}`}>
-                                  <td className="py-1.5 pr-2">{z.label}</td>
+                                  <td className="py-1.5 pr-2">
+                                    <span className="inline-flex items-center gap-1">
+                                      {analyseMonthKey && (
+                                        kontoDrill === z.konto
+                                          ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                          : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                      )}
+                                      {z.label}
+                                    </span>
+                                  </td>
                                   <td className="text-right px-2">CHF {fmtChf(z.erfasst)}</td>
                                   <td className="text-right px-2">{z.er !== null ? `CHF ${fmtChf(z.er)}` : '–'}</td>
                                   <td className={cn('text-right px-2',
                                     abweichung && !erklaertInfo && 'text-red-600 dark:text-red-400 font-medium')}>
                                     {z.diff !== null ? fmtChf(z.diff) : '–'}
                                   </td>
-                                  <td className="py-1.5 pl-2">
+                                  <td className="py-1.5 pl-2" onClick={e => e.stopPropagation()}>
                                     <span className="inline-flex items-center gap-1.5 flex-wrap">
                                       {erklaertInfo ? (
                                         <>
@@ -3144,6 +3200,100 @@ export default function WarenrechnungenPage() {
                                     </span>
                                   </td>
                                 </tr>
+                                {kontoDrill === z.konto && analyseMonthKey && (
+                                  <tr className="border-t border-border/40 bg-muted/10">
+                                    <td colSpan={5} className="p-3" data-testid={`konto-drilldown-${z.konto}`}>
+                                      <div className="space-y-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-xs font-semibold text-foreground">Woraus besteht die Differenz? · {z.label}</span>
+                                          {analyseJournalGeladen && kontoDrilldown && !kontoDrilldown.hatJournal && (
+                                            <span className="text-[11px] text-muted-foreground">
+                                              Keine FIBU-Buchungszeilen für diesen Monat — nur App-Seite je Lieferant (ER liegt nur als Konto-Total vor).
+                                            </span>
+                                          )}
+                                        </div>
+                                        {!analyseJournalGeladen || !kontoDrilldown ? (
+                                          <p className="text-xs text-muted-foreground">Lade FIBU-Buchungen…</p>
+                                        ) : kontoDrilldown.zeilen.length === 0 ? (
+                                          <p className="text-xs text-muted-foreground">Keine Beträge auf diesem Konto im Zeitraum.</p>
+                                        ) : (
+                                          <table className="w-full text-xs">
+                                            <thead>
+                                              <tr className="text-[11px] text-muted-foreground">
+                                                <th className="text-left font-medium py-1 pr-2">Lieferant</th>
+                                                <th className="text-right font-medium py-1 px-2">App (dieses Konto)</th>
+                                                <th className="text-right font-medium py-1 px-2">FIBU (dieses Konto)</th>
+                                                <th className="text-right font-medium py-1 px-2">Differenz</th>
+                                                <th className="text-right font-medium py-1 pl-2"></th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="tabular-nums">
+                                              {kontoDrilldown.zeilen.map(dz => (
+                                                <Fragment key={dz.lieferant}>
+                                                  <tr className="border-t border-border/40">
+                                                    <td className="py-1 pr-2">{dz.lieferant}</td>
+                                                    <td className="text-right px-2">CHF {fmtChf(dz.app)}</td>
+                                                    <td className="text-right px-2">{dz.fibu !== null ? `CHF ${fmtChf(dz.fibu)}` : '–'}</td>
+                                                    <td className={cn('text-right px-2',
+                                                      dz.diff !== null && Math.abs(dz.diff) > 0.05 && !dz.splitHinweis && 'text-red-600 dark:text-red-400 font-medium',
+                                                      dz.splitHinweis && 'text-amber-600 dark:text-amber-400')}>
+                                                      {dz.diff !== null ? fmtChf(dz.diff) : '–'}
+                                                    </td>
+                                                    <td className="text-right pl-2 whitespace-nowrap">
+                                                      <button
+                                                        onClick={() => {
+                                                          setYear(aYear); setMonth(aMonth);
+                                                          setAbgleichOffen(dz.lieferant);
+                                                          setTab('abgleich');
+                                                        }}
+                                                        className="text-[11px] text-muted-foreground hover:text-foreground underline mr-2"
+                                                        title="Zum FIBU-Abgleich dieses Lieferanten"
+                                                      >FIBU-Abgleich</button>
+                                                      <button
+                                                        onClick={() => { setSupplierFilter(dz.lieferant); setKontoDrill(null); }}
+                                                        className="text-[11px] text-muted-foreground hover:text-foreground underline"
+                                                        title="Rechnungen dieses Lieferanten in der Analyse filtern"
+                                                      >Lieferant</button>
+                                                    </td>
+                                                  </tr>
+                                                  {dz.splitHinweis && (
+                                                    <tr>
+                                                      <td colSpan={5} className="pb-1.5 pl-4">
+                                                        <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                                                          Konto-Split: FIBU bucht {Object.entries(dz.splitHinweis.fibuJeKonto).map(([k, v]) => `${k} (${fmtChf(v)})`).join(', ') || '—'};
+                                                          {' '}App verteilt auf {Object.entries(dz.splitHinweis.appJeKonto).map(([k, v]) => `${k} (${fmtChf(v)})`).join(', ') || '—'}
+                                                          {dz.splitHinweis.reineZuordnung
+                                                            ? <> → reine Zuordnung, kein Fehlbetrag (Total über alle Konten gleicht sich aus).</>
+                                                            : <> → grösstenteils Zuordnung, ABER echter Restbetrag über alle Konten: <span className="font-semibold text-red-600 dark:text-red-400">CHF {fmtChf(dz.splitHinweis.totalDiff)}</span>.</>}
+                                                        </span>
+                                                      </td>
+                                                    </tr>
+                                                  )}
+                                                </Fragment>
+                                              ))}
+                                              <tr className="border-t border-border/60 font-semibold">
+                                                <td className="py-1 pr-2">Summe{kontoDrilldown.nichtZugeordnet !== null && Math.abs(kontoDrilldown.nichtZugeordnet) > 0.05 ? ' (inkl. nicht zugeordnet)' : ''}</td>
+                                                <td className="text-right px-2">CHF {fmtChf(kontoDrilldown.appTotal)}</td>
+                                                <td className="text-right px-2">{kontoDrilldown.fibuTotal !== null ? `CHF ${fmtChf(kontoDrilldown.fibuTotal)}` : '–'}</td>
+                                                <td className="text-right px-2">{kontoDrilldown.diffTotal !== null ? fmtChf(kontoDrilldown.diffTotal) : '–'}</td>
+                                                <td className="pl-2" />
+                                              </tr>
+                                            </tbody>
+                                          </table>
+                                        )}
+                                        {kontoDrilldown && kontoDrilldown.nichtZugeordnet !== null && Math.abs(kontoDrilldown.nichtZugeordnet) > 0.05 && (
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Nicht zugeordnete FIBU-Buchungen auf diesem Konto: CHF {fmtChf(kontoDrilldown.nichtZugeordnet)} — Details im FIBU-Abgleich («ohne Zuordnung»).
+                                          </p>
+                                        )}
+                                        <p className="text-[11px] text-muted-foreground/70">
+                                          Abschliessen: Differenz in der Konto-Zeile mit einem Grund erklären (z.B. «Konto-Split»).
+                                        </p>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                                </Fragment>
                               );
                             })}
                             <tr className="border-t border-border font-semibold">

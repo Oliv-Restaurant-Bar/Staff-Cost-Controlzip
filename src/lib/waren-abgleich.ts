@@ -65,7 +65,7 @@ export interface WarenAbgleich {
 }
 
 /** Betrag einer Buchungszeile: Aufwandskonto → Soll − Haben. */
-function buchungsBetrag(e: SageJournalEntry): number {
+export function buchungsBetrag(e: SageJournalEntry): number {
   if (e.soll || e.haben) return (e.soll ?? 0) - (e.haben ?? 0);
   return e.amount ?? 0;
 }

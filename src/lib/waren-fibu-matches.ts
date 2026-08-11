@@ -39,6 +39,7 @@ export const ERKLAER_GRUENDE = [
   { id: 'noch_nicht_gebucht', label: 'Noch nicht in FIBU gebucht (laufender Monat)' },
   { id: 'bar_einkauf',        label: 'Bar-Einkauf (nicht als Rechnung erfasst)' },
   { id: 'fehlende_rechnung',  label: 'Fehlende Rechnung — nachtragen' },
+  { id: 'konto_split',        label: 'Konto-Split (App splittet, FIBU bucht auf ein Konto)' },
   { id: 'sonstiges',          label: 'Sonstiges (Freitext)' },
 ] as const;
 export type ErklaerGrundId = typeof ERKLAER_GRUENDE[number]['id'];
