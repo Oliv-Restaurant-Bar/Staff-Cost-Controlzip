@@ -487,6 +487,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
           ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
           kategorie: kategorieFromKonto(haupt),
           ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
+          // TG/Prodega hat keine Monatsrechnung: jede Einzelrechnung ist
+          // sofort FINAL (Re-Import derselben Nr. bleibt idempotenter Upsert).
+          final: true,
           createdAt: vorhanden?.createdAt ?? jetzt,
           updatedAt: jetzt,
         };

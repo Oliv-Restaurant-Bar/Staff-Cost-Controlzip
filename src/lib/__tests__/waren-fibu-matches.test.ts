@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buchungKey, buchungKeysMitIndex, buchungBetrag, fmtDatumCH,
   matchAmpel, lieferantMatchStat, normalizeFibuMatches, normalizeFibuMatchState,
-  autoMatchVorschlaege, LEERER_MATCH_STATE, bereinigeMatchState,
+  autoMatchVorschlaege, LEERER_MATCH_STATE, bereinigeMatchState, zerlegeLieferantDifferenz,
   type FibuMatchGruppe, type FibuMatchState,
 } from '@/lib/waren-fibu-matches';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -144,24 +144,115 @@ describe('autoMatchVorschlaege', () => {
 });
 
 describe('erklaert (erklärte Differenz pro Lieferant)', () => {
-  it('normalize: liest erklaert-Map, verwirft Nicht-Strings und leere Notizen', () => {
+  it('normalize: Alt-Format (Notiz-String) migriert zu «sonstiges»; leere/kaputte Werte fliegen raus', () => {
     const s = normalizeFibuMatchState({
       gruppen: [], gesperrt: { invoiceIds: [], buchungKeys: [] },
       erklaert: { 'Feldschlösschen': 'GU-Doppelzahlung', Transgourmet: '  ', X: 42 },
     });
-    expect(s.erklaert).toEqual({ 'Feldschlösschen': 'GU-Doppelzahlung' });
+    expect(s.erklaert).toEqual({
+      'Feldschlösschen': { grund: 'sonstiges', notiz: 'GU-Doppelzahlung', betrag: null, erklaertAm: '' },
+    });
+  });
+  it('normalize: strukturiertes Format bleibt erhalten; unbekannter Grund → sonstiges, kaputter Betrag → null', () => {
+    const s = normalizeFibuMatchState({
+      gruppen: [],
+      erklaert: {
+        A: { grund: 'leergut', betrag: -12.5, erklaertAm: '2026-08-11' },
+        B: { grund: 'quatsch', notiz: 'x', betrag: 'NaN', erklaertAm: 7 },
+      },
+    });
+    expect(s.erklaert.A).toEqual({ grund: 'leergut', betrag: -12.5, erklaertAm: '2026-08-11' });
+    expect(s.erklaert.B).toEqual({ grund: 'sonstiges', notiz: 'x', betrag: null, erklaertAm: '' });
   });
   it('normalize: Alt-Blob ohne erklaert → leere Map', () => {
     expect(normalizeFibuMatchState({ gruppen: [] }).erklaert).toEqual({});
   });
   it('bereinigeMatchState lässt erklaert unangetastet', () => {
-    const state = {
+    const state: FibuMatchState = {
       gruppen: [{ id: 'g1', invoiceIds: ['weg'], buchungKeys: ['b1'] }],
       gesperrt: { invoiceIds: ['weg'], buchungKeys: [] },
-      erklaert: { Transgourmet: 'Rechnung umgebucht' },
+      erklaert: { Transgourmet: { grund: 'periodenfremd', notiz: 'Rechnung umgebucht', betrag: 99, erklaertAm: '2026-08-01' } },
     };
     const { state: neu } = bereinigeMatchState(state, new Set<string>());
-    expect(neu.erklaert).toEqual({ Transgourmet: 'Rechnung umgebucht' });
+    expect(neu.erklaert).toEqual(state.erklaert);
+  });
+});
+
+describe('zerlegeLieferantDifferenz', () => {
+  it('zerlegt exakt: Match-Rest (Rundung), ungematchte Rechnung negativ, Nur-FIBU positiv; Summe = diff', () => {
+    const invoices = [inv('a', 500), inv('b', 300)];
+    const buchungen = [jrn('x', 500.03), jrn('y', 120)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] }];
+    const { posten, summe } = zerlegeLieferantDifferenz(invoices, buchungen, keys, gruppen);
+    expect(posten.map(p => p.typ)).toEqual(['rundung', 'nur_erfasst', 'nur_fibu']);
+    expect(posten[0].betrag).toBeCloseTo(0.03, 2);
+    expect(posten[1].betrag).toBe(-300);
+    expect(posten[2].betrag).toBe(120);
+    // diff = gebucht − erfasst = 620.03 − 800 = −179.97
+    expect(summe).toBeCloseTo(-179.97, 2);
+  });
+  it('grössere Match-Abweichung = match_rest; Depot-Split erzeugt Hinweis', () => {
+    const e = { ...inv('a', 500), kontoSplits: [
+      { warenkonto: '4000', amountNet: 480, amountGross: 517 },
+      { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
+    ] } as InvoiceEntry;
+    const buchungen = [jrn('x', 480)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] }];
+    const { posten, summe } = zerlegeLieferantDifferenz([e], buchungen, keys, gruppen);
+    expect(posten).toHaveLength(1);
+    expect(posten[0].typ).toBe('match_rest');
+    expect(posten[0].betrag).toBe(-20);
+    expect(posten[0].detail).toMatch(/Leergut\/Pfand CHF 20.00/);
+    expect(summe).toBe(-20);
+  });
+  it('cross-supplier-Gruppe (lokale Rechnung + fremde Buchung) → gruppe_extern, Summen-Invariante hält', () => {
+    const invoices = [inv('a', 500)];
+    const buchungen: SageJournalEntry[] = [];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: ['fremd|key|0'] }];
+    const { posten, summe } = zerlegeLieferantDifferenz(invoices, buchungen, keys, gruppen);
+    expect(posten).toHaveLength(1);
+    expect(posten[0].typ).toBe('gruppe_extern');
+    expect(posten[0].betrag).toBe(-500);
+    // diff der Zeile = gebucht(0) − erfasst(500) = −500 → Invariante exakt.
+    expect(summe).toBe(-500);
+  });
+  it('cross-supplier-Gruppe (lokale Buchung + fremde Rechnung) → gruppe_extern positiv, Invariante hält', () => {
+    const invoices: InvoiceEntry[] = [];
+    const buchungen = [jrn('x', 320)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['fremde-rechnung'], buchungKeys: [keys[0]] }];
+    const { posten, summe } = zerlegeLieferantDifferenz(invoices, buchungen, keys, gruppen);
+    expect(posten).toHaveLength(1);
+    expect(posten[0].typ).toBe('gruppe_extern');
+    expect(posten[0].betrag).toBe(320);
+    expect(summe).toBe(320); // = gebucht(320) − erfasst(0)
+  });
+  it('Summen-Invariante: Posten-Summe = gebucht − erfasst über gemischte Zustände', () => {
+    const invoices = [inv('a', 500), inv('b', 300), inv('c', 42.4)];
+    const buchungen = [jrn('x', 500.03), jrn('y', 120), jrn('z', 77)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [
+      { id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] },
+      { id: 'g2', invoiceIds: ['b', 'fremd'], buchungKeys: ['fremd|key|0'] }, // cross-supplier
+    ];
+    const { summe } = zerlegeLieferantDifferenz(invoices, buchungen, keys, gruppen);
+    const diff = (500.03 + 120 + 77) - (500 + 300 + 42.4);
+    expect(summe).toBeCloseTo(Math.round(diff * 100) / 100, 2);
+  });
+  it('fremde Gruppen (anderer Lieferant) werden ignoriert; alles gematcht & ausgeglichen → keine Posten', () => {
+    const invoices = [inv('a', 250)];
+    const buchungen = [jrn('x', 250)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [
+      { id: 'fremd', invoiceIds: ['zzz'], buchungKeys: ['unbekannt|0'] },
+      { id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] },
+    ];
+    const { posten, summe } = zerlegeLieferantDifferenz(invoices, buchungen, keys, gruppen);
+    expect(posten).toHaveLength(0);
+    expect(summe).toBe(0);
   });
 });
 

@@ -54,3 +54,7 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 ## «Erklärte Differenz» pro Lieferant (Aug 2026)
 - FibuMatchState hat `erklaert: Record<Lieferant-/Alias-Gruppenname, Notiz>` — im selben KV-Blob `waren_fibu_matches_<YYYY-MM>_v1` (mandant+monat). Zeile wird grün/neutral, CHF-Differenz bleibt sichtbar; jederzeit aufhebbar. Key ist der Alias-Gruppenname: Umbenennung der Gruppe verwaist die Notiz (bekannt/akzeptiert).
 - JEDE FibuMatchState-Mutation muss `...cur` spreaden, sonst gehen erklaert-Notizen verloren; saveFibuMatchState schreibt kvSetStrict (kvSet schluckt Fehler → optimistischer Rollback griffe nie).
+
+## Erklärte Differenzen & Zusammensetzung (08/2026)
+- `FibuMatchState.erklaert` ist strukturiert (`{grund, notiz?, betrag, erklaertAm}` je Lieferant); Alt-String-Blobs migriert `normalizeFibuMatchState` beim Laden zu `grund:'sonstiges'` — neue Leser dürfen nie String annehmen.
+- Differenz-Zerlegung (`zerlegeLieferantDifferenz`): Posten-Summe MUSS exakt `gebucht − erfasst` ergeben; Match-Gruppen sind pro Monat GLOBAL — Gruppen mit fremden Mitgliedern (anderer Lieferant) als `gruppe_extern` mit lokalem Beitrag ausweisen, nie als «Betragsabweichung/Rundung» labeln.

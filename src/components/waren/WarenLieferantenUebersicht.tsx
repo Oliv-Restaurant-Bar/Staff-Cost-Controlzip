@@ -41,6 +41,20 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-zäöüé ]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Effektiver Final-Status einer Buchung für die Status-Spalte:
+ * - final === true  ⇒ final.
+ * - final === false ⇒ provisorisch (explizit: FIBU-/Kreditoren-Übernahme).
+ * - final fehlt (Altbestand/manuelle Erfassung): «provisorisch» gibt es nur
+ *   im Lieferschein→Monatsrechnung-Workflow — bei Lieferanten OHNE
+ *   Monatsrechnung (und manuell erfassten) gilt jede Rechnung als final.
+ */
+function istEffektivFinal(e: InvoiceEntry, monatsrechnung: boolean | null): boolean {
+  if (e.final === true) return true;
+  if (e.final === false) return false;
+  return monatsrechnung !== true;
+}
+
 export function WarenLieferantenUebersicht({
   tenantId, entries, suppliers, canEdit, canUpload, monthLabel, onUploadFor,
 }: {
@@ -123,7 +137,7 @@ export function WarenLieferantenUebersicht({
   const statsFuer = (z: Zeile) => {
     const eigene = entries.filter(e => z.match(e.supplierName));
     const letzter = eigene.reduce<string | null>((m, e) => (!m || e.createdAt > m ? e.createdAt : m), null);
-    const finale = eigene.filter(e => e.final).length;
+    const finale = eigene.filter(e => istEffektivFinal(e, z.monatsrechnung)).length;
     const prov = eigene.length - finale;
     return { eigene, letzter, finale, prov };
   };
@@ -302,7 +316,9 @@ function FragmentZeile({ z, st, istOffen, onToggle, canEdit, canUpload, kontoEdi
                         <td className="py-1 text-right tabular-nums">{fmt(e.amountNet)}</td>
                         <td className="py-1 pl-3">{e.kontoSplits?.length ? e.kontoSplits.map(s => s.warenkonto).join(' / ') : (e.warenkonto ?? '—')}</td>
                         <td className="py-1 pl-3">
-                          {e.final ? 'final' : e.quelle === 'fibu_uebernahme' ? 'FIBU-Übernahme' : e.quelle === 'kreditoren_uebernahme' ? 'Kreditoren-Übernahme' : 'provisorisch'}
+                          {e.quelle === 'fibu_uebernahme' ? 'FIBU-Übernahme'
+                            : e.quelle === 'kreditoren_uebernahme' ? 'Kreditoren-Übernahme'
+                            : istEffektivFinal(e, z.monatsrechnung) ? 'final' : 'provisorisch'}
                         </td>
                       </tr>
                     ))}

@@ -30,16 +30,45 @@ export interface FibuMatchGruppe {
  * Entscheidung bleibt stehen); manuelles Matchen ist weiterhin möglich
  * (ein neues manuelles Match entsperrt seine Mitglieder wieder).
  */
+/** Vordefinierte Gründe für eine erklärte Abgleich-Differenz (Dropdown). */
+export const ERKLAER_GRUENDE = [
+  { id: 'leergut',            label: 'Leergut/Pfand (Depot separat)' },
+  { id: 'periodenfremd',      label: 'Periodenfremd (in anderem Monat gebucht)' },
+  { id: 'zahlungskorrektur',  label: 'Doppelzahlung / Zahlungskorrektur (nur FIBU)' },
+  { id: 'rundung',            label: 'Rundungsdifferenz' },
+  { id: 'noch_nicht_gebucht', label: 'Noch nicht in FIBU gebucht (laufender Monat)' },
+  { id: 'bar_einkauf',        label: 'Bar-Einkauf (nicht als Rechnung erfasst)' },
+  { id: 'fehlende_rechnung',  label: 'Fehlende Rechnung — nachtragen' },
+  { id: 'sonstiges',          label: 'Sonstiges (Freitext)' },
+] as const;
+export type ErklaerGrundId = typeof ERKLAER_GRUENDE[number]['id'];
+
+export function erklaerGrundLabel(id: ErklaerGrundId): string {
+  return ERKLAER_GRUENDE.find(g => g.id === id)?.label ?? id;
+}
+
+/** Abgeschlossene (erklärte) Differenz-Zeile: Grund + Betrag bleiben gespeichert. */
+export interface ErklaerteDifferenz {
+  grund: ErklaerGrundId;
+  /** Freitext (bei «Sonstiges» Pflicht, sonst optional). */
+  notiz?: string;
+  /** Die CHF-Differenz zum Zeitpunkt des Erklärens (null = unbekannt/Altdaten). */
+  betrag: number | null;
+  /** ISO-Datum des Erklärens ('' bei migrierten Altdaten). */
+  erklaertAm: string;
+}
+
 export interface FibuMatchState {
   gruppen: FibuMatchGruppe[];
   gesperrt: { invoiceIds: string[]; buchungKeys: string[] };
   /**
    * «Erklärte Differenz» pro Lieferant-Zeile des Abgleichs: Lieferant-Name
-   * (Alias-Gruppenname der Zeile) → Notiztext. Rein visuell — die
+   * (Alias-Gruppenname der Zeile) → Grund/Notiz/Betrag. Rein visuell — die
    * CHF-Differenz bleibt sichtbar, die Zeile wird nur nicht mehr rot.
    * Pro Mandant+Monat gespeichert (dieser Blob), jederzeit aufhebbar.
+   * Alt-Daten (reiner Notiz-String) werden als «Sonstiges» gelesen.
    */
-  erklaert: Record<string, string>;
+  erklaert: Record<string, ErklaerteDifferenz>;
 }
 
 export const LEERER_MATCH_STATE: FibuMatchState = { gruppen: [], gesperrt: { invoiceIds: [], buchungKeys: [] }, erklaert: {} };
@@ -107,10 +136,23 @@ export function normalizeFibuMatchState(raw: unknown): FibuMatchState {
   const strArr = (x: unknown): string[] =>
     Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string') : [];
   const erkRaw = (raw && typeof raw === 'object' ? (raw as { erklaert?: unknown }).erklaert : null);
-  const erklaert: Record<string, string> = {};
+  const erklaert: Record<string, ErklaerteDifferenz> = {};
   if (erkRaw && typeof erkRaw === 'object' && !Array.isArray(erkRaw)) {
     for (const [k, v] of Object.entries(erkRaw as Record<string, unknown>)) {
-      if (typeof v === 'string' && v.trim()) erklaert[k] = v;
+      // Alt-Format: reiner Notiz-String → «Sonstiges (Freitext)».
+      if (typeof v === 'string' && v.trim()) {
+        erklaert[k] = { grund: 'sonstiges', notiz: v, betrag: null, erklaertAm: '' };
+        continue;
+      }
+      if (!v || typeof v !== 'object') continue;
+      const o = v as Record<string, unknown>;
+      const grund = ERKLAER_GRUENDE.some(g => g.id === o.grund) ? o.grund as ErklaerGrundId : 'sonstiges';
+      erklaert[k] = {
+        grund,
+        ...(typeof o.notiz === 'string' && o.notiz.trim() ? { notiz: o.notiz } : {}),
+        betrag: typeof o.betrag === 'number' && Number.isFinite(o.betrag) ? o.betrag : null,
+        erklaertAm: typeof o.erklaertAm === 'string' ? o.erklaertAm : '',
+      };
     }
   }
   return {
@@ -337,4 +379,113 @@ export function lieferantMatchStat(
     matchedBuchungen, totalBuchungen: buchungen.length,
     offenErfasst, offenGebucht,
   };
+}
+
+// ─── Differenz-Zusammensetzung (Drilldown) ───────────────────────────────────
+
+export interface DiffPosten {
+  typ: 'rundung' | 'match_rest' | 'gruppe_extern' | 'nur_erfasst' | 'nur_fibu';
+  /** Kurzlabel (z.B. «Nicht in FIBU: Rechnung 12345 vom 03.08.»). */
+  label: string;
+  /** Beitrag zur Differenz (Vorzeichen wie diff = Buchhaltung − Erfasst). */
+  betrag: number;
+  /** Zusatzinfo (z.B. Depot-Hinweis). */
+  detail?: string;
+}
+
+/** Depot-/Leergut-Anteil einer Rechnung (Pseudo-Splits mit nicht-numerischem «Konto» wie «Depot»). */
+function depotAnteil(e: InvoiceEntry): number {
+  return (e.kontoSplits ?? [])
+    .filter(s => /depot|leergut|pfand/i.test(s.warenkonto))
+    .reduce((s, x) => s + x.amountNet, 0);
+}
+
+/**
+ * Zerlegt die Abgleich-Differenz eines Lieferanten (diff = Buchhaltung − Erfasst)
+ * EXAKT in Posten: Rest-Differenzen der Match-Gruppen (≤ 0.05 = Rundung),
+ * ungematchte Rechnungen (fehlen in der FIBU → negativ) und ungematchte
+ * Buchungen (nur in der FIBU → positiv). Summe der Posten = diff (rappengenau).
+ * Depot-/Leergut-Anteile erfasster Rechnungen werden als Hinweis am Posten
+ * ausgewiesen (typische Erklärung: FIBU bucht Pfand auf ein Nicht-Warenkonto).
+ */
+export function zerlegeLieferantDifferenz(
+  invoices: InvoiceEntry[],
+  buchungen: SageJournalEntry[],
+  keys: string[],
+  gruppen: FibuMatchGruppe[],
+): { posten: DiffPosten[]; summe: number } {
+  const invById = new Map(invoices.map(e => [e.id, e]));
+  const betragByKey = new Map<string, number>();
+  buchungen.forEach((b, i) => betragByKey.set(keys[i], buchungBetrag(b)));
+
+  const posten: DiffPosten[] = [];
+  const matchedInv = new Set<string>();
+  const matchedKey = new Set<string>();
+  const rp = (n: number) => Math.round(n * 100) / 100;
+
+  // Match-Gruppen: nur Mitglieder DIESES Lieferanten zählen (Gruppen sind pro
+  // Monat global). Der Posten-Betrag ist IMMER der lokale Beitrag zur Zeilen-
+  // Differenz (sumB_lokal − sumI_lokal) — so bleibt Summe der Posten = diff
+  // auch dann exakt, wenn eine Gruppe lieferantenübergreifend gematcht wurde
+  // (fremde Mitglieder tauchen in der Zeile des anderen Lieferanten auf).
+  gruppen.forEach((g, gi) => {
+    const inv = g.invoiceIds.filter(id => invById.has(id));
+    const kk = g.buchungKeys.filter(k => betragByKey.has(k));
+    if (inv.length === 0 && kk.length === 0) return;
+    inv.forEach(id => matchedInv.add(id));
+    kk.forEach(k => matchedKey.add(k));
+    const sumI = inv.reduce((s, id) => s + (invById.get(id)?.amountNet ?? 0), 0);
+    const sumB = kk.reduce((s, k) => s + (betragByKey.get(k) ?? 0), 0);
+    const rest = rp(sumB - sumI);
+    if (rest === 0) return;
+    const depot = rp(inv.reduce((s, id) => s + depotAnteil(invById.get(id)!), 0));
+    const fremde = (g.invoiceIds.length - inv.length) + (g.buchungKeys.length - kk.length);
+    const depotHinweis = depot !== 0 ? `enthält Leergut/Pfand CHF ${depot.toFixed(2)} (Depot bucht die FIBU separat)` : '';
+    if (fremde > 0) {
+      // Gruppe umfasst Mitglieder eines ANDEREN Lieferanten (Alias-/manuelles
+      // Cross-Match): der lokale Rest ist KEINE Betragsabweichung — die
+      // Gegenseite steht in der anderen Abgleich-Zeile.
+      posten.push({
+        typ: 'gruppe_extern',
+        label: `Match ${gi + 1} übergreifend gematcht (${fremde} Position${fremde === 1 ? '' : 'en'} bei anderem Lieferanten)`,
+        betrag: rest,
+        detail: ['Gegenseite in anderer Abgleich-Zeile', depotHinweis].filter(Boolean).join(' · '),
+      });
+      return;
+    }
+    posten.push({
+      typ: Math.abs(rest) <= 0.05 ? 'rundung' : 'match_rest',
+      label: Math.abs(rest) <= 0.05
+        ? `Rundungsdifferenz (Match ${gi + 1})`
+        : `Betragsabweichung im Match ${gi + 1} (${inv.length} Rechnung${inv.length === 1 ? '' : 'en'} ↔ ${kk.length} Buchung${kk.length === 1 ? '' : 'en'})`,
+      betrag: rest,
+      ...(depotHinweis ? { detail: depotHinweis } : {}),
+    });
+  });
+
+  // Ungematchte Rechnungen: erfasst, aber (noch) keine FIBU-Buchung zugeordnet.
+  for (const e of invoices) {
+    if (matchedInv.has(e.id)) continue;
+    const depot = rp(depotAnteil(e));
+    posten.push({
+      typ: 'nur_erfasst',
+      label: `Nicht in FIBU: ${e.reference ? `Rechnung ${e.reference}` : 'Rechnung'} vom ${fmtDatumCH(e.date)}`,
+      betrag: rp(-e.amountNet),
+      detail: depot !== 0
+        ? `noch nicht gebucht / fehlt in FIBU · enthält Leergut/Pfand CHF ${depot.toFixed(2)}`
+        : 'noch nicht gebucht / fehlt in FIBU / periodenfremd',
+    });
+  }
+  // Ungematchte Buchungen: nur in der FIBU.
+  buchungen.forEach((b, i) => {
+    if (matchedKey.has(keys[i])) return;
+    posten.push({
+      typ: 'nur_fibu',
+      label: `Nur in FIBU: ${b.text || 'Buchung'} vom ${b.date}`,
+      betrag: rp(buchungBetrag(b)),
+      detail: 'fehlende Rechnung / Bar-Einkauf / Zahlungskorrektur?',
+    });
+  });
+
+  return { posten, summe: rp(posten.reduce((s, p) => s + p.betrag, 0)) };
 }

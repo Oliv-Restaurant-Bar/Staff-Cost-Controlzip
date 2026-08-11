@@ -88,7 +88,8 @@ import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/w
 import {
   buchungKeysMitIndex, buchungBetrag, fmtDatumCH, matchAmpel, lieferantMatchStat,
   autoMatchVorschlaege, LEERER_MATCH_STATE, DEFAULT_FIBU_MATCH_TOLERANZ,
-  type FibuMatchGruppe, type FibuMatchState,
+  ERKLAER_GRUENDE, erklaerGrundLabel, zerlegeLieferantDifferenz,
+  type FibuMatchGruppe, type FibuMatchState, type ErklaerteDifferenz, type ErklaerGrundId,
 } from '@/lib/waren-fibu-matches';
 import type { SageJournalEntry } from '@/types/reporting';
 import { computePLForMonth } from '@/lib/pl-engine';
@@ -3755,13 +3756,13 @@ export default function WarenrechnungenPage() {
                               {abgleich.zeilen.map(z => {
                                 const offen = abgleichOffen === z.lieferant;
                                 const kannDrilldown = abgleich.mode === 'lieferanten';
-                                const erklaertNotiz = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
+                                const erklaertInfo = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
                                 return (
                                 <Fragment key={z.lieferant}>
                                 <tr
                                   className={cn('border-b border-border/40',
                                     kannDrilldown && 'cursor-pointer hover:bg-muted/20',
-                                    erklaertNotiz
+                                    erklaertInfo
                                       ? 'bg-emerald-500/5'
                                       : cn(z.status === 'abweichung' && 'bg-red-500/5',
                                           (z.status === 'nur-erfasst' || z.status === 'nur-gebucht') && 'bg-amber-500/5'))}
@@ -3784,18 +3785,21 @@ export default function WarenrechnungenPage() {
                                   </td>
                                   <td className={cn('px-3 py-2 text-right tabular-nums',
                                     // Differenz bleibt IMMER sichtbar — bei «erklärt» nur nicht mehr rot.
-                                    z.status === 'abweichung' && !erklaertNotiz && 'text-red-600 dark:text-red-400 font-medium')}>
+                                    z.status === 'abweichung' && !erklaertInfo && 'text-red-600 dark:text-red-400 font-medium')}>
                                     {z.diff !== null ? fmtChf(z.diff) : '—'}
                                   </td>
                                   <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                                     <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                      {erklaertNotiz ? (
+                                      {erklaertInfo ? (
                                         <>
                                           <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40 inline-flex items-center gap-1" data-testid={`abgleich-erklaert-${z.lieferant}`}>
-                                            <Info className="h-3 w-3" /> erklärt
+                                            <Info className="h-3 w-3" /> abgeschlossen
                                           </Badge>
-                                          <span className="text-[11px] text-muted-foreground max-w-[26rem]" title={erklaertNotiz}>
-                                            {erklaertNotiz}
+                                          <span className="text-[11px] text-muted-foreground max-w-[26rem]"
+                                            title={[erklaerGrundLabel(erklaertInfo.grund), erklaertInfo.notiz].filter(Boolean).join(' — ')}>
+                                            {erklaerGrundLabel(erklaertInfo.grund)}
+                                            {erklaertInfo.betrag !== null && <> · CHF {fmtChf(erklaertInfo.betrag)}</>}
+                                            {erklaertInfo.notiz && <> — {erklaertInfo.notiz}</>}
                                           </span>
                                         </>
                                       ) : (
@@ -3810,10 +3814,11 @@ export default function WarenrechnungenPage() {
                                       {canEdit && fibuGeladen && z.status !== 'keine-fibu' && (
                                         <ErklaertMarkierung
                                           lieferant={z.lieferant}
-                                          notiz={erklaertNotiz}
-                                          onSave={async notiz => {
+                                          info={erklaertInfo}
+                                          aktuelleDiff={z.diff}
+                                          onSave={async info => {
                                             const ok = await persistFibuState(cur => ({
-                                              ...cur, erklaert: { ...cur.erklaert, [z.lieferant]: notiz },
+                                              ...cur, erklaert: { ...cur.erklaert, [z.lieferant]: info },
                                             }));
                                             if (ok) toast.success(`${z.lieferant}: Differenz als erklärt markiert.`);
                                             return ok;
@@ -3849,6 +3854,14 @@ export default function WarenrechnungenPage() {
                                             </p>
                                           ))}
                                         </div>
+                                      )}
+                                      {fibuGeladen && (
+                                        <DiffZusammensetzung
+                                          lieferant={z.lieferant}
+                                          invoices={entries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
+                                          buchungen={z.buchungen}
+                                          gruppen={fibuState.gruppen}
+                                        />
                                       )}
                                       <FibuMatchBereich
                                         lieferant={z.lieferant}
@@ -4759,50 +4772,114 @@ function AliasGruppenVerwaltung({
 // Gruppen-Nummer; Auswahl zeigt live Summen + Differenz-Ampel. Persistiert
 // pro Mandant und Monat (waren_fibu_matches_<YYYY-MM>_v1).
 /**
- * «Erklärte Differenz» pro Lieferant-Zeile: Popover mit Notizfeld. Speichern
- * markiert die Zeile grün/neutral (Differenz bleibt sichtbar), Aufheben ist
- * jederzeit möglich. Persistenz pro Mandant+Monat im FIBU-Match-Blob.
+ * «Erklärte Differenz» pro Lieferant-Zeile: Popover mit Grund-DROPDOWN
+ * (vordefinierte Gründe, Freitext nur bei «Sonstiges» Pflicht). Speichern
+ * schliesst die Zeile ab (grün/neutral, Differenz bleibt sichtbar); Grund +
+ * Betrag werden pro Mandant+Monat im FIBU-Match-Blob gespeichert. Aufheben
+ * ist jederzeit möglich.
  */
-function ErklaertMarkierung({ lieferant, notiz, onSave, onRemove }: {
+function ErklaertMarkierung({ lieferant, info, aktuelleDiff, onSave, onRemove }: {
   lieferant: string;
-  notiz: string | undefined;
-  onSave: (notiz: string) => Promise<boolean>;
+  info: ErklaerteDifferenz | undefined;
+  /** Aktuelle Differenz der Zeile (wird beim Abschluss mitgespeichert). */
+  aktuelleDiff: number | null;
+  onSave: (info: ErklaerteDifferenz) => Promise<boolean>;
   onRemove: () => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
+  const [grund, setGrund] = useState<ErklaerGrundId>('leergut');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const kannSpeichern = grund !== 'sonstiges' || text.trim().length > 0;
   return (
-    <Popover open={open} onOpenChange={o => { setOpen(o); if (o) setText(notiz ?? ''); }}>
+    <Popover open={open} onOpenChange={o => { setOpen(o); if (o) { setGrund(info?.grund ?? 'leergut'); setText(info?.notiz ?? ''); } }}>
       <PopoverTrigger asChild>
         <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-muted-foreground"
           data-testid={`abgleich-erklaeren-${lieferant}`}>
           <Pencil className="h-3 w-3 mr-0.5" />
-          {notiz ? 'Notiz' : 'erklären'}
+          {info ? 'ändern' : 'erklären'}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 space-y-2" onClick={e => e.stopPropagation()}>
-        <p className="text-xs font-medium">{lieferant} — Differenz als erklärt markieren</p>
-        <Textarea value={text} onChange={e => setText(e.target.value)} rows={3}
-          placeholder="Begründung (z.B. Umbuchung, Zahlungskorrektur — keine Warenbewegung)"
+        <p className="text-xs font-medium">{lieferant} — Differenz erklären &amp; abschliessen</p>
+        {aktuelleDiff !== null && (
+          <p className="text-[11px] text-muted-foreground tabular-nums">Differenz: CHF {fmtChf(aktuelleDiff)}</p>
+        )}
+        <Select value={grund} onValueChange={v => setGrund(v as ErklaerGrundId)}>
+          <SelectTrigger className="h-8 text-xs" data-testid={`abgleich-erklaert-grund-${lieferant}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ERKLAER_GRUENDE.map(g => (
+              <SelectItem key={g.id} value={g.id} className="text-xs">{g.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Textarea value={text} onChange={e => setText(e.target.value)} rows={2}
+          placeholder={grund === 'sonstiges' ? 'Begründung (Pflicht bei «Sonstiges»)' : 'Ergänzende Notiz (optional)'}
           className="text-xs" data-testid={`abgleich-erklaert-notiz-${lieferant}`} />
         <div className="flex items-center justify-end gap-2">
-          {notiz && (
+          {info && (
             <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy}
               onClick={async () => { setBusy(true); try { if (await onRemove()) setOpen(false); } finally { setBusy(false); } }}
               data-testid={`abgleich-erklaert-aufheben-${lieferant}`}>
               Markierung aufheben
             </Button>
           )}
-          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || !text.trim()}
-            onClick={async () => { setBusy(true); try { if (await onSave(text.trim())) setOpen(false); } finally { setBusy(false); } }}
+          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || !kannSpeichern}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const jetzt = new Date().toISOString().slice(0, 10);
+                const notiz = text.trim();
+                if (await onSave({ grund, ...(notiz ? { notiz } : {}), betrag: aktuelleDiff, erklaertAm: jetzt })) setOpen(false);
+              } finally { setBusy(false); }
+            }}
             data-testid={`abgleich-erklaert-speichern-${lieferant}`}>
             {busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-            Speichern
+            Abschliessen
           </Button>
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * Zusammensetzung der Differenz (Drilldown): exakte Zerlegung in Posten
+ * (Match-Reste/Rundung, nicht gebuchte Rechnungen, Nur-FIBU-Buchungen) —
+ * Summe der Posten = Differenz der Zeile. Rein informativ.
+ */
+function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen }: {
+  lieferant: string;
+  invoices: InvoiceEntry[];
+  buchungen: SageJournalEntry[];
+  gruppen: FibuMatchGruppe[];
+}) {
+  const { posten, summe } = useMemo(
+    () => zerlegeLieferantDifferenz(invoices, buchungen, buchungKeysMitIndex(buchungen), gruppen),
+    [invoices, buchungen, gruppen],
+  );
+  if (posten.length === 0) return null;
+  return (
+    <div className="mb-3 rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid={`abgleich-zusammensetzung-${lieferant}`}>
+      <p className="font-medium mb-1">Woraus besteht die Differenz? (Buchhaltung − Erfasst)</p>
+      {posten.map((p, i) => (
+        <p key={i} className="flex justify-between gap-3 py-0.5">
+          <span>
+            {p.label}
+            {p.detail && <span className="text-muted-foreground"> · {p.detail}</span>}
+          </span>
+          <span className={cn('tabular-nums shrink-0', (p.typ === 'rundung' || p.typ === 'gruppe_extern') ? 'text-muted-foreground' : p.betrag < 0 ? 'text-amber-600' : 'text-red-600 dark:text-red-400')}>
+            {p.betrag > 0 ? '+' : ''}{fmtChf(p.betrag)}
+          </span>
+        </p>
+      ))}
+      <p className="flex justify-between gap-3 border-t border-border/50 mt-1 pt-1 font-medium">
+        <span>Summe</span>
+        <span className="tabular-nums">{summe > 0 ? '+' : ''}{fmtChf(summe)}</span>
+      </p>
+    </div>
   );
 }
 
