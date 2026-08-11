@@ -125,7 +125,9 @@ import {
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
   Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
+  Info,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -3632,13 +3634,16 @@ export default function WarenrechnungenPage() {
                               {abgleich.zeilen.map(z => {
                                 const offen = abgleichOffen === z.lieferant;
                                 const kannDrilldown = abgleich.mode === 'lieferanten';
+                                const erklaertNotiz = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
                                 return (
                                 <Fragment key={z.lieferant}>
                                 <tr
                                   className={cn('border-b border-border/40',
                                     kannDrilldown && 'cursor-pointer hover:bg-muted/20',
-                                    z.status === 'abweichung' && 'bg-red-500/5',
-                                    (z.status === 'nur-erfasst' || z.status === 'nur-gebucht') && 'bg-amber-500/5')}
+                                    erklaertNotiz
+                                      ? 'bg-emerald-500/5'
+                                      : cn(z.status === 'abweichung' && 'bg-red-500/5',
+                                          (z.status === 'nur-erfasst' || z.status === 'nur-gebucht') && 'bg-amber-500/5'))}
                                   onClick={() => kannDrilldown && setAbgleichOffen(offen ? null : z.lieferant)}
                                   data-testid={`abgleich-row-${z.lieferant}`}
                                 >
@@ -3657,15 +3662,52 @@ export default function WarenrechnungenPage() {
                                       : z.gebucht !== null ? fmtChf(z.gebucht) : '—'}
                                   </td>
                                   <td className={cn('px-3 py-2 text-right tabular-nums',
-                                    z.status === 'abweichung' && 'text-red-600 dark:text-red-400 font-medium')}>
+                                    // Differenz bleibt IMMER sichtbar — bei «erklärt» nur nicht mehr rot.
+                                    z.status === 'abweichung' && !erklaertNotiz && 'text-red-600 dark:text-red-400 font-medium')}>
                                     {z.diff !== null ? fmtChf(z.diff) : '—'}
                                   </td>
-                                  <td className="px-3 py-2">
-                                    {z.status === 'ok' && <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40">OK</Badge>}
-                                    {z.status === 'abweichung' && <Badge variant="outline" className="text-[10px] text-red-600 border-red-600/40">Abweichung</Badge>}
-                                    {z.status === 'nur-erfasst' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">keine Buchung gefunden</Badge>}
-                                    {z.status === 'nur-gebucht' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">nicht erfasst</Badge>}
-                                    {z.status === 'keine-fibu' && <span className="text-[10px] text-muted-foreground">—</span>}
+                                  <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                      {erklaertNotiz ? (
+                                        <>
+                                          <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40 inline-flex items-center gap-1" data-testid={`abgleich-erklaert-${z.lieferant}`}>
+                                            <Info className="h-3 w-3" /> erklärt
+                                          </Badge>
+                                          <span className="text-[11px] text-muted-foreground max-w-[26rem]" title={erklaertNotiz}>
+                                            {erklaertNotiz}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          {z.status === 'ok' && <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-600/40">OK</Badge>}
+                                          {z.status === 'abweichung' && <Badge variant="outline" className="text-[10px] text-red-600 border-red-600/40">Abweichung</Badge>}
+                                          {z.status === 'nur-erfasst' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">keine Buchung gefunden</Badge>}
+                                          {z.status === 'nur-gebucht' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">nicht erfasst</Badge>}
+                                          {z.status === 'keine-fibu' && <span className="text-[10px] text-muted-foreground">—</span>}
+                                        </>
+                                      )}
+                                      {canEdit && fibuGeladen && z.status !== 'keine-fibu' && (
+                                        <ErklaertMarkierung
+                                          lieferant={z.lieferant}
+                                          notiz={erklaertNotiz}
+                                          onSave={async notiz => {
+                                            const ok = await persistFibuState(cur => ({
+                                              ...cur, erklaert: { ...cur.erklaert, [z.lieferant]: notiz },
+                                            }));
+                                            if (ok) toast.success(`${z.lieferant}: Differenz als erklärt markiert.`);
+                                            return ok;
+                                          }}
+                                          onRemove={async () => {
+                                            const ok = await persistFibuState(cur => {
+                                              const { [z.lieferant]: _weg, ...rest } = cur.erklaert;
+                                              return { ...cur, erklaert: rest };
+                                            });
+                                            if (ok) toast.success(`${z.lieferant}: Markierung aufgehoben.`);
+                                            return ok;
+                                          }}
+                                        />
+                                      )}
+                                    </span>
                                   </td>
                                 </tr>
                                 {/* Drilldown: Rechnungen und Buchungen nebeneinander */}
@@ -4595,6 +4637,54 @@ function AliasGruppenVerwaltung({
 // visuell — keine Beträge werden verändert. Gematchte Zeilen grün mit
 // Gruppen-Nummer; Auswahl zeigt live Summen + Differenz-Ampel. Persistiert
 // pro Mandant und Monat (waren_fibu_matches_<YYYY-MM>_v1).
+/**
+ * «Erklärte Differenz» pro Lieferant-Zeile: Popover mit Notizfeld. Speichern
+ * markiert die Zeile grün/neutral (Differenz bleibt sichtbar), Aufheben ist
+ * jederzeit möglich. Persistenz pro Mandant+Monat im FIBU-Match-Blob.
+ */
+function ErklaertMarkierung({ lieferant, notiz, onSave, onRemove }: {
+  lieferant: string;
+  notiz: string | undefined;
+  onSave: (notiz: string) => Promise<boolean>;
+  onRemove: () => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={o => { setOpen(o); if (o) setText(notiz ?? ''); }}>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] text-muted-foreground"
+          data-testid={`abgleich-erklaeren-${lieferant}`}>
+          <Pencil className="h-3 w-3 mr-0.5" />
+          {notiz ? 'Notiz' : 'erklären'}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-96 space-y-2" onClick={e => e.stopPropagation()}>
+        <p className="text-xs font-medium">{lieferant} — Differenz als erklärt markieren</p>
+        <Textarea value={text} onChange={e => setText(e.target.value)} rows={3}
+          placeholder="Begründung (z.B. Umbuchung, Zahlungskorrektur — keine Warenbewegung)"
+          className="text-xs" data-testid={`abgleich-erklaert-notiz-${lieferant}`} />
+        <div className="flex items-center justify-end gap-2">
+          {notiz && (
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy}
+              onClick={async () => { setBusy(true); try { if (await onRemove()) setOpen(false); } finally { setBusy(false); } }}
+              data-testid={`abgleich-erklaert-aufheben-${lieferant}`}>
+              Markierung aufheben
+            </Button>
+          )}
+          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || !text.trim()}
+            onClick={async () => { setBusy(true); try { if (await onSave(text.trim())) setOpen(false); } finally { setBusy(false); } }}
+            data-testid={`abgleich-erklaert-speichern-${lieferant}`}>
+            {busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+            Speichern
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function FibuMatchBereich({
   lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate,
 }: {
@@ -4687,6 +4777,7 @@ function FibuMatchBereich({
       herkunft: 'manuell',
     };
     const ok = await onMutate(cur => ({
+      ...cur,
       gruppen: [...cur.gruppen, neue],
       // Manuelles Match entsperrt seine Mitglieder wieder (neue Entscheidung).
       gesperrt: {
@@ -4705,6 +4796,7 @@ function FibuMatchBereich({
       const g = cur.gruppen.find(x => x.id === gruppeId);
       if (!g) return cur;
       return {
+        ...cur,
         gruppen: cur.gruppen.filter(x => x.id !== gruppeId),
         // Manuell aufgelöste Mitglieder sperren: der Auto-Lauf fasst sie NIE
         // wieder an — manuelle Entscheidung bleibt stehen (manuelles Matchen

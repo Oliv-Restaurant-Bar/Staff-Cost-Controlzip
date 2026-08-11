@@ -50,3 +50,7 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - Doppel-Erfassung = gleiche Rechnung über mehrere Pfade (Detail-PDF/CSV, fibu_uebernahme, kreditoren_uebernahme). Keep-Regel: final>Detail>fibu>kred; FIBU-Splits gleicher Nr. = EIN Beleg (zusammen behalten).
 - Detail-Belege gleicher Nr. an VERSCHIEDENEN Daten sind KEINE Duplikate (Transgourmet verwendet Nummern wieder) — gilt auch in der Übernahme-Wache `findeDublette` (Ausnahme nur Detail+anderes Datum+anderer Betrag).
 - Sammelrechnungs-Heuristik: Übernahme ≥500 CHF ≈ Summe ≥3 Detail-Belegen (Toleranz max(5, 0.5%)) → Vorschlag. Nur Vorschau-Dialog, nie Auto-Löschen.
+
+## «Erklärte Differenz» pro Lieferant (Aug 2026)
+- FibuMatchState hat `erklaert: Record<Lieferant-/Alias-Gruppenname, Notiz>` — im selben KV-Blob `waren_fibu_matches_<YYYY-MM>_v1` (mandant+monat). Zeile wird grün/neutral, CHF-Differenz bleibt sichtbar; jederzeit aufhebbar. Key ist der Alias-Gruppenname: Umbenennung der Gruppe verwaist die Notiz (bekannt/akzeptiert).
+- JEDE FibuMatchState-Mutation muss `...cur` spreaden, sonst gehen erklaert-Notizen verloren; saveFibuMatchState schreibt kvSetStrict (kvSet schluckt Fehler → optimistischer Rollback griffe nie).

@@ -90,6 +90,7 @@ describe('autoMatchVorschlaege', () => {
     const state: FibuMatchState = {
       gruppen: [{ id: 'm1', invoiceIds: ['b'], buchungKeys: [keys[1]], herkunft: 'manuell' }],
       gesperrt: { invoiceIds: ['a'], buchungKeys: [] },
+      erklaert: {},
     };
     const neu = autoMatchVorschlaege({ invoices, buchungen, keys, state });
     expect(neu).toHaveLength(0); // 'a' gesperrt, 'b' schon gematcht
@@ -139,6 +140,28 @@ describe('autoMatchVorschlaege', () => {
     const buchungen = [jrn('x', 200)];
     const keys = buchungKeysMitIndex(buchungen);
     expect(autoMatchVorschlaege({ invoices, buchungen, keys, state: state0 })).toHaveLength(0);
+  });
+});
+
+describe('erklaert (erklärte Differenz pro Lieferant)', () => {
+  it('normalize: liest erklaert-Map, verwirft Nicht-Strings und leere Notizen', () => {
+    const s = normalizeFibuMatchState({
+      gruppen: [], gesperrt: { invoiceIds: [], buchungKeys: [] },
+      erklaert: { 'Feldschlösschen': 'GU-Doppelzahlung', Transgourmet: '  ', X: 42 },
+    });
+    expect(s.erklaert).toEqual({ 'Feldschlösschen': 'GU-Doppelzahlung' });
+  });
+  it('normalize: Alt-Blob ohne erklaert → leere Map', () => {
+    expect(normalizeFibuMatchState({ gruppen: [] }).erklaert).toEqual({});
+  });
+  it('bereinigeMatchState lässt erklaert unangetastet', () => {
+    const state = {
+      gruppen: [{ id: 'g1', invoiceIds: ['weg'], buchungKeys: ['b1'] }],
+      gesperrt: { invoiceIds: ['weg'], buchungKeys: [] },
+      erklaert: { Transgourmet: 'Rechnung umgebucht' },
+    };
+    const { state: neu } = bereinigeMatchState(state, new Set<string>());
+    expect(neu.erklaert).toEqual({ Transgourmet: 'Rechnung umgebucht' });
   });
 });
 
@@ -192,6 +215,7 @@ describe('bereinigeMatchState (C1: Cleanup nach Löschen/Undo)', () => {
       { id: 'g3', invoiceIds: ['d'], buchungKeys: [] }, // beschädigt: keine Buchungsseite
     ],
     gesperrt: { invoiceIds: ['a', 'x'], buchungKeys: ['k9'] },
+    erklaert: {},
   });
 
   it('entfernt verwaiste invoiceIds; Gruppen ohne Rechnungs- ODER Buchungsseite fliegen raus', () => {

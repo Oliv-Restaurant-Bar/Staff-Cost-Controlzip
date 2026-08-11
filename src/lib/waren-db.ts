@@ -312,7 +312,11 @@ export async function saveFibuMatchState(
   monthKey: string,
   state: import('./waren-fibu-matches').FibuMatchState,
 ): Promise<void> {
-  await kvSet(fibuMatchesKey(tenantId, monthKey), state);
+  // Strikt schreiben: kvSet schluckt Fehler still — dann meldet der
+  // optimistische persistFibuState-Pfad Erfolg ohne Persistenz und rollt
+  // NICHT zurück. Der Fehler muss bis zum Aufrufer propagieren.
+  const { kvSetStrict } = await import('./supabase-kv');
+  await kvSetStrict(fibuMatchesKey(tenantId, monthKey), state);
   console.log(`[WAREN] fibu-matches saved: ${state.gruppen.length} groups (${monthKey}, tenant "${tenantId}")`);
 }
 

@@ -33,9 +33,16 @@ export interface FibuMatchGruppe {
 export interface FibuMatchState {
   gruppen: FibuMatchGruppe[];
   gesperrt: { invoiceIds: string[]; buchungKeys: string[] };
+  /**
+   * «Erklärte Differenz» pro Lieferant-Zeile des Abgleichs: Lieferant-Name
+   * (Alias-Gruppenname der Zeile) → Notiztext. Rein visuell — die
+   * CHF-Differenz bleibt sichtbar, die Zeile wird nur nicht mehr rot.
+   * Pro Mandant+Monat gespeichert (dieser Blob), jederzeit aufhebbar.
+   */
+  erklaert: Record<string, string>;
 }
 
-export const LEERER_MATCH_STATE: FibuMatchState = { gruppen: [], gesperrt: { invoiceIds: [], buchungKeys: [] } };
+export const LEERER_MATCH_STATE: FibuMatchState = { gruppen: [], gesperrt: { invoiceIds: [], buchungKeys: [] }, erklaert: {} };
 
 /** Standard-Toleranz für Auto-Match und grüne Ampel (absolute CHF-Differenz). */
 export const DEFAULT_FIBU_MATCH_TOLERANZ = 10;
@@ -99,9 +106,17 @@ export function normalizeFibuMatchState(raw: unknown): FibuMatchState {
     { invoiceIds?: unknown; buchungKeys?: unknown } | null;
   const strArr = (x: unknown): string[] =>
     Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string') : [];
+  const erkRaw = (raw && typeof raw === 'object' ? (raw as { erklaert?: unknown }).erklaert : null);
+  const erklaert: Record<string, string> = {};
+  if (erkRaw && typeof erkRaw === 'object' && !Array.isArray(erkRaw)) {
+    for (const [k, v] of Object.entries(erkRaw as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim()) erklaert[k] = v;
+    }
+  }
   return {
     gruppen,
     gesperrt: { invoiceIds: strArr(g?.invoiceIds), buchungKeys: strArr(g?.buchungKeys) },
+    erklaert,
   };
 }
 
@@ -288,7 +303,8 @@ export function bereinigeMatchState(
     || gesperrtInv.length !== state.gesperrt.invoiceIds.length
     || gruppen.some((g, i) => g.invoiceIds.length !== state.gruppen[i].invoiceIds.length);
   return {
-    state: { gruppen, gesperrt: { ...state.gesperrt, invoiceIds: gesperrtInv } },
+    // «erklaert» bleibt unangetastet — Lieferanten-Notizen hängen nicht an Invoice-IDs.
+    state: { ...state, gruppen, gesperrt: { ...state.gesperrt, invoiceIds: gesperrtInv } },
     geaendert,
   };
 }
