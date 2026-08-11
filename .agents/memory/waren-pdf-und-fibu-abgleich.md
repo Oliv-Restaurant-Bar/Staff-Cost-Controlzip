@@ -16,6 +16,11 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - Kanonisierung IMMER via `applyAliasGruppen`/`buildAliasResolver` (waren-alias-gruppen.ts, normalizeSupplierKey-basiert) an der Ladestelle der Rechnungsliste — nie Beträge/Daten ändern, nur supplierName-Merge.
 - FIBU-Abgleich: erfasst+gebucht pro Gruppe summiert, Journal matcht auch Gruppen-Aliasse; `mitglieder`-Breakdown nur bei echter Zusammenführung. Drilldown-/Detail-Filter müssen Original-Namen via Resolver vergleichen (entries behalten Original-Namen).
 
+## Auto-Match primär via Rechnungsnummer (08/2026)
+- Phase 0 in `autoMatchVorschlaege`: Referenznummern aus Buchungstext+`belegNr` (`refNummern`, ≥5 Ziffern freistehend — kein Anschluss an `. , '`+Ziffer, führende Nullen normalisiert) gegen `InvoiceEntry.reference`; 1 Rechnung ↔ ALLE Split-Zeilen mit derselben Nummer = EINE 1:n-Gruppe, bewusst OHNE Betrags-Toleranz (Rest = echtes Leergut/Split in der Differenz-Zerlegung). Betrag+Datum nur noch Fallback.
+- Mehrdeutigkeit zählt als UNION: erreicht eine Buchung über irgendeine ihrer Nummern 2+ Rechnungen (auch wenn EINE Nummer eindeutig wäre) → offen lassen, nie raten (Architect-Fund).
+- Anzeige immer via `buchungAnzeigeText` (Text + belegNr, ohne Duplikat) — die Rechnungsnummer steckt in `belegNr` (Kontoblatt-Referenzzeile), nicht im Text; `buchungKey` bleibt OHNE belegNr (Persistenz-Stabilität).
+
 ## Manuelles FIBU-Matching (Drilldown)
 - Match-Gruppen sind rein zuordnend (IDs/Schlüssel, nie Beträge); Buchungen ohne stabile ID → deterministischer Schlüssel aus Feldern + Duplikat-Index in Anzeige-Reihenfolge; verschwundene Schlüssel werden ignoriert, nie «repariert».
 - Optimistische KV-Saves in schneller Folge: IMMER serialisieren + funktional auf Ref-Stand mutieren; Rollback nur auf den Vorzustand der fehlgeschlagenen Mutation; Erfolgs-UI (Toast/Auswahl leeren) erst nach bestätigtem Save.

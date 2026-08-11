@@ -102,6 +102,40 @@ export function buchungBetrag(b: SageJournalEntry): number {
   return (b.soll ?? 0) - (b.haben ?? 0);
 }
 
+/**
+ * Anzeige-Text einer Buchung: Buchungstext + Beleg-/Referenznummer (die
+ * Kontoblatt-Referenzzeile mit der Rechnungsnummer landet beim Import in
+ * `belegNr`). Nie duplizieren, wenn die Nummer schon im Text steht.
+ */
+export function buchungAnzeigeText(b: SageJournalEntry): string {
+  const text = (b.text ?? '').trim();
+  const beleg = (b.belegNr ?? '').trim();
+  if (!beleg || text.includes(beleg)) return text || beleg;
+  return text ? `${text} · ${beleg}` : beleg;
+}
+
+/**
+ * Referenz-/Rechnungsnummern aus einem Freitext: Ziffernfolgen ab 5 Stellen
+ * (schliesst Datumsteile, 4-stellige Konten und Rappen-Beträge aus),
+ * führende Nullen normalisiert. Für den Abgleich Buchungstext ↔ erfasste
+ * Rechnungsnummer.
+ */
+export function refNummern(text: string | null | undefined): string[] {
+  const out = new Set<string>();
+  // Nur freistehende Ziffernfolgen: kein Anschluss an Dezimal-/Tausender-
+  // Zeichen (CHF 12345.00, 1'234'567) und keine längere Zahl drumherum —
+  // Beträge, Datums-/Telefonfragmente werden so nicht als Referenz gelesen.
+  for (const m of (text ?? '').matchAll(/(?<![\d.,'])\d{5,}(?![\d]|[.,']\d)/g)) {
+    out.add(m[0].replace(/^0+/, '') || '0');
+  }
+  return [...out];
+}
+
+/** Alle Referenznummern einer Buchung (Text + Belegnummern-Zeile). */
+export function buchungRefNummern(b: SageJournalEntry): string[] {
+  return refNummern(`${b.text ?? ''} ${b.belegNr ?? ''}`);
+}
+
 /** ISO-Datum (yyyy-mm-dd) → dd.mm.yyyy; andere Formate unverändert. */
 export function fmtDatumCH(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? '');
@@ -250,6 +284,40 @@ export function autoMatchVorschlaege(input: AutoMatchInput): FibuMatchGruppe[] {
     for (const id of invoiceIds) belegtInv.add(id);
     for (const k of buchungKeys) belegtKey.add(k);
   };
+
+  // ── Phase 0 (PRIMÄR): Rechnungs-/Belegnummer aus dem Buchungstext ──
+  // 1 erfasste Rechnung ↔ ALLE FIBU-Split-Zeilen mit derselben Nummer werden
+  // als EINE Gruppe gematcht (1:n) — bewusst OHNE Betrags-Toleranz: die Summe
+  // der Split-Zeilen weicht typischerweise um Leergut/Pfand oder Warengruppen-
+  // Split vom Rechnungstotal ab; dieser Rest erscheint danach als ECHTER
+  // Rest in der Differenz-Zerlegung. Mehrdeutige Nummern (auf 2+ Rechnungen
+  // bzw. Buchung trifft 2+ Rechnungen) bleiben offen — nie raten.
+  {
+    const invByRef = new Map<string, string[]>();
+    for (const { e } of inv) {
+      for (const r of refNummern(e.reference)) {
+        invByRef.set(r, [...(invByRef.get(r) ?? []), e.id]);
+      }
+    }
+    const keysByInv = new Map<string, string[]>();
+    for (const { b, key } of buch) {
+      // JEDE erreichte Rechnung zählt in die Mehrdeutigkeits-Prüfung — auch
+      // wenn eine der Nummern selbst mehrdeutig ist (2+ Rechnungen mit
+      // gleicher Ref): dann bleibt die Buchung offen, nie raten.
+      const treffer = new Set<string>();
+      let mehrdeutig = false;
+      for (const r of buchungRefNummern(b)) {
+        const ids = invByRef.get(r);
+        if (!ids) continue;
+        if (ids.length > 1) { mehrdeutig = true; break; }
+        treffer.add(ids[0]);
+      }
+      if (mehrdeutig || treffer.size !== 1) continue; // keine/mehrdeutige Nummer → Fallback/manuell
+      const [invId] = treffer;
+      keysByInv.set(invId, [...(keysByInv.get(invId) ?? []), key]);
+    }
+    for (const [invId, keys] of keysByInv) nimm([invId], keys);
+  }
 
   // ── Phase a: eindeutige 1:1 ──
   // Kandidatenpaare mit Score (Differenz, Datumsdistanz), aufsteigend sortiert.
@@ -482,7 +550,7 @@ export function zerlegeLieferantDifferenz(
     if (matchedKey.has(keys[i])) return;
     posten.push({
       typ: 'nur_fibu',
-      label: `Nur in FIBU: ${b.text || 'Buchung'} vom ${b.date}`,
+      label: `Nur in FIBU: ${buchungAnzeigeText(b) || 'Buchung'} vom ${b.date}`,
       betrag: rp(buchungBetrag(b)),
       detail: 'fehlende Rechnung / Bar-Einkauf / Zahlungskorrektur?',
     });

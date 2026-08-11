@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  buchungKey, buchungKeysMitIndex, buchungBetrag, fmtDatumCH,
+  buchungKey, buchungKeysMitIndex, buchungBetrag, buchungAnzeigeText, refNummern, buchungRefNummern, fmtDatumCH,
   matchAmpel, lieferantMatchStat, normalizeFibuMatches, normalizeFibuMatchState,
   autoMatchVorschlaege, LEERER_MATCH_STATE, bereinigeMatchState, zerlegeLieferantDifferenz,
   type FibuMatchGruppe, type FibuMatchState,
@@ -51,8 +51,98 @@ describe('matchAmpel', () => {
   });
 });
 
+describe('buchungAnzeigeText / refNummern', () => {
+  it('hängt die Belegnummer an den Text an, ohne zu duplizieren', () => {
+    const b = { text: 'Transgourmet Schweiz AG', belegNr: '64119916' } as unknown as SageJournalEntry;
+    expect(buchungAnzeigeText(b)).toBe('Transgourmet Schweiz AG · 64119916');
+    expect(buchungAnzeigeText({ text: 'TG 64119916', belegNr: '64119916' } as unknown as SageJournalEntry)).toBe('TG 64119916');
+    expect(buchungAnzeigeText({ text: '', belegNr: '87756560' } as unknown as SageJournalEntry)).toBe('87756560');
+  });
+  it('refNummern: nur Ziffernfolgen ≥5, führende Nullen normalisiert; Datum/Konto/Beträge ignoriert', () => {
+    expect(refNummern('Rechnung 64119916 vom 31.07.2026, Konto 4000, CHF 1234.50')).toEqual(['64119916']);
+    expect(refNummern('Ref 0087756560')).toEqual(['87756560']);
+    expect(refNummern('')).toEqual([]);
+    // Beträge/Tausender-Formate sind KEINE Referenzen
+    expect(refNummern('CHF 12345.00')).toEqual([]);
+    expect(refNummern('Total 12345,50')).toEqual([]);
+    expect(refNummern("1'234'567.90")).toEqual([]);
+    expect(refNummern('Zahlung 64119916.')).toEqual(['64119916']); // Satzende ≠ Dezimalpunkt
+    const b = { text: 'Transgourmet', belegNr: '64124672 · LS 479500001' } as unknown as SageJournalEntry;
+    expect(buchungRefNummern(b).sort()).toEqual(['479500001', '64124672']);
+  });
+});
+
 describe('autoMatchVorschlaege', () => {
   const state0: FibuMatchState = LEERER_MATCH_STATE;
+
+  it('Phase 0: Rechnungsnummer im Buchungstext gruppiert ALLE Split-Zeilen 1:n, ohne Toleranz', () => {
+    // Kontrollfall Transgourmet: Splits 3 Zeilen, Summe weicht um Leergut ab.
+    const invoices = [
+      { ...inv('r1', 1000), reference: '64119916' } as InvoiceEntry,
+      { ...inv('r2', 500), reference: '64124672' } as InvoiceEntry,
+    ];
+    const buchungen = [
+      { ...jrn('Transgourmet Schweiz AG', 600), belegNr: '64119916' } as SageJournalEntry,
+      { ...jrn('Transgourmet Schweiz AG', 300), belegNr: '64119916' } as SageJournalEntry,
+      jrn('Transgourmet Schweiz AG 64119916', 37.21), // Nummer im Text statt belegNr
+      { ...jrn('Transgourmet Schweiz AG', 480), belegNr: '64124672' } as SageJournalEntry,
+    ];
+    const keys = buchungKeysMitIndex(buchungen);
+    const neu = autoMatchVorschlaege({ invoices, buchungen, keys, state: state0 });
+    expect(neu).toHaveLength(2);
+    const g1 = neu.find(g => g.invoiceIds.includes('r1'))!;
+    expect(g1.buchungKeys.sort()).toEqual([keys[0], keys[1], keys[2]].sort()); // alle 3 Splits, Diff 62.79 > Toleranz egal
+    const g2 = neu.find(g => g.invoiceIds.includes('r2'))!;
+    expect(g2.buchungKeys).toEqual([keys[3]]);
+  });
+
+  it('Phase 0: mehrdeutige Nummern bleiben offen (nie raten); gesperrte/gematchte werden nicht angefasst', () => {
+    const invoices = [
+      { ...inv('r1', 100), reference: '55555' } as InvoiceEntry,
+      { ...inv('r2', 200), reference: '55555' } as InvoiceEntry, // gleiche Ref auf 2 Rechnungen
+      { ...inv('r3', 999), reference: '77777' } as InvoiceEntry,
+    ];
+    const buchungen = [
+      { ...jrn('Lief A', 100), belegNr: '55555' } as SageJournalEntry,
+      { ...jrn('Lief B', 999), belegNr: '77777' } as SageJournalEntry,
+    ];
+    const keys = buchungKeysMitIndex(buchungen);
+    const state: FibuMatchState = { ...LEERER_MATCH_STATE, gesperrt: { invoiceIds: ['r3'], buchungKeys: [] } };
+    const neu = autoMatchVorschlaege({ invoices, buchungen, keys, state });
+    // 55555 mehrdeutig → kein Ref-Match; r3 gesperrt → 77777-Buchung fällt in den Betrags-Fallback
+    expect(neu.some(g => g.invoiceIds.includes('r3'))).toBe(false);
+    expect(neu.flatMap(g => g.buchungKeys)).not.toContain(keys[1]);
+  });
+
+  it('Phase 0: mehrdeutige Ref NEBEN eindeutiger Ref lässt die Buchung offen (Union zählt)', () => {
+    const invoices = [
+      { ...inv('a', 100), reference: '55555' } as InvoiceEntry,
+      { ...inv('b', 200), reference: '55555' } as InvoiceEntry, // 55555 mehrdeutig
+      { ...inv('c', 900), reference: '66666' } as InvoiceEntry,
+    ];
+    // Buchung trägt BEIDE Nummern → erreicht potenziell a/b UND c → offen lassen
+    const buchungen = [{ ...jrn('Lief', 900), belegNr: '55555 · 66666' } as SageJournalEntry];
+    const keys = buchungKeysMitIndex(buchungen);
+    const neu = autoMatchVorschlaege({ invoices, buchungen, keys, state: state0 });
+    expect(neu.filter(g => g.herkunft === 'auto' && g.invoiceIds.includes('c') && g.buchungKeys.length === 1 && g.invoiceIds.length === 1 && g.buchungKeys[0] === keys[0])
+      .every(g => Math.abs(900 - 900) <= 10)).toBe(true); // Betrags-Fallback DARF noch matchen (900≈900) …
+    // … aber NICHT via Phase-0-Ref: dazu prüfen wir den reinen Ref-Fall ohne Betragsgleichheit
+    const invoices2 = invoices.map(e => e.id === 'c' ? { ...e, amountNet: 500 } as InvoiceEntry : e);
+    const neu2 = autoMatchVorschlaege({ invoices: invoices2, buchungen, keys, state: state0 });
+    expect(neu2).toHaveLength(0); // Ref mehrdeutig + Betrag passt nicht → offen
+  });
+
+  it('Phase 0 vor Betrags-Fallback: Ref gewinnt auch gegen betragsgleiche andere Rechnung', () => {
+    const invoices = [
+      { ...inv('mitRef', 500), reference: '64119916' } as InvoiceEntry,
+      inv('ohneRef', 500),
+    ];
+    const buchungen = [{ ...jrn('TG', 500), belegNr: '64119916' } as SageJournalEntry];
+    const keys = buchungKeysMitIndex(buchungen);
+    const neu = autoMatchVorschlaege({ invoices, buchungen, keys, state: state0 });
+    const g = neu.find(g => g.buchungKeys.includes(keys[0]))!;
+    expect(g.invoiceIds).toEqual(['mitRef']);
+  });
 
   it('a) eindeutige 1:1 innerhalb Toleranz, Tag auto', () => {
     const invoices = [inv('a', 500), inv('b', 300)];

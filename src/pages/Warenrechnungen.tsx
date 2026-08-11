@@ -89,7 +89,7 @@ import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type Wa
 import { findeDublettenGruppen, type DublettenGruppe } from '@/lib/waren-dubletten';
 import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import {
-  buchungKeysMitIndex, buchungBetrag, fmtDatumCH, matchAmpel, lieferantMatchStat,
+  buchungKeysMitIndex, buchungBetrag, buchungAnzeigeText, fmtDatumCH, matchAmpel, lieferantMatchStat,
   autoMatchVorschlaege, LEERER_MATCH_STATE, DEFAULT_FIBU_MATCH_TOLERANZ,
   ERKLAER_GRUENDE, erklaerGrundLabel, zerlegeLieferantDifferenz,
   type FibuMatchGruppe, type FibuMatchState, type ErklaerteDifferenz, type ErklaerGrundId,
@@ -4505,7 +4505,7 @@ export default function WarenrechnungenPage() {
                             Buchungen ohne Lieferanten-Zuordnung: {abgleich.nichtZugeordnet.length} · CHF {fmtChf(abgleich.nichtZugeordnetSumme)}
                           </p>
                           {abgleich.nichtZugeordnet.slice(0, 12).map((b, i) => (
-                            <p key={i} className="tabular-nums">{b.date} · {b.text} · CHF {fmtChf((b.soll ?? 0) - (b.haben ?? 0))}</p>
+                            <p key={i} className="tabular-nums">{b.date} · {buchungAnzeigeText(b)} · CHF {fmtChf((b.soll ?? 0) - (b.haben ?? 0))}</p>
                           ))}
                           {abgleich.nichtZugeordnet.length > 12 && <p>… und {abgleich.nichtZugeordnet.length - 12} weitere</p>}
                           <p className="mt-1">Tipp: Lieferant im Stamm anlegen oder eine PDF-Rechnung zuordnen — der Alias wirkt auch hier.</p>
@@ -5785,7 +5785,7 @@ function FibuMatchBereich({
                     checked={selBuch.has(key)}
                     onChange={() => toggle(selBuch, key, setSelBuch)} />
                 )}
-                <span className="flex-1 truncate max-w-[260px]" title={b.text}>{b.date} · {b.text}</span>
+                <span className="flex-1 truncate max-w-[260px]" title={buchungAnzeigeText(b)}>{b.date} · {buchungAnzeigeText(b)}</span>
                 <span>CHF {fmtChf(buchungBetrag(b))}</span>
               </label>
             );
