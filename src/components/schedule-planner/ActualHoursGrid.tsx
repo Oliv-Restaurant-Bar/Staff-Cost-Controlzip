@@ -1,6 +1,6 @@
 // Actual Hours Grid Component - For displaying and editing Ist-Stunden in schedule view
 import React, { useState } from 'react';
-import { format, isWeekend, isSunday, getDay } from 'date-fns';
+import { format, isWeekend, isSunday, getDay, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
+import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon, Lock, LockOpen } from 'lucide-react';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { toast } from 'sonner';
 
@@ -48,6 +48,12 @@ interface ActualHoursGridProps {
   laborCostThreshold?: number;
   /** External day-click handler: opens the day detail popup for ANY day */
   onDayClick?: (day: Date) => void;
+  /** Gesperrte Ist-Tage (yyyy-MM-dd): Zellen eingefroren, Importe/Sync überspringen sie. */
+  lockedDates?: Set<string>;
+  /** Sperr-Toggle: erhält 1 Datum (Tag), Wochentage (KW) oder alle angezeigten Tage. */
+  onToggleDayLock?: (dates: string[], lock?: boolean) => void;
+  /** Nur mit Bearbeitungsrecht dürfen Sperren geändert werden. */
+  canLock?: boolean;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -91,6 +97,7 @@ const ActualHoursCell = ({
   onSave,
   showCosts = false,
   quickEntry = null,
+  locked = false,
 }: {
   employee: Employee;
   day: Date;
@@ -98,6 +105,7 @@ const ActualHoursCell = ({
   onSave: (entry: ActualHoursEntry | null) => void;
   showCosts?: boolean;
   quickEntry?: AbsenceCode | null;
+  locked?: boolean;
 }) => {
   const { rates: socialCostRates } = useSocialCostRates();
   const [isEditing, setIsEditing] = useState(false);
@@ -126,6 +134,11 @@ const ActualHoursCell = ({
   const hoursFromChf = (chfInput && effectiveRate > 0) ? (parseFloat(chfInput.replace(',', '.')) / effectiveRate) : 0;
 
   const handleCellClick = () => {
+    // ── Tages-Sperre: eingefrorene Tage erst entsperren, dann bearbeiten ──
+    if (locked) {
+      toast.warning(`Der ${format(day, 'd.M.')} ist gesperrt — zum Bearbeiten zuerst entsperren (Schloss im Spaltenkopf).`);
+      return;
+    }
     // ── Austritts-Sperre: nach dem Austrittsdatum keine Ist-Erfassung mehr ──
     if (employee.employmentEndDate && format(day, 'yyyy-MM-dd') > employee.employmentEndDate) {
       toast.warning(`${getEmployeeDisplayName(employee)} ist seit ${format(new Date(employee.employmentEndDate + 'T00:00:00'), 'dd.MM.yyyy')} ausgetreten — keine Ist-Erfassung nach dem Austritt möglich.`);
@@ -246,9 +259,10 @@ const ActualHoursCell = ({
           absenceType === 'F' && "bg-slate-100 dark:bg-slate-800/50",
           !absenceType && hours > 0 && "bg-green-50 dark:bg-green-900/20",
           quickHoverClass,
+          locked && "opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800/60 ring-1 ring-inset ring-slate-300 dark:ring-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800/60",
         )}
         onClick={handleCellClick}
-        title={quickEntry ? `Klicken → ${quickEntry} setzen (nochmal klicken zum Aufheben)` : "Klicken zum Bearbeiten"}
+        title={locked ? "Tag gesperrt — Import/Sync/Bearbeitung blockiert (Schloss im Spaltenkopf zum Entsperren)" : quickEntry ? `Klicken → ${quickEntry} setzen (nochmal klicken zum Aufheben)` : "Klicken zum Bearbeiten"}
       >
         {absenceType ? (
           <div className="flex flex-col items-center gap-0.5">
@@ -624,8 +638,23 @@ export const ActualHoursGrid = ({
   dailyBudgets = {},
   laborCostThreshold: laborCostThresholdProp,
   onDayClick,
+  lockedDates,
+  onToggleDayLock,
+  canLock = false,
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
+  const lockedSet = lockedDates ?? new Set<string>();
+  const showLockUI = !!onToggleDayLock && canLock;
+  // ISO-Wochen-Gruppen (aufeinanderfolgende Tage derselben KW) für die
+  // KW-Kopfzeile mit Wochen-Schloss. Nur relevant, wenn Sperren aktiv sind.
+  const weekGroups: Array<{ week: number; dates: string[] }> = [];
+  for (const day of days) {
+    const w = getISOWeek(day);
+    const dateStr = format(day, 'yyyy-MM-dd');
+    const last = weekGroups[weekGroups.length - 1];
+    if (last && last.week === w) last.dates.push(dateStr);
+    else weekGroups.push({ week: w, dates: [dateStr] });
+  }
 
   // Zentrale AG-Sozialkostensätze für alle Stundenkostensätze in diesem Grid
   const { rates: socialCostRates } = useSocialCostRates();
@@ -849,12 +878,60 @@ export const ActualHoursGrid = ({
           Typ wählen, dann Zellen anklicken
         </span>
       )}
+      {showLockUI && (
+        <button
+          onClick={() => onToggleDayLock!(days.map(d => format(d, 'yyyy-MM-dd')))}
+          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800/50 transition-colors shrink-0"
+          title={days.every(d => lockedSet.has(format(d, 'yyyy-MM-dd')))
+            ? 'Alle angezeigten Tage entsperren'
+            : 'Alle angezeigten Tage sperren — Importe/Sync/Bearbeitung blockiert'}
+          data-testid="button-lock-all-days"
+        >
+          {days.every(d => lockedSet.has(format(d, 'yyyy-MM-dd')))
+            ? <><LockOpen className="h-3 w-3" /> Alle entsperren</>
+            : <><Lock className="h-3 w-3" /> Alle sperren</>}
+        </button>
+      )}
     </div>
 
     <div className="overflow-auto max-h-[calc(100vh-280px)]">
       <div className={cn("min-w-max", isWeekView && "min-w-0")}>
         <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
           <thead className="sticky top-0 z-30 bg-card">
+            {showLockUI && (
+              // KW-Kopfzeile mit Wochen-Schloss: sperrt/entsperrt alle
+              // angezeigten Tage der jeweiligen ISO-Woche auf einmal.
+              <tr className="bg-card">
+                <th className={cn(
+                  "sticky left-0 z-20 bg-card border-b border-r-2 border-border",
+                  isWeekView ? "w-[110px] min-w-[110px]" : "w-[140px] min-w-[140px]"
+                )} />
+                <th className={cn(
+                  "sticky z-20 bg-card border-b border-r-2 border-border",
+                  isWeekView ? "left-[110px] w-[50px] min-w-[50px]" : "left-[140px] w-[60px] min-w-[60px]"
+                )} />
+                {weekGroups.map(g => {
+                  const allLocked = g.dates.every(d => lockedSet.has(d));
+                  return (
+                    <th key={`kw-${g.week}-${g.dates[0]}`} colSpan={g.dates.length}
+                      className="px-1 py-0.5 text-[9px] font-semibold text-muted-foreground border-b border-r border-border/50 bg-muted/30">
+                      <button
+                        onClick={() => onToggleDayLock!(g.dates)}
+                        className={cn(
+                          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted transition-colors",
+                          allLocked && "text-slate-700 dark:text-slate-300"
+                        )}
+                        title={allLocked ? `KW ${g.week} entsperren` : `KW ${g.week} sperren — Importe/Sync/Bearbeitung blockiert`}
+                        data-testid={`button-lock-week-${g.week}`}
+                      >
+                        KW {g.week}
+                        {allLocked ? <Lock className="h-2.5 w-2.5" /> : <LockOpen className="h-2.5 w-2.5 opacity-50" />}
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            )}
             <tr className="bg-card">
               <th
                 className={cn(
@@ -878,6 +955,7 @@ export const ActualHoursGrid = ({
                 const stats = getDailyStats(day);
                 const dateStr = format(day, 'yyyy-MM-dd');
                 const ms = stats.markerStatus;
+                const isLockedDay = lockedSet.has(dateStr);
 
                 // Background based on Ampel status (takes priority over weekend colors)
                 const headerBg =
@@ -902,6 +980,8 @@ export const ActualHoursGrid = ({
                       "border-r border-border/50",
                       headerBg,
                       isSundayDay && ms === 'none' && "bg-amber-200/70 dark:bg-amber-900/50 border-r-2 border-r-primary/30",
+                      // Gesperrter Tag: Spaltenkopf sichtbar grau (Sperr-Farbton hat Vorrang)
+                      isLockedDay && "bg-slate-200/80 dark:bg-slate-800/70 hover:bg-slate-200/80 dark:hover:bg-slate-800/70",
                       isWeekView ? "min-w-[80px] text-xs" : "min-w-[60px] text-[10px]"
                     )}
                     onClick={() => {
@@ -919,8 +999,24 @@ export const ActualHoursGrid = ({
                       : "Klicken für Tagesdetails"
                     }
                   >
-                    <div className={cn("text-[9px] font-semibold", textColor)}>
+                    <div className={cn("text-[9px] font-semibold flex items-center justify-center gap-0.5", textColor)}>
                       {WEEKDAY_NAMES[day.getDay()]}
+                      {showLockUI ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onToggleDayLock!([dateStr]); }}
+                          className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                          title={lockedSet.has(dateStr)
+                            ? 'Tag entsperren — wieder importierbar/editierbar'
+                            : 'Tag sperren — Import/Sync/Bearbeitung blockiert'}
+                          data-testid={`button-lock-day-${dateStr}`}
+                        >
+                          {lockedSet.has(dateStr)
+                            ? <Lock className="h-2.5 w-2.5 text-slate-700 dark:text-slate-300" />
+                            : <LockOpen className="h-2.5 w-2.5 opacity-40" />}
+                        </button>
+                      ) : lockedSet.has(dateStr) ? (
+                        <Lock className="h-2.5 w-2.5 text-slate-700 dark:text-slate-300" />
+                      ) : null}
                     </div>
                     <div className={cn("font-semibold text-[10px]", textColor)}>
                       {format(day, 'd.M.')}
@@ -1053,6 +1149,7 @@ export const ActualHoursGrid = ({
                         onSave={(newEntry) => onHoursChange(employee.id, dateStr, newEntry)}
                         showCosts={showCosts}
                         quickEntry={quickEntry}
+                        locked={lockedSet.has(dateStr)}
                       />
                     );
                   })}

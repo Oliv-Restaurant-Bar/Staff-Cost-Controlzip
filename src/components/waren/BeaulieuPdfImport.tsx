@@ -20,7 +20,7 @@ import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import { parseProfilPdf, type ProfilPdfErgebnis } from '@/lib/profil-pdf-parse';
 import {
   loadLieferantenProfile, saveLieferantenProfile, lerneProfil, normalisiereMwstNr,
-  erkenneMandantImText,
+  erkenneMandantImText, hatMonatsrechnung, CAPORASO_KONTEN,
   type LieferantenProfil, type ProfilBelegtyp,
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
@@ -96,8 +96,11 @@ function num(s: string): number | null {
 
 const R2 = (n: number) => Math.round(n * 100) / 100;
 
-export function BeaulieuPdfImport({ tenantId, onImported }: {
+export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef }: {
   tenantId: TenantId; onImported: () => void;
+  /** Optionaler Einspeise-Kanal: die Seite kann erkannte Profil-PDFs (z.B.
+   *  Caporaso aus der Schnellerfassung) direkt in diese Vorschau umleiten. */
+  externalFilesRef?: { current: ((files: File[]) => void) | null };
 }) {
   const [profile, setProfile] = useState<LieferantenProfil[]>([]);
   const [zeilen, setZeilen] = useState<VorschauZeile[]>([]);
@@ -121,7 +124,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
 
   const profilById = useMemo(() => new Map(profile.map(p => [p.id, p])), [profile]);
 
-  const handleFiles = useCallback(async (files: FileList | null) => {
+  const handleFiles = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const pdfs = Array.from(files).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     if (pdfs.length === 0) { toast.error('Bitte PDF-Dateien wählen.'); return; }
@@ -225,6 +228,14 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
       setZeilen(z => [...z, ...neu]);
     } finally { setBusy(false); }
   }, [tenantId]);
+
+  // Einspeise-Kanal für die Seite: erkannte Profil-PDFs (z.B. Caporaso aus der
+  // Schnellerfassung) landen direkt in dieser Vorschau statt im Formular.
+  useEffect(() => {
+    if (!externalFilesRef) return;
+    externalFilesRef.current = (files: File[]) => { void handleFiles(files); };
+    return () => { externalFilesRef.current = null; };
+  }, [externalFilesRef, handleFiles]);
 
   function patch(i: number, p: Partial<VorschauZeile>) {
     setZeilen(z => z.map((row, idx) => idx === i ? { ...row, ...p } : row));
@@ -407,9 +418,15 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         if (rechnungen.length === 0) continue;
         const erg = await kernImportiereFsRechnungen(tenantId, profil.name, rechnungen, {
           noteLabel: 'Lieferanten-PDF', idPrefix: 'lpdf',
-          extraMapping: { [profil.kategorie]: profil.konto },
+          // Caporaso: fester Split via MwSt-Basis (Küche 4060 / Betriebs-
+          // material 4701) — Regeln VOR der Profil-Kategorie einfügen.
+          extraMapping: profil.parser === 'caporaso'
+            ? { ...CAPORASO_KONTEN, [profil.kategorie]: profil.konto }
+            : { [profil.kategorie]: profil.konto },
           defaultKonto: profil.konto,
           ...(quelle ? { quelle } : {}),
+          // «Monatsrechnung: nein» ⇒ Einzelrechnungen buchen sofort FINAL.
+          ...(!quelle && !hatMonatsrechnung(profil) ? { finalDirekt: true } : {}),
           // AB↔Rechnungs-Match ohne Referenz-Treffer: enges ±3-Tage-Fenster.
           ...(profil.abAlsLieferschein ? { ersatzFensterTage: 3 } : {}),
         });
@@ -574,8 +591,8 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                           : row.modus === 'monatsrechnung'
                           ? `Monatsrechnung (massgeblich — überschreibt provisorische Buchungen) · ${erg.lieferungen.length} Lieferungen`
                           : erg.positionenErkannt
-                          ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen`
-                          : 'Kopf-Buchung (ohne Positionen)'}
+                          ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen${erg.profil && !hatMonatsrechnung(erg.profil) ? ' · bucht sofort final' : ''}`
+                          : `Kopf-Buchung (ohne Positionen)${erg.profil && !hatMonatsrechnung(erg.profil) ? ' · bucht sofort final' : ''}`}
                       </span>}
                   {!istOffen && profilById.get(row.lieferant)?.belegtyp === 'dual' && erg.positionenErkannt && (
                     <Select value={row.modus}
@@ -803,11 +820,11 @@ export function LieferantenProfilEditor({ tenantId, canEdit }: { tenantId: Tenan
 
   return (
     <div className="space-y-1.5" data-testid="lieferanten-profil-editor">
-      <div className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_24px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
-        <span>Lieferant</span><span>MWST-Nr</span><span>Kategorie</span><span>Konto</span><span>MwSt %</span><span>Belegtyp</span><span />
+      <div className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_110px_24px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
+        <span>Lieferant</span><span>MWST-Nr</span><span>Kategorie</span><span>Konto</span><span>MwSt %</span><span>Belegtyp</span><span>Monatsrechnung</span><span />
       </div>
       {profile.map(p => (
-        <div key={p.id} className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_24px] gap-1.5 items-center">
+        <div key={p.id} className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_110px_24px] gap-1.5 items-center">
           <Input className="h-7 text-xs" value={p.name} disabled={!canEdit}
             onChange={e => save(profile.map(x => x.id === p.id ? { ...x, name: e.target.value } : x))} />
           <Input className="h-7 text-xs" value={p.mwstNr} disabled={!canEdit} placeholder="—"
@@ -830,6 +847,16 @@ export function LieferantenProfilEditor({ tenantId, canEdit }: { tenantId: Tenan
               <SelectItem value="dual">Lieferscheine + Monatsrechnung</SelectItem>
               <SelectItem value="monatsrechnung">nur Monats-/Sammelrechnung</SelectItem>
               <SelectItem value="einzelrechnung">nur Einzelrechnung</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={hatMonatsrechnung(p) ? 'ja' : 'nein'} disabled={!canEdit}
+            onValueChange={v => save(profile.map(x => x.id === p.id ? { ...x, monatsrechnung: v === 'ja' } : x))}>
+            <SelectTrigger className="h-7 text-[11px]" data-testid={`profil-monatsrechnung-${p.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ja">ja — LS provisorisch</SelectItem>
+              <SelectItem value="nein">nein — bucht final</SelectItem>
             </SelectContent>
           </Select>
           {canEdit && p.id.startsWith('p-') ? (

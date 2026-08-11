@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso';
 
 /**
  * Belegtyp des Lieferanten:
@@ -53,23 +53,48 @@ export interface LieferantenProfil {
    *  die (massgebliche) Monatsrechnung ersetzt/korrigiert sie später.
    *  Standard = false: AB/Offerte/Bestellung werden NIE gebucht (Sperre). */
   abAlsLieferschein?: boolean;
+  /** «Monatsrechnung: ja/nein» (pro Lieferant einstellbar):
+   *  - JA: Lieferscheine bleiben provisorisch, bis die Monatsrechnung sie
+   *    ersetzt/finalisiert (Lieferschein→Monatsrechnung-Workflow).
+   *  - NEIN: jede Einzelrechnung bucht sofort FINAL (keine provisorische Stufe).
+   *  Ohne expliziten Wert wird aus dem Belegtyp abgeleitet (dual/monats-
+   *  rechnung ⇒ ja, einzelrechnung ⇒ nein) — siehe hatMonatsrechnung(). */
+  monatsrechnung?: boolean;
 }
+
+/** Effektives «Monatsrechnung ja/nein» eines Profils (explizit > Belegtyp). */
+export function hatMonatsrechnung(p: LieferantenProfil): boolean {
+  return p.monatsrechnung ?? (p.belegtyp === 'dual' || p.belegtyp === 'monatsrechnung');
+}
+
+/** Caporaso: fester Konto-Split über die MwSt-Basis der Rechnungssumme —
+ *  2.6 %-Basis → 4060 Küche (Food), 8.1 %-Basis → 4701 Betriebsmaterial
+ *  (Verpackung, kein Wareneinsatz). Warengruppen-Labels der Parser-Positionen. */
+export const CAPORASO_KONTEN: Record<string, string> = {
+  'Küche': '4060',
+  'Betriebsmaterial': '4701',
+};
 
 /** Vorbelegung gemäss Aufgabe — Konto in den Einstellungen anpassbar. */
 export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
   { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
-  { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true },
-  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual' },
+  { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
+  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
   // Bäckerei Bohnenblust bewusst KEIN Profil: wird ausschliesslich MANUELL
   // erfasst (freie Mandantenwahl) — siehe BOHNENBLUST_AUSGESCHLOSSEN.
   // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).
-  { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet' },
-  { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'monatsrechnung' },
+  { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet', monatsrechnung: false },
+  { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'monatsrechnung', monatsrechnung: true },
   { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
-  { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6 },
+  { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6, monatsrechnung: false },
+  // Caporaso: LIEFERSCHEIN-RECHNUNG (Einzelbeleg, bucht sofort final);
+  // Konto-Split via MwSt-Basis (2.6 % → 4060 Küche, 8.1 % → 4701 Betriebs-
+  // material). Keine MWST-Nr im Beleg-Kopf hinterlegt → Namens-Erkennung.
+  { id: 'caporaso',    name: 'Caporaso',                mwstNr: '',          kategorie: 'Küche',            konto: '4060', mwstSatz: 2.6, parser: 'caporaso', monatsrechnung: false,
+    erkennungTokens: ['caporaso'] },
   { id: 'hofamstutz',  name: 'Hof am Stutz',            mwstNr: '',          kategorie: 'Eier',             konto: '4060', mwstSatz: 0,
     erkennungTokens: ['hof am stutz'], iban: 'CH3830129016376058001' },
 ];

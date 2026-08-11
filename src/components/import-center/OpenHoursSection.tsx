@@ -53,6 +53,7 @@ import {
   saveDienstplanIstBackup, saveActualHourEntry, updateEmployeeErfassungsart,
   DienstplanIstBackupRow, ActualHourEntry,
 } from '@/lib/supabase-db';
+import { loadIstDayLocksStrict } from '@/lib/ist-day-locks';
 
 const PATTERN_SHORT: Record<1 | 2 | 3 | 4 | 5, { label: string; mirusLabel: string; keepLabel: string }> = {
   1: { label: 'M1 — wird übernommen', mirusLabel: 'Übernehmen', keepLabel: 'Nicht übernehmen' },
@@ -120,9 +121,11 @@ export function OpenHoursSection() {
     setBusyId(entry.id);
     try {
       const monthDate = new Date(`${entry.month}-01T12:00:00`);
-      const [schedule, actuals] = await Promise.all([
+      // Tagessperren STRIKT lesen (fail-closed) — wirft bei Lesefehler.
+      const [schedule, actuals, lockedDates] = await Promise.all([
         loadScheduleForMonth(monthDate, tenantId),
         loadActualHoursForMonth(monthDate, tenantId),
+        loadIstDayLocksStrict(tenantId, entry.month),
       ]);
       if (actuals === null) {
         toast.error('Gespeicherte Ist-Werte konnten nicht geladen werden — Zuweisung abgebrochen (nichts geschrieben).');
@@ -152,6 +155,7 @@ export function OpenHoursSection() {
         month: entry.month,
         dates,
         roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H,
+        lockedDates,
         // Austritts-Sperre: keine Ist-Stunden nach dem Austrittsdatum
         ...(employee.employmentEndDate ? { exitDates: { [employee.id]: employee.employmentEndDate } } : {}),
       });
@@ -217,7 +221,14 @@ export function OpenHoursSection() {
       }
 
       // 2) Schreiben — awaited + geprüft, Abbruch-Meldung bei Fehlern.
-      const writes = resolvePlanToWrites(plan);
+      // Tagessperren UNMITTELBAR vor dem Commit strikt neu prüfen (zwischen
+      // Vorschau und Bestätigung kann gesperrt worden sein); fail-closed.
+      const commitLocks = await loadIstDayLocksStrict(tenantId, plan.month);
+      const allWrites = resolvePlanToWrites(plan);
+      const writes = allWrites.filter(op => !commitLocks.has(op.date));
+      if (allWrites.length - writes.length > 0) {
+        toast.info(`${allWrites.length - writes.length} Tag(e) inzwischen gesperrt — nicht überschrieben.`);
+      }
       const failed: string[] = [];
       let written = 0;
       for (const op of writes) {
@@ -421,6 +432,21 @@ export function OpenHoursSection() {
                 <Badge variant="outline" className={questionCount ? 'text-orange-700 border-orange-300' : ''}>{questionCount} Rückfragen</Badge>
                 {assign.plan.silentRounds.length > 0 && <Badge variant="outline" className="text-muted-foreground">{assign.plan.silentRounds.length} still gerundet</Badge>}
               </div>
+
+              {(assign.plan.lockedSkipped.length > 0 || assign.plan.lockedDates.length > 0) && (
+                <Alert>
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-assign-locked">
+                    <strong>Gesperrt — nicht überschrieben:</strong>{' '}
+                    {assign.plan.lockedDates.map(d => `${d.slice(8)}.${d.slice(5, 7)}.`).join(', ')}
+                    {assign.plan.lockedSkipped.length > 0 && (
+                      <> — geparkte Stunden auf gesperrten Tagen bleiben unberücksichtigt:{' '}
+                      {assign.plan.lockedSkipped.map(r => `${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}</>
+                    )}
+                    {' '}— zum Übernehmen die Tage im Dienstplan (Ist) entsperren.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {assign.plan.rejectedExited.length > 0 && (
                 <Alert variant="destructive">

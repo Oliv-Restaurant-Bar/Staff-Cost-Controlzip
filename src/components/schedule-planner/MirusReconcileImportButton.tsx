@@ -58,6 +58,7 @@ import {
 } from '@/lib/mirus-open-hours-store';
 import { recordImportRun, markMirusRunUndoneByBackup } from '@/lib/import-undo-store';
 import { loadMonthAbsences, saveMonthAbsences } from '@/lib/supabase-kv';
+import { loadIstDayLocksStrict, loadIstDayLocksForMonths } from '@/lib/ist-day-locks';
 import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
@@ -383,12 +384,21 @@ export function MirusReconcileImportButton({
 
   // ── Schritt 3: Plan bauen (Drei-Weg: Datei / PLAN / Ist) ──────────────────
 
-  const buildPlanFromMatches = (
+  const buildPlanFromMatches = async (
     overrides: NameMatchOverride[],
     entries: MirusDailyImportEntry[],
     month: string,
     dates: string[],
   ) => {
+    // Tages-/Wochensperren STRIKT lesen (fail-closed): Lesefehler dürfen nie
+    // als «keine Sperren» interpretiert werden — dann lieber gar nicht importieren.
+    let lockedDates: Set<string>;
+    try {
+      lockedDates = await loadIstDayLocksStrict(tenantId, month);
+    } catch (e) {
+      toast.error(`${e instanceof Error ? e.message : String(e)} — Import abgebrochen (nichts geschrieben).`);
+      return;
+    }
     saveNameMappingsBatch(
       overrides.filter(o => o.selectedEmployeeId !== 'new' && o.selectedEmployeeId !== 'park' && o.selectedEmployeeId !== 'create')
         .map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId || 'skip' })),
@@ -536,7 +546,7 @@ export function MirusReconcileImportButton({
     }
     const p = buildMirusReconcilePlan({
       entries: resolved, existing: actualHoursData, planned, erfassungsart, month, dates,
-      roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H, exitDates,
+      roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H, exitDates, lockedDates,
     });
     setPlan(p);
     // Rückfrage-Gruppen (2,4,5) standardmässig offen, Sammelgruppen 1+3 zu.
@@ -600,7 +610,22 @@ export function MirusReconcileImportButton({
 
       // 2) Schreiben (nur effektive Änderungen; MANUELL-MA werden nie berührt).
       // Supabase-Write pro Zelle awaited + geprüft; State/localStorage erst nach Erfolg.
-      const writes = resolvePlanToWrites(plan);
+      // Tagessperren UNMITTELBAR vor dem Commit strikt neu prüfen: zwischen
+      // Vorschau und Bestätigung kann ein Tag gesperrt worden sein (Fenster
+      // steht offen). Lesefehler = Abbruch (fail-closed), nichts geschrieben.
+      let commitLocks: Set<string>;
+      try {
+        commitLocks = await loadIstDayLocksStrict(tenantId, plan.month);
+      } catch (e) {
+        toast.error(`${e instanceof Error ? e.message : String(e)} — Import abgebrochen (nichts geschrieben).`);
+        return;
+      }
+      const allWrites = resolvePlanToWrites(plan);
+      const writes = allWrites.filter(op => !commitLocks.has(op.date));
+      const lockedAtCommit = allWrites.length - writes.length;
+      if (lockedAtCommit > 0) {
+        toast.info(`${lockedAtCommit} Zelle(n) auf inzwischen gesperrten Tagen übersprungen — «gesperrt, nicht überschrieben».`);
+      }
       const failed: string[] = [];
       let written = 0;
       for (const op of writes) {
@@ -785,6 +810,16 @@ export function MirusReconcileImportButton({
       const jobs = resolved.filter((r): r is { p: typeof r.p; empId: string } => !!r.empId);
       if (jobs.length === 0) return;
 
+      // Tagessperren strikt prüfen (fail-closed): «Dateiwert übernehmen»
+      // schreibt Ist-Werte und darf gesperrte Tage nie anfassen.
+      let adoptLocks: Set<string>;
+      try {
+        adoptLocks = await loadIstDayLocksStrict(tenantId, report.month);
+      } catch (e) {
+        toast.error(`${e instanceof Error ? e.message : String(e)} — nichts geschrieben.`);
+        return;
+      }
+
       // Schreib-Plan pro MA aus Report-Dateiwerten + LIVE-Ist (nicht Report-Strings).
       const perJob = jobs.map(({ p, empId }) => {
         const days = (p.days ?? []).map(d => {
@@ -796,8 +831,11 @@ export function MirusReconcileImportButton({
             savedAbsence: saved?.absenceType ?? null,
           };
         });
-        return { p, empId, writes: planAdoptFileWrites(days) };
+        return { p, empId, writes: planAdoptFileWrites(days).filter(w => !adoptLocks.has(w.date)) };
       }).filter(j => j.writes.length > 0);
+      if (adoptLocks.size > 0) {
+        toast.info('Gesperrte Tage werden nicht überschrieben — zum Übernehmen zuerst entsperren.');
+      }
       if (perJob.length === 0) {
         toast.info('Gespeicherte Werte entsprechen bereits den Dateiwerten.');
         return;
@@ -1067,6 +1105,21 @@ export function MirusReconcileImportButton({
                     <strong>Abgelehnt (&gt; 16 h/Tag, Phantom-Verdacht — wird NICHT geschrieben):</strong>{' '}
                     {plan.rejectedImplausible.map(r => `${r.employeeName} ${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}
                     {' '}— bestehende Werte dieser Tage bleiben unangetastet.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {(plan.lockedSkipped.length > 0 || plan.lockedDates.length > 0) && (
+                <Alert>
+                  <ShieldCheck className="h-4 w-4" />
+                  <AlertDescription data-testid="alert-locked">
+                    <strong>Gesperrt — nicht überschrieben:</strong>{' '}
+                    {plan.lockedDates.map(d => `${d.slice(8)}.${d.slice(5, 7)}.`).join(', ')}
+                    {plan.lockedSkipped.length > 0 && (
+                      <> — Dateiwerte auf gesperrten Tagen bleiben unberücksichtigt:{' '}
+                      {plan.lockedSkipped.map(r => `${r.employeeName} ${r.date.slice(8)}.${r.date.slice(5, 7)}. (${r.hours.toFixed(1)} h)`).join(', ')}</>
+                    )}
+                    {' '}— zum Importieren die Tage im Dienstplan (Ist) entsperren.
                   </AlertDescription>
                 </Alert>
               )}

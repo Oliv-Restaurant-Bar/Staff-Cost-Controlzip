@@ -53,6 +53,8 @@ import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
+import { WarenUniversalUpload, klassifiziereWarenDateien, type UploadRouting } from '@/components/waren/WarenUniversalUpload';
+import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
@@ -79,6 +81,7 @@ import {
   parseInvoiceText, extractPdfInvoiceText, findSupplierInText, matchSupplier,
   normalizeSupplierKey, type ErkannteRechnung,
 } from '@/lib/waren-pdf-erkennung';
+import { loadLieferantenProfile, findeProfilImText } from '@/lib/lieferanten-profile';
 import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
 import { findeDublettenGruppen, type DublettenGruppe } from '@/lib/waren-dubletten';
 import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
@@ -123,7 +126,7 @@ import {
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
   Info,
 } from 'lucide-react';
@@ -383,6 +386,19 @@ export default function WarenrechnungenPage() {
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [zielWkqPct,        setZielWkqPct]        = useState<number>(DEFAULT_ZIEL_WARENQUOTE_PCT);
   const amountInputRef = useRef<HTMLInputElement>(null);
+  // Einspeise-Kanal in die Lieferanten-PDF-Vorschau (Caporaso-Umleitung).
+  const profilImportRef = useRef<((files: File[]) => void) | null>(null);
+  // Einspeise-Kanäle des universellen Uploads (CSV / Feldschlösschen).
+  const csvImportRef = useRef<((files: File[]) => void) | null>(null);
+  const fsImportRef  = useRef<((files: File[]) => void) | null>(null);
+  /** Spezial-Import-Boxen (CSV/FS/Profil): eingeklappt, öffnen sich beim Routing. */
+  const [spezialOpen, setSpezialOpen] = useState(false);
+  /** Manuelle Einzelerfassung: nur noch als eingeklappter Bereich. */
+  const [manuellOpen, setManuellOpen] = useState(false);
+  // Stapel-Spiegel + Selbstreferenz: nach einer Umleitung muss processPdf das
+  // NÄCHSTE PDF selbst anstossen (handleSave läuft in diesem Fall nie).
+  const pdfQueueRef = useRef<File[]>([]);
+  const processPdfRef = useRef<((f: File) => Promise<void>) | null>(null);
   // Warenkonten-Verwaltung (im Lieferantenstamm-Dialog)
   const [newKontoValue,     setNewKontoValue]     = useState('');
   const [newKontoLabel,     setNewKontoLabel]     = useState('');
@@ -1361,6 +1377,29 @@ export default function WarenrechnungenPage() {
     setPdfBusy(true);
     try {
       const { text, textLayer, ocrFehler } = await extractPdfInvoiceText(file);
+      // Caporaso: NICHT über die Einzelzeilen-Schnellerfassung buchen — das PDF
+      // gehört in den Profil-Split-Import (2.6 % → 4060 / 8.1 % → 4701 aus den
+      // MwSt-BASEN). Umleitung in die Lieferanten-PDF-Vorschau.
+      if (textLayer) {
+        try {
+          const profile = await loadLieferantenProfile(tenantId);
+          const { profil } = findeProfilImText(text, profile);
+          if (profil?.id === 'caporaso' && profilImportRef.current) {
+            toast.info(`${file.name}: Caporaso erkannt — wird über den Lieferanten-PDF-Import mit Konto-Split (4060/4701) verarbeitet.`);
+            profilImportRef.current([file]);
+            // Stapel weiterführen: handleSave (der normale Fortschaltpunkt)
+            // läuft für umgeleitete PDFs nie — nächstes PDF direkt anstossen.
+            const q = pdfQueueRef.current;
+            if (q.length > 0) {
+              const [next, ...rest] = q;
+              pdfQueueRef.current = rest;
+              setPdfQueue(rest);
+              setTimeout(() => { void processPdfRef.current?.(next); }, 0);
+            }
+            return;
+          }
+        } catch { /* Erkennung best-effort — Fallback: normale Schnellerfassung */ }
+      }
       const felder = parseInvoiceText(text);
       const supplierNames = suppliers.filter(s => s.active).map(s => s.name);
       const hit = findSupplierInText(text, supplierNames, aliases);
@@ -1409,7 +1448,50 @@ export default function WarenrechnungenPage() {
       setPdfBusy(false);
       requestAnimationFrame(() => amountInputRef.current?.focus());
     }
-  }, [suppliers, aliases, warenkonten]);
+  }, [suppliers, aliases, warenkonten, tenantId]);
+  useEffect(() => { processPdfRef.current = processPdf; }, [processPdf]);
+  useEffect(() => { pdfQueueRef.current = pdfQueue; }, [pdfQueue]);
+
+  /** Universeller Upload: klassifizierte Dateien an die Import-Kanäle leiten. */
+  const handleUniversalRoute = useCallback((routing: UploadRouting) => {
+    if (routing.csv.length)    csvImportRef.current?.(routing.csv);
+    if (routing.fs.length)     fsImportRef.current?.(routing.fs);
+    if (routing.profil.length) profilImportRef.current?.(routing.profil);
+    if (routing.csv.length || routing.fs.length || routing.profil.length) setSpezialOpen(true);
+  }, []);
+
+  /** Direkt-Upload aus der Lieferanten-Übersicht: NUR für diesen Lieferanten.
+   *  Fail-closed: Dateien, die laut Klassifikation NICHT zu ihm gehören,
+   *  werden ABGEWIESEN (nicht umgeleitet) — über den universellen Upload
+   *  oben können sie regulär importiert werden. Nie raten. */
+  const handleUploadFor = useCallback((files: File[], erwartet: { name: string; ziel: 'csv' | 'fs' | 'profil' }) => {
+    if (!canCreate) { toast.error('Keine Berechtigung zum Erfassen von Rechnungen.'); return; }
+    void (async () => {
+      const routing = await klassifiziereWarenDateien(tenantId, files);
+      const passt = (z: UploadRouting['erkannt'][number]) => {
+        if (z.kanal !== erwartet.ziel) return false;
+        if (erwartet.ziel !== 'profil') return true;   // csv/fs-Zeilen sind kanal-eindeutig
+        // Profil-Zeile: erkannter Lieferant muss übereinstimmen; unbekannte/
+        // unlesbare PDFs sind hier ebenfalls fremd (→ universeller Upload).
+        return z.profilName === erwartet.name;
+      };
+      const eigene = routing.erkannt.filter(passt);
+      const fremde = routing.erkannt.filter(z => !passt(z));
+      if (fremde.length > 0) {
+        toast.error(`${fremde.length} Datei(en) gehören nicht zu ${erwartet.name} — abgewiesen. Bitte über «Rechnung(en) / CSV hier ablegen» hochladen.`, {
+          description: fremde.slice(0, 3).map(f => `${f.file} → ${f.ziel}`).join(' · '),
+        });
+      }
+      if (eigene.length === 0) return;
+      const dateien = eigene.map(z => z.datei);
+      handleUniversalRoute({
+        csv: erwartet.ziel === 'csv' ? dateien : [],
+        fs: erwartet.ziel === 'fs' ? dateien : [],
+        profil: erwartet.ziel === 'profil' ? dateien : [],
+        erkannt: eigene,
+      });
+    })();
+  }, [tenantId, canCreate, handleUniversalRoute]);
 
   /** Upload-Handler: mehrere PDFs → Stapel; erstes sofort verarbeiten. */
   function handlePdfErkennungFiles(files: FileList | null) {
@@ -1848,18 +1930,45 @@ export default function WarenrechnungenPage() {
                   </div>
                   <div className="px-5 py-4 space-y-4">
 
-                    {/* ── CSV-Positionsimport (Transgourmet/Prodega) mit Preisüberwachung ── */}
-                    <WarenCsvImport tenantId={tenantId} suppliers={suppliers}
-                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+                    {/* ── EIN universeller Upload: erkennt Lieferant & Format automatisch ── */}
+                    <WarenUniversalUpload tenantId={tenantId} tenantColor={tenant.color}
+                      onRoute={handleUniversalRoute} />
 
-                    {/* ── Feldschlösschen PDF-Import (Lieferscheine · Monatsrechnung · Historie) ── */}
-                    <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers}
-                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+                    {/* ── Spezial-Import-Boxen: eingeklappt; öffnen sich beim Routing ── */}
+                    <button
+                      type="button"
+                      className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                      onClick={() => setSpezialOpen(o => !o)}
+                      data-testid="button-toggle-spezialimport"
+                    >
+                      {spezialOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      Direkt-Import je Format (CSV · Feldschlösschen · Lieferanten-PDF)
+                    </button>
+                    <div className={cn('space-y-4', !spezialOpen && 'hidden')}>
+                      {/* ── CSV-Positionsimport (Transgourmet/Prodega) mit Preisüberwachung ── */}
+                      <WarenCsvImport tenantId={tenantId} suppliers={suppliers} externalFilesRef={csvImportRef}
+                        onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
-                    {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (beide Mandanten) ── */}
-                    <BeaulieuPdfImport tenantId={tenantId}
-                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+                      {/* ── Feldschlösschen PDF-Import (Lieferscheine · Monatsrechnung · Historie) ── */}
+                      <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers} externalFilesRef={fsImportRef}
+                        onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
+                      {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (beide Mandanten) ── */}
+                      <BeaulieuPdfImport tenantId={tenantId} externalFilesRef={profilImportRef}
+                        onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+                    </div>
+
+                    {/* ── Manuelle Einzelerfassung: nur noch eingeklappt ── */}
+                    <button
+                      type="button"
+                      className="text-xs font-medium inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 hover:bg-muted/40 transition-colors"
+                      onClick={() => setManuellOpen(o => !o)}
+                      data-testid="button-toggle-manuell"
+                    >
+                      {manuellOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" style={{ color: tenant.color }} />}
+                      Manuell erfassen
+                    </button>
+                    <div className={cn('space-y-4', !manuellOpen && 'hidden')}>
                     {/* ── PDF-Erkennung: Rechnung hochladen → Felder vorfüllen ── */}
                     <div className="flex flex-wrap items-center gap-3">
                       <label className={cn(
@@ -2271,9 +2380,21 @@ export default function WarenrechnungenPage() {
                       />
                     </div>
                     </>)} {/* end showDetails (Sekundärfelder) */}
+                    </div> {/* end manuellOpen */}
                   </div>
                 </section>
                 )} {/* end canCreate */}
+
+                {/* ── Lieferanten-Übersicht: alle Lieferanten, Status & Direkt-Upload ── */}
+                <WarenLieferantenUebersicht
+                  tenantId={tenantId}
+                  entries={entries}
+                  suppliers={suppliers}
+                  canEdit={canEdit}
+                  canUpload={canCreate}
+                  monthLabel={monthLabel}
+                  onUploadFor={handleUploadFor}
+                />
 
                 {/* Letzte Einträge */}
                 {entries.length === 0 ? (

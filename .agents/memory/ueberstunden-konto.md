@@ -19,6 +19,8 @@ description: Regeln des Überstunden-Features (src/lib/ueberstunden.ts, /ueberst
 
 **Cockpit = Perioden-Werte (08/2026):** Die Monatsreport-Zeilen zeigen NUR den Saldo der angezeigten Periode (Monat = monatsSaldo, Woche = genau diese ISO-Woche via ladeUeberstundenPeriode), NICHT das kumulierte Konto — das bleibt exklusiv in der Überstunden-Ansicht (Spalte «Laufend»). Wochen-Lookup: weekFrom erst auf ISO-Montag normalisieren (last7 liefert keinen Montag); Dez/Jan-Wochen aus beiden Kalenderjahren zusammensetzen (berechneUeberstundenJahr schneidet am Jahresende ab).
 
+**UI (08/2026):** KW-Kopf-Klick = Tage-Drilldown (nutzt die bereits gedeckelten Tages-Gutschriften aus `UeWoche.tage`, Tages-Saldo = Ist+Gutschrift−Soll, KEINE Tages-Kostenaufteilung); Kosten-Spalte per Toggle, Default verborgen. Seiten-Tests: Context-Hook-Mocks (useTenant/useToast) brauchen STABILE Referenzen, sonst feuert der reload-Effect endlos (Render-Loop → Vitest-OOM).
+
 ## Dienstplan-Absenzen & Deckelung (08/2026)
 - FE/K/U kommen automatisch aus dem Dienstplan (schedule_entries, mandantengefiltert); manuelle Maske «Absenzen erfassen» ist Override und sticht den Plan (Tages-Vorrang `manuell ?? plan`).
 - **Deckelung:** Wochen-Gutschrift ≤ max(0, Wochen-Soll − Arbeits-Ist) — Absenzen füllen höchstens bis Saldo 0, nie Plus-Überstunden; proportional auf Absenz-Tage verteilt (Monats-Splits bleiben tageanteilig).

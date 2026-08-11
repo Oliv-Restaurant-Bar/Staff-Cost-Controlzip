@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Cockpit – Wochenübersicht (Design-Muster)</title>
+<style>
+  :root{
+    --ink:#1c2321; --ink2:#54605b; --muted:#8a938e; --line:#e3e7e4;
+    --surface:#ffffff; --band:#f5f7f5; --accent:#4d7c3a; --accent-d:#38602a;
+    --good-bg:#e7f3ec; --good-ink:#15794a;
+    --bad-bg:#fbeceb; --bad-ink:#c0392b;
+    --warn-bg:#fdf3e2; --warn-ink:#b07214;
+    --zebra:#fafbfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#e9ece9;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-variant-numeric:tabular-nums;}
+  .page{width:297mm;min-height:210mm;margin:14px auto;background:var(--surface);
+    padding:13mm 12mm 10mm;box-shadow:0 6px 26px rgba(0,0,0,.16);}
+  /* header band */
+  .head{display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:2.5px solid var(--accent);padding-bottom:9px;margin-bottom:4px;}
+  .brand{display:flex;align-items:center;gap:11px}
+  .logo{width:34px;height:34px;border-radius:8px;background:var(--accent);
+    color:#fff;font-weight:800;font-size:17px;display:flex;align-items:center;justify-content:center;letter-spacing:.5px}
+  .brand h1{font-size:15px;margin:0;letter-spacing:.2px}
+  .brand .sub{font-size:10.5px;color:var(--ink2);margin-top:1px}
+  .rtitle{text-align:right}
+  .rtitle .t{font-size:17px;font-weight:750;color:var(--accent-d)}
+  .rtitle .m{font-size:10.5px;color:var(--ink2);margin-top:2px}
+  /* period sub-row */
+  .periods{display:flex;justify-content:flex-end;gap:0;margin:10px 0 6px}
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  col.k{width:23%}
+  col.v{width:9.5%}
+  col.d{width:13.3%}
+  thead .grp th{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);
+    font-weight:700;padding:0 0 3px;text-align:center}
+  thead .grp .g1{border-bottom:2px solid var(--accent);color:var(--accent-d)}
+  thead .grp .g2{border-bottom:2px solid #9aa79c;color:#5f6c62}
+  thead .sub th{font-size:9px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);
+    font-weight:700;padding:4px 8px;border-bottom:1px solid var(--line)}
+  thead .sub th.r{text-align:right}
+  thead .sub th.c{text-align:center}
+  thead .sub th.kh{text-align:left}
+  tbody td{padding:5px 8px;font-size:11px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr:nth-child(even of .d){background:var(--zebra)}
+  td.k{font-weight:600;color:var(--ink)}
+  td.k .note{display:block;font-weight:400;font-size:8.6px;color:var(--muted);margin-top:1px}
+  td.num{text-align:right;font-weight:600}
+  td.bud{text-align:right;color:var(--ink2);font-weight:500}
+  /* section header row */
+  tr.section td{background:var(--band);font-size:9.5px;font-weight:800;letter-spacing:1px;
+    text-transform:uppercase;color:var(--accent-d);padding:6px 8px;border-bottom:1px solid var(--line)}
+  /* delta chip */
+  .chip{display:inline-flex;flex-direction:column;align-items:flex-end;line-height:1.05;
+    padding:3px 7px;border-radius:6px;min-width:74px}
+  .chip .big{font-size:11px;font-weight:750}
+  .chip .pct{font-size:8.4px;font-weight:600;opacity:.85;margin-top:1px}
+  .chip.good{background:var(--good-bg);color:var(--good-ink)}
+  .chip.bad{background:var(--bad-bg);color:var(--bad-ink)}
+  .chip.flat{background:#eef1ef;color:var(--ink2)}
+  td.dcell{text-align:right}
+  /* quota badge */
+  .q{display:inline-block;padding:1px 6px;border-radius:5px;font-size:8.8px;font-weight:700;margin-top:2px}
+  .q.g{background:var(--good-bg);color:var(--good-ink)}
+  .q.w{background:var(--warn-bg);color:var(--warn-ink)}
+  .q.r{background:var(--bad-bg);color:var(--bad-ink)}
+  .empty{color:var(--muted)}
+  /* legend */
+  .legend{margin-top:12px;padding-top:8px;border-top:1px solid var(--line);
+    columns:3;column-gap:20px;font-size:8.3px;color:var(--muted);line-height:1.5}
+  .legend b{color:var(--ink2)}
+  .legkey{display:flex;gap:14px;margin-bottom:6px;font-size:8.8px;color:var(--ink2)}
+  .legkey span{display:inline-flex;align-items:center;gap:5px}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .foot{display:flex;justify-content:space-between;margin-top:9px;font-size:8.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <div class="brand">
+      <div class="logo">O</div>
+      <div>
+        <h1>OLIV Restaurant &amp; Bar</h1>
+        <div class="sub">Oliv Gastro AG · Waisenhausplatz 28, Bern</div>
+      </div>
+    </div>
+    <div class="rtitle">
+      <div class="t">Wochenübersicht</div>
+      <div class="m">August 2026 · KW 31 &amp; letzte abgeschlossene Woche · Export 11.08.2026</div>
+    </div>
+  </div>
+
+  <div class="legkey">
+    <span><span class="dot" style="background:var(--good-ink)"></span> im Ziel / besser</span>
+    <span><span class="dot" style="background:var(--warn-ink)"></span> erhöht</span>
+    <span><span class="dot" style="background:var(--bad-ink)"></span> über Ziel / schlechter</span>
+    <span style="margin-left:auto;color:var(--muted)">leer = keine Datenquelle · Δ = Ist vs. Budget</span>
+  </div>
+
+  <table>
+    <colgroup><col class="k"><col class="v"><col class="v"><col class="d"><col class="v"><col class="v"><col class="d"></colgroup>
+    <thead>
+      <tr class="grp">
+        <th></th>
+        <th class="g1" colspan="3">KW 31 · 27.07.–02.08.</th>
+        <th class="g2" colspan="3">Letzte abgeschl. Woche · 03.08.–09.08.</th>
+      </tr>
+      <tr class="sub">
+        <th class="kh">Kennzahl</th>
+        <th class="r">Ist</th><th class="r">Budget</th><th class="c">Δ</th>
+        <th class="r">Ist</th><th class="r">Budget</th><th class="c">Δ</th>
+      </tr>
+    </thead>
+    <tbody id="tb"></tbody>
+  </table>
+
+  <div class="legend">
+    <b>Budget</b> = Wochenanteil des Monatsbudgets. <b>Ist</b> = gewählte Woche. <b>Δ</b> = Ist − Budget (CHF gross, % klein). ·
+    <b>Verhältnis-Kennzahlen</b> (Ø-Verkauf, PKQ, Produktivität, Take-Away-Anteil) werden nie pro-rata gekürzt. ·
+    <b>Ø-Verkauf pro Gast</b> nur über Tage mit beiden Quellen. ·
+    <b>Personalkosten</b> = Ist bis Stichtag (Fixlohn anteilig + Stunden-Ist). <b>PKQ</b> = Personalkosten ÷ Netto-Umsatz. ·
+    <b>Stunden</b> vergleichen Bedarf (Soll) / Plan (Budget) / Ist (MIRUS). ·
+    <b>WKQ</b> Ampel: ≤30 % grün · 30–35 % gelb · &gt;35 % rot. ·
+    <b>Überstunden</b>: laufendes Konto siehe Überstunden-Ansicht. ·
+    leere Felder = keine Datenquelle (nie 0). Monatswerte im Tab «Monatsübersicht».
+  </div>
+  <div class="foot"><span>Staff Cost Control · Cockpit-Export</span><span>Mandant: Oliv · Seite 1/3</span></div>
+</div>
+
+<script>
+// dir: 'up' = höher ist gut (Umsatz/Gäste), 'down' = höher ist schlecht (Kosten/Quoten)
+const rows = [
+ {s:'Umsatz'},
+ {k:'Brutto Umsatz',           a:"55'359.10", b:"60'651.61", d:"−5'292.51", dp:"−8.7 %",  dir:'up',
+                               a2:"65'300.60", b2:"60'651.61", d2:"+4'648.99", dp2:"+7.7 %", dir2:'up'},
+ {k:'Netto Umsatz',            a:"55'166.43", b:"56'451.61", d:"−1'285.18", dp:"−2.3 %",  dir:'up',
+                               a2:"60'798.40", b2:"56'451.61", d2:"+4'346.79", dp2:"+7.7 %", dir2:'up'},
+ {k:'Food Umsatz (netto)',     a:"39'167.53", b:"37'032.26", d:"+2'135.27", dp:"+5.8 %",  dir:'up',
+                               a2:"43'281.84", b2:"37'032.26", d2:"+6'249.58", dp2:"+16.9 %",dir2:'up'},
+ {k:'Beverage Umsatz (netto)', a:"15'998.89", b:"19'419.35", d:"−3'420.46", dp:"−17.6 %", dir:'up',
+                               a2:"17'516.56", b2:"19'419.35", d2:"−1'902.79", dp2:"−9.8 %", dir2:'up'},
+ {k:'Ø-Verkauf pro Gast',      a:"23.33", b:"29.00", d:"−5.67", dp:"−19.6 %", dir:'up', q:'r',
+                               a2:"24.93", b2:"29.00", d2:"−4.07", dp2:"−14.0 %", dir2:'up', q2:'r'},
+ {k:'Take Away Umsatz (netto)',a:"8'149.12", b:"6'774.19", d:"+1'374.93", dp:"+20.3 %", dir:'up',
+                               a2:"7'681.29", b2:"6'774.19", d2:"+907.10", dp2:"+13.4 %", dir2:'up'},
+ {k:'Take Away Anteil',        a:"15.1 %", b:"12.0 %", d:"+3.1 PP", dp:"", dir:'up', q:'g',
+                               a2:"12.1 %", b2:"12.0 %", d2:"+0.1 PP", dp2:"", dir2:'up', q2:'g'},
+
+ {s:'Gäste'},
+ {k:'Gäste IN',                a:"1'308", b:"1'713", d:"−405", dp:"−23.6 %", dir:'up',
+                               a2:"2'131", b2:"1'713", d2:"+418", dp2:"+24.4 %", dir2:'up'},
+ {k:'Reservierte Gäste', note:'24.9 % Anteil Gäste IN', a:"326", b:"273", d:"+53", dp:"+19.3 %", dir:'up',
+                               a2:"329", b2:"327", d2:"+2", dp2:"+0.6 %", dir2:'up'},
+ {k:'Gruppen ab 20 Pax',       a:"1", b:"6", d:"−5", dp:"", dir:'up',
+                               a2:"0", b2:"4", d2:"−4", dp2:"", dir2:'up'},
+ {k:'Gäste Take Away', note:'37.0 % Anteil Gäste', a:"768", b:"638", d:"+130", dp:"+20.4 %", dir:'up',
+                               a2:"301", b2:"265", d2:"+36", dp2:"+13.6 %", dir2:'up'},
+
+ {s:'Personal'},
+ {k:'Stunden', note:'Bedarf 4’475 · Plan/Budget · Ist MIRUS', a:"780", b:"678", d:"+103", dp:"+15.1 %", dir:'flat',
+                               a2:"727", b2:"731", d2:"−4", dp2:"−0.5 %", dir2:'flat'},
+ {k:'Produktivität (Umsatz/Std)', a:"70.70", b:"79.05", d:"−8.35", dp:"−10.6 %", dir:'up', q:'r',
+                               a2:"83.61", b2:"78.20", d2:"+5.41", dp2:"+6.9 %", dir2:'up', q2:'g'},
+ {k:'Personalkosten', note:'Ist bis 09.08.', a:"25'279.27", b:"22'580.65", d:"+2'698.62", dp:"+12.0 %", dir:'down',
+                               a2:"28'618.43", b2:"22'580.65", d2:"+6'037.78", dp2:"+26.7 %", dir2:'down'},
+ {k:'Personalquote (PKQ)',     a:"45.8 %", b:"40.0 %", d:"+5.8 PP", dp:"", dir:'down', q:'r',
+                               a2:"47.1 %", b2:"40.0 %", d2:"+7.1 PP", dp2:"", dir2:'down', q2:'r'},
+ {k:'Überstunden (Fix-MA)',    a:"54", b:"—", d:"—", dp:"", dir:'flat',
+                               a2:"47", b2:"—", d2:"—", dp2:"", dir2:'flat'},
+ {k:'Überstunden-Kosten',      a:"2'755.65", b:"—", d:"—", dp:"", dir:'flat',
+                               a2:"2'332.93", b2:"—", d2:"—", dp2:"", dir2:'flat'},
+
+ {s:'Waren'},
+ {k:'Warenkosten total vs. Soll', note:'WKQ 43.6 %', a:"24'152.35", b:"13'548.39", d:"+10'603.96", dp:"+78.3 %", dir:'down', q:'r',
+                               a2:"5'901.46", b2:"13'548.39", d2:"−7'646.93", dp2:"−56.4 %", dir2:'down', q2:'g', note2:'WKQ 9.7 %'},
+ {k:'Warenkosten Food (Küche)', note:'WKQ 49.3 %', a:"19'292.45", b:"9'400.21", d:"+9'892.24", dp:"", dir:'down', q:'r',
+                               a2:"5'820.22", b2:"10'387.64", d2:"−4'567.42", dp2:"", dir2:'down', q2:'g', note2:'WKQ 13.4 %'},
+ {k:'Warenkosten Beverage (Bar)', note:'WKQ 35.4 %', a:"4'859.90", b:"3'836.73", d:"+1'020.17", dp:"", dir:'down', q:'w',
+                               a2:"81.24", b2:"4'203.98", d2:"−4'122.74", dp2:"", dir2:'down', q2:'g', note2:'WKQ 0.5 %'},
+
+ {s:'Bewertungen'},
+ {k:'Google 5 Sterne',         a:"3", b:"5", d:"−2", dp:"", dir:'up',
+                               a2:"10", b2:"5", d2:"+5", dp2:"", dir2:'up'},
+ {k:'Google 3 Sterne',         a:"1", b:"0", d:"+1", dp:"", dir:'down',
+                               a2:"0", b2:"0", d2:"—", dp2:"", dir2:'flat'},
+ {k:'TripAdvisor 5 Sterne',    a:"0", b:"5", d:"−5", dp:"", dir:'up',
+                               a2:"0", b2:"5", d2:"−5", dp2:"", dir2:'up'},
+];
+
+function chip(d, dp, dir){
+  if(d==="—"||d===undefined) return '<span class="empty">—</span>';
+  let cls='flat';
+  const neg = d.trim().startsWith('−') || d.trim().startsWith('-');
+  if(dir==='up')   cls = neg ? 'bad' : 'good';
+  if(dir==='down') cls = neg ? 'good' : 'bad';
+  return `<span class="chip ${cls}"><span class="big">${d}</span>${dp?`<span class="pct">${dp}</span>`:''}</span>`;
+}
+function qbadge(q){ return q?`<span class="q ${q}">${q==='g'?'im Ziel':q==='w'?'erhöht':'über Ziel'}</span>`:''; }
+
+const tb = document.getElementById('tb');
+let html='';
+for(const r of rows){
+  if(r.s){ html += `<tr class="section"><td colspan="7">${r.s}</td></tr>`; continue; }
+  html += `<tr class="d">
+    <td class="k">${r.k}${r.note?`<span class="note">${r.note}</span>`:''}</td>
+    <td class="num">${r.a}${r.q?`<br>${qbadge(r.q)}`:''}</td>
+    <td class="bud">${r.b}</td>
+    <td class="dcell">${chip(r.d,r.dp,r.dir)}</td>
+    <td class="num">${r.a2}${r.q2?`<br>${qbadge(r.q2)}`:(r.note2?`<span class="note" style="text-align:right">${r.note2}</span>`:'')}</td>
+    <td class="bud">${r.b2}</td>
+    <td class="dcell">${chip(r.d2,r.dp2,r.dir2)}</td>
+  </tr>`;
+}
+tb.innerHTML = html;
+</script>
+</body>
+</html>

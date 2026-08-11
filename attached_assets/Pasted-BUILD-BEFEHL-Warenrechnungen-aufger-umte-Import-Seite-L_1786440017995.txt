@@ -1,0 +1,33 @@
+BUILD-BEFEHL — Warenrechnungen: aufgeräumte Import-Seite + Lieferanten-Übersicht
+
+ZIEL
+- Die verstreuten Import-Boxen (CSV, Feldschlösschen-PDF, Lieferanten-PDFs, «PDF erkennen»,
+  Schnellerfassung) zu EINER Seite zusammenführen: ein universeller Upload + eine Lieferanten-Übersicht.
+
+1) EIN UNIVERSELLER UPLOAD-BEREICH (oben)
+- Eine Drop-Zone «Rechnung(en) / CSV hier ablegen». App erkennt den Lieferanten automatisch
+  (MwSt-Nr / Name / Format) und leitet zum richtigen Parser → Vorschau mit korrektem Konto-Split.
+- Mehrfach-/Drag&Drop, auch gemischte Lieferanten in einem Rutsch.
+- Unbekannter Lieferant → klarer Hinweis + manuelle Zuordnung, nie geraten.
+
+2) LIEFERANTEN-ÜBERSICHT (Tabelle) — alle Lieferanten mit Namen
+Spalten: Lieferant · Import-Typ · Konto-Zuordnung · Monatsrechnung(ja/nein) · Letzter Import · Rechnungen(Monat) · Status
+Gruppiert:
+  AUTOMATISCH GEPARST
+    Transgourmet / Prodega  — CSV-Positionsimport (Warengruppen)  → 4060 / 4020 / 4701
+    Feldschlösschen         — PDF, Split aus «Zusammenfassung MwSt.» → 4030 / 4040 / 4050 (+Depot)
+    Caporaso                — PDF Lieferschein-Rechnung, MwSt-Split → 4060 / 4701 · final
+    Ambro Food              — PDF Monatsrechnung, Lieferdaten je LS  → 4060 · Monatsrechnung
+    Terravigna              — PDF Monatsrechnung (Retouren/Misch-MwSt) → 4020 · Monatsrechnung
+    Metzgerei Spahni        — PDF (15. + Monatsende), LS-Daten        → 4060 · Monatsrechnung
+    Blaser Café             — PDF Einzelrechnung                      → 4070 · final
+  MANUELL
+    Bäckerei Bohnenblust · La Marra · Obrist · Paul Ullrich · RB Chocolate · Asia Company · Barausgaben
+- Klick auf einen Lieferanten: dessen Rechnungen des Monats + direkter Upload NUR für ihn.
+- Konto-Zuordnung/Profil je Lieferant hier einsehbar und editierbar.
+
+3) MANUELLE EINZELERFASSUNG
+- Nur noch als eingeklappter «Manuell erfassen»-Button, nicht mehr prominent.
+
+BEIBEHALTEN: alle Parser/Splits, Dubletten-Upsert, «Letzter Import rückgängig», FIBU-Übernahmen,
+Warn-Schwellen, mandantengetrennt (Beaulieu hat eigene Lieferanten/Profile).

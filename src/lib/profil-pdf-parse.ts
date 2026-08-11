@@ -590,6 +590,23 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       mwstSatz: null,
     };
   },
+  caporaso: (text) => {
+    const g = generischerKopf(text);
+    const basen = caporasoMwstBasen(text);
+    const lieferdatum = parseDatumCH(suche(text, [CAPORASO_LS_RE]) ?? '');
+    const netto = basen.length > 0 ? rundung2(basen.reduce((s, b) => s + b.basis, 0)) : g.netto;
+    const mwst = basen.length > 0 ? rundung2(basen.reduce((s, b) => s + b.betrag, 0)) : g.mwst;
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/LIEFERSCHEIN-?RECHNUNG\s*:?\s*(\d{4,12})/i]) ?? g.rechnungsNr,
+      // Bei Caporaso ist das Lieferschein-Datum zugleich das Rechnungsdatum.
+      rechnungsdatum: lieferdatum ?? g.rechnungsdatum,
+      lieferdatum,
+      netto, mwst,
+      // Gemischte Sätze (2.6 Food / 8.1 Verpackung) — kein einzelner Satz.
+      mwstSatz: null,
+    };
+  },
   hofamstutz: (text) => {
     const g = generischerKopf(text);
     const total = sucheBetrag(text, [new RegExp(`Rechnungstotal\\s*\\n?\\s*(${BETRAG_RE.source})`, 'i')]);
@@ -608,7 +625,79 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   terravigna: parseTerravignaLieferungen,
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
+  caporaso: parseCaporasoLieferungen,
 };
+
+// ─── Caporaso (LIEFERSCHEIN-RECHNUNG) ────────────────────────────────────────
+
+/** «Lieferschein: L12345 vom 15.07.2026» — Lieferdatum (= Rechnungsdatum). */
+const CAPORASO_LS_RE = /Lieferschein\s*:?\s*L?\s*\d{2,12}\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i;
+
+/**
+ * MwSt-Basen aus der Rechnungssumme: Zeilen mit Satz 2.6 % oder 8.1 % und
+ * einem Basis/Betrag-Paar. SELBSTVALIDIEREND (basis × Satz ≈ Betrag ±0.06),
+ * damit Positionszeilen mit zufälligen Prozentangaben nie mitzählen —
+ * unabhängig von der Spaltenreihenfolge des Layouts.
+ */
+export function caporasoMwstBasen(text: string): Array<{ satz: number; basis: number; betrag: number }> {
+  const proSatz = new Map<number, { satz: number; basis: number; betrag: number }>();
+  for (const line of text.split('\n')) {
+    // Nur echte MwSt-Zusammenfassungszeilen — Positions-/Rabattzeilen mit
+    // zufällig passendem Prozentbetrag dürfen NIE eine Basis stellen.
+    if (!/mwst|mehrwertsteuer|\bvat\b|\btva\b/i.test(line)) continue;
+    if (/rabatt|skonto|zuschlag/i.test(line)) continue;
+    const rm = /(2\.60?|8\.10?)\s*%/.exec(line);
+    if (!rm) continue;
+    const satz = Math.round(parseFloat(rm[1]) * 10) / 10;
+    const rest = line.slice(rm.index + rm[0].length);
+    const vor = line.slice(0, rm.index);
+    // Kandidaten: alle Beträge der Zeile ausser der Satz-Angabe selbst.
+    const nums = [...vor.matchAll(/-?[\d’'.,]*\d/g), ...rest.matchAll(/-?[\d’'.,]*\d/g)]
+      .map(m => parseBetrag(m[0]))
+      .filter((n): n is number => n !== null && Math.abs(n) > 0.005);
+    let paar: { basis: number; betrag: number } | null = null;
+    for (const basis of nums) {
+      for (const betrag of nums) {
+        if (basis === betrag) continue;
+        if (Math.abs(rundung2(basis * satz / 100) - betrag) <= 0.06 && Math.abs(basis) > Math.abs(betrag)) {
+          paar = { basis, betrag };
+          break;
+        }
+      }
+      if (paar) break;
+    }
+    // Pro Satz nur EINMAL zählen (Wiederholung z.B. auf Folgeseite/QR-Teil).
+    if (paar && !proSatz.has(satz)) proSatz.set(satz, { satz, ...paar });
+  }
+  return [...proSatz.values()];
+}
+
+/** Caporaso: EINE Lieferung, Konto-Split als zwei synthetische Positionen
+ *  (Warengruppen «Küche» 2.6 % / «Betriebsmaterial» 8.1 % → CAPORASO_KONTEN). */
+function parseCaporasoLieferungen(lines: string[], p: LieferantenProfil): ParsedCsvRechnung[] {
+  const text = lines.join('\n');
+  const nr = suche(text, [/LIEFERSCHEIN-?RECHNUNG\s*:?\s*(\d{4,12})/i]);
+  const datum = parseDatumCH(suche(text, [CAPORASO_LS_RE]) ?? '');
+  const basen = caporasoMwstBasen(text);
+  if (!nr || !datum || basen.length === 0) return [];
+  const positionen = basen
+    .sort((a, b) => a.satz - b.satz)
+    .map(b => ({
+      artNr: '',
+      bezeichnung: b.satz === 8.1 ? 'Verpackung/Betriebsmaterial (8.1 % MwSt)' : 'Lebensmittel (2.6 % MwSt)',
+      warengruppe: b.satz === 8.1 ? 'Betriebsmaterial' : 'Küche',
+      menge: 0, einheit: '', preis: 0,
+      positionspreis: b.basis, mwstBetrag: b.betrag, mwstCode: 1,
+    }));
+  const netto = rundung2(basen.reduce((s, b) => s + b.basis, 0));
+  const mwst = rundung2(basen.reduce((s, b) => s + b.betrag, 0));
+  return [{
+    docKey: `${nr}|${datum}|${p.name}`,
+    rechnungsNr: nr, datum, markt: p.name,
+    positionen,
+    nettoTotal: netto, mwstTotal: mwst, bruttoTotal: rundung2(netto + mwst),
+  }];
+}
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
 

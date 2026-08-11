@@ -250,10 +250,12 @@ export function MarktLieferantenEditor({ tenantId, canEdit }: { tenantId: Tenant
   );
 }
 
-export function WarenCsvImport({ tenantId, suppliers, onImported }: {
+export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesRef }: {
   tenantId: TenantId;
   suppliers: Supplier[];
   onImported: () => void;
+  /** Einspeise-Kanal für den universellen Upload (eine CSV pro Durchgang). */
+  externalFilesRef?: { current: ((files: File[]) => void) | null };
 }) {
   const [busy, setBusy] = useState(false);
   const [ergebnis, setErgebnis] = useState<CsvParseErgebnis | null>(null);
@@ -302,6 +304,31 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
       });
     }
   };
+
+  // Einspeise-Kanal des universellen Uploads: mehrere CSVs werden VERLUSTFREI
+  // als Warteschlange abgearbeitet — die nächste lädt, sobald die aktuelle
+  // Vorschau importiert oder verworfen wurde. Nie still Dateien fallenlassen.
+  const [csvQueue, setCsvQueue] = useState<File[]>([]);
+  useEffect(() => {
+    if (!externalFilesRef) return;
+    externalFilesRef.current = (files: File[]) => {
+      if (files.length === 0) return;
+      if (files.length > 1) toast.info(`${files.length} CSV-Dateien: werden nacheinander zur Vorschau geladen.`);
+      void handleFile(files[0]);
+      setCsvQueue(q => [...q, ...files.slice(1)]);
+    };
+    return () => { externalFilesRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFilesRef]);
+  useEffect(() => {
+    // Vorschau frei (importiert/verworfen) → nächste CSV aus der Warteschlange.
+    if (ergebnis !== null || csvQueue.length === 0) return;
+    const [next, ...rest] = csvQueue;
+    setCsvQueue(rest);
+    toast.info(`Nächste CSV aus dem Stapel: ${next.name}${rest.length ? ` (noch ${rest.length} danach)` : ''}`);
+    void handleFile(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ergebnis, csvQueue]);
 
   /** Lieferant pro Rechnung aus der Markt-Spalte; null = «Lieferant offen». */
   const lieferantFuer = (markt: string) => lieferantFuerMarkt(markt, marktMap);

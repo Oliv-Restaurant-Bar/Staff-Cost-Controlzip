@@ -28,6 +28,7 @@ import {
   loadEmployeeSortOrder, saveEmployeeSortOrder,
   loadCellColors, saveCellColors,
 } from '@/lib/supabase-kv';
+import { loadIstDayLocks, saveIstDayLocks } from '@/lib/ist-day-locks';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,7 +46,6 @@ import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHour
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
-import { StaffingComparisonPanel } from '@/components/schedule-planner/StaffingComparisonPanel';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
 import { IstDayDetailDialog } from '@/components/schedule-planner/IstDayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
@@ -246,7 +246,7 @@ const SchedulePlanner = () => {
     const scope = effectiveEmployeeDepartmentScope(role, allowedDepartment);
     return scope === 'all' ? undefined : [scope];
   }, [role, allowedDepartment]);
-  // Personalbedarf: Saison geteilt zwischen Tages-Badges (Grid) und Abgleich-Panel.
+  // Personalbedarf: Saison für Tages-Badges (Grid), Wochenmatrix und Vorschläge.
   const [staffingSeason, setStaffingSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
   // Aktives Profil automatisch aus dem Datumsbereich der Profil-Konfiguration
   // vorbelegen (z.B. Winter/UG ab 01.10.); manuelle Auswahl bleibt danach erhalten.
@@ -383,6 +383,15 @@ const SchedulePlanner = () => {
   useEffect(() => { scheduleDataRef.current = scheduleData; }, [scheduleData]);
   const actualHoursRef = useRef<typeof actualHoursData>({});
   useEffect(() => { actualHoursRef.current = actualHoursData; }, [actualHoursData]);
+
+  // ── Ist-Tagessperren (Tag/Woche/Monat) ─────────────────────────────────────
+  // Gesperrte Tage werden von MIRUS-Import, Plan→Ist-Sync und manueller
+  // Erfassung NICHT überschrieben. Persistenz: app_settings pro Mandant+Monat.
+  const [lockedIstDates, setLockedIstDates] = useState<Set<string>>(new Set());
+  const lockedIstDatesRef = useRef<Set<string>>(new Set());
+  useEffect(() => { lockedIstDatesRef.current = lockedIstDates; }, [lockedIstDates]);
+  /** Serialisiert Lock-Saves (Lost-Update-Schutz, KV hat kein CAS). */
+  const lockSaveChainRef = useRef<Promise<void>>(Promise.resolve());
 
   // Queue: pro Zelle läuft höchstens EIN Save; neuere Payloads ersetzen
   // wartende (last-writer-wins). Speicherstatus erst nach Backend-Ack.
@@ -1275,8 +1284,65 @@ const SchedulePlanner = () => {
     return eachDayOfInterval({ start: weekStart, end: weekEnd });
   }, [calendarView, daysInMonth, selectedDayOffset, selectedWeekIndex, weeksInMonth]);
 
+  // Ist-Tagessperren laden — für alle Monate, die aktuell sichtbar sind
+  // (Wochenansicht kann zwei Monate umfassen).
+  useEffect(() => {
+    let cancelled = false;
+    const months = [...new Set([
+      format(currentMonth, 'yyyy-MM'),
+      ...displayDays.map(d => format(d, 'yyyy-MM')),
+    ])];
+    void Promise.all(months.map(m => loadIstDayLocks(tenantId, m))).then(sets => {
+      if (cancelled) return;
+      const union = new Set<string>();
+      sets.forEach(s => s.forEach(d => union.add(d)));
+      setLockedIstDates(union);
+      lockedIstDatesRef.current = union;
+    });
+    return () => { cancelled = true; };
+  }, [currentMonth, tenantId, displayDays]);
+
+  /**
+   * Tage sperren/entsperren (Tag-Klick = 1 Datum, KW-Klick = Wochentage,
+   * Monat = alle Monatstage). `lock` erzwingt eine Richtung; ohne `lock`:
+   * alles gesperrt → entsperren, sonst sperren. Nur mit Bearbeitungsrecht.
+   */
+  const toggleIstDayLocks = async (dates: string[], lock?: boolean) => {
+    if (!canEditEmployees) { toast.error('Keine Berechtigung zum Sperren/Entsperren.'); return; }
+    if (dates.length === 0) return;
+    // Saves SERIALISIEREN (Kette): parallele Toggles würden sonst denselben
+    // Monatsblob mit unterschiedlichem Stand upserten (Lost-Update, kein CAS).
+    const run = async () => {
+      const prev = lockedIstDatesRef.current;
+      const shouldLock = lock ?? !dates.every(d => prev.has(d));
+      const next = new Set(prev);
+      dates.forEach(d => shouldLock ? next.add(d) : next.delete(d));
+      setLockedIstDates(next);
+      lockedIstDatesRef.current = next;
+      const months = [...new Set(dates.map(d => d.slice(0, 7)))];
+      const results = await Promise.all(months.map(m => saveIstDayLocks(tenantId, m, next)));
+      const failed = results.find(r => r.error);
+      if (failed) {
+        // Fehlschlag: NICHT blind zurückrollen (könnte einen inzwischen
+        // erfolgreichen Save verwerfen) — Remote-Stand frisch laden.
+        toast.error(`Sperre konnte nicht gespeichert werden: ${failed.error}`);
+        const fresh = await Promise.all(months.map(m => loadIstDayLocks(tenantId, m)));
+        const union = new Set<string>([...lockedIstDatesRef.current].filter(d => !months.includes(d.slice(0, 7))));
+        fresh.forEach(s => s.forEach(d => union.add(d)));
+        setLockedIstDates(union);
+        lockedIstDatesRef.current = union;
+      } else {
+        toast.success(shouldLock
+          ? `${dates.length === 1 ? 'Tag' : `${dates.length} Tage`} gesperrt — Importe/Sync überschreiben nicht mehr.`
+          : `${dates.length === 1 ? 'Tag' : `${dates.length} Tage`} entsperrt — wieder importierbar/editierbar.`);
+      }
+    };
+    lockSaveChainRef.current = lockSaveChainRef.current.then(run, run);
+    await lockSaveChainRef.current;
+  };
+
   // Personalbedarf Soll/Ist je angezeigtem Tag (kompakte Badges im Grid-Kopf).
-  // Nur Anzeige: nutzt dieselbe rollen-gescopte Sicht wie das Abgleich-Panel;
+  // Nur Anzeige: nutzt dieselbe rollen-gescopte Sicht wie der Personalbedarf;
   // Tage ohne Bedarf (oder ohne Bedarf im Rollen-Scope) erhalten KEINEN Eintrag.
   const dayStaffingSummaries = useMemo(() => {
     const map: Record<string, DayStaffingSummaryResult> = {};
@@ -1654,6 +1720,11 @@ const SchedulePlanner = () => {
   //  - Absenz entfernt → nur den plan-synchronisierten Ist-Eintrag löschen
   //  - Konflikt mit echten Ist-Daten → sichtbarer Dialog, nie stilles Skippen
   const syncPlanAbsenceToIst = (employeeId: string, date: string, day: DaySchedule | null) => {
+    // Ist-Tagessperre: gesperrte Tage werden vom Plan→Ist-Sync ÜBERSPRUNGEN.
+    if (lockedIstDatesRef.current.has(date)) {
+      console.log(`[IST-LOCK] plan_sync übersprungen (Tag gesperrt): ${employeeId} ${date}`);
+      return;
+    }
     const cellKey = `${employeeId}-${date}`;
     const absenceType = day?.frühAbsence || day?.spätAbsence || null;
 
@@ -1832,6 +1903,8 @@ const SchedulePlanner = () => {
     if (!willBeEmpty || !planCopiedKeys.has(cellKey)) return;
     const employeeId2 = cellKey.slice(0, -11);
     const date2       = cellKey.slice(-10);
+    // Ist-Tagessperre: den plan-übernommenen Ist-Eintrag gesperrter Tage nicht anbieten.
+    if (lockedIstDatesRef.current.has(date2)) return;
     toast('Plan-Schicht gelöscht', {
       description: 'Soll auch der automatisch übernommene IST-Eintrag gelöscht werden?',
       action: {
@@ -1971,6 +2044,11 @@ const SchedulePlanner = () => {
     cellKey: string,
     entry: ActualHoursEntry,
   ) => {
+    // Ist-Tagessperre: keine Plan→Ist-Übernahme auf gesperrte Tage.
+    if (lockedIstDatesRef.current.has(date)) {
+      toast.warning('Tag ist gesperrt — zuerst entsperren, dann übernehmen.');
+      return;
+    }
     const entryWithSource: ActualHoursEntry = { ...entry, source: 'plan_sync' };
     setActualHoursData(prev => ({ ...prev, [cellKey]: entryWithSource }));
     actualHoursRef.current = { ...actualHoursRef.current, [cellKey]: entryWithSource };
@@ -2154,6 +2232,13 @@ const SchedulePlanner = () => {
   // opts.skipSupabase: Aufrufer hat bereits selbst (awaited) in Supabase geschrieben
   // — z.B. der MIRUS-Import, der Schreibfehler pro Zelle prüfen muss.
   const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null, opts?: { skipSupabase?: boolean }) => {
+    // Ist-Tagessperre (zentrales Gate für manuelle Erfassung/Mobile/Quick-Entry).
+    // skipSupabase-Aufrufer (MIRUS-Import) filtern gesperrte Tage bereits in der
+    // Engine — deren lokale State-Spiegelung darf hier nicht blockiert werden.
+    if (!opts?.skipSupabase && lockedIstDatesRef.current.has(date)) {
+      toast.warning(`Der ${date.slice(8)}.${date.slice(5, 7)}. ist gesperrt — zum Ändern zuerst entsperren (Schloss im Spaltenkopf).`);
+      return;
+    }
     const cellKey = `${employeeId}-${date}`;
 
     setActualHoursData(prev => {
@@ -3310,6 +3395,13 @@ const SchedulePlanner = () => {
   }, [handleSave]);
 
   const handleBulkApplyActual = useCallback((delta: Record<string, { hours: number; start?: string; end?: string }>) => {
+    // Ist-Tagessperre: gesperrte Tage aus dem Bulk-Delta entfernen.
+    const lockedKeys = Object.keys(delta).filter(k => lockedIstDatesRef.current.has(k.slice(-10)));
+    if (lockedKeys.length > 0) {
+      delta = Object.fromEntries(Object.entries(delta).filter(([k]) => !lockedIstDatesRef.current.has(k.slice(-10))));
+      toast.warning(`${lockedKeys.length} Eintrag/Einträge auf gesperrten Tagen übersprungen — zuerst entsperren.`);
+      if (Object.keys(delta).length === 0) return;
+    }
     setActualHoursData(prev => {
       const next = { ...prev, ...delta };
       const monthKey = format(currentMonth, 'yyyy-MM');
@@ -4627,6 +4719,9 @@ const SchedulePlanner = () => {
                     dailyBudgets={dailyBudgets}
                     laborCostThreshold={gridLaborCostThreshold}
                     onDayClick={handleIstDayClick}
+                    lockedDates={lockedIstDates}
+                    canLock={canEditEmployees}
+                    onToggleDayLock={(dates, lock) => { void toggleIstDayLocks(dates, lock); }}
                   />
                 </>
               )}
@@ -5294,19 +5389,6 @@ const SchedulePlanner = () => {
         currentMonth={currentMonth}
         department={activeDepartment}
         cellColors={cellColors}
-      />
-
-      {/* Personalbedarf-Abgleich (SOLL-Besetzung vs. eingeplante Mitarbeitende) */}
-      <StaffingComparisonPanel
-        employees={roleScopedEmployees}
-        scheduleData={scheduleData}
-        initialDate={displayDays[0] ?? selectedDay ?? new Date()}
-        departments={comparisonDepartments}
-        season={staffingSeason}
-        onSeasonChange={setStaffingSeason}
-        profiles={staffingProfilesConfig.profiles}
-        profilesConfig={staffingProfilesConfig}
-        kitchenCold={staffingProfilesConfig.kitchenCold}
       />
 
       {/* Day Detail Dialog (Plan view) */}

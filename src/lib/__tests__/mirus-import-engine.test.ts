@@ -357,6 +357,58 @@ describe('Plausibilitätsgrenze & letzter befüllter Tag', () => {
     expect(aPlan.fileTotal).toBe(8);
   });
 
+  it('Tages-Sperre: gesperrte Tage → lockedSkipped, nie geschrieben; Ist-Wert bleibt und zählt in Totale', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8), entry('a', '2026-07-02', 6.5), entry('a', '2026-07-03', 4)],
+      existing: { 'a-2026-07-02': { hours: 3 } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+      lockedDates: ['2026-07-02'],
+    });
+    // Dateiwert des gesperrten Tags gelistet, aber KEIN Konflikt/Fehler
+    expect(plan.lockedSkipped).toEqual([{ employeeName: 'A', date: '2026-07-02', hours: 6.5 }]);
+    expect(plan.lockedDates).toEqual(['2026-07-02']);
+    // Nie geschrieben: keine Zelle, kein Write für den gesperrten Tag
+    const writes = resolvePlanToWrites(plan);
+    expect(writes.map(w => w.date).sort()).toEqual(['2026-07-01', '2026-07-03']);
+    const aPlan = plan.employees[0];
+    expect(aPlan.cells.find(c => c.date === '2026-07-02')).toBeUndefined();
+    // fileTotal ohne den gesperrten Dateiwert; bestehender Ist-Wert bleibt in Totalen
+    expect(aPlan.fileTotal).toBe(12);
+    expect(aPlan.rejectedKeptHours).toBe(3);
+    expect(aPlan.beforeTotal).toBe(3);
+    expect(expectedAfterTotals(plan)['a']).toBe(15); // 3 bleibt + 8 + 4 neu
+  });
+
+  it('Tages-Sperre: gesperrter Tag ohne Datei-Stunden erscheint nicht in lockedSkipped, aber in lockedDates', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8)],
+      existing: {}, erfassungsart: { a: 'MIRUS' }, month, dates,
+      lockedDates: ['2026-07-03'],
+    });
+    expect(plan.lockedSkipped).toEqual([]);
+    expect(plan.lockedDates).toEqual(['2026-07-03']);
+  });
+
+  it('Tages-Sperre: gesperrter Tag verkürzt lastFilledDate, wenn er der letzte befüllte war', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8), entry('a', '2026-07-03', 5)],
+      existing: {}, erfassungsart: { a: 'MIRUS' }, month, dates,
+      lockedDates: ['2026-07-03'],
+    });
+    // Gesperrte Datei-Stunden zählen nicht als «befüllt» — Import endet am 01.07.
+    expect(plan.lastFilledDate).toBe('2026-07-01');
+  });
+
+  it('ohne lockedDates keine Sperr-Auslassungen (Rückwärtskompatibilität)', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8)],
+      existing: {}, erfassungsart: { a: 'MIRUS' }, month, dates,
+    });
+    expect(plan.lockedSkipped).toEqual([]);
+    expect(plan.lockedDates).toEqual([]);
+  });
+
   it('ohne exitDates keine Austritts-Ablehnungen (Rückwärtskompatibilität)', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 8)],

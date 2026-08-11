@@ -65,6 +65,7 @@
 - [Netto-Umsatz SSOT](umsatz-ssot.md) — umsatz.ts einzige Netto-Quelle (ALLE Views); Quelle = MANUELLER Speisekarte-Import (dailyBudgets-KV) + maison-daily-Marketing, NIE gn_imports mischen; Mount-Loads brauchen store-synced-Retry.
 - [Monatsreport Quellen & Regeln](monatsreport-sources.md) — leer statt 0; Ist-Klemme; Gäste-Tagessumme massgeblich (kein Zeitraum-Abgleich); Umsatz/Gast nur über gepaarte Tage; KW-Auswahl braucht ISO-Wochenjahr.
 - [Personalkosten-SSOT](personalkosten-ssot.md) — alle PK-Ansichten nur via personalkosten.ts; Budget 106'400/35.5 %, PKQ nur personalquote(); State-Reset bei Monatswechsel; Rollen-Setzen via Mgmt-API-SQL.
+- [Ist-Tagessperren](ist-day-locks.md) — jeder actual_hours-Schreibpfad braucht Lock-Guard (strikt, fail-closed); Commit lädt Locks frisch; KV ohne CAS → Toggles serialisieren.
 - [MIRUS-Reconcile-Import (Dienstplan)](mirus-reconcile-import.md) — erfassungsart-Kennzeichnung, awaited Writes ({ok}-Check, wirft nie), Backup/Undo-Disziplin; alte ActualHoursImportButton lebt auf 3 anderen Seiten weiter.
 - [Personalbedarf Kopfzahl-Modell](staffing-headcount.md) — Personen/Tag = max(M,A) bzw. meta.dayHeadcount, UG additiv; Teildienst = 2 Zeilen via meta.splitGroup, rein präsentational, Save-Pfade normalisieren.
 - [Personalbedarf-Profile & Prüfung](staffing-profiles-and-check.md) — Profile als season-Keys + app_settings-Blob; Lock im Save-Pfad prüfen; Auto-Profil pro Mandant; Schedule-Key-Datum = letzte 10 Zeichen.
@@ -98,4 +99,5 @@
 - [Cockpit-KPI-Budget](cockpit-kpi-budget.md) — separater KV-Store cockpit-budget:<jahr> (budget_v1 unangetastet); Ratio-Budgets bewusst als Perioden-Totale-Ratio wie das Ist; Nav-Gate = Route-Gate.
 - [Überstunden-Konto Fix-MA](ueberstunden-konto.md) — leer-statt-0 via Wochen-Datenbasis, Start 2026-07-01, KV-Blob mit updatedAt-Stale-Wache (kein CAS), Total gecacht wegen Monatsreport-Pfad.
 - [Lieferschein→Monatsrechnung](lieferschein-monatsabgleich.md) — Monatsrechnung ERSETZT Lieferscheine (nie addieren); Entscheid pro Lieferant, fail-closed, Aliasse Pflicht.
+- [Cockpit-PDF Vektor-Export](cockpit-pdf-vektor.md) — ALLE Cockpit-Reports als jsPDF-Vektor (max 4 Gruppen/Seite, mapRowForExport-SSOT, onPdfDaten-Refs null bei Ladebeginn+Unmount); dezente Chips, keine Legenden.
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.

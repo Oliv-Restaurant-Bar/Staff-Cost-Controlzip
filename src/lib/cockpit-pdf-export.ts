@@ -198,6 +198,58 @@ export async function exportCockpitPanelPDF(
  * Exportiert MEHRERE Panels als mehrseitiges PDF (eine Seite pro Panel,
  * Orientierung pro Seite — z.B. Monatsübersicht hoch + 4-Wochen-Tabelle quer).
  */
+/**
+ * Hybrid-Export: Seiten sind entweder gerasterte DOM-Panels («raster», z.B.
+ * Monatsübersicht) oder strukturierte Report-Modelle («model» — Vektor-Layout
+ * aus cockpit-report-pdf: Wochenübersicht / Letzte 4 Wochen / Wochenverlauf).
+ * Am Ende bekommen ALLE Seiten eine Fusszeile mit Seitenzahl.
+ */
+export type CockpitExportPart =
+  | { kind: 'raster'; element: HTMLElement; opts: CockpitPdfOptions }
+  | { kind: 'model'; model: import('@/lib/cockpit-report-pdf').CrReportModel };
+
+export async function exportCockpitMixedPDF(
+  parts: CockpitExportPart[],
+  branding: import('@/lib/pl-branding').RestaurantBranding,
+  fileName: string,
+  heute: Date = new Date(),
+): Promise<void> {
+  if (parts.length === 0) return;
+  const brauchtRaster = parts.some(p => p.kind === 'raster');
+  const [{ default: jsPDF }, reportMod, brandMod, html2canvas] = await Promise.all([
+    import('jspdf'),
+    import('@/lib/cockpit-report-pdf'),
+    import('@/lib/pl-branding'),
+    brauchtRaster ? import('html2canvas').then(m => m.default) : Promise.resolve(null),
+  ]);
+  let logo: string | null = null;
+  try { logo = (await brandMod.renderLogoDataUrl(branding)) || null; } catch { logo = null; }
+
+  // Erst alle Raster-Panels capturen (DOM stabil halten), dann zeichnen.
+  const captured = new Map<number, { canvas: HTMLCanvasElement; landscape: boolean }>();
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.kind === 'raster') captured.set(i, await capturePanel(html2canvas!, p.element, p.opts));
+  }
+
+  const firstLandscape = parts[0].kind === 'model' ? true : captured.get(0)!.landscape;
+  const pdf = new jsPDF({
+    orientation: firstLandscape ? 'landscape' : 'portrait',
+    unit: 'mm', format: 'a4',
+  });
+  parts.forEach((p, i) => {
+    if (p.kind === 'model') {
+      reportMod.zeichneCockpitReport(pdf, p.model, branding, logo, heute, i === 0);
+    } else {
+      const c = captured.get(i)!;
+      if (i > 0) pdf.addPage('a4', c.landscape ? 'landscape' : 'portrait');
+      zeichneSeite(pdf, c.canvas, c.landscape, p.opts, heute);
+    }
+  });
+  reportMod.zeichneFusszeilen(pdf, branding.companyLine);
+  pdf.save(`${fileName}.pdf`);
+}
+
 export async function exportCockpitPagesPDF(
   pages: Array<{ element: HTMLElement; opts: CockpitPdfOptions }>,
   fileName: string,

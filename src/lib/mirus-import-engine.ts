@@ -128,6 +128,13 @@ export interface MirusReconcilePlan {
   rejectedExited: Array<{ employeeName: string; date: string; hours: number; exitDate: string }>;
   /** Letzter im Export befüllte Tag (>0 h) — spätere Tage werden NICHT angefasst. */
   lastFilledDate: string | null;
+  /**
+   * Gesperrte Tage (Tages-/Wochensperre): Datei-Zeilen mit >0 h auf gesperrten
+   * Tagen — «gesperrt, nicht überschrieben», NIE geschrieben, keine Differenz.
+   */
+  lockedSkipped: Array<{ employeeName: string; date: string; hours: number }>;
+  /** Alle gesperrten Tage im Datei-Zeitraum (auch ohne Datei-Stunden). */
+  lockedDates: string[];
 }
 
 /** Plausibilitätsgrenze: mehr Ist-Stunden pro Tag sind ein Parser-/Datenfehler. */
@@ -305,9 +312,12 @@ export function buildMirusReconcilePlan(params: {
   roundingThreshold?: number;
   /** employeeId → Austrittsdatum (ISO). Zeilen mit date > Austritt werden abgelehnt. */
   exitDates?: Record<string, string>;
+  /** Gesperrte Tage (ISO): werden NIE angefasst — «gesperrt, nicht überschrieben». */
+  lockedDates?: Iterable<string>;
 }): MirusReconcilePlan {
   const { entries, existing, erfassungsart, month, dates } = params;
   const exitDates = params.exitDates ?? {};
+  const lockedSet = new Set(params.lockedDates ?? []);
   const planned = params.planned ?? {};
   const threshold = params.roundingThreshold ?? MIRUS_ROUNDING_THRESHOLD_H;
   const dateSet = new Set(dates);
@@ -358,6 +368,20 @@ export function buildMirusReconcilePlan(params: {
   }
   rejectedExited.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de') || a.date.localeCompare(b.date));
 
+  // Tages-/Wochensperre: gesperrte Tage werden NIE angefasst — Datei-Werte
+  // dort werden als «gesperrt, nicht überschrieben» gelistet (KEIN Konflikt,
+  // KEIN Fehler); bestehende Ist-Werte bleiben und zählen zu den Totalen.
+  const lockedSkipped: MirusReconcilePlan['lockedSkipped'] = [];
+  for (const [, rec] of byEmp) {
+    for (const [date, h] of rec.days) {
+      if (lockedSet.has(date)) {
+        if (h > 0) lockedSkipped.push({ employeeName: rec.name, date, hours: h });
+        rec.days.delete(date);
+      }
+    }
+  }
+  lockedSkipped.sort((a, b) => a.employeeName.localeCompare(b.employeeName, 'de') || a.date.localeCompare(b.date));
+
   // Nur Tage bis und mit dem letzten im Export befüllten Tag (>0 h) anfassen:
   // spätere Tage bleiben komplett stehen (Plan-Stunden, künftige Einträge).
   let lastFilledDate: string | null = null;
@@ -385,7 +409,10 @@ export function buildMirusReconcilePlan(params: {
       // Abgelehnter Phantom-Tag: Zelle komplett auslassen — bestehender
       // Ist-Wert bleibt unangetastet (nie 0 hineinschreiben), zählt aber
       // weiterhin zu Vorher-/Nachher-Total (Review-Fix: Totals nicht verfälschen).
-      if (implausibleCells.has(`${empId}-${date}`)) {
+      // Gesperrter Tag ODER abgelehnter Phantom-Tag: Zelle komplett auslassen —
+      // bestehender Ist-Wert bleibt unangetastet (nie 0 hineinschreiben), zählt
+      // aber weiterhin zu Vorher-/Nachher-Total (Totals nicht verfälschen).
+      if (lockedSet.has(date) || implausibleCells.has(`${empId}-${date}`)) {
         const kept = existing[`${empId}-${date}`]?.hours ?? 0;
         beforeTotal += kept;
         rejectedKeptHours += kept;
@@ -414,6 +441,7 @@ export function buildMirusReconcilePlan(params: {
   return {
     month, dates: effDates, employees, skippedManual, skippedOutOfScope, silentRounds,
     roundingThreshold: threshold, rejectedImplausible, rejectedExited, lastFilledDate,
+    lockedSkipped, lockedDates: dates.filter(d => lockedSet.has(d)),
   };
 }
 

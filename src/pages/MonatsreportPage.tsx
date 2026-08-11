@@ -40,7 +40,11 @@ import {
 } from '@/lib/cockpit-budget';
 import type { CockpitBudgetPosition } from '@/types/budget';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
-import { exportCockpitPanelPDF, exportCockpitPagesPDF, naechsterFrame, type CockpitPdfOptions } from '@/lib/cockpit-pdf-export';
+import { exportCockpitMixedPDF, naechsterFrame, type CockpitExportPart } from '@/lib/cockpit-pdf-export';
+import {
+  buildWochenPdfModel, buildVerlaufPdfModel, buildJahresvergleichPdfModel, exportCockpitReportPdf,
+} from '@/lib/cockpit-report-pdf';
+import { getBranding } from '@/lib/pl-branding';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
@@ -910,6 +914,8 @@ export default function MonatsreportPage() {
   // PDF-Metadaten je Tab; Wochenverlauf/Jahresübersicht melden sie via Callback.
   const [verlaufMeta, setVerlaufMeta] = useState<CockpitPdfMeta | null>(null);
   const [jahrMeta, setJahrMeta] = useState<CockpitPdfMeta | null>(null);
+  // Strukturierte Jahresvergleich-Daten fürs Vektor-PDF (Tab meldet sie via Callback).
+  const jahrDatenRef = useRef<JahresvergleichDaten | null>(null);
   const [pdfLaeuft, setPdfLaeuft] = useState(false);
 
   // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
@@ -918,15 +924,13 @@ export default function MonatsreportPage() {
   const [expAktuell, setExpAktuell] = useState(true);
   const [expVierWochen, setExpVierWochen] = useState(false);
   const [expVerlauf, setExpVerlauf] = useState(false);
-  /** Off-screen gerenderte 4-Wochen-Tabelle (nur während des Exports). */
-  const [exportVier, setExportVier] = useState<{
-    cols: { rows: MrRow[] | null; header: string; sub: string | null; keyPrefix: string }[];
-    range: string;
-  } | null>(null);
-  const exportVierRef = useRef<HTMLDivElement>(null);
   /** Off-screen gemounteter Wochenverlauf (nur während des Exports). */
   const [exportVerlaufAktiv, setExportVerlaufAktiv] = useState(false);
   const exportVerlaufRef = useRef<HTMLDivElement>(null);
+  // Strukturierte Verlauf-Daten für den Vektor-PDF-Export (Live-Tab bzw.
+  // off-screen gemountete Export-Ansicht melden ihre WochenverlaufDaten).
+  const verlaufDatenRef = useRef<WochenverlaufDaten | null>(null);
+  const exportVerlaufDatenRef = useRef<WochenverlaufDaten | null>(null);
   const exportVerlaufMetaRef = useRef<CockpitPdfMeta | null>(null);
 
   const [year, setYear] = useState(heute.getFullYear());
@@ -1256,61 +1260,73 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     ? `KW ${isoWeekOf(parseIso(daten.vjWeekFrom)).week} · ${fmtDate(daten.vjWeekFrom)}–${fmtDate(daten.vjWeekTo)}${daten.vjWeekTo.slice(0, 4)}`
     : null;
 
-  // Fussnoten der Monats-/Wochen-PDFs (auch vom Auswahl-Export genutzt).
-  const MONAT_FOOTNOTE = 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
-    + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, Produktivität) '
-    + 'als Quote über den Monat, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
-    + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
-    + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-    + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
-    + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
-    + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».';
-  const WOCHE_FOOTNOTE = 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
-    + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
-    + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Take-Away-Anteil, Ø-Verkauf pro Gast, '
-    + 'Produktivität) als Quote über die Woche, nicht summiert · Ø-Verkauf pro Gast nur über Tage mit beiden Quellen · '
-    + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
-    + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
-    + 'Gäste Take Away: Δ gegen das abgeleitete TA-Gäste-Budget · «vs. VJ» nur bei Zeilen ohne hinterlegtes Budget · '
-    + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
-    + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».';
+  // Hinweis: Die früheren PDF-Fussnoten/-Legenden sind bewusst entfernt —
+  // das Report-Design zeigt nur Kopfband + Tabelle + schmale Fusszeile.
 
-  // PDF-Export der aktuell aktiven Ansicht «genau so wie angezeigt».
+  /** Wochen-Spalten der 2-Wochen-Ansicht (Vorwoche + Woche) fürs Vektor-PDF. */
+  const wochePdfModel = useCallback(() => {
+    if (!daten) return null;
+    return buildWochenPdfModel([
+      {
+        rows: datenPrev?.rows ?? null,
+        header: datenPrev?.weekLabel ?? 'Vorwoche',
+        sub: datenPrev?.weekFrom && datenPrev?.weekTo
+          ? `${fmtDate(datenPrev.weekFrom)}–${fmtDate(datenPrev.weekTo)}` : null,
+      },
+      { rows: daten.rows, header: daten.weekLabel ?? 'Woche', sub: wocheRange || null },
+    ], {
+      reportTyp: 'Wochenübersicht',
+      zeitraum: `${MONATE[month - 1]} ${year}${daten.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
+    });
+  }, [daten, datenPrev, wocheRange, month, year]);
+
+  /** Monatsübersicht als strukturiertes Vektor-Modell (gleicher Stil wie Woche). */
+  const monatPdfModel = useCallback(() => {
+    if (!daten) return null;
+    return buildWochenPdfModel(
+      [{ rows: daten.rows, header: `${MONATE[month - 1]} ${year}`, sub: null }],
+      {
+        reportTyp: 'Monatsübersicht',
+        zeitraum: `${MONATE[month - 1]} ${year}`,
+        granularity: 'monat',
+      });
+  }, [daten, month, year]);
+
+  // PDF-Export der aktiven Ansicht — ALLE Reporttypen im selben Vektor-Stil.
   const handlePdfExport = useCallback(async () => {
-    // Panel + Metadaten je aktivem Tab bestimmen.
-    let el: HTMLElement | null = null;
-    let meta: CockpitPdfMeta | null = null;
-    if (activeTab === 'monat') {
-      el = monatPanelRef.current;
-      meta = {
-        title: 'Monatsübersicht',
-        subtitle: `${MONATE[month - 1]} ${year}`,
-        fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: MONAT_FOOTNOTE,
-      };
-    } else if (activeTab === 'woche') {
-      el = wochePanelRef.current;
-      meta = {
-        title: 'Wochenübersicht',
-        subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
-        fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: WOCHE_FOOTNOTE,
-      };
+    const branding = getBranding(tenantId);
+    let model = null;
+    let fileName = '';
+    if (activeTab === 'woche') {
+      model = wochePdfModel();
+      fileName = `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`;
     } else if (activeTab === 'verlauf') {
-      el = verlaufPanelRef.current;
-      meta = verlaufMeta;
+      if (verlaufDatenRef.current) {
+        model = buildVerlaufPdfModel(verlaufDatenRef.current, {
+          zeitraum: verlaufMeta?.subtitle ?? `${year}`,
+        });
+        fileName = verlaufMeta?.fileName ?? `cockpit-wochenverlauf-${year}`;
+      }
+    } else if (activeTab === 'monat') {
+      model = monatPdfModel();
+      fileName = `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`;
     } else {
-      el = jahrPanelRef.current;
-      meta = jahrMeta;
+      const jd = jahrDatenRef.current;
+      if (jd) {
+        model = buildJahresvergleichPdfModel(jd, {
+          zeitraum: jahrMeta?.subtitle ?? `${jd.curYear} vs. ${jd.vjYear}`,
+          spaltenHeader: jd.modus === 'ytd' ? `YTD ${jd.curYear}` : `${jd.curYear}`,
+        });
+        fileName = jahrMeta?.fileName ?? `cockpit-jahresvergleich-${jd.curYear}`;
+      }
     }
-    if (!el || !meta) {
+    if (!model) {
       toast({ title: 'PDF-Export nicht möglich', description: 'Ansicht ist noch nicht geladen.', variant: 'destructive' });
       return;
     }
     setPdfLaeuft(true);
     try {
-      await naechsterFrame(); // Recharts/Layout sicher fertig
-      await exportCockpitPanelPDF(el, meta, heute);
+      await exportCockpitReportPdf([model], branding, fileName, heute);
     } catch (e) {
       toast({
         title: 'PDF-Export fehlgeschlagen',
@@ -1320,21 +1336,8 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     } finally {
       setPdfLaeuft(false);
     }
-  }, [activeTab, month, year, daten, wocheRange, verlaufMeta, jahrMeta, heute, toast]);
-
-  /** Metadaten der Monats-/Wochen-Ansicht (für den Auswahl-Export wiederverwendet). */
-  const monatMeta = useCallback((): CockpitPdfOptions => ({
-    title: 'Monatsübersicht',
-    subtitle: `${MONATE[month - 1]} ${year}`,
-    fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
-    footnote: MONAT_FOOTNOTE,
-  }), [month, year]);
-  const wocheMeta = useCallback((): CockpitPdfOptions => ({
-    title: 'Wochenübersicht',
-    subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
-    fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
-    footnote: WOCHE_FOOTNOTE,
-  }), [month, year, daten, wocheRange]);
+  }, [activeTab, month, year, verlaufMeta, jahrMeta, heute, toast,
+    tenantId, wochePdfModel, monatPdfModel]);
 
   /** Pollt, bis cond wahr ist (Export-Hilfe: off-screen-Inhalte fertig gerendert). */
   const warteAuf = async (cond: () => boolean, timeoutMs = 20000): Promise<void> => {
@@ -1358,21 +1361,23 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     setExportMenuOpen(false);
     setPdfLaeuft(true);
     try {
-      const pages: Array<{ element: HTMLElement; opts: CockpitPdfOptions }> = [];
+      const pages: CockpitExportPart[] = [];
+      const branding = getBranding(tenantId);
 
-      // 1) Aktuelle Ansicht (Monats- oder Wochenübersicht, wie angezeigt).
+      // 1) Aktuelle Ansicht: Wochenübersicht = strukturierter Vektor-Report,
+      //    Monatsübersicht = weiterhin Raster «wie angezeigt».
       if (expAktuell) {
-        const el = activeTab === 'woche' ? wochePanelRef.current : monatPanelRef.current;
-        if (!el) throw new Error('Ansicht ist noch nicht geladen.');
-        pages.push({ element: el, opts: activeTab === 'woche' ? wocheMeta() : monatMeta() });
+        const model = activeTab === 'woche' ? wochePdfModel() : monatPdfModel();
+        if (!model) throw new Error('Ansicht ist noch nicht geladen.');
+        pages.push({ kind: 'model', model });
       }
 
       // 2) Letzte 4 Wochen: gewählte Woche + 3 Vorwochen laden (jede Woche =
       //    eigener ladeMonatsreport-Lauf mit fester ISO-KW) — GLEICHES Muster
       //    wie die Vorwochen-Spalte der Live-2-Wochen-Ansicht: die Wochen-
       //    Spalten von ladeMonatsreport sind ISO-Wochen-massgeblich und laufen
-      //    über Monatsgrenzen hinaus. Dann off-screen als 4-Spalten-Tabelle
-      //    rendern und quer capturen.
+      //    über Monatsgrenzen hinaus. Aus den 4 Wochen-Spalten wird direkt
+      //    das strukturierte Vektor-Modell gebaut (kein Off-screen-Raster).
       if (expVierWochen) {
         if (!daten?.weekFrom || !rates) throw new Error('Wochendaten sind noch nicht geladen.');
         const basisMontag = parseIso(daten.weekFrom);
@@ -1395,42 +1400,52 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
           rows: w?.rows ?? null,
           header: w?.weekFrom ? `KW ${isoWeekOf(parseIso(w.weekFrom)).week}` : `Woche −${3 - i}`,
           sub: w?.weekFrom && w?.weekTo ? `${fmtDate(w.weekFrom)}–${fmtDate(w.weekTo)}` : null,
-          keyPrefix: `w${i + 1}`,
         }));
         const ersteVon = wochen.find(w => w?.weekFrom)?.weekFrom;
         const range = ersteVon && daten.weekTo ? `${fmtDate(ersteVon)}–${fmtDate(daten.weekTo)}` : '';
-        setExportVier({ cols, range });
-        await naechsterFrame();
-        await warteAuf(() => !!exportVierRef.current?.querySelector('table'));
         pages.push({
-          element: exportVierRef.current!,
-          opts: {
-            title: 'Letzte 4 Wochen',
-            subtitle: `${range || ''} · je Woche Ist | Budget | Δ`,
-            fileName: `cockpit-4-wochen-${year}-${String(month).padStart(2, '0')}`,
-            orientation: 'landscape',
-            cloneWidthPx: 1700,
-            footnote: WOCHE_FOOTNOTE,
-          },
+          kind: 'model',
+          model: buildWochenPdfModel(cols, {
+            reportTyp: 'Letzte 4 Wochen',
+            zeitraum: `${range || `${MONATE[month - 1]} ${year}`} · je Woche Ist | Budget | Δ`,
+          }),
         });
       }
 
-      // 3) Wochenverlauf: falls Tab nicht aktiv, off-screen mounten und auf
-      //    fertige Tabelle warten (eigene Datenladung der Ansicht).
+      // 3) Wochenverlauf: falls Tab nicht aktiv, off-screen mounten (die
+      //    Ansicht lädt ihre Daten selbst) und die gemeldeten Verlauf-Daten
+      //    strukturiert exportieren.
       if (expVerlauf) {
-        exportVerlaufMetaRef.current = null;
-        setExportVerlaufAktiv(true);
-        await naechsterFrame();
-        await warteAuf(() =>
-          !!exportVerlaufRef.current?.querySelector('table') && !!exportVerlaufMetaRef.current);
-        pages.push({ element: exportVerlaufRef.current!, opts: exportVerlaufMetaRef.current! });
+        let verlaufDaten = activeTab === 'verlauf' ? verlaufDatenRef.current : null;
+        let meta = activeTab === 'verlauf' ? verlaufMeta : null;
+        if (!verlaufDaten) {
+          exportVerlaufMetaRef.current = null;
+          exportVerlaufDatenRef.current = null;
+          setExportVerlaufAktiv(true);
+          await naechsterFrame();
+          await warteAuf(() =>
+            !!exportVerlaufDatenRef.current && !!exportVerlaufMetaRef.current);
+          verlaufDaten = exportVerlaufDatenRef.current;
+          meta = exportVerlaufMetaRef.current;
+        }
+        if (!verlaufDaten) throw new Error('Wochenverlauf konnte nicht geladen werden.');
+        pages.push({
+          kind: 'model',
+          model: buildVerlaufPdfModel(verlaufDaten, {
+            zeitraum: meta?.subtitle ?? `${year}`,
+          }),
+        });
       }
 
       await naechsterFrame();
-      const fileName = pages.length === 1
-        ? pages[0].opts.fileName
+      // Nur «aktuelle Ansicht» angehakt → reportspezifischer Dateiname
+      // (wie der Direkt-Export), sonst generischer Sammelname.
+      const fileName = pages.length === 1 && expAktuell
+        ? (activeTab === 'woche'
+          ? `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`
+          : `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`)
         : `cockpit-report-${year}-${String(month).padStart(2, '0')}`;
-      await exportCockpitPagesPDF(pages, fileName, heute);
+      await exportCockpitMixedPDF(pages, branding, fileName, heute);
     } catch (e) {
       toast({
         title: 'PDF-Export fehlgeschlagen',
@@ -1438,12 +1453,11 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         variant: 'destructive',
       });
     } finally {
-      setExportVier(null);
       setExportVerlaufAktiv(false);
       setPdfLaeuft(false);
     }
   }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
-    heute, budgetModus, year, month, monatMeta, wocheMeta, toast]);
+    heute, budgetModus, year, month, monatPdfModel, wochePdfModel, verlaufMeta, toast]);
 
   return (
     <PageShell>
@@ -1534,7 +1548,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
 
           {/* ── 1) Jahresübersicht (YTD) ── */}
           <TabsContent value="jahr" className="space-y-4" ref={jahrPanelRef}>
-            <JahresvergleichView onPdfMeta={setJahrMeta} />
+            <JahresvergleichView onPdfMeta={setJahrMeta} onPdfDaten={(d) => { jahrDatenRef.current = d; }} />
           </TabsContent>
 
           {/* ── 2) Monatsübersicht — dieselbe Report-Tabelle, Granularität «monat» ── */}
@@ -1835,7 +1849,10 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
 
           {/* ── 4) Wochenverlauf (unverändert) ── */}
           <TabsContent value="verlauf" className="space-y-4" ref={verlaufPanelRef}>
-            <WochenverlaufView onPdfMeta={setVerlaufMeta} />
+            <WochenverlaufView
+              onPdfMeta={setVerlaufMeta}
+              onPdfDaten={(d) => { verlaufDatenRef.current = d; }}
+            />
           </TabsContent>
         </Tabs>
 
@@ -1845,19 +1862,6 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         </div>
 
         {/* ── Off-screen-Render nur während des Auswahl-PDF-Exports ── */}
-        {exportVier ? (
-          <div
-            ref={exportVierRef}
-            className="fixed top-0 -left-[10000px] w-[1700px] bg-background p-2 space-y-2"
-            aria-hidden="true"
-            data-testid="export-vier-wochen"
-          >
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              Letzte 4 Wochen{exportVier.range ? ` · ${exportVier.range}` : ''}
-            </div>
-            <WochenTable cols={exportVier.cols} testid="table-vier-wochen" />
-          </div>
-        ) : null}
         {exportVerlaufAktiv ? (
           <div
             ref={exportVerlaufRef}
@@ -1866,7 +1870,11 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             data-testid="export-verlauf"
           >
             {/* Jahr folgt der Report-Auswahl (historischer Export = passendes Jahr). */}
-            <WochenverlaufView initialJahr={year} onPdfMeta={(m) => { exportVerlaufMetaRef.current = m; }} />
+            <WochenverlaufView
+              initialJahr={year}
+              onPdfMeta={(m) => { exportVerlaufMetaRef.current = m; }}
+              onPdfDaten={(d) => { exportVerlaufDatenRef.current = d; }}
+            />
           </div>
         ) : null}
 
@@ -1967,8 +1975,10 @@ function Sparkline({ values }: { values: (number | null)[] }) {
   );
 }
 
-function WochenverlaufView({ onPdfMeta, initialJahr }: {
+function WochenverlaufView({ onPdfMeta, onPdfDaten, initialJahr }: {
   onPdfMeta: (m: CockpitPdfMeta) => void;
+  /** Meldet die geladenen Verlauf-Daten (strukturierter Vektor-PDF-Export). */
+  onPdfDaten?: (d: WochenverlaufDaten | null) => void;
   /** Start-Jahr (z.B. Export aus historischer Monatssicht); Default = heute. */
   initialJahr?: number;
 }) {
@@ -2006,17 +2016,29 @@ function WochenverlaufView({ onPdfMeta, initialJahr }: {
   } | null>(null);
   const [budgetReloadTick, setBudgetReloadTick] = useState(0);
 
+  // Verlauf-Daten an die Seite melden (Vektor-PDF-Export). Ref-Muster, damit
+  // ein instabiler Callback den Lade-Effekt nicht neu triggert. WICHTIG gegen
+  // Stale-Exports: bei JEDEM Ladebeginn (Jahr/Anzahl/VJ-Wechsel) sofort null
+  // melden — der Export wartet dann auf die frisch geladenen Daten statt die
+  // alten Einstellungen zu exportieren.
+  const onPdfDatenRef = useRef(onPdfDaten);
+  useEffect(() => { onPdfDatenRef.current = onPdfDaten; }, [onPdfDaten]);
+
   useEffect(() => {
     if (ratesLoading || !rates) return;
     let alive = true;
     setLoading(true);
     setFehler(null);
+    onPdfDatenRef.current?.(null);
     ladeWochenverlauf(anzahl, tenantId, tenantKey, rates, heute, mitVorjahr, jahr)
-      .then(d => { if (alive) setDaten(d); })
-      .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
+      .then(d => { if (alive) { setDaten(d); onPdfDatenRef.current?.(d); } })
+      .catch(e => { if (alive) { setDaten(null); onPdfDatenRef.current?.(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [anzahl, jahr, mitVorjahr, tenantId, tenantKey, rates, ratesLoading, heute]);
+
+  // Beim Unmount (Tab-Wechsel) Export-Daten im Parent löschen (Stale-Schutz).
+  useEffect(() => () => { onPdfDatenRef.current?.(null); }, []);
 
   const showVj = mitVorjahr && !!daten?.vjWeeks;
   // Grafik braucht Vorjahresdaten (zwei Linien) → nur bei mitVorjahr wählbar.
@@ -2411,7 +2433,11 @@ function WochenverlaufChart({ daten, jahr }: { daten: WochenverlaufDaten; jahr: 
 // der Cache beim Umschalten des Zeitraums falsche Daten!).
 let jahresvergleichCache: { key: string; daten: JahresvergleichDaten } | null = null;
 
-function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => void }) {
+function JahresvergleichView({ onPdfMeta, onPdfDaten }: {
+  onPdfMeta: (m: CockpitPdfMeta) => void;
+  /** Meldet die geladenen Jahresvergleich-Daten fürs Vektor-PDF (null beim Laden). */
+  onPdfDaten?: (d: JahresvergleichDaten | null) => void;
+}) {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
@@ -2455,6 +2481,12 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
   const [daten, setDaten] = useState<JahresvergleichDaten | null>(cached);
   const [loading, setLoading] = useState(!cached);
   const [fehler, setFehler] = useState<string | null>(null);
+  // Stabiler Callback-Zugriff (Prop-Identität soll den Load-Effekt nicht triggern).
+  const onPdfDatenRef = useRef(onPdfDaten);
+  useEffect(() => { onPdfDatenRef.current = onPdfDaten; }, [onPdfDaten]);
+  // Beim Unmount (Tab-Wechsel) Export-Daten im Parent löschen — sonst würde
+  // ein späterer Export veraltete Jahresvergleich-Daten verwenden.
+  useEffect(() => () => { onPdfDatenRef.current?.(null); }, []);
 
   // Lazy: erst beim Öffnen des Tabs (Mount) laden; Reload bei Modus-/Zeitraumwechsel.
   const [budgetEdit, setBudgetEdit] = useState(false);
@@ -2470,21 +2502,23 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
 
   useEffect(() => {
     if (ratesLoading || !rates) return;
-    if (!customValid) { setDaten(null); setLoading(false); return; }
+    if (!customValid) { setDaten(null); onPdfDatenRef.current?.(null); setLoading(false); return; }
     if (jahresvergleichCache?.key === cacheKey) {
       setDaten(jahresvergleichCache.daten);
+      onPdfDatenRef.current?.(jahresvergleichCache.daten);
       setLoading(false);
       return;
     }
     let alive = true;
     setLoading(true);
     setFehler(null);
+    onPdfDatenRef.current?.(null);
     ladeJahresvergleich(tenantId, tenantKey, rates, heute, modus, loadVon, loadBis, jahr)
       .then(d => {
         jahresvergleichCache = { key: cacheKey, daten: d };
-        if (alive) setDaten(d);
+        if (alive) { setDaten(d); onPdfDatenRef.current?.(d); }
       })
-      .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
+      .catch(e => { if (alive) { setDaten(null); onPdfDatenRef.current?.(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey, modus, loadVon, loadBis, customValid, jahr]);

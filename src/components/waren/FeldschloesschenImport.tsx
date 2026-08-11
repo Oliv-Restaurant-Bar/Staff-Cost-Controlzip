@@ -67,10 +67,12 @@ async function pdfZuZeilen(file: File | Blob, name: string) {
   return toFsZeilen(reconstructGnPdfLines(res.pages));
 }
 
-export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
+export function FeldschloesschenImport({ tenantId, suppliers, onImported, externalFilesRef }: {
   tenantId: TenantId;
   suppliers: Supplier[];
   onImported: () => void;
+  /** Einspeise-Kanal für den universellen Upload (PDF/ZIP-Dateien). */
+  externalFilesRef?: { current: ((files: File[]) => void) | null };
 }) {
   const [busy, setBusy] = useState(false);
   const [lieferscheine, setLieferscheine] = useState<FsLieferschein[] | null>(null);
@@ -162,7 +164,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   };
 
   // ── Datei-Handling: PDFs (Lieferschein/Sammelrechnung) oder ZIP (Historie) ─
-  const handleFiles = async (files: FileList | null) => {
+  const handleFiles = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     setBusy(true);
     try {
@@ -258,6 +260,14 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       setBusy(false);
     }
   };
+
+  // Einspeise-Kanal des universellen Uploads (erkannte Feldschlösschen-PDFs).
+  useEffect(() => {
+    if (!externalFilesRef) return;
+    externalFilesRef.current = (files: File[]) => { void handleFiles(files); };
+    return () => { externalFilesRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFilesRef]);
 
   // ── Teil 1: Preisüberwachung in der Lieferschein-Vorschau ─────────────────
   // Gleiche Mechanik wie Transgourmet: pro Material-Nr gegen die gespeicherte

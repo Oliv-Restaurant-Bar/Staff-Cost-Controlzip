@@ -389,3 +389,116 @@ describe('Kreditoren-Übernahme finalisieren (Belegnummer-Match)', () => {
     expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(2);
   });
 });
+
+describe('finalDirekt (Lieferant ohne Monatsrechnung — Einzelrechnung bucht final)', () => {
+  it('bucht sofort final (ohne quelle), Re-Import derselben Referenz upsertet idempotent', async () => {
+    const res1 = await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('2144841', '2026-07-15') }],
+      { finalDirekt: true, idPrefix: 'lpdf' });
+    expect(res1.neu).toBe(1);
+    let monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].final).toBe(true);
+    expect(monat[0].quelle).toBeUndefined();
+
+    // Re-Import: kein Doppel, kein «bereits final»-Skip — Upsert.
+    const res2 = await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('2144841', '2026-07-15', 31) }],
+      { finalDirekt: true, idPrefix: 'lpdf' });
+    expect(res2.neu).toBe(0);
+    expect(res2.ersetzt).toBe(1);
+    expect(res2.bereitsFinal).toBe(0);
+    monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].final).toBe(true);
+    expect(monat[0].amountNet).toBe(310);
+  });
+
+  it('Re-Import mit korrigiertem Datum findet die finale Buchung per Referenz (Monate ±1)', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('2144990', '2026-07-31') }],
+      { finalDirekt: true });
+    const res = await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('2144990', '2026-08-02') }],
+      { finalDirekt: true });
+    expect(res.neu).toBe(0);
+    expect(res.ersetzt).toBe(1);
+    expect((kv.get('supplier_invoices_2026-07') as InvoiceEntry[] | undefined) ?? []).toHaveLength(0);
+    const aug = kv.get('supplier_invoices_2026-08') as InvoiceEntry[];
+    expect(aug).toHaveLength(1);
+    expect(aug[0].date).toBe('2026-08-02');
+    expect(aug[0].final).toBe(true);
+  });
+
+  it('OHNE finalDirekt bleibt der «bereits final»-Schutz aktiv', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('77', '2026-07-10') }],
+      { finalDirekt: true });
+    const res = await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('77', '2026-07-10') }]);
+    expect(res.bereitsFinal).toBe(1);
+    expect(res.ersetzt).toBe(0);
+  });
+});
+
+describe('finalDirekt kapert KEINE fremden Finalbuchungen', () => {
+  it('manuelle/MR-finale Buchung gleicher Referenz bleibt unangetastet (bereitsFinal)', async () => {
+    // Fremde finale Buchung: anderer id-Präfix (z.B. manuell) bzw. Monatsrechnung.
+    await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('555', '2026-07-05') }],
+      { quelle: 'monatsrechnung', idPrefix: 'mr' });
+    const vorher = (kv.get('supplier_invoices_2026-07') as InvoiceEntry[])[0];
+    expect(vorher.final).toBe(true);
+
+    const res = await kernImportiereFsRechnungen(TENANT, 'Caporaso', [{ r: rechnung('555', '2026-07-05', 99) }],
+      { finalDirekt: true, idPrefix: 'lpdf' });
+    expect(res.bereitsFinal).toBe(1);
+    expect(res.ersetzt).toBe(0);
+    const nachher = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(nachher).toHaveLength(1);
+    expect(nachher[0].amountNet).toBe(vorher.amountNet);
+  });
+});
+
+describe('Sammelrechnung finalisiert NUR die in ihr gelisteten Lieferscheine', () => {
+  it('Spahni-Szenario: MR vom 15. finalisiert LS 1+2, LS 3+4 bleiben provisorisch bis zur Monatsend-MR', async () => {
+    // Vier provisorische Lieferscheine über den Monat.
+    await kernImportiereFsRechnungen(TENANT, 'Spahni', [
+      { r: rechnung('S1', '2026-07-05') },
+      { r: rechnung('S2', '2026-07-12') },
+      { r: rechnung('S3', '2026-07-20') },
+      { r: rechnung('S4', '2026-07-28') },
+    ], { idPrefix: 'lpdf' });
+
+    // MR vom 15.: listet NUR S1+S2 (Lieferungen = LS-Nrn aus der Rechnung).
+    const mr1 = await kernImportiereFsRechnungen(TENANT, 'Spahni', [
+      { r: rechnung('S1', '2026-07-05') },
+      { r: rechnung('S2', '2026-07-12') },
+    ], { quelle: 'monatsrechnung', idPrefix: 'lpdf' });
+    expect(mr1.ueberschrieben).toBe(2);
+    expect(mr1.neu).toBe(0);
+
+    let monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    const byRef = (ref: string) => monat.find(e => e.reference === ref)!;
+    expect(byRef('S1').final).toBe(true);
+    expect(byRef('S2').final).toBe(true);
+    expect(byRef('S3').final).toBeUndefined(); // NICHT von MR1 finalisiert
+    expect(byRef('S4').final).toBeUndefined();
+    expect(monat).toHaveLength(4); // kein Gesamtbetrag zusätzlich
+
+    // Monatsend-MR: listet S3+S4 → finalisiert genau diese.
+    const mr2 = await kernImportiereFsRechnungen(TENANT, 'Spahni', [
+      { r: rechnung('S3', '2026-07-20') },
+      { r: rechnung('S4', '2026-07-28') },
+    ], { quelle: 'monatsrechnung', idPrefix: 'lpdf' });
+    expect(mr2.ueberschrieben).toBe(2);
+    monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(4);
+    expect(monat.every(e => e.final === true)).toBe(true);
+  });
+
+  it('Datum+Betrag-Fallback greift nur bei Fenster (Default 0 = exaktes LS-Datum), fremde Tage bleiben stehen', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'Spahni', [{ r: rechnung('X9', '2026-07-10') }], { idPrefix: 'lpdf' });
+    // MR-Lieferung OHNE gemeinsame Nr, anderes Datum, gleicher Betrag → KEIN Match, bucht neu.
+    const res = await kernImportiereFsRechnungen(TENANT, 'Spahni', [{ r: rechnung('L-777', '2026-07-11') }],
+      { quelle: 'monatsrechnung', idPrefix: 'lpdf' });
+    expect(res.neu).toBe(1);
+    expect(res.ueberschrieben).toBe(0);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(2);
+    expect(monat.find(e => e.reference === 'X9')!.final).toBeUndefined();
+  });
+});

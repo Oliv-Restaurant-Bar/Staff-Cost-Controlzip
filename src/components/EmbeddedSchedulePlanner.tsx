@@ -38,6 +38,7 @@ import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
 import { useTenant } from '@/contexts/TenantContext';
 import { saveActualHourEntry } from '@/lib/supabase-db';
+import { loadIstDayLocks } from '@/lib/ist-day-locks';
 import {
   loadExtraCostPeople, upsertExtraCostPerson, type ExtraCostPerson,
   extraCostPersonToEmployee,
@@ -110,6 +111,27 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     currentMonth: currentMonthStart,
     restaurantId: tenantId,   // ← Tenant-Filter
   });
+
+  // ── Ist-Tagessperren (Dienstplan): eingefrorene Tage nicht editierbar ──────
+  const [lockedIstDates, setLockedIstDates] = useState<Set<string>>(new Set());
+  const lockedIstDatesRef = useRef<Set<string>>(new Set());
+  useEffect(() => { lockedIstDatesRef.current = lockedIstDates; }, [lockedIstDates]);
+  useEffect(() => {
+    let cancelled = false;
+    const months = [
+      format(currentMonthStart, 'yyyy-MM'),
+      format(subMonths(currentMonthStart, 1), 'yyyy-MM'),
+      format(addMonths(currentMonthStart, 1), 'yyyy-MM'),
+    ];
+    void Promise.all(months.map(m => loadIstDayLocks(tenantId, m))).then(sets => {
+      if (cancelled) return;
+      const union = new Set<string>();
+      sets.forEach(s => s.forEach(d => union.add(d)));
+      setLockedIstDates(union);
+      lockedIstDatesRef.current = union;
+    });
+    return () => { cancelled = true; };
+  }, [currentMonthStart, tenantId]);
 
   // Externe Aushilfen (schedule_extra_cost_people)
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
@@ -345,6 +367,11 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
 
   // Handle actual hours change
   const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null) => {
+    // Ist-Tagessperre (Dienstplan): gesperrte Tage sind eingefroren.
+    if (lockedIstDatesRef.current.has(date)) {
+      toast.warning(`Der ${date.slice(8)}.${date.slice(5, 7)}. ist gesperrt — zum Ändern zuerst im Dienstplan entsperren.`);
+      return;
+    }
     const cellKey = `${employeeId}-${date}`;
 
     // FIX: derive the month key from the *entry date*, not from currentMonthStart.
@@ -1106,6 +1133,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
                         getEmployeeActualHours={calculateEmployeeActualHours}
                         getTargetHours={getMonthlyTargetHours}
                         showCosts={showCosts}
+                        lockedDates={lockedIstDates}
                       />
                     </div>
                     <div>
@@ -1121,6 +1149,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
                         getEmployeeActualHours={calculateEmployeeActualHours}
                         getTargetHours={getMonthlyTargetHours}
                         showCosts={showCosts}
+                        lockedDates={lockedIstDates}
                       />
                     </div>
                   </div>
@@ -1133,6 +1162,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
                     getEmployeeActualHours={calculateEmployeeActualHours}
                     getTargetHours={getMonthlyTargetHours}
                     showCosts={showCosts}
+                    lockedDates={lockedIstDates}
                   />
                 )
               )}

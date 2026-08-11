@@ -88,6 +88,10 @@ export async function kernImportiereFsRechnungen(
     extraMapping?: Record<string, string>;
     /** Fallback-Hauptkonto wenn keine Splits ableitbar (Default '4030'). */
     defaultKonto?: string;
+    /** «Monatsrechnung: nein»-Lieferanten: jede Einzelrechnung bucht sofort
+     *  FINAL (keine provisorische Stufe). Re-Import derselben Referenz bleibt
+     *  idempotent (Upsert statt «bereits final»-Skip). */
+    finalDirekt?: boolean;
   },
 ): Promise<FsImportErgebnis> {
   const [mappingRoh, historie, schwelle, artikelKonten, matchToleranz] = await Promise.all([
@@ -217,7 +221,13 @@ export async function kernImportiereFsRechnungen(
     } else {
       // Lieferschein/AB: eine FINALE Buchung wird NIE verschlechtert —
       // Upload derselben Lieferung wird übersprungen («bereits final»).
-      if (vorhanden?.final) { bereitsFinal++; continue; }
+      // AUSNAHME finalDirekt (Einzelrechnungs-Lieferant ohne Monatsrechnung):
+      // exakter Referenz-Treffer = dieselbe Rechnung ⇒ idempotenter Upsert —
+      // aber NUR bei nachweislich EIGENER Herkunft (gleicher idPrefix, keine
+      // Monatsrechnung); manuelle/MR-Finalbuchungen bleiben unantastbar.
+      const eigeneHerkunft = (e: InvoiceEntry) =>
+        e.id.startsWith(`${opts?.idPrefix ?? 'fs'}-`) && e.quelle !== 'monatsrechnung';
+      if (vorhanden?.final && !(opts?.finalDirekt && eigeneHerkunft(vorhanden))) { bereitsFinal++; continue; }
       if (opts?.quelle === 'auftragsbestaetigung' && vorhanden && vorhanden.quelle !== 'auftragsbestaetigung') {
         // AB upsertet nur die EIGENE provisorische Buchung, nie fremde.
         continue;
@@ -243,15 +253,21 @@ export async function kernImportiereFsRechnungen(
         }
         // FINALE Buchung derselben Lieferung (Referenz, Monate ±1)? Dann ist
         // sie bereits finalisiert — Lieferschein überspringen («bereits final»).
+        // finalDirekt: derselbe Referenz-Treffer ist die EIGENE Rechnung
+        // (z.B. Datum korrigiert) ⇒ Upsert statt Skip — nur eigene Herkunft.
         if (!vorhanden && r.rechnungsNr.trim() !== '') {
-          let final = false;
+          let finalTreffer: { e: InvoiceEntry; nm: string } | null = null;
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
-            if (nb.some(e => e.final === true
+            const e = nb.find(e => e.final === true && !vergeben.has(e.id)
               && e.supplierName.trim().toLowerCase() === lief
-              && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase())) { final = true; break; }
+              && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase());
+            if (e) { finalTreffer = { e, nm }; break; }
           }
-          if (final) { bereitsFinal++; continue; }
+          if (finalTreffer) {
+            if (opts?.finalDirekt && eigeneHerkunft(finalTreffer.e)) { vorhanden = finalTreffer.e; vorhandenMonat = finalTreffer.nm; }
+            else { bereitsFinal++; continue; }
+          }
         }
       }
     }
@@ -326,8 +342,9 @@ export async function kernImportiereFsRechnungen(
       ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
       ...(opts?.quelle ? { quelle: opts.quelle } : {}),
       // Monatsrechnung finalisiert die Lieferung — spätere LS/AB-Uploads
-      // dürfen diese Werte nicht mehr verschlechtern.
-      ...(istMr ? { final: true } : {}),
+      // dürfen diese Werte nicht mehr verschlechtern. finalDirekt: Lieferant
+      // ohne Monatsrechnung ⇒ Einzelrechnung ist sofort final.
+      ...(istMr || opts?.finalDirekt ? { final: true } : {}),
       createdAt: vorhanden?.createdAt ?? jetzt,
       updatedAt: jetzt,
     };

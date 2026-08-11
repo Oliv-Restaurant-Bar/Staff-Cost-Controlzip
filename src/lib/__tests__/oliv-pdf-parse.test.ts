@@ -213,3 +213,107 @@ describe('Blaser Rechnung 1091031', () => {
     expect(e.lieferdatum).toBe('2026-07-29');
   });
 });
+
+describe('Caporaso LIEFERSCHEIN-RECHNUNG (Konto-Split via MwSt-Basis)', () => {
+  it('2144841: 4060 1199.40 / 4701 240.00 · netto 1439.40 · Lieferdatum 04.08.', () => {
+    const e = parse('caporaso-2144841.txt');
+    expect(e.profil?.id).toBe('caporaso');
+    expect(e.belegart).toBe('rechnung');
+    expect(e.rechnungsNr).toBe('2144841');
+    expect(e.lieferdatum).toBe('2026-08-04');
+    // Bei Caporaso = Rechnungsdatum.
+    expect(e.rechnungsdatum).toBe('2026-08-04');
+    expect(e.netto).toBe(1439.4);
+    // Gedruckte MwSt-Beträge der Rechnung: 19.45 (8.1 %) + 31.20 (2.6 %).
+    expect(e.mwst).toBe(50.65);
+    expect(e.positionenErkannt).toBe(true);
+    expect(e.lieferungen).toHaveLength(1);
+    const l = e.lieferungen[0];
+    expect(l.rechnungsNr).toBe('2144841');
+    expect(l.datum).toBe('2026-08-04');
+    const kueche = l.positionen.find(p => p.warengruppe === 'Küche')!;
+    const betrieb = l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!;
+    expect(kueche.positionspreis).toBe(1199.4);
+    expect(betrieb.positionspreis).toBe(240.0);
+    expect(R2(l.nettoTotal)).toBe(1439.4);
+  });
+
+  it('2144990: 4060 566.40 / 4701 120.00 · netto 686.40', () => {
+    const e = parse('caporaso-2144990.txt');
+    expect(e.profil?.id).toBe('caporaso');
+    expect(e.rechnungsNr).toBe('2144990');
+    expect(e.lieferdatum).toBe('2026-08-06');
+    expect(e.netto).toBe(686.4);
+    const l = e.lieferungen[0];
+    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(566.4);
+    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(120.0);
+  });
+
+  it('Selbstvalidierung: Positionszeilen mit zufälligen %-Angaben zählen nicht', async () => {
+    const { caporasoMwstBasen } = await import('@/lib/profil-pdf-parse');
+    const text = [
+      'Rabatt 2.60 % auf 100.00  97.40', // 100×2.6 % = 2.60 ≠ 97.40 → verworfen
+      'MwSt 2.60 % von 566.40  14.73',
+      'MwSt 8.10 % von 120.00  9.72',
+      'MwSt 8.10 % von 120.00  9.72', // Wiederholung (Folgeseite) zählt nicht doppelt
+    ].join('\n');
+    const basen = caporasoMwstBasen(text);
+    expect(basen).toHaveLength(2);
+    expect(basen.find(b => b.satz === 2.6)?.basis).toBe(566.4);
+    expect(basen.find(b => b.satz === 8.1)?.basis).toBe(120.0);
+  });
+});
+
+describe('caporasoMwstBasen: nur MwSt-Zusammenfassungszeilen', () => {
+  it('rechnerisch passende Rabatt-/Positionszeilen ohne MwSt-Kontext zählen nie', async () => {
+    const { caporasoMwstBasen } = await import('@/lib/profil-pdf-parse');
+    const text = [
+      'Rabatt 2.60 % auf 1000.00  26.00',        // Mathe passt, kein MwSt-Kontext → verworfen
+      '9002 Artikel Aktion 8.10 %  200.00 16.20', // dito
+      'MwSt-Rabatt 2.60 % 500.00 13.00',          // MwSt-Wort, aber Rabatt → verworfen
+      'MwSt 2.60 % von 566.40  14.73',
+      'MwSt 8.10 % von 120.00  9.72',
+    ].join('\n');
+    const basen = caporasoMwstBasen(text);
+    expect(basen).toHaveLength(2);
+    expect(basen.find(b => b.satz === 2.6)?.basis).toBe(566.4);
+    expect(basen.find(b => b.satz === 8.1)?.basis).toBe(120.0);
+  });
+});
+
+// ─── Echte Caporaso-PDFs: volle Pipeline (pdfjs-Items → Zeilen → Parser) ─────
+// Die .items.json-Fixtures sind die UNVERÄNDERTEN pdfjs-getTextContent-Items
+// der beiden Original-PDFs; nur die pdfjs-IO-Schicht ist ausgelassen.
+import { reconstructGnPdfLines, type GnPdfPageItems } from '@/lib/gn-pdf-lines';
+import { findeProfilImText } from '@/lib/lieferanten-profile';
+
+const itemsFx = (name: string): GnPdfPageItems[] =>
+  (JSON.parse(fx(name)) as { pages: GnPdfPageItems[] }).pages;
+
+describe('Caporaso: echte PDF-Items durch die produktive Pipeline', () => {
+  it('2144841: Zeilenrekonstruktion → Parser liefert den Konto-Split', () => {
+    const text = reconstructGnPdfLines(itemsFx('caporaso-2144841.items.json')).map(l => l.text).join('\n');
+    const e = parseProfilPdf(text, P);
+    expect(e.profil?.id).toBe('caporaso');
+    expect(e.netto).toBe(1439.4);
+    const l = e.lieferungen[0];
+    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(1199.4);
+    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(240.0);
+  });
+  it('2144990: Zeilenrekonstruktion → Parser liefert den Konto-Split', () => {
+    const text = reconstructGnPdfLines(itemsFx('caporaso-2144990.items.json')).map(l => l.text).join('\n');
+    const e = parseProfilPdf(text, P);
+    expect(e.profil?.id).toBe('caporaso');
+    expect(e.netto).toBe(686.4);
+    const l = e.lieferungen[0];
+    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(566.4);
+    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(120.0);
+  });
+  it('Schnellerfassungs-Text (Items stumpf mit Spaces gejoint) erkennt Caporaso — Kunden-MWST-Nr zählt nicht', () => {
+    for (const name of ['caporaso-2144841.items.json', 'caporaso-2144990.items.json']) {
+      const flat = itemsFx(name).flatMap(p => p.items.map(i => i.str)).join(' ');
+      const { profil } = findeProfilImText(flat, P);
+      expect(profil?.id).toBe('caporaso');
+    }
+  });
+});

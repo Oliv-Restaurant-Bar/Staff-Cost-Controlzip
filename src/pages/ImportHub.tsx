@@ -71,6 +71,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { notifyKVBackupProblem, kvGetStrict, loadDailyBudgetsBaseStrict } from '@/lib/supabase-kv';
+import { loadIstDayLocksForMonths } from '@/lib/ist-day-locks';
 import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 import { HintBox } from '@/components/ui/hint-box';
 import { StatusPill } from '@/components/ui/status-pill';
@@ -2185,6 +2186,23 @@ const IstStundenSection = () => {
     const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
     const saves: Array<{ empId: string; date: string; hours: number }> = [];
 
+    // Ist-Tagessperren strikt lesen (fail-closed): gesperrte Tage werden NIE
+    // überschrieben; Lesefehler = Abbruch, nichts geschrieben.
+    let lockedIstDates: Set<string>;
+    try {
+      lockedIstDates = await loadIstDayLocksForMonths(tenantId, affectedMonths);
+    } catch (e) {
+      toast.error(`${e instanceof Error ? e.message : String(e)} — Import abgebrochen (nichts geschrieben).`);
+      return;
+    }
+    if (lockedIstDates.size > 0) {
+      const before = entries.length;
+      entries = entries.filter(e => !lockedIstDates.has(e.date));
+      if (entries.length < before) {
+        toast.info(`${before - entries.length} Zeile(n) auf gesperrten Tagen übersprungen — «gesperrt, nicht überschrieben».`);
+      }
+    }
+
     const loadMonthData = (month: string): Record<string, { hours: number; absenceType?: string }> => {
       try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${month}`)) || '{}'); } catch { return {}; }
     };
@@ -2201,6 +2219,13 @@ const IstStundenSection = () => {
       const existing = loadMonthData(m);
       // In replace mode start fresh BUT keep absence entries (FE/K/F)
       monthData[m] = mode === 'replace' ? extractAbsenceEntries(existing) : { ...existing };
+      // Gesperrte Tage: bestehende Einträge behalten (Replace darf sie nicht
+      // aus dem lokalen Monatsblob wischen — Supabase behält sie ohnehin).
+      if (mode === 'replace' && lockedIstDates.size > 0) {
+        for (const [k, v] of Object.entries(existing)) {
+          if (lockedIstDates.has(k.slice(-10))) monthData[m][k] = v;
+        }
+      }
     }
 
     let matched = 0;

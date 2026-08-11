@@ -33,6 +33,7 @@ import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
 import { saveActualHourEntry, saveActualHourEntries, saveActualDayAnnotations, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
+import { loadIstDayLocksStrict } from '@/lib/ist-day-locks';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
   getActualHoursBatch,
@@ -747,6 +748,17 @@ export default function ArbeitszeitblaetterPage() {
       }
     }
 
+    // Ist-Tagessperren (Dienstplan) strikt lesen (fail-closed): gesperrte Tage
+    // werden NIE überschrieben; Lesefehler = Abbruch, nichts geschrieben.
+    let istDayLocks: Set<string>;
+    try {
+      istDayLocks = await loadIstDayLocksStrict(tenantId, `${year}-${String(month).padStart(2, '0')}`);
+    } catch (e) {
+      toast.error(`${e instanceof Error ? e.message : String(e)} — Import abgebrochen (nichts geschrieben).`);
+      setImportRunning(false);
+      return;
+    }
+
     // Gesperrte Tage (manuell korrigiert) vorladen — immer, auch im Überschreiben-Modus
     // (im 'keep'-Modus werden sie übersprungen; im 'overwrite'-Modus für das Logging gebraucht)
     const lockedDatesMap: Record<string, Set<string>> = {};
@@ -769,6 +781,12 @@ export default function ArbeitszeitblaetterPage() {
       const empLockedDates = lockedDatesMap[row.employee.id] ?? new Set<string>();
       for (const day of row.excEmployee.days) {
         if (!day.date) continue;
+        // Dienstplan-Tagessperre: «gesperrt — nicht überschrieben», kein Fehler.
+        if (istDayLocks.has(day.date)) {
+          console.debug(`[runImport] ${row.employee.name} / ${day.date}: Ist-Tagessperre (Dienstplan) — übersprungen`);
+          skippedCount++;
+          continue;
+        }
         const wasLocked = empLockedDates.has(day.date);
         // 'keep'-Modus: gesperrte Tage überspringen — Daten bleiben unverändert
         if (manualOverwriteMode === 'keep' && wasLocked) {

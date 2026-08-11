@@ -13,6 +13,7 @@ import { useState, useRef, useCallback } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import { useNavigate } from 'react-router-dom';
+import { loadIstDayLocksForMonths } from '@/lib/ist-day-locks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -231,6 +232,18 @@ export default function StundenimportPage() {
     setImporting(true);
     const res: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [], unmapped: [] };
 
+    // Ist-Tagessperren strikt lesen (fail-closed): gesperrte Tage werden
+    // NIE überschrieben; Lesefehler = Abbruch, nichts geschrieben.
+    let lockedDates: Set<string>;
+    try {
+      const months = new Set(rows.flatMap(r => r.days.map(d => d.date?.slice(0, 7))).filter(Boolean) as string[]);
+      lockedDates = await loadIstDayLocksForMonths(tenantId, months);
+    } catch (e) {
+      toast.error(`${e instanceof Error ? e.message : String(e)} — Import abgebrochen (nichts geschrieben).`);
+      setImporting(false);
+      return;
+    }
+
     // Manuelle Mappings speichern
     const newMappings: Record<string, string> = {};
     for (const row of rows) {
@@ -251,6 +264,8 @@ export default function StundenimportPage() {
 
       for (const day of row.days) {
         if (!day.date || (day.totalHours ?? 0) <= 0) { res.skipped++; continue; }
+        // Gesperrter Tag: «gesperrt — nicht überschrieben», kein Fehler.
+        if (lockedDates.has(day.date)) { res.skipped++; continue; }
         try {
           const start = day.shifts?.[0]?.from ?? undefined;
           const end   = day.shifts?.[0]?.to   ?? undefined;
