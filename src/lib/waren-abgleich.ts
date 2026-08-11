@@ -17,6 +17,7 @@ import type { InvoiceEntry } from '@/lib/waren-db';
 import type { SageJournalEntry } from '@/types/reporting';
 import { findSupplierInText, type SupplierAliasMap } from '@/lib/waren-pdf-erkennung';
 import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
+import { nettoOhneDepot } from '@/lib/waren-cockpit';
 
 export type AbgleichStatus =
   | 'ok'            // beide Quellen, Differenz unter Schwelle
@@ -170,10 +171,14 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   for (const inv of input.invoices) {
     const canon = resolve(inv.supplierName);
     const cur = erfasstMap.get(canon) ?? { sum: 0, count: 0 };
-    cur.sum += inv.amountNet;
+    // Erfasst-Seite OHNE Pfand/Depot: die FIBU bucht Pfand auf ein separates
+    // Depot-Konto (nicht in den Warenkonten) — Vergleich also Waren gegen
+    // Waren, sonst bleiben «enthält Leergut/Pfand»-Restdifferenzen stehen.
+    const invNet = nettoOhneDepot(inv);
+    cur.sum += invNet;
     cur.count += 1;
     erfasstMap.set(canon, cur);
-    addOriginal(originaleErfasst, canon, inv.supplierName, inv.amountNet);
+    addOriginal(originaleErfasst, canon, inv.supplierName, invNet);
   }
   const erfasstTotal = [...erfasstMap.values()].reduce((a, v) => a + v.sum, 0);
 

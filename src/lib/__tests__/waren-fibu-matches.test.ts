@@ -282,7 +282,9 @@ describe('zerlegeLieferantDifferenz', () => {
     // diff = gebucht − erfasst = 620.03 − 800 = −179.97
     expect(summe).toBeCloseTo(-179.97, 2);
   });
-  it('grössere Match-Abweichung = match_rest; Depot-Split erzeugt Hinweis', () => {
+  it('Depot-Split ist AUS dem Vergleich ausgeklammert: Pfand erzeugt keine Restdifferenz mehr', () => {
+    // Rechnung 500 = 480 Waren + 20 Depot; FIBU bucht nur die 480 (Pfand auf
+    // separates Depot-Konto) → Vergleich 480 vs. 480 = KEIN Posten (Spec 08/2026).
     const e = { ...inv('a', 500), kontoSplits: [
       { warenkonto: '4000', amountNet: 480, amountGross: 517 },
       { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
@@ -291,11 +293,25 @@ describe('zerlegeLieferantDifferenz', () => {
     const keys = buchungKeysMitIndex(buchungen);
     const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] }];
     const { posten, summe } = zerlegeLieferantDifferenz([e], buchungen, keys, gruppen);
+    expect(posten).toHaveLength(0);
+    expect(summe).toBe(0);
+  });
+  it('echte Match-Abweichung trotz Depot: Rest ohne Depot, Hinweis nur informativ', () => {
+    // 480 Waren + 20 Depot erfasst, FIBU bucht 450 → Rest = 450 − 480 = −30
+    // (das Depot steckt NICHT in der Differenz, wird aber ausgewiesen).
+    const e = { ...inv('a', 500), kontoSplits: [
+      { warenkonto: '4000', amountNet: 480, amountGross: 517 },
+      { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
+    ] } as InvoiceEntry;
+    const buchungen = [jrn('x', 450)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] }];
+    const { posten, summe } = zerlegeLieferantDifferenz([e], buchungen, keys, gruppen);
     expect(posten).toHaveLength(1);
     expect(posten[0].typ).toBe('match_rest');
-    expect(posten[0].betrag).toBe(-20);
-    expect(posten[0].detail).toMatch(/Leergut\/Pfand CHF 20.00/);
-    expect(summe).toBe(-20);
+    expect(posten[0].betrag).toBe(-30);
+    expect(posten[0].detail).toMatch(/Pfand\/Leergut CHF 20.00 separat als Depot/);
+    expect(summe).toBe(-30);
   });
   it('cross-supplier-Gruppe (lokale Rechnung + fremde Buchung) → gruppe_extern, Summen-Invariante hält', () => {
     const invoices = [inv('a', 500)];

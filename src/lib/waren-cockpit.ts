@@ -36,10 +36,14 @@ export function kategorieShares(
   e: InvoiceEntry, konten: Warenkonto[],
 ): { kategorie: WarenKategorie; net: number }[] {
   if (e.kontoSplits && e.kontoSplits.length > 0) {
-    return e.kontoSplits.map(s => ({
-      kategorie: kontoKategorie(s.warenkonto ?? '', konten),
-      net: Number.isFinite(s.amountNet) ? s.amountNet : 0,
-    }));
+    // Depot-/Pfand-Splits sind KEIN Warenaufwand — gleiche Regel wie
+    // nettoOhneDepot, damit Food+Beverage exakt zum Total (ohne Pfand) passt.
+    return e.kontoSplits
+      .filter(s => !istDepotSplitKonto(s.warenkonto ?? ''))
+      .map(s => ({
+        kategorie: kontoKategorie(s.warenkonto ?? '', konten),
+        net: Number.isFinite(s.amountNet) ? s.amountNet : 0,
+      }));
   }
   // Konto autoritativ (wie kategorieOf): liefert das Konto Food/Beverage,
   // zählt eine alt gespeicherte kategorie («Sonstiges» aus Importen) nicht.
@@ -113,9 +117,31 @@ export function supplierRowIds(names: string[]): string[] {
   });
 }
 
-/** Netto-Total aller Rechnungen (CHF). */
+/**
+ * Pfand/Leergut ist KEIN direkter Warenaufwand: die FIBU bucht Depot auf ein
+ * separates Konto. Alle Warenkosten-Summen (Cockpit/WKQ/FIBU-Abgleich) rechnen
+ * deshalb OHNE die Depot-Pseudo-Splits einer Rechnung. Rechnungen ohne Splits
+ * behalten ihr volles amountNet (kein Raten).
+ */
+export const istDepotSplitKonto = (warenkonto: string): boolean =>
+  /depot|leergut|pfand/i.test(warenkonto);
+
+/** Depot-/Leergut-Anteil einer Rechnung (0 ohne entsprechende Splits). */
+export function depotAnteilNet(e: InvoiceEntry): number {
+  return (e.kontoSplits ?? [])
+    .filter(s => istDepotSplitKonto(s.warenkonto))
+    .reduce((s, x) => s + (Number.isFinite(x.amountNet) ? x.amountNet : 0), 0);
+}
+
+/** Netto einer Rechnung ohne Depot/Pfand (Basis aller Warenkosten-Summen). */
+export function nettoOhneDepot(e: InvoiceEntry): number {
+  const n = Number.isFinite(e.amountNet) ? e.amountNet : 0;
+  return Math.round((n - depotAnteilNet(e)) * 100) / 100;
+}
+
+/** Netto-Total aller Rechnungen (CHF) — OHNE Pfand/Depot-Anteile. */
 export function sumInvoicesNet(invoices: InvoiceEntry[]): number {
-  return invoices.reduce((s, e) => s + (Number.isFinite(e.amountNet) ? e.amountNet : 0), 0);
+  return invoices.reduce((s, e) => s + nettoOhneDepot(e), 0);
 }
 
 /** Aufteilung nach Lieferant, absteigend nach Betrag (Top-Lieferanten zuerst). */
@@ -124,7 +150,7 @@ export function aggregateBySupplier(invoices: InvoiceEntry[]): SupplierAggRow[] 
   for (const e of invoices) {
     const key = (e.supplierName || '—').trim() || '—';
     const cur = map.get(key) ?? { totalNet: 0, count: 0 };
-    cur.totalNet += Number.isFinite(e.amountNet) ? e.amountNet : 0;
+    cur.totalNet += nettoOhneDepot(e);
     cur.count += 1;
     map.set(key, cur);
   }

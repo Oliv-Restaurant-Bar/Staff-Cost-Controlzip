@@ -66,7 +66,7 @@ describe('buildUebernahmeKandidaten', () => {
     const b = buchung();
     const st: FibuMatchState = {
       gruppen: [{ id: 'g1', invoiceIds: ['i1'], buchungKeys: [`${buchungKey(b)}#1`], herkunft: 'manuell' }],
-      gesperrt: { invoiceIds: [], buchungKeys: [] },
+      gesperrt: { invoiceIds: [], buchungKeys: [] }, erklaert: {},
     };
     const ks = buildUebernahmeKandidaten(abgleichMit([b, { ...b }]), st);
     expect(ks).toHaveLength(1);
@@ -76,7 +76,7 @@ describe('buildUebernahmeKandidaten', () => {
     const b = buchung();
     const st: FibuMatchState = {
       gruppen: [{ id: 'g1', invoiceIds: ['i1'], buchungKeys: [buchungKey(b)], herkunft: 'manuell' }],
-      gesperrt: { invoiceIds: [], buchungKeys: [] },
+      gesperrt: { invoiceIds: [], buchungKeys: [] }, erklaert: {},
     };
     expect(buildUebernahmeKandidaten(abgleichMit([b]), st)).toHaveLength(0);
     // …aber ein zweites identisches Exemplar (#1) bleibt Kandidat

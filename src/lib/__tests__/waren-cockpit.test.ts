@@ -126,3 +126,41 @@ describe('supplierRowIds (kollisionssicher)', () => {
     expect(supplierRowIds(['', ' '])).toEqual(['unbenannt', 'unbenannt_2']);
   });
 });
+
+// ── Depot/Pfand ausgeklammert (08/2026): kein direkter Warenaufwand ──────────
+import { nettoOhneDepot, depotAnteilNet, sumInvoicesNet as sumNet2 } from '@/lib/waren-cockpit';
+import type { InvoiceEntry as IE2 } from '@/lib/waren-db';
+
+describe('nettoOhneDepot / sumInvoicesNet ohne Pfand', () => {
+  const mit = { id: 'a', date: '2026-07-01', supplierName: 'TG', amountNet: 500, amountGross: 540,
+    kontoSplits: [
+      { warenkonto: '4060', amountNet: 480, amountGross: 517 },
+      { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
+    ] } as unknown as IE2;
+  const ohneSplits = { id: 'b', date: '2026-07-02', supplierName: 'X', amountNet: 100, amountGross: 108 } as unknown as IE2;
+  it('zieht nur Depot-/Leergut-/Pfand-Splits ab', () => {
+    expect(depotAnteilNet(mit)).toBe(20);
+    expect(nettoOhneDepot(mit)).toBe(480);
+  });
+  it('Rechnungen ohne Splits behalten ihr volles Netto (kein Raten)', () => {
+    expect(nettoOhneDepot(ohneSplits)).toBe(100);
+    expect(sumNet2([mit, ohneSplits])).toBe(580);
+  });
+});
+
+// ── Invariante: Total = Food + Beverage, beide OHNE Depot ────────────────────
+import { sumNetByKategorie as snk2 } from '@/lib/waren-cockpit';
+
+describe('Kategorie-Summen klammern Depot ebenfalls aus (gleiche Regel wie Total)', () => {
+  it('480 Waren + 20 Depot: Total 480 = Food 300 + Beverage 180, Depot nirgends', () => {
+    const e = { id: 'a', date: '2026-07-01', supplierName: 'TG', amountNet: 500, amountGross: 540,
+      kontoSplits: [
+        { warenkonto: '4060', amountNet: 300, amountGross: 323 },
+        { warenkonto: '4030', amountNet: 180, amountGross: 194 },
+        { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
+      ] } as unknown as IE2;
+    expect(sumNet2([e])).toBe(480);
+    expect(snk2([e], 'Food', [])).toBe(300);
+    expect(snk2([e], 'Beverage', [])).toBe(180);
+  });
+});

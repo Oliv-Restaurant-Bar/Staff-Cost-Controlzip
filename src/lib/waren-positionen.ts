@@ -238,11 +238,33 @@ export interface PositionsKonto {
   status: PositionsKontoStatus;
 }
 
+/**
+ * Text-Erkennung Pfand/Leergut/Gebinde (z.B. Transgourmet «Ifco»-Harasse,
+ * Depot-Positionen): greift ZUSÄTZLICH zum MwSt-Code 0 — die FIBU bucht Pfand
+ * auf ein separates Depot-Konto, nie auf die direkten Warenkonten. Im Zweifel
+ * (Kennwort im Artikelnamen) als Depot behandeln, nie raten.
+ */
+export function istPfandBezeichnung(bezeichnung: string | undefined): boolean {
+  if (!bezeichnung) return false;
+  // Token-genau (kein blindes Präfix-Matching mitten in Fremdwörtern wie
+  // «Deposito»/«Harissa»): erlaubt sind die Kennwörter selbst plus übliche
+  // deutsche Komposita (Depotgebühr, Leergutretour, Harassen, Pfandsatz …).
+  for (const tok of bezeichnung.toLowerCase().split(/[^a-zäöüéèà0-9]+/)) {
+    if (!tok) continue;
+    if (/^(pfand|leergut|gebinde)[a-zäöü]*$/.test(tok)) return true;
+    if (/^harass(e|en)?$/.test(tok)) return true;
+    if (/^ifco[a-z0-9äöü-]*$/.test(tok)) return true; // Marken-Mehrwegkisten
+    if (/^depot(s|gebühr(en)?)?$/.test(tok)) return true;
+  }
+  return false;
+}
+
 export function kontoFuerPosition(
-  p: Pick<WarenPosition, 'warengruppe' | 'mwstCode'>,
+  p: Pick<WarenPosition, 'warengruppe' | 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung'>>,
   mapping: WarengruppenMapping,
 ): PositionsKonto {
   if (p.mwstCode === 0) return { konto: null, status: 'pfand' }; // Pfand/Gebinde → neutral/Depot
+  if (istPfandBezeichnung(p.bezeichnung)) return { konto: null, status: 'pfand' };
   const g = normGruppe(p.warengruppe);
   if (g) {
     const regel = mapping.find(r => normGruppe(r.gruppe) === g);
@@ -263,6 +285,8 @@ export function kontoFuerPositionMitArtikel(
   artikelKonten?: ArtikelKontenMapping,
 ): PositionsKonto & { manuell?: boolean } {
   if (p.mwstCode === 0) return { konto: null, status: 'pfand' };
+  // Manuelle Artikel-Zuordnung schlägt die TEXT-Pfand-Erkennung (explizite
+  // User-Entscheidung ist kein «Zweifel»); der harte MwSt-Code 0 bleibt davor.
   const key = artikelKey(lieferant, p);
   const artikel = key ? artikelKonten?.[key] : undefined;
   if (artikel) return { konto: artikel, status: 'zugeordnet', manuell: true };

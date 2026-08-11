@@ -419,3 +419,27 @@ describe('robustes Zahlen-Parsing + MwSt-Code (D1)', () => {
     expect(kontoFuerPosition(posOf('R7'), DEFAULT_WARENGRUPPEN_MAPPING).status).not.toBe('pfand');
   });
 });
+
+// ── Pfand/Leergut-Text-Erkennung (08/2026): Ifco/Harasse/Gebinde/Depot/Leergut ─
+import { istPfandBezeichnung, kontoFuerPosition as kfp, DEFAULT_WARENGRUPPEN_MAPPING as MAP2 } from '@/lib/waren-positionen';
+
+describe('istPfandBezeichnung (Text-Kennzeichen → Depot, nie raten)', () => {
+  it('erkennt Ifco/Harasse/Gebinde/Depot/Leergut/Pfand (case-insensitiv)', () => {
+    for (const s of ['IFCO Liftlock 6416', 'Harasse 24er', 'Harass', 'Gebinde-Depot',
+      'Leergut Retour', 'PFAND CHF 0.50', 'depotgebühr']) {
+      expect(istPfandBezeichnung(s), s).toBe(true);
+    }
+  });
+  it('keine Fehltreffer mitten im Wort oder bei normalen Artikeln', () => {
+    for (const s of ['Barolo DOCG', 'Rindsfilet', 'Champagner', 'Grapefruit',
+      'Harissa-Paste', 'Deposito Riserva', 'Depotenz'.replace('tenz', 'tage'), 'Salsa-Mix', '']) {
+      expect(istPfandBezeichnung(s), s).toBe(false);
+    }
+  });
+  it('kontoFuerPosition: Text-Pfand → Depot-Status trotz bekannter Warengruppe', () => {
+    expect(kfp({ warengruppe: 'Getränke', mwstCode: 2, bezeichnung: 'IFCO Harasse gross' }, MAP2))
+      .toEqual({ konto: null, status: 'pfand' });
+    // ohne Kennzeichen bleibt die Warengruppen-Zuordnung:
+    expect(kfp({ warengruppe: 'Getränke', mwstCode: 2, bezeichnung: 'Mineral 50cl' }, MAP2).konto).toBe('4050');
+  });
+});
