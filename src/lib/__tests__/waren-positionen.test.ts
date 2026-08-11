@@ -442,4 +442,15 @@ describe('istPfandBezeichnung (Text-Kennzeichen → Depot, nie raten)', () => {
     // ohne Kennzeichen bleibt die Warengruppen-Zuordnung:
     expect(kfp({ warengruppe: 'Getränke', mwstCode: 2, bezeichnung: 'Mineral 50cl' }, MAP2).konto).toBe('4050');
   });
+  it('SCHWACHE Kennwörter (Gebinde/Harasse) nur im Zweifel: gemappte Gruppe gewinnt, unbekannte Gruppe → Depot', () => {
+    // FS-Bier «10×33 Harass» mit 8.1 % und gemappter Gruppe bleibt Warenkonto:
+    expect(kfp({ warengruppe: 'Getränke', mwstCode: 1, bezeichnung: 'Lager hell 10x33 Harass' }, MAP2).konto).toBe('4050');
+    // Unbekannte Gruppe + Gebinde/Harasse → Depot statt «offen» (nie raten):
+    expect(kfp({ warengruppe: 'Unbekannt', mwstCode: 1, bezeichnung: 'Harasse 24er' }, MAP2))
+      .toEqual({ konto: null, status: 'pfand' });
+    expect(kfp({ warengruppe: 'Unbekannt', mwstCode: 1, bezeichnung: 'Gebinde gross' }, MAP2))
+      .toEqual({ konto: null, status: 'pfand' });
+    // Unbekannte Gruppe OHNE Kennwort bleibt offen:
+    expect(kfp({ warengruppe: 'Unbekannt', mwstCode: 1, bezeichnung: 'Trüffelöl' }, MAP2).status).toBe('offen');
+  });
 });

@@ -460,3 +460,35 @@ describe('sammelrechnungZuHistorie', () => {
     expect(h.material['10028'].letzterPreis).toBe(3.92);
   });
 });
+
+// ── Regression FS Juli (Oliv): alle Depot-Typen → Depot, nie 4030/4040/4050 ──
+describe('FS Juli Kontrollwerte: Depot separat, Warenkosten ohne Leergut', () => {
+  const kat2 = (name: string, n81: number, n26 = 0, n00 = 0): FsKategorieSumme =>
+    ({ name, netto81: n81, netto26: n26, netto00: n00, nettoTotal: n81 + n26 + n00 });
+  it('Depot 645.00, Warenkosten 15064.15, Betriebsmaterial 465.00 → 4701', () => {
+    const { splits, offen } = kontoSplitsAusFsKategorien([
+      kat2('Bier', 4538.00),
+      kat2('Spirituosen', 2789.30),
+      kat2('Mineralwasser', 0, 5000.00),
+      kat2('Andere alk. freie Getränke', 0, 2736.85),
+      kat2('Leergut', 0, 0, 400.00),
+      kat2('Gebinde', 0, 0, 145.00),      // Harasse/Gebinde → Depot
+      kat2('Ladungsträger', 0, 0, 100.00),
+      kat2('Andere Güter', 465.00),        // Betriebsmaterial → 4701
+    ], []);
+    expect(offen).toEqual([]);
+    const m = Object.fromEntries(splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['Depot']).toBeCloseTo(645.00, 2);
+    expect(m['4701']).toBeCloseTo(465.00, 2);
+    const waren = (m['4030'] ?? 0) + (m['4040'] ?? 0) + (m['4050'] ?? 0);
+    expect(waren).toBeCloseTo(15064.15, 2);
+    // Kein Depot-Anteil auf den Warenkonten:
+    expect(m['4030']).toBeCloseTo(4538.00, 2);
+    expect(m['4040']).toBeCloseTo(2789.30, 2);
+    expect(m['4050']).toBeCloseTo(7736.85, 2);
+  });
+  it('gemischt-sätzige Depot-Kategorie (Name zählt, nicht nur 0 %)', () => {
+    const { splits } = kontoSplitsAusFsKategorien([kat2('Harasse', 10, 0, 90)], []);
+    expect(splits).toEqual([{ warenkonto: 'Depot', amountNet: 100, amountGross: expect.any(Number) }]);
+  });
+});

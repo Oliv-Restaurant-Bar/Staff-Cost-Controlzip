@@ -244,32 +244,57 @@ export interface PositionsKonto {
  * auf ein separates Depot-Konto, nie auf die direkten Warenkonten. Im Zweifel
  * (Kennwort im Artikelnamen) als Depot behandeln, nie raten.
  */
-export function istPfandBezeichnung(bezeichnung: string | undefined): boolean {
+/**
+ * STARKE Pfand-Kennwörter: eindeutig Depot, egal welche Warengruppe/MwSt
+ * (Pfand, Leergut, Depot, Ifco-Mehrwegkisten).
+ */
+export function istPfandBezeichnungStark(bezeichnung: string | undefined): boolean {
   if (!bezeichnung) return false;
-  // Token-genau (kein blindes Präfix-Matching mitten in Fremdwörtern wie
-  // «Deposito»/«Harissa»): erlaubt sind die Kennwörter selbst plus übliche
-  // deutsche Komposita (Depotgebühr, Leergutretour, Harassen, Pfandsatz …).
-  for (const tok of bezeichnung.toLowerCase().split(/[^a-zäöüéèà0-9]+/)) {
-    if (!tok) continue;
-    if (/^(pfand|leergut|gebinde)[a-zäöü]*$/.test(tok)) return true;
-    if (/^harass(e|en)?$/.test(tok)) return true;
+  for (const tok of tokens(bezeichnung)) {
+    if (/^(pfand|leergut)[a-zäöü]*$/.test(tok)) return true;
     if (/^ifco[a-z0-9äöü-]*$/.test(tok)) return true; // Marken-Mehrwegkisten
     if (/^depot(s|gebühr(en)?)?$/.test(tok)) return true;
   }
   return false;
 }
 
+/**
+ * SCHWACHE Kennwörter (Gebinde/Harasse): können auch in normalen Artikel-
+ * namen vorkommen (z.B. Bier «10×33 Harass» mit 8.1 % MwSt) — sie schlagen
+ * NUR im Zweifel durch, d.h. wenn die Warengruppe keinem Konto zuordenbar
+ * ist (dann Depot statt «offen», nie raten).
+ */
+export function istPfandBezeichnungSchwach(bezeichnung: string | undefined): boolean {
+  if (!bezeichnung) return false;
+  for (const tok of tokens(bezeichnung)) {
+    if (/^gebinde[a-zäöü]*$/.test(tok)) return true;
+    if (/^harass(e|en)?$/.test(tok)) return true;
+  }
+  return false;
+}
+
+/** Kombinierte Erkennung (stark ODER schwach) — token-genau, kein blindes
+ *  Präfix-Matching mitten in Fremdwörtern («Deposito»/«Harissa»). */
+export function istPfandBezeichnung(bezeichnung: string | undefined): boolean {
+  return istPfandBezeichnungStark(bezeichnung) || istPfandBezeichnungSchwach(bezeichnung);
+}
+
+const tokens = (s: string): string[] => s.toLowerCase().split(/[^a-zäöüéèà0-9]+/).filter(Boolean);
+
 export function kontoFuerPosition(
   p: Pick<WarenPosition, 'warengruppe' | 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung'>>,
   mapping: WarengruppenMapping,
 ): PositionsKonto {
   if (p.mwstCode === 0) return { konto: null, status: 'pfand' }; // Pfand/Gebinde → neutral/Depot
-  if (istPfandBezeichnung(p.bezeichnung)) return { konto: null, status: 'pfand' };
+  if (istPfandBezeichnungStark(p.bezeichnung)) return { konto: null, status: 'pfand' };
   const g = normGruppe(p.warengruppe);
   if (g) {
     const regel = mapping.find(r => normGruppe(r.gruppe) === g);
     if (regel && regel.konto.trim()) return { konto: regel.konto.trim(), status: 'zugeordnet' };
   }
+  // Warengruppe keinem Konto zuordenbar: SCHWACHE Kennwörter (Gebinde/Harasse)
+  // → im Zweifel Depot statt «offen» (nie auf ein Warenkonto raten).
+  if (istPfandBezeichnungSchwach(p.bezeichnung)) return { konto: null, status: 'pfand' };
   return { konto: null, status: 'offen' }; // unbekannt → nachfragen, nicht raten
 }
 

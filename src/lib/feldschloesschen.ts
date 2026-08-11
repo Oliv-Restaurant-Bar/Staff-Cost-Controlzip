@@ -922,7 +922,10 @@ export function kontoSplitsAusFsKategorien(
     const name = kat.name.trim();
     const nurNull = Math.abs(kat.netto81) < 0.005 && Math.abs(kat.netto26) < 0.005;
     let konto: string;
-    if (/^(leergut|ladungsträger|pfand)$/i.test(name)) konto = 'Depot';
+    // ALLE Depot-Typen der Zusammenfassung (Leergut, Gebinde/Harasse,
+    // Ladungsträger, Pfand/Depot) → Depot, NIE auf 4030/4040/4050.
+    // Recyclinggebühren bleiben bewusst im Mapping (echte Gebühr, kein Depot).
+    if (/^(leergut|ladungsträger|pfand|depot|gebinde|harass(e|en)?)$/i.test(name)) konto = 'Depot';
     else {
       const regel = effektiv.find(r => r.gruppe.trim().toLowerCase() === name.toLowerCase());
       if (regel) konto = regel.konto;

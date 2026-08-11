@@ -13,11 +13,18 @@ description: Depot-Splits sind aus ALLEN Warenkosten-Summen und dem FIBU-Abgleic
   `waren-fibu-matches.ts` (Auto-Match, sumI, offenErfasst, nur_erfasst).
 - Rechnungen OHNE kontoSplits behalten ihr volles amountNet (kein Raten);
   persistierte Daten werden NIE mutiert — Ausklammerung rein rechnerisch.
-- **Erkennung** (`waren-positionen.ts`): MwSt-Code 0 (hart) + `istPfandBezeichnung`
-  Token-genau (pfand*/leergut*/gebinde*/harass(e|en)/ifco*/depot(+gebühr)) —
-  bewusst KEIN Präfix-Match mitten in Wörtern (Deposito/Harissa-Fallen).
-  Vorrang: MwSt-Code 0 > manuelle Artikel-Zuordnung > Text-Pfand > Warengruppe
-  (explizite User-Zuordnung ist kein «Zweifel»).
+- **Erkennung** (`waren-positionen.ts`), zweistufig token-genau (kein Präfix-Match
+  in Fremdwörtern — Deposito/Harissa-Fallen):
+  - STARK (pfand*/leergut*/ifco*/depot(+gebühr)) → immer Depot;
+  - SCHWACH (gebinde*/harass(e|en)) → NUR wenn die Warengruppe keinem Konto
+    zuordenbar ist (Zweifel → Depot statt «offen»); gemappte Gruppe gewinnt
+    (Bier «10×33 Harass» 8.1 % bleibt 4030/4050!).
+  Vorrang: MwSt-Code 0 > manuelle Artikel-Zuordnung > Stark-Text > Warengruppe >
+  Schwach-Text (explizite User-Zuordnung ist kein «Zweifel»).
+- **Feldschlösschen** (`kontoSplitsAusFsKategorien`): ZSF-Kategorienamen
+  leergut|ladungsträger|pfand|depot|gebinde|harass(e|en) → Depot (unabhängig vom
+  MwSt-Mix); Recyclinggebühren bewusst im Mapping (4701, echte Gebühr, kein Depot).
+  Kontrollwerte FS Juli Oliv: Depot 645.00 / Warenkosten 15'064.15 / 465 → 4701.
 - Depot-Hinweis im Abgleich ist nur noch informativ («separat als Depot, nicht
   im Vergleich») — nie mehr Erklärung einer Differenz.
 - **Why:** Transgourmet-Ifco/Harasse erzeugte in fast allen FIBU-Matches
