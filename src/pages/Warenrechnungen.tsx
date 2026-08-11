@@ -86,6 +86,7 @@ import {
 } from '@/lib/waren-pdf-erkennung';
 import { loadLieferantenProfile, findeProfilImText } from '@/lib/lieferanten-profile';
 import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
+import { fibuVergleichsNetto } from '@/lib/waren-cockpit';
 import { findeDublettenGruppen, type DublettenGruppe } from '@/lib/waren-dubletten';
 import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import {
@@ -516,7 +517,11 @@ export default function WarenrechnungenPage() {
     try {
       const record = loadMonth(year, month, tenantKey(REPORTING_STORAGE_KEY));
       const pl = computePLForMonth(record);
-      const row = pl.rows.find(r => r.def.id === 'total_cogs');
+      // GLEICHER Scope wie die Erfasst-Seite (fibuVergleichsNetto): NUR der
+      // direkte Warenaufwand — total_cogs enthält cogs_other (4701) + Lager-
+      // veränderung und würde im degradierten Modus die 4701-Scheindifferenz
+      // wieder erzeugen.
+      const row = pl.rows.find(r => r.def.id === 'total_cogs_direct');
       // Nur endliche Zahlen übernehmen — NaN/Infinity (unvollständiger ER-
       // Import) darf NIE als «CHF NaN» in Total/Differenz durchschlagen.
       buchhaltungTotal = row && Number.isFinite(row.values.actual) ? Math.abs(row.values.actual as number) : null;
@@ -529,8 +534,9 @@ export default function WarenrechnungenPage() {
       aliases,
       buchhaltungTotal,
       aliasGruppen,
+      warenkostenGrenze: warenGrenze,
     });
-  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey]);
+  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey, warenGrenze]);
 
   /**
    * Resolver für Drilldown-/Rechnungs-Filter im Abgleich: MUSS aus den
@@ -4501,6 +4507,7 @@ export default function WarenrechnungenPage() {
                                           invoices={entries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
                                           buchungen={z.buchungen}
                                           gruppen={fibuState.gruppen}
+                                          warenGrenze={warenGrenze}
                                         />
                                       )}
                                       <FibuMatchBereich
@@ -4512,6 +4519,7 @@ export default function WarenrechnungenPage() {
                                         toleranz={fibuToleranz}
                                         onToleranzChange={speichereToleranz}
                                         onMutate={persistFibuState}
+                                        warenGrenze={warenGrenze}
                                       />
                                     </td>
                                   </tr>
@@ -5552,15 +5560,17 @@ function ErklaertMarkierung({ lieferant, info, aktuelleDiff, onSave, onRemove }:
  * (Match-Reste/Rundung, nicht gebuchte Rechnungen, Nur-FIBU-Buchungen) —
  * Summe der Posten = Differenz der Zeile. Rein informativ.
  */
-function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen }: {
+function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen, warenGrenze }: {
   lieferant: string;
   invoices: InvoiceEntry[];
   buchungen: SageJournalEntry[];
   gruppen: FibuMatchGruppe[];
+  /** Kontoklassen-Grenze des Mandanten (Warenaufwand = 4000–Grenze). */
+  warenGrenze?: number;
 }) {
   const { posten, summe } = useMemo(
-    () => zerlegeLieferantDifferenz(invoices, buchungen, buchungKeysMitIndex(buchungen), gruppen),
-    [invoices, buchungen, gruppen],
+    () => zerlegeLieferantDifferenz(invoices, buchungen, buchungKeysMitIndex(buchungen), gruppen, warenGrenze),
+    [invoices, buchungen, gruppen, warenGrenze],
   );
   if (posten.length === 0) return null;
   return (
@@ -5586,8 +5596,10 @@ function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen }: {
 }
 
 function FibuMatchBereich({
-  lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate,
+  lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate, warenGrenze,
 }: {
+  /** Kontoklassen-Grenze des Mandanten (Warenaufwand = 4000–Grenze). */
+  warenGrenze?: number;
   lieferant: string;
   invoices: InvoiceEntry[];
   buchungen: SageJournalEntry[];
@@ -5613,7 +5625,7 @@ function FibuMatchBereich({
   // Treffer; No-op wenn nichts gefunden). Läuft erneut via Button. ──
   const autoLauf = useCallback((zeigeToast: boolean) => {
     void onMutate(cur => {
-      const neue = autoMatchVorschlaege({ invoices, buchungen, keys: buchKeys, state: cur, toleranz });
+      const neue = autoMatchVorschlaege({ invoices, buchungen, keys: buchKeys, state: cur, toleranz, warenkostenGrenze: warenGrenze });
       if (neue.length === 0) {
         if (zeigeToast) toast.info('Keine eindeutigen Auto-Matches gefunden — Rest bitte manuell zuordnen.');
         return cur; // No-op → kein Save
@@ -5621,7 +5633,7 @@ function FibuMatchBereich({
       if (zeigeToast) toast.success(`${neue.length} Auto-Match${neue.length === 1 ? '' : 'es'} gesetzt.`);
       return { ...cur, gruppen: [...cur.gruppen, ...neue] };
     });
-  }, [onMutate, invoices, buchungen, buchKeys, toleranz]);
+  }, [onMutate, invoices, buchungen, buchKeys, toleranz, warenGrenze]);
   const autoGestartet = useRef(false);
   useEffect(() => {
     if (!stateGeladen || autoGestartet.current) return;
@@ -5650,17 +5662,20 @@ function FibuMatchBereich({
 
   // Übersicht: gematcht X von Y · offen erfasst/gebucht.
   const stat = useMemo(
-    () => lieferantMatchStat(invoices, buchungen, buchKeys, lokaleGruppen),
-    [invoices, buchungen, buchKeys, lokaleGruppen],
+    () => lieferantMatchStat(invoices, buchungen, buchKeys, lokaleGruppen, warenGrenze),
+    [invoices, buchungen, buchKeys, lokaleGruppen, warenGrenze],
   );
 
   // Live-Summen der aktuellen Auswahl.
   const selSummen = useMemo(() => {
-    const erfasst = invoices.filter(i => selInv.has(i.id)).reduce((s, i) => s + i.amountNet, 0);
+    // Gleiche Basis wie Auto-Match/Zerlegung: nur direkter Warenaufwand
+    // (ohne Depot/Pfand und ohne 4701 Non-Food), sonst widerspricht die
+    // Live-Ampel dem tatsächlichen Match-Ergebnis.
+    const erfasst = invoices.filter(i => selInv.has(i.id)).reduce((s, i) => s + fibuVergleichsNetto(i, warenGrenze), 0);
     let gebucht = 0;
     buchungen.forEach((b, i) => { if (selBuch.has(buchKeys[i])) gebucht += buchungBetrag(b); });
     return { erfasst, gebucht, diff: gebucht - erfasst, ampel: matchAmpel(erfasst, gebucht, toleranz) };
-  }, [invoices, buchungen, buchKeys, selInv, selBuch, toleranz]);
+  }, [invoices, buchungen, buchKeys, selInv, selBuch, toleranz, warenGrenze]);
 
   const toggle = (set: Set<string>, val: string, apply: (s: Set<string>) => void) => {
     const next = new Set(set);

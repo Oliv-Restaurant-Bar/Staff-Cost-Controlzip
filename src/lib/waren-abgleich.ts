@@ -17,7 +17,7 @@ import type { InvoiceEntry } from '@/lib/waren-db';
 import type { SageJournalEntry } from '@/types/reporting';
 import { findSupplierInText, type SupplierAliasMap } from '@/lib/waren-pdf-erkennung';
 import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
-import { nettoOhneDepot } from '@/lib/waren-cockpit';
+import { fibuVergleichsNetto } from '@/lib/waren-cockpit';
 
 export type AbgleichStatus =
   | 'ok'            // beide Quellen, Differenz unter Schwelle
@@ -140,6 +140,13 @@ export interface AbgleichInput {
    * gezeigt. Reine Anzeige-/Abgleich-Gruppierung — Beträge unverändert.
    */
   aliasGruppen?: AliasGruppe[];
+  /**
+   * Kontoklassen-Grenze des Mandanten (4000–Grenze = Warenaufwand): die
+   * Erfasst-Seite zählt NUR diesen Scope — Depot/Pfand und Betriebskosten-
+   * Splits (4701 Non-Food etc.) sind ausgeklammert, exakt wie das Journal
+   * über warenkontoNummern gefiltert wird. Default 4090.
+   */
+  warenkostenGrenze?: number;
 }
 
 export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
@@ -171,10 +178,10 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   for (const inv of input.invoices) {
     const canon = resolve(inv.supplierName);
     const cur = erfasstMap.get(canon) ?? { sum: 0, count: 0 };
-    // Erfasst-Seite OHNE Pfand/Depot: die FIBU bucht Pfand auf ein separates
-    // Depot-Konto (nicht in den Warenkonten) — Vergleich also Waren gegen
-    // Waren, sonst bleiben «enthält Leergut/Pfand»-Restdifferenzen stehen.
-    const invNet = nettoOhneDepot(inv);
+    // Erfasst-Seite im GLEICHEN Konto-Scope wie das FIBU-Journal: nur direkter
+    // Warenaufwand (4000–Grenze) — ohne Depot/Pfand UND ohne Betriebskosten-
+    // Splits (4701 Non-Food etc.), sonst bleiben Apfel-Birnen-Differenzen stehen.
+    const invNet = fibuVergleichsNetto(inv, input.warenkostenGrenze);
     cur.sum += invNet;
     cur.count += 1;
     erfasstMap.set(canon, cur);

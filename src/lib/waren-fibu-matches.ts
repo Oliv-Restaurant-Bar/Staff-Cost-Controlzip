@@ -13,9 +13,10 @@
 
 import type { InvoiceEntry } from '@/lib/waren-db';
 import type { SageJournalEntry } from '@/types/reporting';
-// Pfand/Depot ist aus dem FIBU-Vergleich ausgeklammert (die FIBU bucht Pfand
-// auf ein separates Depot-Konto): alle Rechnungs-Beträge hier = nettoOhneDepot.
-import { nettoOhneDepot, depotAnteilNet } from '@/lib/waren-cockpit';
+// Pfand/Depot UND Betriebskosten-Splits (4701 Non-Food etc.) sind aus dem
+// FIBU-Vergleich ausgeklammert — das Journal zählt nur Warenaufwand-Konten
+// (4000–Grenze): alle Rechnungs-Beträge hier = fibuVergleichsNetto.
+import { fibuVergleichsNetto, depotAnteilNet, betriebsAnteilNet } from '@/lib/waren-cockpit';
 
 export interface FibuMatchGruppe {
   id: string;
@@ -252,6 +253,8 @@ export interface AutoMatchInput {
   state: FibuMatchState;
   /** Absolute CHF-Toleranz (Default 10.00). */
   toleranz?: number;
+  /** Kontoklassen-Grenze des Mandanten (Warenaufwand = 4000–Grenze, Default 4090). */
+  warenkostenGrenze?: number;
 }
 
 /**
@@ -268,6 +271,7 @@ export interface AutoMatchInput {
  */
 export function autoMatchVorschlaege(input: AutoMatchInput): FibuMatchGruppe[] {
   const tol = (input.toleranz ?? DEFAULT_FIBU_MATCH_TOLERANZ) + 0.005; // Rappen-Rundung
+  const grenze = input.warenkostenGrenze;
   const belegtInv = new Set([
     ...input.state.gruppen.flatMap(g => g.invoiceIds),
     ...input.state.gesperrt.invoiceIds,
@@ -328,7 +332,7 @@ export function autoMatchVorschlaege(input: AutoMatchInput): FibuMatchGruppe[] {
   const paare: Paar[] = [];
   for (const { e } of inv) {
     for (const { b, key } of buch) {
-      const diff = Math.abs(buchungBetrag(b) - nettoOhneDepot(e));
+      const diff = Math.abs(buchungBetrag(b) - fibuVergleichsNetto(e, grenze));
       if (diff <= tol) paare.push({ invId: e.id, key, diff, dist: datumDistanz(e.date, b.date) });
     }
   }
@@ -377,12 +381,12 @@ export function autoMatchVorschlaege(input: AutoMatchInput): FibuMatchGruppe[] {
   // 2–4 Rechnungen ≈ 1 Buchung
   kombiSeite(
     buch.filter(x => !belegtKey.has(x.key)).map(x => ({ id: x.key, betrag: buchungBetrag(x.b), datum: x.b.date })),
-    inv.filter(x => !belegtInv.has(x.e.id)).map(x => ({ id: x.e.id, betrag: nettoOhneDepot(x.e), datum: x.e.date })),
+    inv.filter(x => !belegtInv.has(x.e.id)).map(x => ({ id: x.e.id, betrag: fibuVergleichsNetto(x.e, grenze), datum: x.e.date })),
     (zielKey, invoiceIds) => nimm(invoiceIds, [zielKey]),
   );
   // 2–4 Buchungen ≈ 1 Rechnung
   kombiSeite(
-    inv.filter(x => !belegtInv.has(x.e.id)).map(x => ({ id: x.e.id, betrag: nettoOhneDepot(x.e), datum: x.e.date })),
+    inv.filter(x => !belegtInv.has(x.e.id)).map(x => ({ id: x.e.id, betrag: fibuVergleichsNetto(x.e, grenze), datum: x.e.date })),
     buch.filter(x => !belegtKey.has(x.key)).map(x => ({ id: x.key, betrag: buchungBetrag(x.b), datum: x.b.date })),
     (zielInvId, buchungKeys) => nimm([zielInvId], buchungKeys),
   );
@@ -433,13 +437,14 @@ export function lieferantMatchStat(
   buchungen: SageJournalEntry[],
   keys: string[],
   gruppen: FibuMatchGruppe[],
+  warenkostenGrenze?: number,
 ): LieferantMatchStat {
   const matchedInv = new Set(gruppen.flatMap(g => g.invoiceIds));
   const matchedKey = new Set(gruppen.flatMap(g => g.buchungKeys));
   let matchedInvoices = 0, offenErfasst = 0;
   for (const inv of invoices) {
     if (matchedInv.has(inv.id)) matchedInvoices += 1;
-    else offenErfasst += nettoOhneDepot(inv);
+    else offenErfasst += fibuVergleichsNetto(inv, warenkostenGrenze);
   }
   let matchedBuchungen = 0, offenGebucht = 0;
   buchungen.forEach((b, i) => {
@@ -481,6 +486,7 @@ export function zerlegeLieferantDifferenz(
   buchungen: SageJournalEntry[],
   keys: string[],
   gruppen: FibuMatchGruppe[],
+  warenkostenGrenze?: number,
 ): { posten: DiffPosten[]; summe: number } {
   const invById = new Map(invoices.map(e => [e.id, e]));
   const betragByKey = new Map<string, number>();
@@ -504,16 +510,21 @@ export function zerlegeLieferantDifferenz(
     kk.forEach(k => matchedKey.add(k));
     const sumI = inv.reduce((s, id) => {
       const e = invById.get(id);
-      return s + (e ? nettoOhneDepot(e) : 0);
+      return s + (e ? fibuVergleichsNetto(e, warenkostenGrenze) : 0);
     }, 0);
     const sumB = kk.reduce((s, k) => s + (betragByKey.get(k) ?? 0), 0);
     const rest = rp(sumB - sumI);
     if (rest === 0) return;
     const depot = rp(inv.reduce((s, id) => s + depotAnteil(invById.get(id)!), 0));
+    const betrieb = rp(inv.reduce((s, id) => s + betriebsAnteilNet(invById.get(id)!, warenkostenGrenze), 0));
     const fremde = (g.invoiceIds.length - inv.length) + (g.buchungKeys.length - kk.length);
-    // Depot ist bereits AUS dem Vergleich ausgeklammert (nettoOhneDepot) —
-    // der Hinweis ist rein informativ, nie mehr die Erklärung der Differenz.
-    const depotHinweis = depot !== 0 ? `Pfand/Leergut CHF ${depot.toFixed(2)} separat als Depot (nicht im Vergleich)` : '';
+    // Depot UND Betriebskosten (4701 Non-Food) sind bereits AUS dem Vergleich
+    // ausgeklammert — die Hinweise sind rein informativ, nie mehr die
+    // Erklärung der Differenz.
+    const depotHinweis = [
+      depot !== 0 ? `Pfand/Leergut CHF ${depot.toFixed(2)} separat als Depot (nicht im Vergleich)` : '',
+      betrieb !== 0 ? `Non-Food/Betriebsmaterial CHF ${betrieb.toFixed(2)} separat auf 4701 (nicht im Warenaufwand-Vergleich)` : '',
+    ].filter(Boolean).join(' · ');
     if (fremde > 0) {
       // Gruppe umfasst Mitglieder eines ANDEREN Lieferanten (Alias-/manuelles
       // Cross-Match): der lokale Rest ist KEINE Betragsabweichung — die
@@ -540,13 +551,16 @@ export function zerlegeLieferantDifferenz(
   for (const e of invoices) {
     if (matchedInv.has(e.id)) continue;
     const depot = rp(depotAnteil(e));
+    const betrieb = rp(betriebsAnteilNet(e, warenkostenGrenze));
+    const hinweise = [
+      depot !== 0 ? `Pfand/Leergut CHF ${depot.toFixed(2)} separat als Depot (nicht im Vergleich)` : '',
+      betrieb !== 0 ? `Non-Food/Betriebsmaterial CHF ${betrieb.toFixed(2)} separat auf 4701 (nicht im Warenaufwand-Vergleich)` : '',
+    ].filter(Boolean);
     posten.push({
       typ: 'nur_erfasst',
       label: `Nicht in FIBU: ${e.reference ? `Rechnung ${e.reference}` : 'Rechnung'} vom ${fmtDatumCH(e.date)}`,
-      betrag: rp(-nettoOhneDepot(e)),
-      detail: depot !== 0
-        ? `noch nicht gebucht / fehlt in FIBU · Pfand/Leergut CHF ${depot.toFixed(2)} separat als Depot (nicht im Vergleich)`
-        : 'noch nicht gebucht / fehlt in FIBU / periodenfremd',
+      betrag: rp(-fibuVergleichsNetto(e, warenkostenGrenze)),
+      detail: ['noch nicht gebucht / fehlt in FIBU' + (hinweise.length === 0 ? ' / periodenfremd' : ''), ...hinweise].join(' · '),
     });
   }
   // Ungematchte Buchungen: nur in der FIBU.

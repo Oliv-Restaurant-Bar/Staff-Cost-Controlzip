@@ -434,3 +434,35 @@ describe('bereinigeMatchState (C1: Cleanup nach Löschen/Undo)', () => {
     expect(geaendert).toBe(false);
   });
 });
+
+// ── 4701 Non-Food ausgeklammert wie Depot (08/2026, TG-Kontrollfall) ─────────
+describe('zerlegeLieferantDifferenz: 4701 im gleichen Scope wie das FIBU-Journal', () => {
+  it('4701-Anteil erzeugt keine Restdifferenz, nur informativen Hinweis', () => {
+    // Rechnung 10'000 = 6'000 Waren + 3'856.64 auf 4701 + 143.36 Depot;
+    // FIBU bucht nur die 6'000 Warenaufwand → Rest 0.
+    const e = { ...inv('a', 10000), kontoSplits: [
+      { warenkonto: '4000', amountNet: 6000, amountGross: 6486 },
+      { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
+      { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
+    ] } as InvoiceEntry;
+    const buchungen = [jrn('x', 6000)];
+    const keys = buchungKeysMitIndex(buchungen);
+    const gruppen: FibuMatchGruppe[] = [{ id: 'g1', invoiceIds: ['a'], buchungKeys: [keys[0]] }];
+    const { posten, summe } = zerlegeLieferantDifferenz([e], buchungen, keys, gruppen);
+    expect(posten).toHaveLength(0);
+    expect(summe).toBe(0);
+  });
+  it('ungebuchte Rechnung: Betrag ohne 4701/Depot, Hinweise separat ausgewiesen', () => {
+    const e = { ...inv('a', 1000), kontoSplits: [
+      { warenkonto: '4020', amountNet: 700, amountGross: 757 },
+      { warenkonto: '4701', amountNet: 250, amountGross: 270 },
+      { warenkonto: 'Depot', amountNet: 50, amountGross: 50 },
+    ] } as InvoiceEntry;
+    const { posten, summe } = zerlegeLieferantDifferenz([e], [], [], []);
+    expect(posten).toHaveLength(1);
+    expect(posten[0].betrag).toBe(-700);
+    expect(posten[0].detail).toMatch(/Pfand\/Leergut CHF 50.00 separat als Depot/);
+    expect(posten[0].detail).toMatch(/Non-Food\/Betriebsmaterial CHF 250.00 separat auf 4701/);
+    expect(summe).toBe(-700);
+  });
+});

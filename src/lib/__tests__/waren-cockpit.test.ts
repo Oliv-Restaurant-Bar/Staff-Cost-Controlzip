@@ -164,3 +164,35 @@ describe('Kategorie-Summen klammern Depot ebenfalls aus (gleiche Regel wie Total
     expect(snk2([e], 'Beverage', [])).toBe(180);
   });
 });
+
+// ── FIBU-Vergleichs-Netto: gleicher Konto-Scope wie das Journal (08/2026) ────
+import { fibuVergleichsNetto, betriebsAnteilNet } from '@/lib/waren-cockpit';
+
+describe('fibuVergleichsNetto: nur direkter Warenaufwand (4000–Grenze)', () => {
+  it('klammert Depot UND 4701 Non-Food aus (TG-Muster)', () => {
+    const e = { id: 'a', date: '2026-07-01', supplierName: 'Transgourmet', amountNet: 10000, amountGross: 10810,
+      kontoSplits: [
+        { warenkonto: '4000', amountNet: 5000, amountGross: 5405 },
+        { warenkonto: '4050', amountNet: 1000, amountGross: 1026 },
+        { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
+        { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
+      ] } as unknown as IE2;
+    expect(fibuVergleichsNetto(e)).toBe(6000);
+    expect(betriebsAnteilNet(e)).toBeCloseTo(3856.64, 2);
+  });
+  it('Rechnung ohne Splits behält volles Netto (kein Raten); «offen» zählt als Waren', () => {
+    const ohne = { id: 'b', date: '2026-07-02', supplierName: 'X', amountNet: 454.88, amountGross: 491 } as unknown as IE2;
+    expect(fibuVergleichsNetto(ohne)).toBe(454.88);
+    const offen = { ...ohne, id: 'c', kontoSplits: [{ warenkonto: 'offen', amountNet: 100, amountGross: 108 }] } as unknown as IE2;
+    expect(fibuVergleichsNetto(offen)).toBe(100);
+  });
+  it('respektiert die Mandanten-Grenze (4090 über Grenze 4070 = Betriebskosten)', () => {
+    const e = { id: 'd', date: '2026-07-03', supplierName: 'Y', amountNet: 300, amountGross: 324,
+      kontoSplits: [
+        { warenkonto: '4070', amountNet: 200, amountGross: 216 },
+        { warenkonto: '4090', amountNet: 100, amountGross: 108 },
+      ] } as unknown as IE2;
+    expect(fibuVergleichsNetto(e, 4070)).toBe(200);
+    expect(fibuVergleichsNetto(e)).toBe(300); // Default-Grenze 4090 inkludiert 4090
+  });
+});

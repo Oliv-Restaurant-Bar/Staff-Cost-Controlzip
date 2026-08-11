@@ -11,6 +11,7 @@
  */
 
 import { kontoKategorie, type WarenKategorie } from './warenkosten-quote';
+import { kontoKlasse, DEFAULT_WARENKOSTEN_GRENZE } from './waren-klassen';
 import type { InvoiceEntry, Warenkonto } from './waren-db';
 import type { TenantId } from './cockpit-budget';
 
@@ -142,6 +143,33 @@ export function nettoOhneDepot(e: InvoiceEntry): number {
 /** Netto-Total aller Rechnungen (CHF) — OHNE Pfand/Depot-Anteile. */
 export function sumInvoicesNet(invoices: InvoiceEntry[]): number {
   return invoices.reduce((s, e) => s + nettoOhneDepot(e), 0);
+}
+
+/**
+ * FIBU-Vergleichs-Netto einer Rechnung: NUR der direkte Warenaufwand
+ * (Konten 4000–Grenze) — ohne Depot/Pfand UND ohne Betriebskosten-Splits
+ * (4701 Non-Food/Betriebsmaterial, >Grenze, <4000). Das ist derselbe
+ * Konto-Scope, mit dem das FIBU-Lieferanten-Journal gefiltert wird —
+ * Vergleich Waren gegen Waren. Rechnungen OHNE Splits behalten ihr volles
+ * amountNet (kein Raten); «offen»/kontolos zählt wie bisher als Warenkosten.
+ */
+export function fibuVergleichsNetto(e: InvoiceEntry, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): number {
+  const splits = e.kontoSplits ?? [];
+  if (splits.length === 0) return Number.isFinite(e.amountNet) ? e.amountNet : 0;
+  const sum = splits.reduce((s, sp) => {
+    if (istDepotSplitKonto(sp.warenkonto ?? '')) return s;
+    if (kontoKlasse(sp.warenkonto, grenze) !== 'warenkosten') return s;
+    return s + (Number.isFinite(sp.amountNet) ? sp.amountNet : 0);
+  }, 0);
+  return Math.round(sum * 100) / 100;
+}
+
+/** Betriebskosten-Anteil (z.B. 4701 Non-Food) einer Rechnung — für den
+ *  informativen Hinweis im Abgleich («separat auf 4701, nicht im Vergleich»). */
+export function betriebsAnteilNet(e: InvoiceEntry, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): number {
+  return (e.kontoSplits ?? [])
+    .filter(sp => !istDepotSplitKonto(sp.warenkonto ?? '') && kontoKlasse(sp.warenkonto, grenze) !== 'warenkosten')
+    .reduce((s, sp) => s + (Number.isFinite(sp.amountNet) ? sp.amountNet : 0), 0);
 }
 
 /** Aufteilung nach Lieferant, absteigend nach Betrag (Top-Lieferanten zuerst). */

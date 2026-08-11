@@ -5,6 +5,22 @@ description: Depot-Splits sind aus ALLEN Warenkosten-Summen und dem FIBU-Abgleic
 
 # Pfand/Leergut/Gebinde → Depot (08/2026, Build-Befehl)
 
+## FIBU-Abgleich: gleicher Konto-Scope beider Seiten (Erweiterung 08/2026)
+- `fibuVergleichsNetto(e, grenze)` (waren-cockpit) = NUR Splits der Klasse
+  «warenkosten» (4000–Grenze via kontoKlasse), ohne Depot UND ohne 4701/
+  Betriebskosten — derselbe Scope, mit dem das Journal gefiltert wird.
+  ALLE Abgleich-Beträge (buildWarenAbgleich erfasst-Seite, Auto-Match,
+  lieferantMatchStat, zerlegeLieferantDifferenz, selSummen-Live-Ampel) nutzen
+  diese Basis; `betriebsAnteilNet` liefert den informativen 4701-Hinweis.
+- Degradierter Modus (kein Journal): buchhaltungTotal = `total_cogs_direct`,
+  NIE `total_cogs` (enthält cogs_other 4701 + Lagerveränderung → Scheindifferenz).
+- Mandanten-Grenze (`loadWarenkostenGrenze`) wird durchgereicht
+  (AbgleichInput.warenkostenGrenze bzw. trailing param); Default 4090.
+- sumInvoicesNet (Cockpit/WKQ-Totale) bleibt bewusst nettoOhneDepot
+  (4701 zählt dort weiterhin über die Kontoklassen-Logik).
+- **Why:** TG Juli zeigte −4'256.02 statt ~454.88, weil ~3'856.64 auf 4701 nur
+  auf der Erfasst-Seite steckten (Journal zählt 4000–4089) — Apfel-Birnen.
+
 - **Regel:** Pfand ist KEIN direkter Warenaufwand — die FIBU bucht Depot auf ein
   separates Konto. SSOT `waren-cockpit.ts`: `istDepotSplitKonto` /
   `depotAnteilNet` / `nettoOhneDepot`. Diese Basis gilt für `sumInvoicesNet`,

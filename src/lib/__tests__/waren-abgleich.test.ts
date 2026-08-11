@@ -140,3 +140,25 @@ describe('NaN-Absicherung (degradierter Modus)', () => {
     expect(Number.isFinite(r.erfasstTotal)).toBe(true);
   });
 });
+
+// ── Degradierter Modus: gleicher Scope wie erfasst (ohne 4701/Depot) ─────────
+import { buildWarenAbgleich as bwa2 } from '@/lib/waren-abgleich';
+import type { InvoiceEntry as IE3 } from '@/lib/waren-db';
+
+describe('buildWarenAbgleich: 4701/Depot aus der Erfasst-Seite ausgeklammert', () => {
+  const invMitSplits = { id: 'a', date: '2026-07-05', supplierName: 'Transgourmet', amountNet: 10000, amountGross: 10810,
+    kontoSplits: [
+      { warenkonto: '4000', amountNet: 6000, amountGross: 6486 },
+      { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
+      { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
+    ] } as unknown as IE3;
+  it('erfasstTotal = nur direkter Warenaufwand (auch im degradierten Modus)', () => {
+    const a = bwa2({
+      invoices: [invMitSplits], journal: null, warenkontoNummern: ['4000', '4020', '4050'],
+      supplierNames: ['Transgourmet'], aliases: {}, buchhaltungTotal: 6000,
+    });
+    expect(a.mode).toBe('nur-total');
+    expect(a.erfasstTotal).toBe(6000);
+    expect(a.diffTotal).toBe(0); // 4701 erzeugt KEINE Scheindifferenz mehr
+  });
+});
