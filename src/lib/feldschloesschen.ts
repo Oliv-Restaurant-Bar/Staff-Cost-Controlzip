@@ -65,13 +65,18 @@ export function toFsZeilen(lines: GnPdfLine[]): FsZeile[] {
 
 // ── Dokumenttyp ───────────────────────────────────────────────────────────────
 
-export type FsPdfTyp = 'lieferschein' | 'sammelrechnung';
+export type FsPdfTyp = 'lieferschein' | 'sammelrechnung' | 'faktura';
 
 export function detectFsPdfTyp(zeilen: FsZeile[]): FsPdfTyp | null {
   const kopf = zeilen.slice(0, 40);
   if (kopf.some(z => z.kompakt.includes('sammelrechnung:'))) return 'sammelrechnung';
   if (kopf.some(z => z.kompakt === 'lieferschein') && zeilen.some(z => z.kompakt.startsWith('lieferung:'))) {
     return 'lieferschein';
+  }
+  // Einzelne FS-Faktura: «Rechnung: <Nr>» im Kopf + eigene «Zusammenfassung MwSt.»
+  if (kopf.some(z => z.kompakt.includes('rechnung:'))
+      && zeilen.some(z => z.kompakt.startsWith('zusammenfassungmwst'))) {
+    return 'faktura';
   }
   return null;
 }
@@ -682,6 +687,88 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
   if (!out.nr) out.failureReason = 'Keine «Sammelrechnung: <Nr>» gefunden.';
   else if (out.fakturen.length === 0) out.failureReason = 'Keine Faktura-Zeilen erkannt.';
   return out;
+}
+
+// ── Einzelne FS-Faktura (Kopf «Rechnung: <Nr>», eigene Zusammenfassung MwSt.) ─
+
+/**
+ * Einzelnes Faktura-PDF parsen — gleiche Zustandsmaschine wie der Anhang der
+ * Sammelrechnung (das Layout ist identisch), aber mit eigenen Erfolgs-Kriterien:
+ * es gibt keine «Sammelrechnung:»-Kopfzeile und keine Faktura-Tabelle.
+ */
+export function parseFsFaktura(zeilen: FsZeile[]): FsSammelrechnung {
+  const out = parseFsSammelrechnung(zeilen);
+  out.failureReason = undefined;
+  const nrn = Object.keys(out.fakturaKategorien);
+  if (out.anhangLieferscheine.length === 0) {
+    out.failureReason = 'Keine Lieferschein-Positionen erkannt — ist das eine Feldschlösschen-Rechnung?';
+  } else if (nrn.length === 0) {
+    out.failureReason = 'Keine «Zusammenfassung MwSt.» gefunden — Kontierung wäre nicht belegbar.';
+  } else {
+    out.nr = out.anhangLieferscheine[0].fakturaNr;
+    // Rechnungsdatum aus dem Kopf («Datum: …» folgt NACH der «Rechnung:»-Zeile,
+    // die bereits in den Anhang-Modus schaltet — darum hier separat lesen).
+    if (!out.datum) {
+      for (const z of zeilen.slice(0, 40)) {
+        if (z.kompakt.includes('datum:')) {
+          out.datum = parseDatumCH(z.cells[z.cells.length - 1] ?? '') ?? '';
+          if (out.datum) break;
+        }
+      }
+    }
+    if (!out.datum) out.datum = [...out.anhangLieferscheine].map(a => a.datum).sort().at(-1) ?? '';
+    if (out.endbetrag === null) out.endbetrag = out.anhangLieferscheine[0].fakturaEndbetrag ?? null;
+    // Ohne Beleg-Nr kein Dedupe/Kreditoren-Match, ohne offiziellen Endbetrag
+    // keine belastbare Buchung — beides ist Pflicht.
+    if (!out.nr) out.failureReason = 'Keine Rechnungs-Nummer («Rechnung: <Nr>») gefunden.';
+    else if (out.endbetrag === null) out.failureReason = 'Kein «Endbetrag CHF» gefunden — offizieller Rechnungsbetrag fehlt.';
+  }
+  return out;
+}
+
+/**
+ * Fakturen eines geparsten FS-Dokuments als buchbare Rechnungen — EINE Buchung
+ * je Faktura (alle Lieferscheine zusammengelegt; die Beleg-Nr = Faktura-Nr
+ * matcht die Kreditoren-Übernahme). Die Faktura-eigene «Zusammenfassung MwSt.»
+ * wird als massgebliche Kontierung mitgegeben (hier IMMER eindeutig, weil die
+ * Buchung die ganze Faktura umfasst — auch bei mehreren Lieferscheinen).
+ */
+export function fsFakturenAlsRechnungen(s: FsSammelrechnung): Array<{
+  r: ParsedCsvRechnung;
+  fsKategorien?: FsKategorieSumme[];
+  nettoOffiziell?: number | null;
+  bruttoOffiziell?: number | null;
+}> {
+  const proFaktura = new Map<string, FsAnhangLieferschein[]>();
+  for (const a of s.anhangLieferscheine) {
+    proFaktura.set(a.fakturaNr, [...(proFaktura.get(a.fakturaNr) ?? []), a]);
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return [...proFaktura.entries()].map(([nr, lss]) => {
+    const positionen = lss.flatMap(l => l.positionen);
+    const netto = positionen.reduce((a, p) => a + p.positionspreis, 0);
+    const mwst = positionen.reduce((a, p) => a + p.mwstBetrag, 0);
+    const datum = lss.map(l => l.datum).filter(Boolean).sort().at(-1) ?? s.datum;
+    const kats = (s.fakturaKategorien[nr] ?? []).filter(k =>
+      Math.abs(k.nettoTotal) >= 0.005 || Math.abs(k.netto81) >= 0.005
+      || Math.abs(k.netto26) >= 0.005 || Math.abs(k.netto00) >= 0.005);
+    return {
+      r: {
+        docKey: `${nr}|${datum}`,
+        rechnungsNr: nr,
+        datum,
+        markt: 'Feldschlösschen',
+        positionen,
+        nettoTotal: r2(netto),
+        mwstTotal: r2(mwst),
+        bruttoTotal: r2(netto + mwst),
+      },
+      fsKategorien: kats.length > 0 ? kats : undefined,
+      // Offizielle Beträge der Faktura: Netto = Σ Zusammenfassung, Brutto = «Endbetrag CHF»
+      nettoOffiziell: kats.length > 0 ? r2(kats.reduce((a, k) => a + k.nettoTotal, 0)) : undefined,
+      bruttoOffiziell: lss[0]?.fakturaEndbetrag ?? undefined,
+    };
+  });
 }
 
 // ── Faktura-Abgleich (Kontrolle, kein Doppelzählen) ──────────────────────────

@@ -28,7 +28,8 @@ import { extractGnPdfTextItems } from '@/lib/gn-pdf-text';
 import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import {
   toFsZeilen, detectFsPdfTyp, istFeldschloesschenPdf,
-  parseFsLieferschein, parseFsSammelrechnung, fsLieferscheinAlsRechnung,
+  parseFsLieferschein, parseFsSammelrechnung, parseFsFaktura, fsFakturenAlsRechnungen,
+  fsLieferscheinAlsRechnung, kontoSplitsAusFsKategorien,
   fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, findeNaheRechnung,
   sammelrechnungZuHistorie,
   type FsLieferschein, type FsSammelrechnung, type FakturaAbgleich,
@@ -75,6 +76,8 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   const [lieferscheine, setLieferscheine] = useState<FsLieferschein[] | null>(null);
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set());
   const [sammel, setSammel] = useState<FsSammelrechnung | null>(null);
+  /** Einzelne Faktura-PDFs («Rechnung: <Nr>» + eigene Zusammenfassung MwSt.) — je Dokument ein Eintrag. */
+  const [einzelFakturen, setEinzelFakturen] = useState<FsSammelrechnung[] | null>(null);
   const [abgleich, setAbgleich] = useState<FakturaAbgleich | null>(null);
   const [monatsInvoices, setMonatsInvoices] = useState<InvoiceEntry[]>([]);
   const [uebernommen, setUebernommen] = useState<Set<string>>(new Set());
@@ -195,6 +198,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
 
       const neueLs: FsLieferschein[] = [];
       let neueSammel: FsSammelrechnung | null = null;
+      const neueFakturen: FsSammelrechnung[] = [];
       for (const f of pdfs) {
         const zeilen = await pdfZuZeilen(f, f.name);
         if (!istFeldschloesschenPdf(zeilen)) { toast.error(`${f.name}: kein Feldschlösschen-PDF.`); continue; }
@@ -207,15 +211,37 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
           const s = parseFsSammelrechnung(zeilen);
           if (s.failureReason) { toast.error(`${f.name}: ${s.failureReason}`); continue; }
           neueSammel = s;
+        } else if (typ === 'faktura') {
+          const s = parseFsFaktura(zeilen);
+          if (s.failureReason) { toast.error(`${f.name}: ${s.failureReason}`); continue; }
+          neueFakturen.push(s);
         } else {
-          toast.error(`${f.name}: weder Lieferschein noch Sammelrechnung erkannt.`);
+          toast.error(`${f.name}: weder Lieferschein noch (Sammel-)Rechnung erkannt.`);
         }
       }
+      // Modus-Exklusivität: es ist immer nur EINE Vorschau aktiv (Lieferscheine
+      // ODER Einzelfakturen ODER Monatsrechnung) — sonst könnte ein Nutzer nach
+      // einem neuen Upload noch eine veraltete Vorschau final buchen.
       if (neueLs.length > 0) {
         setLieferscheine(neueLs);
         setAusgewaehlt(new Set(neueLs.map(l => l.lieferungNr)));
+        setEinzelFakturen(null);
+        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
+      }
+      if (neueFakturen.length > 0) {
+        // Mehrfach-Upload erlaubt: an bestehende Vorschau anhängen, je Faktura-Nr nur einmal
+        setEinzelFakturen(prev => {
+          const alle = [...(prev ?? []), ...neueFakturen];
+          const gesehen = new Set<string>();
+          return alle.filter(s => { if (gesehen.has(s.nr)) return false; gesehen.add(s.nr); return true; });
+        });
+        setLieferscheine(null); setAusgewaehlt(new Set());
+        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
       }
       if (neueSammel) {
+        setLieferscheine(null); setAusgewaehlt(new Set());
+        setEinzelFakturen(null);
+        setGegenprobeZeilen(null);
         setSammel(neueSammel);
         setUebernommen(new Set());
         // Erfasste FS-Rechnungen der betroffenen Monate laden und matchen
@@ -289,6 +315,24 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         + `${res.offen > 0 ? ` · ${res.offen} Positionen «Konto offen»` : ''}`);
       for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
       setLieferscheine(null);
+      onImported();
+    } catch (e) {
+      toast.error(`Import fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── Teil A2: einzelne Faktura-PDFs buchen (ersetzt Kreditoren-Übernahme) ──
+  const importiereEinzelFakturen = async () => {
+    if (!einzelFakturen || einzelFakturen.length === 0) return;
+    setBusy(true);
+    try {
+      const rechnungen = einzelFakturen.flatMap(fsFakturenAlsRechnungen);
+      const res = await importiereRechnungen(rechnungen, 'Feldschlösschen-Einzelrechnungen', { quelle: 'monatsrechnung' });
+      toast.success(`${rechnungen.length} Faktura/Fakturen gebucht: ${res.neu} neu · ${res.ersetzt} ersetzt${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
+      for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
+      setEinzelFakturen(null);
       onImported();
     } catch (e) {
       toast.error(`Import fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
@@ -490,7 +534,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
           busy ? 'opacity-60 pointer-events-none' : 'hover:bg-muted/40',
         )}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Beer className="h-4 w-4 text-amber-600" />}
-          Feldschlösschen-PDF importieren (Lieferschein · Monatsrechnung · ZIP-Historie)
+          Feldschlösschen-PDF importieren (Lieferschein · Einzelrechnung · Monatsrechnung · ZIP-Historie)
           <input type="file" accept=".pdf,.zip,application/pdf,application/zip" multiple className="hidden" disabled={busy}
             data-testid="input-fs-pdf"
             onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
@@ -620,6 +664,55 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
               onClick={() => void importiereLieferscheine()} data-testid="fs-liefer-import">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
               {ausgewaehlt.size} Lieferung{ausgewaehlt.size === 1 ? '' : 'en'} importieren
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Teil A2: einzelne Faktura-PDFs (Split aus Zusammenfassung MwSt.) ── */}
+      {einzelFakturen && einzelFakturen.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs space-y-2" data-testid="fs-faktura-vorschau">
+          <div className="flex items-center gap-3">
+            <span className="font-medium">
+              {einzelFakturen.length} Einzelrechnung{einzelFakturen.length === 1 ? '' : 'en'} · Lieferant: {lieferant} · Kontierung aus «Zusammenfassung MwSt.»
+            </span>
+            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setEinzelFakturen(null)}>
+              <X className="h-3 w-3 mr-0.5" /> Verwerfen
+            </Button>
+          </div>
+          <div className="max-h-56 overflow-y-auto space-y-1">
+            {einzelFakturen.map(s => {
+              const kats = s.fakturaKategorien[s.nr] ?? [];
+              const { splits, offen } = kontoSplitsAusFsKategorien(kats, fsMapping);
+              return (
+                <div key={s.nr} className="rounded border border-border/50 px-2 py-1.5 tabular-nums" data-testid={`fs-faktura-${s.nr}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono font-semibold">{s.nr}</span>
+                    <span className="text-muted-foreground">{fmtDatumCH(s.datum)}</span>
+                    <span className="text-muted-foreground">{s.anhangLieferscheine.length} Lieferschein{s.anhangLieferscheine.length === 1 ? '' : 'e'}</span>
+                    <span className="ml-auto font-medium">CHF {s.endbetrag !== null ? fmt(s.endbetrag) : '—'}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                    {splits.map(sp => (
+                      <span key={sp.warenkonto} className={cn(sp.warenkonto === 'offen' && 'text-amber-600 dark:text-amber-400')}>
+                        {sp.warenkonto}: {fmt(sp.amountNet)}
+                      </span>
+                    ))}
+                    {offen.length > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> unbekannt: {offen.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-end">
+            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy}
+              onClick={() => void importiereEinzelFakturen()} data-testid="fs-faktura-import">
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+              {einzelFakturen.length} Faktura/Fakturen buchen (ersetzt Kreditoren-Übernahme)
             </Button>
           </div>
         </div>

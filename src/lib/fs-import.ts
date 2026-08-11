@@ -282,6 +282,12 @@ export async function kernImportiereFsRechnungen(
       const zsfNetto = ausZsf.splits.reduce((a, s) => a + s.amountNet, 0);
       if (Math.abs(zsfNetto - zielNetto) <= 0.10) {
         splits = ausZsf.splits;
+        // Warnsignal (ohne die massgebliche ZSF-Kontierung zu ändern): weicht
+        // das aus den POSITIONEN gelesene Netto von der Zusammenfassung ab,
+        // stimmt Parser oder PDF nicht — sichtbar machen.
+        if (Math.abs(zsfNetto - r.nettoTotal) > 0.10) {
+          hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Positions-Netto (${r.nettoTotal.toFixed(2)}) weicht von der Zusammenfassung MwSt. (${zsfNetto.toFixed(2)}) ab — Zusammenfassung bleibt massgeblich, bitte PDF prüfen.`);
+        }
         if (ausZsf.offen.length > 0) {
           hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: unbekannte Kategorie(n) «${ausZsf.offen.join('», «')}» in der Zusammenfassung MwSt. — als «offen» kontiert, bitte Zuordnung ergänzen.`);
         }

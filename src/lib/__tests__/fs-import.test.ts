@@ -67,6 +67,21 @@ describe('kernImportiereFsRechnungen', () => {
     expect(m).toEqual({ '4030': 200, '4040': 100 });
   });
 
+  it('fsKategorien massgeblich, aber Positions-Netto weicht ab → Warnhinweis (Splits bleiben ZSF)', async () => {
+    const r = rechnung('L-Z3', '2026-07-12'); // Positions-Netto 300
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      r,
+      // Offizielles Netto (ZSF) = 280 → mit nettoOffiziell=280 greift die ZSF,
+      // aber die Positionen (300) weichen ab → sichtbares Warnsignal.
+      nettoOffiziell: 280,
+      fsKategorien: [{ name: 'Bier', netto81: 280, netto26: 0, netto00: 0, nettoTotal: 280 }],
+    }], { quelle: 'monatsrechnung' });
+    expect(res.hinweise.some(h => /Positions-Netto .*weicht von der Zusammenfassung/.test(h))).toBe(true);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat[0].warenkonto ?? monat[0].kontoSplits?.[0]?.warenkonto).toBe('4030');
+    expect(monat[0].amountNet).toBe(280); // offizieller ZSF-Betrag
+  });
+
   it('fsKategorien mit abweichender Summe → sichtbarer Hinweis, Fallback auf Positionen', async () => {
     const r = rechnung('L-Z2', '2026-07-11'); // Netto 300, ganz Bier
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{

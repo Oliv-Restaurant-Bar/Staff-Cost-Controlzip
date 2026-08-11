@@ -5,7 +5,7 @@ import {
   parseFsLieferschein, parseFsSammelrechnung, fsKategorie,
   fsLieferscheinAlsRechnung, fsAnhangAlsRechnung, matchFakturen,
   kategorienGegenprobe, mitFsDefaults, sammelrechnungZuHistorie, findeNaheRechnung,
-  kontoSplitsAusFsKategorien,
+  kontoSplitsAusFsKategorien, parseFsFaktura, fsFakturenAlsRechnungen,
   DEFAULT_FS_KATEGORIEN_MAPPING,
   type FsZeile, type FsKategorieSumme,
 } from '../feldschloesschen';
@@ -244,6 +244,78 @@ describe('parseFsSammelrechnung', () => {
     expect(s.kategorien.find(k => k.name === 'Bier')?.nettoTotal).toBe(5259.12);
     // «Endbetrag CHF» der Faktura bleibt korrekt geparst
     expect(s.anhangLieferscheine[0].fakturaEndbetrag).toBe(4258);
+  });
+});
+
+// Fixture: einzelne Faktura-PDF (Kopf «Rechnung: <Nr>», 2 Lieferscheine, eigene ZSF)
+const FAKTURA = zeilen([
+  [1, 'Feldschlösschen Getränke AG | Rechnung: | 87750197'],
+  [1, 'Restaurant Olivenbaum | Datum: | 31.07.2026'],
+  [1, 'Lieferschein | 479500001 | vom | 03.07.2026'],
+  [1, 'Material | Bezeichnung | Inhalt | Menge | Einheit | Preis | Wert | MwSt | Pfand'],
+  [1, '10042 | Feldschlösschen Original 20/0.50 | 20X0,50 | 10 | HAR | 30.0000 | 300.00 | 8.1% | 36.60'],
+  [1, 'Zwischentotal Warenwert / Pfand | 10 Stk | 300.00 | 36.60'],
+  [2, 'Lieferschein | 479500002 | vom | 17.07.2026'],
+  [2, 'Material | Bezeichnung | Inhalt | Menge | Einheit | Preis | Wert | MwSt | Pfand'],
+  [2, '117774 | Eptinger blau | 24X0,33 | 5 | HAR | 20.0000 | 100.00 | 2.6% | -'],
+  [2, 'Zwischentotal Warenwert / Pfand | 5 Stk | 100.00 | 0.00'],
+  [2, 'Mehrwertsteuer | 26.90'],
+  [2, 'Endbetrag CHF | 463.50'],
+  [3, 'Zusammenfassung MwSt.'],
+  [3, '8.1% | 2.6% | 0.0%'],
+  [3, 'Bier | Nettowert | 300.00 | 0.00 | 0.00 | 300.00'],
+  [3, 'MwSt | 24.30 | 0.00 | 0.00 | 24.30'],
+  [3, 'Mineralwasser | Nettowert | 0.00 | 100.00 | 0.00 | 100.00'],
+  [3, 'MwSt | 0.00 | 2.60 | 0.00 | 2.60'],
+  [3, 'Leergut | Nettowert | 0.00 | 0.00 | 36.60 | 36.60'],
+  [3, 'Endbetrag | 436.60 | 0.00 | 0.00 | 436.60'],
+  [3, 'Total Brutto | 463.50 | 0.00 | 0.00 | 463.50'],
+]);
+
+describe('parseFsFaktura / fsFakturenAlsRechnungen (einzelne Faktura-PDF)', () => {
+  it('detectFsPdfTyp erkennt die Einzel-Faktura (und weiter Sammelrechnung/Lieferschein)', () => {
+    expect(detectFsPdfTyp(FAKTURA)).toBe('faktura');
+    expect(detectFsPdfTyp(SAMMEL)).toBe('sammelrechnung');
+    expect(detectFsPdfTyp(LIEFERSCHEIN)).toBe('lieferschein');
+  });
+  it('parst Kopf, beide Lieferscheine und die eigene Zusammenfassung MwSt.', () => {
+    const s = parseFsFaktura(FAKTURA);
+    expect(s.failureReason).toBeUndefined();
+    expect(s.nr).toBe('87750197');
+    expect(s.datum).toBe('2026-07-31');
+    expect(s.anhangLieferscheine).toHaveLength(2);
+    expect(s.fakturaKategorien['87750197']?.map(k => k.name)).toEqual(['Bier', 'Mineralwasser', 'Leergut']);
+  });
+  it('fsFakturenAlsRechnungen: EINE Buchung je Faktura, ZSF massgeblich, offizielle Beträge', () => {
+    const s = parseFsFaktura(FAKTURA);
+    const [fr] = fsFakturenAlsRechnungen(s);
+    expect(fr.r.rechnungsNr).toBe('87750197');
+    expect(fr.r.datum).toBe('2026-07-17'); // letztes Lieferdatum
+    expect(fr.fsKategorien?.map(k => k.name)).toEqual(['Bier', 'Mineralwasser', 'Leergut']);
+    expect(fr.nettoOffiziell).toBeCloseTo(436.6, 2);
+    expect(fr.bruttoOffiziell).toBe(463.5);
+    const { splits } = kontoSplitsAusFsKategorien(fr.fsKategorien!, []);
+    const m = Object.fromEntries(splits.map(x => [x.warenkonto, x.amountNet]));
+    expect(m).toEqual({ '4030': 300, '4050': 100, 'Depot': 36.6 });
+  });
+  it('ohne Zusammenfassung MwSt. → failureReason (Kontierung nicht belegbar)', () => {
+    const ohne = zeilen([
+      [1, 'Feldschlösschen Getränke AG | Rechnung: | 999'],
+      [1, 'Lieferschein | 1 | vom | 03.07.2026'],
+      [1, '10042 | Bier | 20X0,50 | 10 | HAR | 30.0000 | 300.00 | 8.1% | -'],
+    ]);
+    expect(parseFsFaktura(ohne).failureReason).toMatch(/Zusammenfassung MwSt/);
+  });
+  it('ohne «Endbetrag CHF» → failureReason (offizieller Betrag fehlt)', () => {
+    const ohneEndbetrag = zeilen([
+      [1, 'Feldschlösschen Getränke AG | Rechnung: | 999'],
+      [1, 'Lieferschein | 1 | vom | 03.07.2026'],
+      [1, 'Material | Bezeichnung | Inhalt | Menge | Einheit | Preis | Wert | MwSt | Pfand'],
+      [1, '10042 | Feldschlösschen Original 20/0.50 | 20X0,50 | 10 | HAR | 30.0000 | 300.00 | 8.1% | -'],
+      [2, 'Zusammenfassung MwSt.'],
+      [2, 'Bier | Nettowert | 300.00 | 0.00 | 0.00 | 300.00'],
+    ]);
+    expect(parseFsFaktura(ohneEndbetrag).failureReason).toMatch(/Endbetrag CHF/);
   });
 });
 
