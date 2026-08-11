@@ -178,6 +178,23 @@ export function vjTagWerte(tenantId: TenantId, rec: VjTagFelder, datum = ''): Vj
 
 // ── Lader ────────────────────────────────────────────────────────────────────
 
+/**
+ * Netto-Umsatz pro Tag (Food+Beverage netto = kanonischer Netto inkl.
+ * Marketing) als Map 'YYYY-MM-DD' → CHF (gerundet). Einheitliche WKQ-Basis
+ * für das Warenrechnungen-Modul — GLEICHE Basis wie die Cockpit-WKQ.
+ * Tage ohne manuellen Import fehlen in der Map (leer statt 0).
+ */
+export async function ladeNettoUmsatzByDate(
+  tenantId: TenantId,
+  fromIso: string,
+  toIso: string,
+): Promise<Record<string, number>> {
+  const tage = await ladeUmsatzTage(tenantId, fromIso, toIso);
+  const out: Record<string, number> = {};
+  for (const [d, t] of tage) out[d] = r2(nettoUmsatzTag(t));
+  return out;
+}
+
 /** Tenant-Schlüssel wie TenantContext.tenantKey: 'oliv' ohne Präfix. */
 function tenantKvKey(tenantId: TenantId, base: string): string {
   return tenantId === 'oliv' ? base : `${tenantId}:${base}`;

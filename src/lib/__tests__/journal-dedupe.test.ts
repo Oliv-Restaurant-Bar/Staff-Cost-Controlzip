@@ -126,3 +126,27 @@ describe('saveJournalEntries dedupliziert — saveJournalEntriesStrict bleibt ve
     vi.doUnmock('@/lib/supabase-kv');
   });
 });
+
+// ── Kostenblatt-Re-Import = vollständige Wahrheit (Regression 63912738) ──────
+import { zeilenNichtImNeuenFile } from '@/lib/journal-dedupe';
+
+describe('zeilenNichtImNeuenFile (Re-Import entfernt weggefallene Zeilen)', () => {
+  it('Regression: 63912738 fehlt im neuen Juli-File → wird als entfallend erkannt', () => {
+    const prior = [
+      ...JULI,
+      je({ text: 'Transgourmet', soll: 1234.55, belegNr: '63912738', date: '01.07.2026', accountNumber: '4010' }),
+    ];
+    const neu = JULI.map(e => ({ ...e })); // neues File OHNE 63912738
+    const weg = zeilenNichtImNeuenFile(prior, neu);
+    expect(weg).toHaveLength(1);
+    expect(weg[0].belegNr).toBe('63912738');
+  });
+
+  it('identisches File → keine entfallenden Zeilen (No-op)', () => {
+    expect(zeilenNichtImNeuenFile(JULI, JULI.map(e => ({ ...e })))).toHaveLength(0);
+  });
+
+  it('leeres prior → leer (leer statt 0-Karteileichen)', () => {
+    expect(zeilenNichtImNeuenFile([], JULI)).toHaveLength(0);
+  });
+});

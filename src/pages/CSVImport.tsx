@@ -55,6 +55,7 @@ import { PLCategory, DepartmentHint } from '@/types/account-mapping';
 import { saveMonth, saveJournalEntries, loadJournalEntries, loadYear, syncJournalYearFromDB, upsertCostMonths, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { recordImportRun } from '@/lib/import-undo-store';
 import { splitWarenJournal, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { zeilenNichtImNeuenFile } from '@/lib/journal-dedupe';
 import { loadWarenkostenGrenze } from '@/lib/waren-db';
 import { useTenant } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
@@ -818,9 +819,17 @@ export default function CSVImportPage() {
   const [splitDialogOpen, setSplitDialogOpen]   = useState(false);
   const [splitDialogRow, setSplitDialogRow]     = useState<MatchedCSVRow | null>(null);
 
-  // Beim Seitenaufruf: Sage Journal aus Supabase laden (auto-migration)
+  // Beim Seitenaufruf: Sage Journal aus Supabase laden (auto-migration).
+  // Der Tick signalisiert den Abschluss — die «wird entfernt»-Vorschau liest
+  // das Monats-Journal synchron aus localStorage und muss nach dem Sync
+  // (bzw. Mandanten-/Jahreswechsel) neu rechnen, sonst zeigt sie Stale-Daten.
+  const [journalSyncTick, setJournalSyncTick] = useState(0);
   useEffect(() => {
-    syncJournalYearFromDB(year, tenantId);
+    let on = true;
+    Promise.resolve(syncJournalYearFromDB(year, tenantId))
+      .catch(() => undefined)
+      .then(() => { if (on) setJournalSyncTick(t => t + 1); });
+    return () => { on = false; };
   }, [year, tenantId]);
 
   // Warenkosten-Grenze (pro Mandant, Standard 4090): Lieferanten-Journal
@@ -838,6 +847,20 @@ export default function CSVImportPage() {
     () => splitWarenJournal(parseResult?.journalEntries ?? [], warenGrenze),
     [parseResult, warenGrenze],
   );
+  // Re-Import = vollständige Wahrheit: bestehende Waren-Buchungszeilen des
+  // Monats, die im neuen File FEHLEN, werden beim Speichern entfernt (z.B.
+  // periodenfremd umgebuchte Rechnungen). Diese Vorschau-Gruppe macht die
+  // wegfallenden Zeilen VOR dem Import sichtbar (Undo bleibt möglich).
+  const entfallendeJournalZeilen = useMemo(() => {
+    if (dataType !== 'actual' || (parseResult?.journalEntries?.length ?? 0) === 0) return [];
+    try {
+      const prior = splitWarenJournal(loadJournalEntries(year, month, tenantId), warenGrenze).waren;
+      return zeilenNichtImNeuenFile(prior, journalSplit.waren);
+    } catch {
+      return [];
+    }
+    // journalSyncTick: nach dem Supabase-Sync neu rechnen (Stale-Schutz).
+  }, [dataType, parseResult, journalSplit, year, month, tenantId, warenGrenze, journalSyncTick]);
   const multiJournalDropped = useMemo(() => {
     if (!multiParse) return 0;
     let n = 0;
@@ -1415,10 +1438,19 @@ export default function CSVImportPage() {
         // ER-Kontobeträge (saveMonth oben) bleiben vollständig.
         const grenze = await loadWarenkostenGrenze(tenantId);
         const { waren } = splitWarenJournal(parseResult.journalEntries ?? [], grenze);
-        const priorClean = importMode === 'replace'
-          ? []
+        // Das (re-)importierte Kostenblatt ist die VOLLSTÄNDIGE WAHRHEIT für
+        // Mandant+Monat: das bestehende Monats-Journal wird ERSETZT — Zeilen,
+        // die im neuen File fehlen (z.B. periodenfremd umgebuchte Rechnungen),
+        // verschwinden auch im «Aktualisieren»-Modus. Eine «erklärt/
+        // abgeschlossen»-Markierung schützt Buchungszeilen NICHT (nur die
+        // ER-Kontobeträge kennen den Manuell-Schutz, z.B. Konto 5004).
+        // Fail-safe: liefert das File GAR KEINE Buchungszeilen (Format ohne
+        // Journal), bleibt das bestehende Journal im Aktualisieren-Modus
+        // stehen — kein stilles Leeren; «Ersetzen» leert weiterhin bewusst.
+        const hatJournalImFile = (parseResult.journalEntries?.length ?? 0) > 0;
+        const final = importMode === 'replace' || hatJournalImFile
+          ? waren
           : splitWarenJournal(loadJournalEntries(year, month, tenantId), grenze).waren;
-        const final = [...priorClean, ...waren];
         const prior = loadJournalEntries(year, month, tenantId);
         if (JSON.stringify(prior) !== JSON.stringify(final)) {
           saveJournalEntries(year, month, final, 'replace', tenantId);
@@ -1916,6 +1948,35 @@ export default function CSVImportPage() {
                         {journalSplit.nichtWaren.length} Nicht-Waren-Buchungen (Löhne/Gebühren/Verrechnungskonten)
                         werden nicht ins Lieferanten-Journal übernommen.
                       </p>
+                    )}
+                    {entfallendeJournalZeilen.length > 0 && (
+                      <div className="mb-2 rounded border border-amber-500/40 bg-amber-500/5 p-2" data-testid="journal-entfernte-zeilen">
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                          Im neuen File nicht mehr vorhanden — wird entfernt ({entfallendeJournalZeilen.length} {entfallendeJournalZeilen.length === 1 ? 'Zeile' : 'Zeilen'})
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Das importierte Kostenblatt gilt als vollständige Wahrheit für den Monat —
+                          diese bestehenden Buchungszeilen fehlen im neuen File (z.B. periodenfremd
+                          umgebucht) und werden beim Import entfernt. Rückgängig über das Import-Center möglich.
+                        </p>
+                        <div className="max-h-32 overflow-y-auto mt-1">
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {entfallendeJournalZeilen.map((e, i) => (
+                                <tr key={i} className="border-t border-border/40">
+                                  <td className="py-0.5 pr-2 whitespace-nowrap">{e.date}</td>
+                                  <td className="py-0.5 pr-2 whitespace-nowrap text-muted-foreground">{e.belegNr ?? ''}</td>
+                                  <td className="py-0.5 pr-2">{e.text}</td>
+                                  <td className="py-0.5 pr-2 whitespace-nowrap text-muted-foreground">{e.accountNumber}</td>
+                                  <td className="py-0.5 text-right tabular-nums whitespace-nowrap">
+                                    {(e.soll - e.haben).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     )}
                     <div className="max-h-48 overflow-y-auto">
                       <table className="w-full text-xs">

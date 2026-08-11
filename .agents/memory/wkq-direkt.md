@@ -17,4 +17,17 @@ description: ER-KPI/P&L-Definition «direkt» ist strikt 4020–4070; 4000–401
 - **Why:** KPI, P&L-Zeile und Waren-Analyse müssen überall dieselbe Definition
   zeigen (User-Befehl «überall identisch, Wareneinsatz = 4020–4070»).
 - **Grenzen:** Die OPERATIVE Cockpit-WKQ (`warenkosten-quote.ts`, 4000–Grenze) ist
-  eine bewusst separate Definition — weiterhin NICHT angleichen.
+  eine bewusst separate ZÄHLER-Definition — weiterhin NICHT angleichen.
+
+## Einheitliche UMSATZBASIS (Nenner) — 08/2026, zweiter Build-Befehl
+- Alle WKQ-Nenner (Cockpit-Monatsreport UND Warenrechnungen-Modul) = **Netto
+  (Food+Beverage netto = umsatz-SSOT `nettoUmsatzTag`, inkl. Marketing)**.
+  Warenrechnungen las vorher brutto `actualRevenue` (16.5 % statt 17.4 %) —
+  jetzt via `ladeNettoUmsatzByDate` (umsatz.ts) für `revenueByDate`/`rangeRevenue`.
+- Monatsreport-Zeilen Warenkosten total/Food/Beverage: WKQ-% dezent unter Ist-
+  UND Budget-Wert (`WkqInlineInfo.budgetPct`). Budget-Nenner: Total-Monat =
+  ER-Netto-Budget (Fallback Ist-Netto), Kategorien/Woche = Ist-Umsatz (kein
+  Kategorie-/Wochen-Umsatzbudget vorhanden — Soll ist darauf gerechnet).
+- **Why:** User-Befehl «gleiche Basis überall»; leer statt 0, nie ÷0.
+- **How to apply:** Neue WKQ-Anzeigen nie auf brutto `actualRevenue` rechnen;
+  Tagesnenner immer über `ladeNettoUmsatzByDate`/umsatz-SSOT beziehen.

@@ -745,6 +745,13 @@ export interface WkqInlineInfo {
   food: number | null;
   /** Beverage-WKQ in % (effektive Kategorie); null ohne Wert/Umsatz. */
   bev: number | null;
+  /**
+   * WKQ des BUDGET-/Soll-Werts in % (Budget-Warenkosten ÷ Budget-Netto-
+   * Umsatz; für Kategorien ohne eigenes Umsatz-Budget: Soll ÷ Ist-Kategorie-
+   * Umsatz = wirksame Quote). Anzeige dezent unter dem Budget-Wert. null =
+   * kein Budget/keine Basis («leer statt 0», nie ÷ 0).
+   */
+  budgetPct?: number | null;
 }
 
 export interface MonatsreportDaten {
@@ -1717,6 +1724,21 @@ export async function ladeMonatsreport(
         : r2(quoteMonat);
     }
     if (wkqW && sollWoche != null && wNet > 0) wkqW.ziel = r2((sollWoche / wNet) * 100);
+    // WKQ unter dem BUDGET-Wert: Budget-Warenkosten total ÷ Budget-Netto-
+    // Umsatz (ER-Budget des Monats = Food+Beverage-Budget, da Food+Bev =
+    // Netto per SSOT-Invariante); fehlt das ER-Budget bzw. für die Woche
+    // (kein Wochen-Umsatzbudget) dient der Ist-Netto — die Basis, auf der
+    // das Soll gerechnet wurde. «leer statt 0», nie ÷ 0.
+    const pctVon = (chf: number | null, basis: number | null): number | null =>
+      chf != null && basis != null && basis > 0 ? r2((chf / basis) * 100) : null;
+    const erBudgetMonat = ((): number | null => {
+      const v = weqJahrCtx[String(year)]?.er?.[m0];
+      return typeof v === 'number' && v > 0 ? v : null;
+    })();
+    const totalBudgetM = ckMk('wareneinsatz') ?? sollMonat;
+    const totalBudgetW = ckWk('wareneinsatz') ?? sollWoche;
+    if (wkqM) wkqM.budgetPct = pctVon(totalBudgetM, erBudgetMonat ?? (mNetV != null && mNet > 0 ? mNet : null));
+    if (wkqW) wkqW.budgetPct = pctVon(totalBudgetW, wNetV != null && wNet > 0 ? wNet : null);
     const totalRow: MrRow = {
       ...d('warenkosten_total', 'Warenkosten total (Ist) vs. Wareneinsatz (Soll)', {
         month: monthTotal, week: weekTotal,
@@ -1748,6 +1770,18 @@ export async function ladeMonatsreport(
         ist > 0 && umsV != null && ums > 0
           ? { pct: r2((ist / ums) * 100), ziel: weqPct !== null ? r2(weqPct) : null, food: null, bev: null }
           : null;
+      // Budget-WKQ der Kategorie: Soll ÷ Kategorie-Umsatz (es gibt kein
+      // eigenes Kategorie-Umsatz-Budget — das Soll ist auf dem Ist-Kategorie-
+      // Umsatz gerechnet, die Quote ist also die ehrliche Budget-WKQ).
+      // «leer statt 0», nie ÷ 0.
+      const budgetPct = (soll: number | null, umsV: number | null, ums: number): number | null =>
+        soll != null && umsV != null && ums > 0 ? r2((soll / ums) * 100) : null;
+      const mitBudget = (info: WkqInlineInfo | null, soll: number | null, umsV: number | null, ums: number): WkqInlineInfo | null => {
+        const bp = budgetPct(soll, umsV, ums);
+        if (info) return { ...info, budgetPct: bp };
+        // Auch ohne Ist-Warenkosten die Budget-WKQ zeigen (Budget-Spalte).
+        return bp != null ? { pct: null, ziel: null, food: null, bev: null, budgetPct: bp } : null;
+      };
       return {
         ...d(id, label, {
           month: istM > 0 ? r2(istM) : null,
@@ -1757,8 +1791,8 @@ export async function ladeMonatsreport(
           budget: sollW,
         }, { deltaInverted: true }),
         wkqInline: {
-          month: wkq(istM, umsMV, umsM),
-          week: wkq(istW, umsWV, umsW),
+          month: mitBudget(wkq(istM, umsMV, umsM), sollM, umsMV, umsM),
+          week: mitBudget(wkq(istW, umsWV, umsW), sollW, umsWV, umsW),
         },
       };
     };

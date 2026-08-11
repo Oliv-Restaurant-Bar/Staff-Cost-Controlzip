@@ -428,7 +428,7 @@ function ReportTable({
                       </TooltipContent>
                     </Tooltip>
                   ) : null}
-                  {wkq ? (
+                  {wkq && (wkq.pct != null || wkq.ziel != null || wkq.food != null || wkq.bev != null) ? (
                     <span className="block text-[11px] font-normal tabular-nums" data-testid={`wkq-inline-${granularity}`}>
                       {wkq.pct != null ? (
                         <span className="inline-flex items-center gap-1">
@@ -474,6 +474,11 @@ function ReportTable({
                     Unterzeile («18.3 % Anteil Gäste IN»). Ohne Basis kein Anteil. */}
                 <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>
                   {fmtCell(p.ist, row.fmt, p.istPax)}
+                  {wkq && wkq.pct != null && p.ist !== null ? (
+                    <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`wkq-ist-${row.id}-${granularity}`}>
+                      {wkq.pct.toFixed(1)} %
+                    </span>
+                  ) : null}
                   {row.sharePct && p.ist !== null && p.istShare !== null ? (
                     <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`share-${row.id}-${granularity}`}>
                       {p.istShare.toFixed(1)} % {row.shareHint ?? 'Anteil Gäste IN'}
@@ -521,6 +526,11 @@ function ReportTable({
                   ) : (
                     <>
                       {fmtCell(p.budget, row.fmt)}
+                      {wkq && wkq.budgetPct != null && p.budget !== null ? (
+                        <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`wkq-budget-${row.id}-${granularity}`}>
+                          {wkq.budgetPct.toFixed(1)} %
+                        </span>
+                      ) : null}
                       {granularity === 'monat' && row.monthBudgetManuell ? (
                         <span
                           className="ml-1 inline-block rounded bg-amber-100 px-1 align-middle text-[9px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"

@@ -20,7 +20,6 @@ import {
   uploadInvoiceReceipt,
   getInvoiceReceiptUrl,
   deleteInvoiceReceipt,
-  loadDailyRevenueFromLocalStorage,
   loadWarenMonthlyRevenue,
   seedMonthlyRevenueIfMissing,
   computeDailyBudgetRevenue,
@@ -49,6 +48,7 @@ import {
   type WarenKategorie,
   type Warenkonto,
 } from '@/lib/waren-db';
+import { ladeNettoUmsatzByDate } from '@/lib/umsatz';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
@@ -733,11 +733,13 @@ export default function WarenrechnungenPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     console.log(`[WAREN] tenant: ${tenantId} · month: ${monthKey}`);
-    const [sups, invs] = await Promise.all([
+    // Umsatzbasis = Netto (Food+Beverage netto, umsatz-SSOT) — GLEICHE Basis
+    // wie die Cockpit-WKQ (vorher brutto actualRevenue → Quote zu tief).
+    const [sups, invs, rev] = await Promise.all([
       loadSuppliers(tenantId),
       loadMonthInvoices(tenantId, monthKey),
+      ladeNettoUmsatzByDate(tenantId, `${monthKey}-01`, `${monthKey}-31`),
     ]);
-    const rev = loadDailyRevenueFromLocalStorage(tenantId, monthKey);
     setSuppliers(sups);
     setEntries(invs);
     setRevenueByDate(rev);
@@ -892,12 +894,14 @@ export default function WarenrechnungenPage() {
         monthKeys.push(`${aRangeYear}-${String(m2).padStart(2,'0')}`);
       }
     }
-    const results = await Promise.all(monthKeys.map(mk => loadMonthInvoices(tenantId, mk)));
+    const sortedKeys = [...monthKeys].sort();
+    const [results, allRevenue] = await Promise.all([
+      Promise.all(monthKeys.map(mk => loadMonthInvoices(tenantId, mk))),
+      // Umsatzbasis = Netto (Food+Beverage netto, umsatz-SSOT) — GLEICHE
+      // Basis wie die Cockpit-WKQ («leer statt 0»: Tage ohne Import fehlen).
+      ladeNettoUmsatzByDate(tenantId, `${sortedKeys[0]}-01`, `${sortedKeys[sortedKeys.length - 1]}-31`),
+    ]);
     const allEntries: InvoiceEntry[] = results.flat();
-    const allRevenue: Record<string, number> = {};
-    for (const mk of monthKeys) {
-      Object.assign(allRevenue, loadDailyRevenueFromLocalStorage(tenantId, mk));
-    }
     // Monatliches Umsatz-Budget laden (als Fallback wenn kein tagesgenauer Umsatz vorhanden)
     // Seed-Daten werden beim ersten Aufruf automatisch eingetragen (einmalig, authentifiziert)
     const years = Array.from(new Set(monthKeys.map(mk => Number(mk.slice(0, 4)))));
@@ -4370,7 +4374,17 @@ export default function WarenrechnungenPage() {
                               {abgleich.zeilen.map(z => {
                                 const offen = abgleichOffen === z.lieferant;
                                 const kannDrilldown = abgleich.mode === 'lieferanten';
-                                const erklaertInfo = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
+                                const erklaertRaw = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
+                                // Re-Bewertung nach Kostenblatt-Re-Import: passt der beim
+                                // Abschluss festgehaltene Betrag nicht mehr zur AKTUELLEN
+                                // Differenz (z.B. weil umgebuchte Zeilen aus dem Journal
+                                // entfernt wurden), gilt die Erklärung als VERALTET — die
+                                // Zeile wird wieder normal bewertet (keine Karteileiche);
+                                // ohne festgehaltenen Betrag (null) bleibt sie gültig.
+                                const erklaertVeraltet = !!erklaertRaw
+                                  && (z.diff === null
+                                    || (erklaertRaw.betrag !== null && Math.abs(erklaertRaw.betrag - z.diff) > 0.05));
+                                const erklaertInfo = erklaertVeraltet ? undefined : erklaertRaw;
                                 return (
                                 <Fragment key={z.lieferant}>
                                 <tr
@@ -4423,12 +4437,24 @@ export default function WarenrechnungenPage() {
                                           {z.status === 'nur-erfasst' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">keine Buchung gefunden</Badge>}
                                           {z.status === 'nur-gebucht' && <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-600/40">nicht erfasst</Badge>}
                                           {z.status === 'keine-fibu' && <span className="text-[10px] text-muted-foreground">—</span>}
+                                          {erklaertVeraltet && erklaertRaw && (
+                                            <span
+                                              className="text-[11px] text-amber-600 dark:text-amber-400"
+                                              data-testid={`abgleich-erklaert-veraltet-${z.lieferant}`}
+                                              title={`Beim Abschluss festgehaltene Differenz: CHF ${fmtChf(erklaertRaw.betrag ?? 0)} — die aktuelle Differenz weicht ab (z.B. nach Kostenblatt-Re-Import). Bitte neu prüfen und ggf. neu abschliessen.`}
+                                            >
+                                              Erklärung veraltet — neu prüfen
+                                            </span>
+                                          )}
                                         </>
                                       )}
                                       {canEdit && fibuGeladen && z.status !== 'keine-fibu' && (
                                         <ErklaertMarkierung
                                           lieferant={z.lieferant}
-                                          info={erklaertInfo}
+                                          // RAW-Marker (auch wenn veraltet): «Markierung aufheben»
+                                          // muss für veraltete Erklärungen verfügbar bleiben —
+                                          // nur Status/Färbung der Zeile nutzen erklaertInfo.
+                                          info={erklaertRaw}
                                           aktuelleDiff={z.diff}
                                           onSave={async info => {
                                             const ok = await persistFibuState(cur => ({

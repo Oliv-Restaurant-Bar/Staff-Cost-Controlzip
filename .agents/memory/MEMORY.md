@@ -101,7 +101,7 @@
 - [Überstunden-Konto Fix-MA](ueberstunden-konto.md) — leer-statt-0 via Wochen-Datenbasis, Start 2026-07-01, KV-Blob mit updatedAt-Stale-Wache (kein CAS), Total gecacht wegen Monatsreport-Pfad.
 - [Lieferschein→Monatsrechnung](lieferschein-monatsabgleich.md) — Monatsrechnung ERSETZT Lieferscheine (nie addieren); Entscheid pro Lieferant, fail-closed, Aliasse Pflicht.
 - [Cockpit-PDF Vektor-Export](cockpit-pdf-vektor.md) — ALLE Cockpit-Reports als jsPDF-Vektor (max 4 Gruppen/Seite, mapRowForExport-SSOT, onPdfDaten-Refs null bei Ladebeginn+Unmount); dezente Chips, keine Legenden.
-- [WKQ = direkt 4020–4070](wkq-direkt.md) — ER-KPI cogs_ratio rechnet auf total_cogs_direct; Range-SSoT: 4000–4019 = übrig; operative Cockpit-WKQ bleibt separat.
+- [WKQ = direkt 4020–4070](wkq-direkt.md) — ER-KPI cogs_ratio auf total_cogs_direct; operative WKQ-Zähler separat; NENNER überall Netto (umsatz-SSOT, nie brutto actualRevenue).
 - [Analyse = direkter Warenaufwand 4020–4070](waren-analyse-direkt.md) — Analyse-Tab bewusst nur Konten 4020–4070; Konto-Erklärungen im fibu-matches-Blob unter `konto:<nr>`, Saves via fibuSaveChain.
 - [Schutz manueller Kontierungen](manuelle-kontierungen-schutz.md) — quelle='manuell' im Schreib-Kern geschützt; Überschreiben nur via uebernehmen-Set; Jahr-Löschen bypasst bewusst.
 - [FIBU-Journal Dublettensicherung](journal-dedupe.md) — saveJournalEntries dedupliziert immer (Schlüssel Datum+Beleg+Konto+Betrag+Text); Strict bleibt verbatim für Undo; Bereinigung mit Kontext-Wache.

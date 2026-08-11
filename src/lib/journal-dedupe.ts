@@ -29,6 +29,20 @@ export function journalZeilenKey(e: SageJournalEntry): string {
   ].join('|');
 }
 
+/**
+ * Kostenblatt-Re-Import = vollständige Wahrheit: liefert die bestehenden
+ * Buchungszeilen, die im NEUEN File fehlen (Schlüssel wie Dedupe:
+ * Datum+Beleg+Konto+Soll+Haben+Text) — sie werden beim Import entfernt
+ * (z.B. periodenfremd umgebuchte Rechnungen). Vorschau-/Regressionsbasis.
+ */
+export function zeilenNichtImNeuenFile(
+  prior: SageJournalEntry[],
+  neu: SageJournalEntry[],
+): SageJournalEntry[] {
+  const neuKeys = new Set(neu.map(journalZeilenKey));
+  return prior.filter(e => !neuKeys.has(journalZeilenKey(e)));
+}
+
 export interface JournalDedupeErgebnis {
   /** Bereinigte Liste: 1× je Schlüssel, Original-Reihenfolge (erstes Vorkommen). */
   zeilen: SageJournalEntry[];
