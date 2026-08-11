@@ -402,6 +402,8 @@ interface KopfFelder {
   netto: number | null;
   mwst: number | null;
   mwstSatz: number | null;
+  /** Profil-spezifische Hinweise (z.B. Gebinde separat, Kontierung prüfen). */
+  hinweise?: string[];
 }
 
 function generischerKopf(text: string): KopfFelder {
@@ -430,6 +432,18 @@ function generischerKopf(text: string): KopfFelder {
   return { rechnungsNr, rechnungsdatum, lieferdatum: null, netto, mwst, mwstSatz };
 }
 
+/** Deutsches Langdatum («15. Mai 2026») → YYYY-MM-DD. */
+function parseDatumLang(tag: string, monat: string, jahr: string): string | null {
+  const MONATE: Record<string, number> = {
+    januar: 1, februar: 2, 'märz': 3, maerz: 3, april: 4, mai: 5, juni: 6,
+    juli: 7, august: 8, september: 9, oktober: 10, november: 11, dezember: 12,
+  };
+  const mm = MONATE[monat.toLowerCase()];
+  const dd = Number(tag), y = Number(jahr);
+  if (!mm || dd < 1 || dd > 31 || y < 2000 || y > 2099) return null;
+  return `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}
+
 /** Satz aus netto/mwst ableiten und auf bekannte CH-Sätze runden. */
 function satzAusBetraegen(netto: number | null, mwst: number | null): number | null {
   if (!netto || netto <= 0 || mwst === null) return null;
@@ -441,12 +455,69 @@ function satzAusBetraegen(netto: number | null, mwst: number | null): number | n
 type KopfParser = (text: string, lines: string[]) => KopfFelder;
 
 const KOPF_PARSER: Record<string, KopfParser> = {
-  obrist: (text) => ({
-    ...generischerKopf(text),
-    rechnungsNr: suche(text, [/Rechnung-?Nr\.?\s*:?\s*(\d{3,10})/i]),
-    netto: sucheBetrag(text, [new RegExp(`Zwischensumme ohne MwSt\\s*CHF\\s*(${BETRAG_RE.source})`, 'i')]),
-    mwst: sucheBetrag(text, [new RegExp(`MwSt\\.\\s*CHF\\s*(${BETRAG_RE.source})`, 'i')]),
-  }),
+  obrist: (text) => {
+    const g = generischerKopf(text);
+    // «Lieferschein … EV144016, vom 01.07.2026   30.06.2026»: das LS-Datum
+    // («vom …») ist das LIEFERDATUM, das Datum danach (Spalte «Datum») das
+    // Rechnungsdatum.
+    const ls = /,\s*vom\s+(\d{1,2}\.\d{1,2}\.\d{4})\s+(\d{1,2}\.\d{1,2}\.\d{4})/.exec(text);
+    // «Total Gebinde CHF» = Depot — separat, NIE im Wareneinsatz. Netto/MwSt
+    // stammen aus Zwischensumme/MwSt (ohne Gebinde); Brutto = netto+mwst
+    // entspricht «Total CHF inkl. MwSt.» (die «Gesamtsumme» enthielte Gebinde).
+    const gebinde = sucheBetrag(text, [new RegExp(`Total Gebinde CHF\\s+(${BETRAG_RE.source})`, 'i')]);
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/Rechnung-?Nr\.?\s*:?\s*(\d{3,10})/i]),
+      rechnungsdatum: ls ? parseDatumCH(ls[2]) ?? g.rechnungsdatum : g.rechnungsdatum,
+      lieferdatum: ls ? parseDatumCH(ls[1]) : null,
+      netto: sucheBetrag(text, [new RegExp(`Zwischensumme ohne MwSt\\s*CHF\\s*(${BETRAG_RE.source})`, 'i')]),
+      mwst: sucheBetrag(text, [new RegExp(`MwSt\\.\\s*CHF\\s*(${BETRAG_RE.source})`, 'i')]),
+      ...(gebinde !== null && gebinde > 0
+        ? { hinweise: [`Total Gebinde CHF ${gebinde.toFixed(2)} (Depot) — separat, nicht im Wareneinsatz enthalten.`] }
+        : {}),
+    };
+  },
+  // The Asia Company: «Rechnung 297454 · Münchenstein, 15. Mai 2026»;
+  // Netto/Brutto aus «Total CHF exkl./inkl. MWST»; Lieferdatum aus
+  // «Lieferung Nr. VW108357 vom 07.05.26»; Kontierungs-Codes 420xx = Küche.
+  asia: (text, lines) => {
+    const g = generischerKopf(text);
+    const lang = /,\s*(\d{1,2})\.\s*(Januar|Februar|M(?:ä|ae)rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+(\d{4})/i.exec(text);
+    const rechnungsdatum = lang ? parseDatumLang(lang[1], lang[2], lang[3]) : g.rechnungsdatum;
+    // Lieferdatum nur, wenn GENAU EINE Lieferung gelistet ist — nie raten.
+    const ldTreffer = [...text.matchAll(/(?:^|\n)Lieferung\s+Nr\.\s*\S+\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/gi)];
+    const netto = sucheBetrag(text, [new RegExp(`Total CHF exkl\\.\\s*MWST\\s+(${BETRAG_RE.source})`, 'i')]);
+    const hinweise: string[] = [];
+    // «Zusammenfassung Kontierung»: 5-stellige Codes; alle 420xx sind Küche
+    // (42020/42030/42050/42060 …) → Profil-Konto 4060. Fremde Codes oder eine
+    // Summenabweichung werden gemeldet — nie stumm umgebucht.
+    const start = lines.findIndex(z => /Zusammenfassung\s+Kontierung/i.test(z));
+    if (start >= 0) {
+      let summe = 0; let gefunden = false;
+      for (const z of lines.slice(start + 1)) {
+        const m = /^\s*(\d{5})\s{2,}(.+?)\s{2,}[\d.,]+\s*%\s{2,}([\d’'.,]+)\s/.exec(z);
+        if (!m) continue;
+        gefunden = true;
+        summe += parseBetrag(m[3]) ?? 0;
+        if (!m[1].startsWith('420')) {
+          hinweise.push(`Kontierungscode ${m[1]} (${m[2].trim()}) ausserhalb Warenaufwand Küche — bitte Konto prüfen.`);
+        }
+      }
+      if (gefunden && netto !== null && Math.abs(rundung2(summe) - netto) > 0.05) {
+        hinweise.push(`Summe Kontierung ${rundung2(summe).toFixed(2)} ≠ Rechnungs-Netto ${netto.toFixed(2)} — bitte prüfen.`);
+      }
+    }
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/Rechnung\s+(\d{4,12})/i]) ?? g.rechnungsNr,
+      rechnungsdatum,
+      lieferdatum: ldTreffer.length === 1 ? parseDatumCH(ldTreffer[0][1]) : null,
+      netto,
+      mwst: sucheBetrag(text, [new RegExp(`MWST\\s+[\\d.]+\\s*%\\s*von\\s+[\\d’'.,]+\\s+(${BETRAG_RE.source})`, 'i')]),
+      mwstSatz: 2.6,
+      ...(hinweise.length ? { hinweise } : {}),
+    };
+  },
   rutishauser: (text) => {
     const g = generischerKopf(text);
     // «MWST B7 = 8.10 % von 584.40 47.34» — Satz≠0-Zeilen summieren.
@@ -747,6 +818,7 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
         ?? suche(text, [/Auftragsbest(?:ä|ae)tigung\s*(?:Nr\.?\s*)?:?\s*(\d{3,12})/i]);
       hinweise.push('Auftragsbestätigung — wird als provisorische Lieferung gebucht; die Monatsrechnung ersetzt/korrigiert sie.');
     }
+    if (kopf.hinweise?.length) hinweise.push(...kopf.hinweise);
     if (!profil) hinweise.push('Lieferant nicht erkannt — bitte in der Vorschau zuordnen (wird dauerhaft gespeichert).');
     if (netto === null) hinweise.push('Netto-Betrag nicht erkannt — bitte in der Vorschau erfassen.');
     if (!rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');

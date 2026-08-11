@@ -488,9 +488,10 @@ export const DEFAULT_SUPPLIERS: string[] = [
   'Transgourmet',
   'Blaser Café',
   'Metzgerei Spahni',
-  'Siebe Dupf',
+  'Siebe Dupf Kellerei',
   'Feldschlösschen',
-  'Chocolats Camille',
+  'Chocolats Camille Bloch',
+  'Länggass-Tee',
   'Caporaso',
   'Ambro Food',
   'La Marra',
@@ -499,8 +500,8 @@ export const DEFAULT_SUPPLIERS: string[] = [
   'Terravigna',
   'Fideco',
   'Korngold',
-  'Paul Ulrich',
-  'Hiestand',
+  'Paul Ullrich',
+  // Hiestand bewusst entfernt (kein Lieferant mehr, 08/2026).
   'Frigemo',
   'Compagnie Desserts',
 ];

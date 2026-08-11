@@ -77,12 +77,20 @@ export const CAPORASO_KONTEN: Record<string, string> = {
 
 /** Vorbelegung gemäss Aufgabe — Konto in den Einstellungen anpassbar. */
 export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
-  { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
+  // Obrist/Schenk: Einzelrechnung, bucht sofort final. Namens-Fallback
+  // «schenk suisse» (Buchungen laufen z.T. unter «Schenk Suisse S.A.»);
+  // matcht NICHT «Schenk Family Wine».
+  { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, monatsrechnung: false,
+    erkennungTokens: ['schenk suisse'] },
   { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
+  // The Asia Company: Einzelrechnung, bucht sofort final. Split aus der
+  // rechnungseigenen «Zusammenfassung Kontierung» (Codes 420xx = alle Küche
+  // → 4060); fremde Codes werden in der Vorschau gemeldet, nie geraten.
+  { id: 'asia',        name: 'The Asia Company',        mwstNr: '115846638', kategorie: 'Küche',            konto: '4060', mwstSatz: 2.6, monatsrechnung: false },
   // Bäckerei Bohnenblust bewusst KEIN Profil: wird ausschliesslich MANUELL
   // erfasst (freie Mandantenwahl) — siehe BOHNENBLUST_AUSGESCHLOSSEN.
   // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).

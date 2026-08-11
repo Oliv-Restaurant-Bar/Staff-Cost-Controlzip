@@ -120,6 +120,47 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.netto).toBe(415.2);
     expect(r.mwst).toBe(33.63);
   });
+  it('Obrist 327503 (Kontrolle): netto 267.75 / brutto 289.44, Lieferdatum aus «vom», Beleg 13.07.', () => {
+    const r = parse('obrist-327503.txt');
+    expect(r.profil?.id).toBe('obrist');
+    expect(r.rechnungsNr).toBe('327503');
+    expect(r.netto).toBe(267.75);
+    expect(r.brutto).toBe(289.44);
+    expect(r.mwstSatz).toBe(8.1);
+    expect(r.lieferdatum).toBe('2026-07-10');
+    expect(r.rechnungsdatum).toBe('2026-07-13');
+    // Gebinde 0.00 ⇒ kein Depot-Hinweis
+    expect(r.hinweise.join(' ')).not.toContain('Gebinde');
+  });
+  it('Obrist: «Total Gebinde CHF» > 0 ⇒ Depot-Hinweis, Netto bleibt ohne Gebinde', () => {
+    const text = fx('obrist-327503.txt').replace('Total Gebinde CHF  0.00', 'Total Gebinde CHF  24.00');
+    const r = parseProfilPdf(text, P);
+    expect(r.netto).toBe(267.75);
+    expect(r.hinweise.join(' ')).toContain('Gebinde CHF 24.00');
+  });
+  it('The Asia Company 297454 (Kontrolle): netto 866.50 / brutto 889.05 (2.6%), Kontierung 420xx ok', () => {
+    const r = parse('asia-297454.txt');
+    expect(r.profil?.id).toBe('asia');
+    expect(r.rechnungsNr).toBe('297454');
+    expect(r.netto).toBe(866.5);
+    expect(r.mwst).toBe(22.55);
+    expect(r.brutto).toBe(889.05);
+    expect(r.mwstSatz).toBe(2.6);
+    expect(r.rechnungsdatum).toBe('2026-05-15'); // «Münchenstein, 15. Mai 2026»
+    expect(r.lieferdatum).toBe('2026-05-07');    // «Lieferung Nr. VW108357 vom 07.05.26»
+    expect(r.belegart).toBe('rechnung');
+    // Alle Kontierungscodes 420xx (Küche) ⇒ keine Konto-Warnung
+    expect(r.hinweise.join(' ')).not.toContain('Konto prüfen');
+    expect(r.hinweise.join(' ')).not.toContain('Summe Kontierung');
+  });
+  it('The Asia Company: fremder Kontierungscode wird gemeldet', () => {
+    const text = fx('asia-297454.txt').replace(
+      '42020  Fleisch, Comestibles, Wurstwaren  2.6 %  160.00  4.16  164.16',
+      '42880  Non-Food  2.6 %  160.00  4.16  164.16');
+    const r = parseProfilPdf(text, P);
+    expect(r.hinweise.join(' ')).toContain('42880');
+    expect(r.hinweise.join(' ')).toContain('Konto prüfen');
+  });
   it('Rutishauser 91091909: netto 584.40 / MwSt 47.34 (8.1%)', () => {
     const r = parse('rutishauser-91091909.txt');
     expect(r.profil?.id).toBe('rutishauser');

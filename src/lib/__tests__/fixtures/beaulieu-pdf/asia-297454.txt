@@ -1,0 +1,45 @@
+Rechnungsadresse
+Restaurant Oliv Bern
+Waisenhausplatz 28
+3011 Bern
+Rechnung 297454  Münchenstein, 15. Mai 2026  Seite 1
+Debitorennr.  3171  Unsere MWST-Nr.  CHE-115.846.638
+Kundencode  BE88  Sachbearbeiter  Sunissa Stark
+Zahlungsbedingung  15 Tage netto
+Fälligkeitsdatum  30.05.2026
+Pos  Artikel  Menge  Einheit  VK-Preis  Rabatt  Betrag
+Lieferung Nr. VW108357 vom 07.05.26:
+10  4576  1  Karton  49.00  49.00
+ASIA CUISINE Eingelegter Ingwer weiss 1. Qualität
+10x1500gr
+20  4675  1  Karton  149.00  149.00
+KINJIRUSHI Meerrettichpulver nach Wasabi Art
+10x1kg
+30  5732  3  Sack  47.50  142.50
+IBUKI Sushi Premium Reis
+20kg
+40  8442  3  Karton  49.00  147.00
+ASIA CUISINE Sandwich Bao Bun weiss
+10x400gr (10x40gr Stück pro Beutel)
+50  8443  3  Karton  49.00  147.00
+ASIA CUISINE Sandwich Bao Bun schwarz
+10x400gr ( 10x40gr Stück pro Beutel )
+60  8457  1  Karton  72.00  72.00
+TYJ Gyoza Teig 100mm
+30x300gr
+70  7588  1  Karton  160.00  160.00
+SEACON 5L Sushi EBI Crevetten
+20x240gr ( 30Stk.- 9.1-9.5 cm )
+Total Lieferung Nr. VW108357 vom 07.05.26:  866.50
+Total CHF exkl. MWST  866.50
+MWST 2.6% von 866.50  22.55
+Total CHF inkl. MWST  889.05
+Rechnung 297454  Seite 2
+Zusammenfassung Kontierung
+Code  Beschreibung  MWST %  Betrag  MWST-Betrag  Betrag inkl. MWST
+420  Warenaufwand Küche
+42020  Fleisch, Comestibles, Wurstwaren  2.6 %  160.00  4.16  164.16
+42030  Früchte, Gemüse  2.6 %  49.00  1.28  50.28
+42050  Brot, Backwaren  2.6 %  294.00  7.65  301.65
+42060  Kolonialwaren  2.6 %  363.50  9.46  372.96
+Bankverbindung: Aargauische Kantonalbank, SWIFT KBAGCH22, IBAN CH87 0076 1644 5131 2200 1
