@@ -67,12 +67,15 @@ async function pdfZuZeilen(file: File | Blob, name: string) {
   return toFsZeilen(reconstructGnPdfLines(res.pages));
 }
 
-export function FeldschloesschenImport({ tenantId, suppliers, onImported, externalFilesRef }: {
+export function FeldschloesschenImport({ tenantId, suppliers, onImported, externalFilesRef, uploadUiVersteckt }: {
   tenantId: TenantId;
   suppliers: Supplier[];
   onImported: () => void;
   /** Einspeise-Kanal für den universellen Upload (PDF/ZIP-Dateien). */
   externalFilesRef?: { current: ((files: File[]) => void) | null };
+  /** true = Datei-Auswahl ausblenden (Import nur pro Lieferant via «Upload nur für …»);
+   *  Historie/Analyse, Vorschau & Undo bleiben sichtbar. */
+  uploadUiVersteckt?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [lieferscheine, setLieferscheine] = useState<FsLieferschein[] | null>(null);
@@ -539,6 +542,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
   return (
     <div className="space-y-3" data-testid="fs-import">
       <div className="flex flex-wrap items-center gap-3">
+        {!uploadUiVersteckt && (
         <label className={cn(
           'inline-flex items-center gap-2 text-xs font-medium rounded-lg border border-dashed px-3 py-2 cursor-pointer transition-colors',
           busy ? 'opacity-60 pointer-events-none' : 'hover:bg-muted/40',
@@ -549,6 +553,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
             data-testid="input-fs-pdf"
             onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
         </label>
+        )}
         <button type="button" className="text-[11px] text-muted-foreground underline decoration-dotted hover:text-foreground"
           onClick={() => { setHistAnalyse(null); void ladeAnalyse(); }} data-testid="fs-analyse-oeffnen">
           Historie/Analyse…

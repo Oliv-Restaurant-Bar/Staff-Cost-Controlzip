@@ -250,12 +250,15 @@ export function MarktLieferantenEditor({ tenantId, canEdit }: { tenantId: Tenant
   );
 }
 
-export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesRef }: {
+export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesRef, uploadUiVersteckt }: {
   tenantId: TenantId;
   suppliers: Supplier[];
   onImported: () => void;
   /** Einspeise-Kanal für den universellen Upload (eine CSV pro Durchgang). */
   externalFilesRef?: { current: ((files: File[]) => void) | null };
+  /** true = Datei-Auswahl ausblenden (Import nur pro Lieferant via «Upload nur für …»);
+   *  Vorschau, Undo & Einstellungen bleiben sichtbar. */
+  uploadUiVersteckt?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [ergebnis, setErgebnis] = useState<CsvParseErgebnis | null>(null);
@@ -548,6 +551,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
+        {!uploadUiVersteckt && (
         <label className={cn(
           'inline-flex items-center gap-2 text-xs font-medium rounded-lg border border-dashed px-3 py-2 cursor-pointer transition-colors',
           busy ? 'opacity-60 pointer-events-none' : 'hover:bg-muted/40',
@@ -558,6 +562,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
             data-testid="input-waren-csv"
             onChange={e => { void handleFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
         </label>
+        )}
         <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
           Warn-Schwelle ±
           <Input value={schwelleText.pct} onChange={e => setSchwelleText(t => ({ ...t, pct: e.target.value }))}

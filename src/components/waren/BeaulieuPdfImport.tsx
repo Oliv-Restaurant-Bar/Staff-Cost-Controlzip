@@ -96,11 +96,14 @@ function num(s: string): number | null {
 
 const R2 = (n: number) => Math.round(n * 100) / 100;
 
-export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef }: {
+export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uploadUiVersteckt }: {
   tenantId: TenantId; onImported: () => void;
   /** Optionaler Einspeise-Kanal: die Seite kann erkannte Profil-PDFs (z.B.
    *  Caporaso aus der Schnellerfassung) direkt in diese Vorschau umleiten. */
   externalFilesRef?: { current: ((files: File[]) => void) | null };
+  /** true = Datei-Auswahl & Drag-Drop ausblenden (Import nur pro Lieferant
+   *  via «Upload nur für …»); Vorschau & Undo bleiben sichtbar. */
+  uploadUiVersteckt?: boolean;
 }) {
   const [profile, setProfile] = useState<LieferantenProfil[]>([]);
   const [zeilen, setZeilen] = useState<VorschauZeile[]>([]);
@@ -459,9 +462,10 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef }: {
 
   return (
     <div className="border border-border/60 rounded-lg p-3 space-y-3" data-testid="beaulieu-pdf-import"
-      onDragOver={e => { e.preventDefault(); }}
-      onDrop={e => { e.preventDefault(); void handleFiles(e.dataTransfer.files); }}>
+      onDragOver={e => { if (!uploadUiVersteckt) e.preventDefault(); }}
+      onDrop={e => { if (uploadUiVersteckt) return; e.preventDefault(); void handleFiles(e.dataTransfer.files); }}>
       <div className="flex flex-wrap items-center gap-3">
+        {!uploadUiVersteckt && (
         <label className="inline-flex items-center gap-2 text-xs font-medium rounded-lg border border-dashed px-3 py-2 cursor-pointer hover:bg-muted/40 transition-colors">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileScan className="h-4 w-4 text-primary" />}
           Lieferanten-PDFs importieren — Mehrfachauswahl/Drag&amp;Drop (Erkennung über MWST-Nr-Profile)
@@ -469,6 +473,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef }: {
             data-testid="input-beaulieu-pdf"
             onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }} />
         </label>
+        )}
         <span className="text-[11px] text-muted-foreground">
           Kopf-Erkennung für alle Profile · Positionen je Lieferung für Terravigna, Spahni, Fideco, Ambro, Transgourmet · Bohnenblust nur manuell
         </span>

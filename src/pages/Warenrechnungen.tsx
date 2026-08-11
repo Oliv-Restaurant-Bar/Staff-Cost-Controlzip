@@ -53,7 +53,7 @@ import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
-import { WarenUniversalUpload, klassifiziereWarenDateien, type UploadRouting } from '@/components/waren/WarenUniversalUpload';
+import { klassifiziereWarenDateien, type UploadRouting } from '@/components/waren/WarenUniversalUpload';
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
@@ -130,7 +130,7 @@ import {
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp, UploadCloud,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
   Info,
 } from 'lucide-react';
@@ -397,8 +397,9 @@ export default function WarenrechnungenPage() {
   const fsImportRef  = useRef<((files: File[]) => void) | null>(null);
   /** Spezial-Import-Boxen (CSV/FS/Profil): eingeklappt, öffnen sich beim Routing. */
   const [spezialOpen, setSpezialOpen] = useState(false);
-  // Universal-Dropzone: dezent eingeklappt unter der Lieferanten-Übersicht.
-  const [uploadOpen, setUploadOpen] = useState(false);
+  // true, sobald «Upload nur für …» Dateien geroutet hat — erst dann zeigen die
+  // Import-Boxen ihre eigene Datei-Auswahl (Import läuft NUR pro Lieferant).
+  const [importRouted, setImportRouted] = useState(false);
   /** Manuelle Einzelerfassung: nur noch als eingeklappter Bereich. */
   const [manuellOpen, setManuellOpen] = useState(false);
   // Stapel-Spiegel + Selbstreferenz: nach einer Umleitung muss processPdf das
@@ -1685,13 +1686,13 @@ export default function WarenrechnungenPage() {
     if (routing.csv.length)    csvImportRef.current?.(routing.csv);
     if (routing.fs.length)     fsImportRef.current?.(routing.fs);
     if (routing.profil.length) profilImportRef.current?.(routing.profil);
-    if (routing.csv.length || routing.fs.length || routing.profil.length) setSpezialOpen(true);
+    if (routing.csv.length || routing.fs.length || routing.profil.length) { setSpezialOpen(true); setImportRouted(true); }
   }, []);
 
   /** Direkt-Upload aus der Lieferanten-Übersicht: NUR für diesen Lieferanten.
    *  Fail-closed: Dateien, die laut Klassifikation NICHT zu ihm gehören,
-   *  werden ABGEWIESEN (nicht umgeleitet) — über den universellen Upload
-   *  oben können sie regulär importiert werden. Nie raten. */
+   *  werden ABGEWIESEN (nicht umgeleitet) — sie gehören zum jeweils anderen
+   *  Lieferanten («Upload nur für …») oder zu «Manuell erfassen». Nie raten. */
   const handleUploadFor = useCallback((files: File[], erwartet: { name: string; ziel: 'csv' | 'fs' | 'profil' }) => {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erfassen von Rechnungen.'); return; }
     void (async () => {
@@ -1706,7 +1707,7 @@ export default function WarenrechnungenPage() {
       const eigene = routing.erkannt.filter(passt);
       const fremde = routing.erkannt.filter(z => !passt(z));
       if (fremde.length > 0) {
-        toast.error(`${fremde.length} Datei(en) gehören nicht zu ${erwartet.name} — abgewiesen. Bitte über «Beleg hochladen — Lieferant wird automatisch erkannt» hochladen.`, {
+        toast.error(`${fremde.length} Datei(en) gehören nicht zu ${erwartet.name} — abgewiesen. Für neue/unbekannte Lieferanten: «Manuell erfassen» (nie raten).`, {
           description: fremde.slice(0, 3).map(f => `${f.file} → ${f.ziel}`).join(' · '),
         });
       }
@@ -2170,25 +2171,12 @@ export default function WarenrechnungenPage() {
                   </div>
                   <div className="px-5 py-4 space-y-4">
 
-                    {/* ── Schnell-Weg: EINE smarte Universal-Dropzone, dezent & eingeklappt.
-                           Format-Buttons gibt es nicht mehr — Erkennung läuft automatisch
-                           über MWST-Nr/Profil; die Import-Boxen öffnen sich beim Routing. ── */}
-                    <button
-                      type="button"
-                      className="text-xs font-medium inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 hover:bg-muted/40 transition-colors"
-                      onClick={() => setUploadOpen(o => !o)}
-                      data-testid="button-toggle-upload"
-                    >
-                      {uploadOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <UploadCloud className="h-3.5 w-3.5" style={{ color: tenant.color }} />}
-                      Beleg hochladen — Lieferant wird automatisch erkannt
-                    </button>
-                    <div className={cn(!uploadOpen && 'hidden')}>
-                      <WarenUniversalUpload tenantId={tenantId} tenantColor={tenant.color}
-                        onRoute={handleUniversalRoute} />
-                    </div>
+                    {/* ── Import läuft AUSSCHLIESSLICH pro Lieferant über die Übersicht oben
+                           («Upload nur für …»). Keine generische Sammel-Dropzone mehr.
+                           Neue/unbekannte Lieferanten: «Manuell erfassen» (mit PDF-Upload). ── */}
 
                     {/* ── Import-Boxen (CSV · Feldschlösschen · Lieferanten-PDF): öffnen sich
-                           automatisch beim Routing; zusätzlich dezent aufklappbar, damit
+                           automatisch beim Routing («Upload nur für …»); zusätzlich dezent aufklappbar, damit
                            Importverlauf, Historie & «Rückgängig» ohne neuen Upload erreichbar
                            bleiben. Kein Format-Chooser mehr — nur Verwaltung. ── */}
                     <button
@@ -2203,14 +2191,17 @@ export default function WarenrechnungenPage() {
                     <div className={cn('space-y-4', !spezialOpen && 'hidden')}>
                       {/* ── CSV-Positionsimport (Transgourmet/Prodega) mit Preisüberwachung ── */}
                       <WarenCsvImport tenantId={tenantId} suppliers={suppliers} externalFilesRef={csvImportRef}
+                        uploadUiVersteckt={!importRouted}
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
                       {/* ── Feldschlösschen PDF-Import (Lieferscheine · Monatsrechnung · Historie) ── */}
                       <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers} externalFilesRef={fsImportRef}
+                        uploadUiVersteckt={!importRouted}
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
                       {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (beide Mandanten) ── */}
                       <BeaulieuPdfImport tenantId={tenantId} externalFilesRef={profilImportRef}
+                        uploadUiVersteckt={!importRouted}
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
                     </div>
 
