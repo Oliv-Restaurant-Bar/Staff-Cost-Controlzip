@@ -5,7 +5,7 @@
  * 2) Zuordnungs-Review: Auto-Vorschlag Waren ja/nein (40xx-Haben-Buchung),
  *    jeder Kreditor an-/abwählbar; «kein Waren» wird pro Mandant dauerhaft
  *    gemerkt (GastroSocial & Co. trotz 40xx-Buchung). Reine-div-Kreditoren
- *    (z.B. Rutishauser-DiVino = Wein) manuell als Waren taggbar.
+ *    (z.B. Wein-Kreditoren ohne Detail-Import) manuell als Waren taggbar.
  * 3) Cockpit: pro Waren-Lieferant Modell · Konto · Anzahl/Betrag Kreditor ↔
  *    erfasst · Differenz · Ampel. Der Auszug ändert NIE bestehende Rechnungen.
  * 4) Fehlende Rechnungen: opt-in-Übernahme (provisorisch, Vorschau, Undo).

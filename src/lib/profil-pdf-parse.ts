@@ -518,26 +518,7 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       ...(hinweise.length ? { hinweise } : {}),
     };
   },
-  rutishauser: (text) => {
-    const g = generischerKopf(text);
-    // «MWST B7 = 8.10 % von 584.40 47.34» — Satz≠0-Zeilen summieren.
-    let netto = 0, mwst = 0, gefunden = false;
-    const re = /MWST\s+\S+\s*=\s*([\d.]+)\s*%\s*von\s+([\d’'.,]+)\s+([\d’'.,]+)/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-      const n = parseBetrag(m[2]) ?? 0;
-      if ((parseBetrag(m[1]) ?? 0) > 0 && n > 0) { netto += n; mwst += parseBetrag(m[3]) ?? 0; gefunden = true; }
-    }
-    const ls = /Lieferscheinnummer\/Datum\s*\n?\s*(\d+)\s*\/\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(text);
-    return {
-      ...g,
-      rechnungsNr: suche(text, [/Rechnung\s*(?:Nr\.?|nummer)?\s*:?\s*(\d{5,12})/i]) ?? g.rechnungsNr,
-      lieferdatum: ls ? parseDatumCH(ls[2]) : null,
-      netto: gefunden ? rundung2(netto) : g.netto,
-      mwst: gefunden ? rundung2(mwst) : g.mwst,
-      mwstSatz: 8.1,
-    };
-  },
+  // rutishauser-Parser entfernt (Altlast, kein Lieferant mehr, 08/2026).
   terravigna: (text) => {
     const netto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s*ohne\\s*MwSt\\.?\\s+(${BETRAG_RE.source})`, 'i')]);
     // Gemischte MwSt-Sätze möglich (z.B. 8.1% + 2.6%): Brutto DIREKT aus dem

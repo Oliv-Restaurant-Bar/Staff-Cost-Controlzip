@@ -82,7 +82,8 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // matcht NICHT «Schenk Family Wine».
   { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, monatsrechnung: false,
     erkennungTokens: ['schenk suisse'] },
-  { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
+  // Rutishauser-DiVino bewusst entfernt (Altlast, kein Lieferant mehr, 08/2026)
+  // — siehe ALTLASTEN_ENTFERNT (filtert auch frühere KV-Profile).
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
@@ -110,6 +111,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
 /** Vom Automatik-Import AUSGESCHLOSSEN (nur manuelle Erfassung): früher
  *  gespeicherte KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
 const BOHNENBLUST_AUSGESCHLOSSEN = { ids: ['bohnenblust'], mwstNrn: ['472136586'] };
+
+/** Altlasten-Lieferanten (kein Lieferant mehr, 08/2026): früher gespeicherte
+ *  KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
+const ALTLASTEN_ENTFERNT = { ids: ['rutishauser'], mwstNrn: ['116319519'] };
 
 function profileKey(tenantId: TenantId): string {
   return tenantKey(tenantId, 'waren_lieferanten_profile_v1');
@@ -150,7 +155,9 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
   }
   return [...proId.values()].filter(p =>
     !BOHNENBLUST_AUSGESCHLOSSEN.ids.includes(p.id)
-    && !BOHNENBLUST_AUSGESCHLOSSEN.mwstNrn.includes(normalisiereMwstNr(p.mwstNr)));
+    && !BOHNENBLUST_AUSGESCHLOSSEN.mwstNrn.includes(normalisiereMwstNr(p.mwstNr))
+    && !ALTLASTEN_ENTFERNT.ids.includes(p.id)
+    && !ALTLASTEN_ENTFERNT.mwstNrn.includes(normalisiereMwstNr(p.mwstNr)));
 }
 
 export async function saveLieferantenProfile(tenantId: TenantId, profile: LieferantenProfil[]): Promise<void> {

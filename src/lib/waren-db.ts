@@ -499,11 +499,11 @@ export const DEFAULT_SUPPLIERS: string[] = [
   'Amarx Espro',
   'Terravigna',
   'Fideco',
-  'Korngold',
+  // Korngold bewusst entfernt (Altlast, kein Lieferant mehr, 08/2026).
   'Paul Ullrich',
   // Hiestand bewusst entfernt (kein Lieferant mehr, 08/2026).
   'Frigemo',
-  'Compagnie Desserts',
+  // Compagnie Desserts bewusst entfernt (Altlast, kein Lieferant mehr, 08/2026).
 ];
 
 // ─── Schlüssel-Helfer ─────────────────────────────────────────────────────────
