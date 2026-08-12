@@ -1,0 +1,40 @@
+Im FIBU-Abgleich zeigt der Kopf aktuell eine einzige Zahl „Differenz (Buchhaltung −
+erfasst)" in Rot, auch wenn die Differenz bereits als „abgeschlossen/erklärt" markiert
+ist (z.B. Feldschlösschen Leergut/Pfand). Das ist irreführend. Trenne die Kopf-Differenz
+in OFFEN und ERKLÄRT.
+
+GRUNDREGELN:
+- Mandantengetrennt (Oliv / Beaulieu). „Leer statt 0". Keine Buchungen verändern —
+  reine Auswertung/Anzeige.
+
+=== 1) KOPF-DIFFERENZ AUFTEILEN ===
+Ersetze die eine rote Differenz-Zahl durch zwei klar getrennte Werte:
+- „Offene Differenz" = Summe aller NICHT als erklärt/abgeschlossen markierten
+  Lieferanten-Differenzen. Das ist die Zahl, die auf 0 gehen soll. Innerhalb der
+  Rundungstoleranz (|Betrag| ≤ z.B. 0.10) als „0.00" / grün anzeigen.
+- „Erklärt" = Summe aller Lieferanten-Differenzen, die als „abgeschlossen/erklärt"
+  markiert sind (Grund Leergut/Pfand, Konto-Split, interne Umbuchung). Neutral/grau
+  anzeigen mit Label, z.B. „Erklärt: Leergut/Pfand · CHF …". Nur einblenden, wenn > 0
+  (leer statt 0).
+
+=== 2) HERKUNFT DER ERKLÄRUNG ===
+- Eine Lieferanten-Differenz gilt als „erklärt", wenn sie über „erklären" / den
+  „abgeschlossen"-Status mit Grund hinterlegt ist (wie bereits bei Feldschlösschen
+  vorhanden). Diese Beträge zählen NICHT in die offene Differenz, sondern in „Erklärt".
+- Rundungsdifferenzen innerhalb der Toleranz fliessen nicht in „Erklärt", sondern gelten
+  als 0 (offene Differenz bleibt grün 0.00).
+
+=== 3) TRANSPARENZ / AUFKLAPPEN ===
+- „Woraus besteht die Differenz?" weiterhin verfügbar, jetzt zweigeteilt:
+  offene Positionen vs. erklärte Positionen (je Lieferant, Betrag, Grund).
+
+=== KONTROLLWERTE JULI 2026 OLIV (nach 1194-Storno) ===
+Erfasst 75'176.13 · Buchhaltung 75'339.18 · Roh-Differenz 163.05.
+Erwartet nach der Aufteilung:
+- Erklärt (Feldschlösschen · Leergut/Pfand): 163.08
+- Offene Differenz: 163.05 − 163.08 = −0.03 → innerhalb Toleranz → Anzeige „0.00" grün.
+Ergebnis-Anzeige Kopf: „Offene Differenz 0.00 ✓ · Erklärt (Leergut/Pfand) CHF 163.08".
+
+=== ABSCHLUSS ===
+Reine Anzeige-Logik, keine Buchung ändern. Mir den neuen Kopf des Juli-Abgleichs (Oliv)
+zeigen: offene Differenz 0.00, erklärt 163.08.

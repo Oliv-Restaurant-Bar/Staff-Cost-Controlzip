@@ -55,7 +55,7 @@ import {
   type WarenKategorie,
   type Warenkonto,
 } from '@/lib/waren-db';
-import { ladeNettoUmsatzByDate } from '@/lib/umsatz';
+import { ladeNettoUmsatzByDate, ladeUmsatzTage, foodBeverageSplit, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
@@ -66,7 +66,7 @@ import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
-import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
+import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft, type UebernahmeKandidat,
@@ -146,7 +146,7 @@ import {
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp, EyeOff, RotateCcw,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp, EyeOff, RotateCcw, Truck,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
   Info, FileDown,
 } from 'lucide-react';
@@ -282,7 +282,7 @@ function isoWeekRange(isoYear: number, week: number): { from: string; to: string
 // ─── KPI-Box ──────────────────────────────────────────────────────────────────
 
 const KpiBox = ({
-  label, value, sub, sub2, icon: Icon, variant = 'default',
+  label, value, sub, sub2, icon: Icon, variant = 'default', chip, onClick, testId,
 }: {
   label: string;
   value: string;
@@ -290,6 +290,11 @@ const KpiBox = ({
   sub2?: string;
   icon?: React.FC<{ className?: string }>;
   variant?: 'default' | 'warn' | 'alert' | 'ok' | 'muted';
+  /** Zeitraum-Chip («HEUTE»/«MONAT») — macht die Zuordnung der Werte eindeutig. */
+  chip?: string;
+  /** Klickbare Box (öffnet Detail-Popup). */
+  onClick?: () => void;
+  testId?: string;
 }) => {
   const bg: Record<string, string> = {
     default: 'bg-card border-border',
@@ -318,17 +323,33 @@ const KpiBox = ({
   // Grösse zwischen 0.8rem und 1.5rem (= text-2xl) — nie Overflow, auch bei
   // 7-stelligen Beträgen oder schmalen Spalten. overflow-hidden als Sicherheitsnetz.
   const fontSize = `clamp(0.8rem, calc((100cqw - 2rem) / ${Math.max(6, value.length) * 0.62}), 1.5rem)`;
+  const Tag = onClick ? 'button' : 'div';
   return (
-    <div className={cn('rounded-xl border p-4 flex flex-col gap-1 min-h-[96px] min-w-0 overflow-hidden [container-type:inline-size]', bg[variant])}>
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', dot[variant])} />
-        {Icon && <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />}
-        <p className="text-xs text-muted-foreground font-medium leading-tight truncate">{label}</p>
+    <Tag
+      {...(onClick ? { type: 'button' as const, onClick } : {})}
+      {...(testId ? { 'data-testid': testId } : {})}
+      className={cn(
+        'rounded-xl border p-4 flex flex-col gap-1 min-h-[96px] min-w-0 overflow-hidden [container-type:inline-size] text-left',
+        bg[variant],
+        onClick && 'cursor-pointer transition-shadow hover:shadow-md hover:border-foreground/30 focus:outline-none focus:ring-1 focus:ring-ring',
+      )}
+    >
+      <div className="flex items-start gap-1.5 min-w-0">
+        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1', dot[variant])} />
+        {Icon && <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground mt-0.5" />}
+        {/* Titel voll ausschreiben — nie abschneiden (bis zu 2 Zeilen). */}
+        <p className="text-xs text-muted-foreground font-medium leading-tight min-w-0">{label}</p>
+        {chip && (
+          <span className={cn(
+            'ml-auto flex-shrink-0 rounded px-1 py-px text-[9px] font-bold tracking-wider uppercase',
+            chip === 'HEUTE' ? 'bg-foreground/80 text-background' : 'bg-muted text-muted-foreground',
+          )}>{chip}</span>
+        )}
       </div>
       <p className={cn('font-bold tabular-nums leading-none mt-0.5 whitespace-nowrap', vc[variant])} style={{ fontSize }}>{value}</p>
       {sub && <p className="text-xs text-muted-foreground leading-tight truncate" title={sub}>{sub}</p>}
       {sub2 && <p className="text-[11px] text-muted-foreground/60 leading-tight truncate" title={sub2}>{sub2}</p>}
-    </div>
+    </Tag>
   );
 };
 
@@ -725,6 +746,46 @@ export default function WarenrechnungenPage() {
     () => ignorierteKandidaten.reduce((s, k) => s + k.betrag, 0),
     [ignorierteKandidaten],
   );
+  /**
+   * Kopf-Differenz aufgeteilt: erklärte (abgeschlossene) Lieferanten-
+   * Differenzen. GLEICHE Gültigkeitsregel wie die Tabellenzeilen — eine
+   * Erklärung, deren festgehaltener Betrag nicht mehr zur AKTUELLEN Differenz
+   * passt (> 0.05), ist veraltet und zählt NICHT. Betrag = aktuelle Differenz
+   * der Zeile (nicht der gespeicherte), damit Kopf und Tabelle deckungsgleich
+   * sind. Reine Anzeige-Logik — keine Buchung wird verändert.
+   */
+  const erklaerteKopf = useMemo(() => {
+    const leer = { summe: 0, posten: [] as Array<{ lieferant: string; grund: string; betrag: number }> };
+    if (!abgleich || !fibuGeladen) return leer;
+    const posten: Array<{ lieferant: string; grund: string; betrag: number }> = [];
+    for (const z of abgleich.zeilen) {
+      const e = fibuState.erklaert[z.lieferant];
+      if (!e || z.diff === null) continue;
+      if (e.betrag !== null && Math.abs(e.betrag - z.diff) > 0.05) continue; // veraltet
+      // Rundungsdifferenzen innerhalb der Toleranz gelten als 0 und fliessen
+      // NICHT in «Erklärt» (die offene Differenz bleibt grün 0.00).
+      if (Math.abs(z.diff) <= 0.10) continue;
+      posten.push({ lieferant: z.lieferant, grund: erklaerGrundLabel(e.grund), betrag: z.diff });
+    }
+    const summe = Math.round(posten.reduce((sum, pos) => sum + pos.betrag, 0) * 100) / 100;
+    return { summe, posten };
+  }, [abgleich, fibuGeladen, fibuState]);
+  /** Rundungstoleranz der offenen Kopf-Differenz (|Betrag| ≤ 0.10 → «0.00» grün). */
+  const OFFEN_TOLERANZ_CHF = 0.10;
+  /**
+   * Ignoriert-Abzug für den KOPF: Kandidaten eines Lieferanten, dessen
+   * Differenz bereits als «erklärt» zählt, werden übersprungen — sonst würde
+   * dieselbe Abweichung doppelt abgezogen (z.B. Barausgaben-Zeile mit
+   * ignorierter Buchung UND Erklärung). Die Ignorier-Liste selbst bleibt
+   * unangetastet (reine Kopf-Arithmetik).
+   */
+  const ignorierteSummeKopf = useMemo(() => {
+    if (erklaerteKopf.posten.length === 0) return ignorierteSumme;
+    const erklaerteLieferanten = new Set(erklaerteKopf.posten.map(pos => pos.lieferant));
+    return ignorierteKandidaten
+      .filter(k => !k.lieferant || !erklaerteLieferanten.has(k.lieferant))
+      .reduce((sum, k) => sum + k.betrag, 0);
+  }, [ignorierteKandidaten, ignorierteSumme, erklaerteKopf]);
   /** Ignorieren-Dialog (Vorschau + Grund) für eine Buchhaltungszeile. */
   const [ignorierKandidat, setIgnorierKandidat] = useState<UebernahmeKandidat | null>(null);
   const [ignorierGrund, setIgnorierGrund] = useState('');
@@ -764,6 +825,24 @@ export default function WarenrechnungenPage() {
   const [erfassungSupplierFilter, setErfassungSupplierFilter] = useState<string>(''); // '' = alle
   /** Nur aus dem FIBU-Abgleich übernommene Rechnungen zeigen (Rückgängig-Pfad). */
   const [nurFibuUebernahmen, setNurFibuUebernahmen] = useState(false);
+  // ─── Erfassung: UI-Layout (reine Anzeige — keine Buchungslogik) ───────────
+  /** «+ Neue Rechnung»-Panel als Overlay; Inhalt bleibt IMMER gemountet
+   *  (Import-Boxen mit externalFilesRef dürfen nie unmounten). */
+  const [neuOpen, setNeuOpen] = useState(false);
+  /** KPI-Detail-Popups (direkter Warenaufwand nach Konto · Umsatz-Aufbau). */
+  const [kpiDialog, setKpiDialog] = useState<null | 'direkt' | 'umsatz'>(null);
+  /** Listen-Umschalter: Total Netto ↔ nur direkter Warenaufwand (4020–4070). */
+  const [listeAnsicht, setListeAnsicht] = useState<'total' | 'direkt'>('total');
+  /** Zusätzliche Listen-Filter (kombinierbar). */
+  const [erfassungDatumFilter, setErfassungDatumFilter] = useState('');
+  const [erfassungKategorieFilter, setErfassungKategorieFilter] = useState<'' | 'Food' | 'Beverage' | 'Sonstiges'>('');
+  const [erfassungKontoFilter, setErfassungKontoFilter] = useState('');
+  /** Lieferanten-Übersicht standardmässig eingeklappt (Platz sparen). */
+  const [lieferantenOffen, setLieferantenOffen] = useState(false);
+  /** Umsatz-Tage (Food/Beverage-Aufbau) — lazy fürs Umsatz-Popup. */
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag> | null>(null);
+  /** Fokusziel des «Neue Rechnung»-Overlays (Escape/Tastatur-Bedienbarkeit). */
+  const neuPanelRef = useRef<HTMLElement | null>(null);
 
   // ─── Analyse: Lieferanten-Filter ──────────────────────────────────────────
   const [supplierFilter, setSupplierFilter] = useState<string>(''); // '' = alle
@@ -1025,6 +1104,16 @@ export default function WarenrechnungenPage() {
   };
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1;
 
+  // «Neue Rechnung»-Overlay: beim Öffnen Fokus ins Panel (Escape schliesst).
+  useEffect(() => { if (neuOpen) neuPanelRef.current?.focus(); }, [neuOpen]);
+
+  // Umsatz-Popup: Tage lazy laden; Cache bei Monats-/Mandantenwechsel leeren.
+  useEffect(() => { setUmsatzTage(null); }, [monthKey, tenantId]);
+  useEffect(() => {
+    if (kpiDialog !== 'umsatz' || umsatzTage !== null) return;
+    void ladeUmsatzTage(tenantId, `${monthKey}-01`, `${monthKey}-31`).then(setUmsatzTage).catch(() => setUmsatzTage(new Map()));
+  }, [kpiDialog, umsatzTage, tenantId, monthKey]);
+
   const stats = useMemo(() => computeMonthStats(entries, revenueByDate), [entries, revenueByDate]);
   // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
   // Kontoklassen: nur Warenkosten-Anteile (4000–Grenze); Betriebskosten separat.
@@ -1044,16 +1133,66 @@ export default function WarenrechnungenPage() {
 
   const datesWithEntries = useMemo(() => Array.from(new Set(entries.map(e => e.date))).sort(), [entries]);
 
-  // Gefilterte Einträge für Erfassung-Tab (nach Lieferant)
+  // Gefilterte Einträge für Erfassung-Tab (Lieferant · Datum · Kategorie ·
+  // Warenkonto · FIBU — kombinierbar; Total/WKQ rechnen auf dieser Basis).
   const filteredEntries = useMemo(() => {
     let sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
     if (nurFibuUebernahmen) sorted = sorted.filter(e => e.quelle === 'fibu_uebernahme');
-    if (!erfassungSupplierFilter) return sorted;
-    return sorted.filter(e => e.supplierName === erfassungSupplierFilter);
-  }, [entries, erfassungSupplierFilter, nurFibuUebernahmen]);
+    if (erfassungSupplierFilter) sorted = sorted.filter(e => e.supplierName === erfassungSupplierFilter);
+    if (erfassungDatumFilter) sorted = sorted.filter(e => e.date === erfassungDatumFilter);
+    if (erfassungKategorieFilter) sorted = sorted.filter(e =>
+      (e.kategorie ?? kontoKategorie(e.warenkonto ?? '', warenkonten)) === erfassungKategorieFilter);
+    if (erfassungKontoFilter) sorted = sorted.filter(e =>
+      kontoShares(e).some(sh => sh.konto === erfassungKontoFilter));
+    return sorted;
+  }, [entries, erfassungSupplierFilter, nurFibuUebernahmen, erfassungDatumFilter, erfassungKategorieFilter, erfassungKontoFilter, warenkonten]);
 
   const filteredTotalNet   = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountNet, 0),   [filteredEntries]);
   const filteredTotalGross = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountGross, 0), [filteredEntries]);
+
+  /** Listen-Ansicht «nur direkter Warenaufwand»: 4020–4070-Anteil pro Eintrag. */
+  const filteredDirektNet = useMemo(
+    () => Math.round(filteredEntries.reduce((s, e) => s + direktAnteilNet(e), 0) * 100) / 100,
+    [filteredEntries],
+  );
+  /** WKQ auf der gefilterten Basis: Zähler = relevante Warenkosten der
+   *  gefilterten Einträge. Nenner: bei aktivem DATUMSFILTER der Umsatz genau
+   *  dieses Tages, sonst der Monatsumsatz (Lieferant/Kategorie/Konto sind
+   *  bewusst Anteile am Monatsumsatz — gleiche Basis wie die Monats-WKQ). */
+  const filteredWkqPct = useMemo(() => {
+    const basisUmsatz = erfassungDatumFilter
+      ? (revenueByDate[erfassungDatumFilter] ?? 0)
+      : totalRevenue;
+    return warenkostenQuote(relevantNetOf(filteredEntries, warenGrenze), basisUmsatz);
+  }, [filteredEntries, warenGrenze, totalRevenue, erfassungDatumFilter, revenueByDate]);
+  /** In der Liste sichtbare Einträge (direkt-Ansicht blendet reine 4090/4701/4800-Einträge aus). */
+  const anzeigeEntries = useMemo(
+    () => listeAnsicht === 'direkt' ? filteredEntries.filter(e => Math.abs(direktAnteilNet(e)) > 0.004) : filteredEntries,
+    [filteredEntries, listeAnsicht],
+  );
+  /** Aufbau des direkten Warenaufwands nach Konto (fürs KPI-Popup). */
+  const kontoAufbau = useMemo(() => {
+    const KONTO_NAMEN: Record<string, string> = {
+      '4020': 'Wein', '4030': 'Bier', '4040': 'Spirituosen',
+      '4050': 'Mineral', '4060': 'Küche', '4070': 'Kaffee/Tee',
+    };
+    const sums = new Map<string, number>();
+    for (const e of entries) {
+      for (const sh of kontoShares(e)) {
+        if (!(DIREKTE_WARENKONTEN as readonly string[]).includes(sh.konto)) continue;
+        sums.set(sh.konto, (sums.get(sh.konto) ?? 0) + sh.net);
+      }
+    }
+    return (DIREKTE_WARENKONTEN as readonly string[])
+      .map(k => ({ konto: k, name: KONTO_NAMEN[k] ?? '', net: Math.round((sums.get(k) ?? 0) * 100) / 100 }))
+      .filter(r => Math.abs(r.net) > 0.004); // Konten mit 0 weglassen (leer statt 0)
+  }, [entries]);
+  /** Alle in den Einträgen vorkommenden Warenkonten (Filter-Dropdown). */
+  const entryKontos = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of entries) for (const sh of kontoShares(e)) if (sh.konto) set.add(sh.konto);
+    return [...set].sort();
+  }, [entries]);
 
   /**
    * Split der Total-Zeile in der Erfassungsliste: volle Rechnungssumme =
@@ -1063,15 +1202,15 @@ export default function WarenrechnungenPage() {
    * wie die Total-Zeile (Lieferanten-/FIBU-Filter inklusive).
    */
   const erfassungTotalSplit = useMemo(() => {
-    // EXAKT dieselbe Basis wie die angezeigte Total-Zahl der Zeile
-    // (filteredTotalNet nur bei aktivem Lieferantenfilter, sonst ganzer Monat).
-    const basis = erfassungSupplierFilter ? filteredEntries : entries;
+    // EXAKT dieselbe Basis wie die angezeigte Total-Zahl der Zeile:
+    // die gefilterten Einträge (ohne Filter = ganzer Monat).
+    const basis = filteredEntries;
     const total = basis.reduce((sum, e) => sum + (Number.isFinite(e.amountNet) ? e.amountNet : 0), 0);
     const direkt = direkterWarenaufwand(basis).direktNet;
     const depot = basis.reduce((sum, e) => sum + depotAnteilNet(e), 0);
     const r2 = (x: number) => Math.round(x * 100) / 100;
     return { total: r2(total), direkt: r2(direkt), depot: r2(depot), uebrig: r2(total - direkt - depot) };
-  }, [entries, filteredEntries, erfassungSupplierFilter]);
+  }, [filteredEntries]);
 
   /** Obere Kennzahl: direkter Warenaufwand 4020–4070 des Monats (WKQ-Basis). */
   const monthDirektNet = useMemo(() => direkterWarenaufwand(entries).direktNet, [entries]);
@@ -1874,7 +2013,7 @@ export default function WarenrechnungenPage() {
     if (routing.csv.length)    csvImportRef.current?.(routing.csv);
     if (routing.fs.length)     fsImportRef.current?.(routing.fs);
     if (routing.profil.length) profilImportRef.current?.(routing.profil);
-    if (routing.csv.length || routing.fs.length || routing.profil.length) { setSpezialOpen(true); setImportRouted(true); }
+    if (routing.csv.length || routing.fs.length || routing.profil.length) { setSpezialOpen(true); setImportRouted(true); setNeuOpen(true); }
   }, []);
 
   /** Direkt-Upload aus der Lieferanten-Übersicht: NUR für diesen Lieferanten.
@@ -2368,53 +2507,122 @@ export default function WarenrechnungenPage() {
         ) : (
           <>
             {/* ── KPI-Block (immer sichtbar) ──────────────────────────────── */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
               <KpiBox
                 label="Warenkosten heute"
+                chip="HEUTE"
                 value={`CHF ${fmtChf(todayNet)}`}
-                sub={todayPct !== null ? `${fmtPct(todayPct)} vom Umsatz` : 'Kein Umsatz'}
-                sub2={isCurrentMonth ? undefined : undefined}
+                sub={todayPct !== null ? `WKQ heute ${fmtPct(todayPct)}` : 'Kein Umsatz'}
+                sub2={todayRevenue > 0 ? `Umsatz heute CHF ${fmtChf(todayRevenue)}` : undefined}
                 icon={ShoppingCart}
                 variant={todayNet === 0 ? 'muted' : kpiVariant(todayPct)}
               />
               <KpiBox
-                label="Warenkosten heute %"
-                value={todayPct !== null ? fmtPct(todayPct) : '–'}
-                sub={todayRevenue > 0 ? `Umsatz CHF ${fmtChf(todayRevenue)}` : 'Kein Umsatz'}
-                icon={TrendingUp}
-                variant={kpiVariant(todayPct)}
-              />
-              <KpiBox
-                label="Direkter Warenaufwand"
+                label="Direkter Warenaufwand (Monat)"
+                chip="MONAT"
                 value={`CHF ${fmtChf(monthDirektNet)}`}
-                sub={`Konten 4020–4070 (WKQ-Basis) · ${stats.entryCount} Einträge, exkl. MWST`}
+                sub="Konten 4020–4070 · Klick für Aufbau"
                 sub2={monthBetrieb > 0 ? `Betriebskosten (≥ ${warenGrenze + 1}): CHF ${fmtChf(monthBetrieb)}` : undefined}
                 icon={Package}
                 variant={monthDirektNet > 0 ? 'default' : 'muted'}
+                onClick={() => setKpiDialog('direkt')}
+                testId="kpi-direkt-monat"
               />
               <KpiBox
-                label="Warenkosten Monat %"
+                label="WKQ Monat"
+                chip="MONAT"
                 value={monthPct !== null ? fmtPct(monthPct) : '–'}
-                sub={monthPct !== null ? `Ziel ≤ 30 %` : 'Kein Umsatz'}
+                sub={monthPct !== null ? 'Ziel ≤ 30 %' : 'Kein Umsatz'}
                 sub2={monthPct !== null && monthPct <= 30 ? '✓ Im Zielbereich' : monthPct !== null ? '↑ Über Ziel' : undefined}
                 icon={TrendingUp}
                 variant={kpiVariant(monthPct)}
               />
               <KpiBox
-                label="Kum. Umsatz Monat"
+                label="Kum. Umsatz (Monat)"
+                chip="MONAT"
                 value={totalRevenue > 0 ? `CHF ${fmtChf(totalRevenue)}` : '–'}
-                sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : `${Object.keys(revenueByDate).length} Tage`}
+                sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : `${Object.keys(revenueByDate).length} Tage · Klick für Aufbau`}
                 icon={TrendingUp}
                 variant={totalRevenue > 0 ? 'default' : 'muted'}
+                onClick={() => setKpiDialog('umsatz')}
+                testId="kpi-umsatz-monat"
               />
               <KpiBox
                 label="Lieferanten aktiv"
-                value={String(suppliersWithEntries)}
-                sub={`von ${activeSuppliers.length} verfügbar`}
+                chip="MONAT"
+                value={`${suppliersWithEntries} / ${activeSuppliers.length}`}
+                sub={`${suppliersWithEntries} mit Einträgen von ${activeSuppliers.length} verfügbaren`}
                 icon={CheckCircle2}
                 variant={suppliersWithEntries > 0 ? 'ok' : 'muted'}
               />
             </div>
+
+            {/* ── KPI-Detail-Popups (reine Anzeige) ───────────────────────── */}
+            <Dialog open={kpiDialog === 'direkt'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
+              <DialogContent className="max-w-sm" aria-describedby={undefined} data-testid="dialog-kpi-direkt">
+                <DialogHeader>
+                  <DialogTitle className="text-sm">Direkter Warenaufwand · {monthLabel}</DialogTitle>
+                </DialogHeader>
+                <div className="text-sm">
+                  {kontoAufbau.map(r => (
+                    <div key={r.konto} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
+                      <span><span className="font-mono font-semibold">{r.konto}</span> <span className="text-muted-foreground">{r.name}</span></span>
+                      <span className="tabular-nums">CHF {fmtChf(r.net)}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between pt-2 mt-1 border-t border-border font-semibold">
+                    <span>Summe (Konten 4020–4070)</span>
+                    <span className="tabular-nums">CHF {fmtChf(monthDirektNet)}</span>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={kpiDialog === 'umsatz'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
+              <DialogContent className="max-w-md" aria-describedby={undefined} data-testid="dialog-kpi-umsatz">
+                <DialogHeader>
+                  <DialogTitle className="text-sm">Kum. Umsatz (netto) · {monthLabel}</DialogTitle>
+                </DialogHeader>
+                {umsatzTage === null ? (
+                  <p className="text-xs text-muted-foreground py-3">Wird geladen…</p>
+                ) : (() => {
+                  const tage = [...umsatzTage.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+                  let food = 0, bev = 0;
+                  for (const [, t] of tage) { const sp = foodBeverageSplit(t); food += sp.food; bev += sp.beverage; }
+                  const r2x = (x: number) => Math.round(x * 100) / 100;
+                  return (
+                    <div className="text-sm space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between py-1.5 border-b border-border/40">
+                          <span>Food netto</span>
+                          <span className="tabular-nums">CHF {fmtChf(r2x(food))}</span>
+                        </div>
+                        <div className="flex items-center justify-between py-1.5">
+                          <span>Beverage netto</span>
+                          <span className="tabular-nums">CHF {fmtChf(r2x(bev))}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-border font-semibold">
+                          <span>Summe</span>
+                          <span className="tabular-nums">CHF {fmtChf(totalRevenue)}</span>
+                        </div>
+                      </div>
+                      {tage.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-1">Tagesliste</p>
+                          <div className="max-h-56 overflow-y-auto pr-1 text-xs">
+                            {tage.map(([d, t]) => (
+                              <div key={d} className="flex items-center justify-between py-1 border-b border-border/30 last:border-0">
+                                <span className="text-muted-foreground">{formatDateLong(d)}</span>
+                                <span className="tabular-nums">CHF {fmtChf(Math.round(nettoUmsatzTag(t) * 100) / 100)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </DialogContent>
+            </Dialog>
 
             {/* ── Tab: Erfassung ────────────────────────────────────────── */}
             {tab === 'erfassung' && (
@@ -2428,22 +2636,67 @@ export default function WarenrechnungenPage() {
                   </div>
                 )}
 
-                {/* ── PRIMÄR: Lieferanten-Übersicht (benannte Lieferanten, Status, Direkt-Upload) ── */}
-                <WarenLieferantenUebersicht
-                  tenantId={tenantId}
-                  entries={entries}
-                  suppliers={suppliers}
-                  canEdit={canEdit}
-                  canUpload={canCreate}
-                  monthLabel={monthLabel}
-                  onUploadFor={handleUploadFor}
-                />
-
-                {canCreate && (
+                {/* ── Lieferanten-Übersicht: einklappbar, Standard zu (Platz) ── */}
                 <section className="bg-card border border-border rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    className="w-full px-5 py-3 flex items-center justify-between gap-2 hover:bg-muted/20 transition-colors"
+                    onClick={() => setLieferantenOffen(o => !o)}
+                    data-testid="toggle-lieferanten-uebersicht"
+                  >
+                    <span className="text-sm font-semibold flex items-center gap-2">
+                      <Truck className="h-4 w-4" style={{ color: tenant.color }} />
+                      Lieferanten-Übersicht · {monthLabel}
+                    </span>
+                    {lieferantenOffen
+                      ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                      : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                  </button>
+                  {/* Inhalt bleibt gemountet (Upload-Routing/Status), nur versteckt. */}
+                  <div className={cn('px-3 pb-3', !lieferantenOffen && 'hidden')}>
+                    <WarenLieferantenUebersicht
+                      tenantId={tenantId}
+                      entries={entries}
+                      suppliers={suppliers}
+                      canEdit={canEdit}
+                      canUpload={canCreate}
+                      monthLabel={monthLabel}
+                      onUploadFor={handleUploadFor}
+                    />
+                  </div>
+                </section>
+
+                {/* ── «Neue Rechnung erfassen» als Overlay: Inhalt bleibt IMMER
+                       gemountet (Import-Boxen mit externalFilesRef), nur versteckt.
+                       Öffnen: Button in der Einträge-Kopfzeile oder Upload-Routing. ── */}
+                {canCreate && (
+                <div
+                  className={cn(
+                    neuOpen
+                      ? 'fixed inset-0 z-50 bg-black/50 overflow-y-auto p-3 sm:p-8'
+                      : 'hidden',
+                  )}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Neue Rechnung erfassen"
+                  data-testid="overlay-neue-rechnung"
+                  onMouseDown={e => { if (e.target === e.currentTarget) setNeuOpen(false); }}
+                  onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setNeuOpen(false); } }}
+                >
+                <section ref={neuPanelRef} tabIndex={-1}
+                  className="bg-card border border-border rounded-xl overflow-hidden w-full max-w-3xl mx-auto shadow-xl focus:outline-none">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
                     <Plus className="h-4 w-4" style={{ color: tenant.color }} />
                     <h2 className="text-sm font-semibold">Neue Rechnung erfassen</h2>
+                    <button
+                      type="button"
+                      className="ml-auto h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      onClick={() => setNeuOpen(false)}
+                      title="Schliessen"
+                      data-testid="close-neue-rechnung"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
                   <div className="px-5 py-4 space-y-4">
 
@@ -2906,6 +3159,7 @@ export default function WarenrechnungenPage() {
                     </div> {/* end manuellOpen */}
                   </div>
                 </section>
+                </div>
                 )} {/* end canCreate */}
 
                 {/* Letzte Einträge */}
@@ -2917,32 +3171,98 @@ export default function WarenrechnungenPage() {
                   </div>
                 ) : (
                   <section className="bg-card border border-border rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
-                      <h2 className="text-sm font-semibold">Einträge {monthLabel}</h2>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* Lieferanten-Filter Dropdown */}
-                        <div className="flex items-center gap-1.5">
-                          <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                          <select
-                            value={erfassungSupplierFilter}
-                            onChange={e => setErfassungSupplierFilter(e.target.value)}
-                            className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring min-w-[140px]"
-                          >
-                            <option value="">Alle Lieferanten</option>
-                            {entrySupplierNames.map(name => (
-                              <option key={name} value={name}>{name}</option>
-                            ))}
-                          </select>
-                          {erfassungSupplierFilter && (
+                    <div className="px-5 py-3 border-b border-border bg-muted/20 space-y-2">
+                      {/* Zeile 1: Titel · Total · WKQ · Ansicht-Umschalter · + Neue Rechnung */}
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <h2 className="text-sm font-semibold">Einträge {monthLabel}</h2>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <span className="text-sm font-semibold tabular-nums" data-testid="liste-total">
+                            CHF {fmtChf(listeAnsicht === 'direkt' ? filteredDirektNet : filteredTotalNet)}
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              netto{listeAnsicht === 'direkt' ? ' · nur 4020–4070' : ''}
+                            </span>
+                          </span>
+                          {filteredWkqPct !== null && (
+                            <span className="text-xs rounded-full bg-muted px-2 py-0.5 tabular-nums" data-testid="liste-wkq"
+                              title="Warenkostenquote der gefilterten Basis (relevante Warenkosten / Monatsumsatz netto)">
+                              WKQ {fmtPct(filteredWkqPct)}
+                            </span>
+                          )}
+                          <div className="flex rounded-md border border-border overflow-hidden text-xs" role="group" aria-label="Ansicht">
                             <button
-                              onClick={() => setErfassungSupplierFilter('')}
-                              className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                              title="Filter zurücksetzen"
+                              type="button"
+                              className={cn('px-2 py-1 transition-colors', listeAnsicht === 'total'
+                                ? 'bg-foreground text-background' : 'bg-background text-muted-foreground hover:text-foreground')}
+                              onClick={() => setListeAnsicht('total')}
+                              data-testid="ansicht-total"
                             >
-                              <X className="h-3.5 w-3.5" />
+                              Total Netto
                             </button>
+                            <button
+                              type="button"
+                              className={cn('px-2 py-1 border-l border-border transition-colors', listeAnsicht === 'direkt'
+                                ? 'bg-foreground text-background' : 'bg-background text-muted-foreground hover:text-foreground')}
+                              onClick={() => setListeAnsicht('direkt')}
+                              title="Nur den 4020–4070-Anteil zeigen (Betriebsmaterial/übrige und Depot ausgeblendet)"
+                              data-testid="ansicht-direkt"
+                            >
+                              Nur direkter Warenaufwand
+                            </button>
+                          </div>
+                          {canCreate && (
+                            <Button size="sm" className="h-7 px-2.5 text-xs gap-1" data-testid="button-neue-rechnung"
+                              onClick={() => setNeuOpen(true)}>
+                              <Plus className="h-3.5 w-3.5" /> Neue Rechnung
+                            </Button>
                           )}
                         </div>
+                      </div>
+                      {/* Zeile 2: kombinierbare Filter (Lieferant · Datum · Kategorie · Warenkonto · FIBU) */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                        <select
+                          value={erfassungSupplierFilter}
+                          onChange={e => setErfassungSupplierFilter(e.target.value)}
+                          className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring min-w-[130px]"
+                        >
+                          <option value="">Alle Lieferanten</option>
+                          {entrySupplierNames.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={erfassungDatumFilter}
+                          onChange={e => setErfassungDatumFilter(e.target.value)}
+                          className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          data-testid="filter-datum"
+                        >
+                          <option value="">Alle Tage</option>
+                          {[...datesWithEntries].reverse().map(d => (
+                            <option key={d} value={d}>{formatDateLong(d)}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={erfassungKategorieFilter}
+                          onChange={e => setErfassungKategorieFilter(e.target.value as '' | 'Food' | 'Beverage' | 'Sonstiges')}
+                          className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          data-testid="filter-kategorie"
+                        >
+                          <option value="">Alle Kategorien</option>
+                          <option value="Food">Food</option>
+                          <option value="Beverage">Beverage</option>
+                          <option value="Sonstiges">Sonstiges</option>
+                        </select>
+                        <select
+                          value={erfassungKontoFilter}
+                          onChange={e => setErfassungKontoFilter(e.target.value)}
+                          className="h-7 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          data-testid="filter-konto"
+                        >
+                          <option value="">Alle Warenkonten</option>
+                          {entryKontos.map(k => (
+                            <option key={k} value={k}>{k}</option>
+                          ))}
+                        </select>
                         <button
                           onClick={() => setNurFibuUebernahmen(v => !v)}
                           className={cn(
@@ -2956,10 +3276,20 @@ export default function WarenrechnungenPage() {
                         >
                           FIBU-Übernahmen
                         </button>
-                        <span className="text-xs text-muted-foreground">
-                          {(erfassungSupplierFilter || nurFibuUebernahmen)
-                            ? `${filteredEntries.length} von ${entries.length} Einträgen · CHF ${fmtChf(filteredTotalNet)} netto`
-                            : `${entries.length} Einträge · CHF ${fmtChf(stats.totalNet)} netto`}
+                        {(erfassungSupplierFilter || erfassungDatumFilter || erfassungKategorieFilter || erfassungKontoFilter || nurFibuUebernahmen) && (
+                          <button
+                            onClick={() => { setErfassungSupplierFilter(''); setErfassungDatumFilter(''); setErfassungKategorieFilter(''); setErfassungKontoFilter(''); setNurFibuUebernahmen(false); }}
+                            className="h-7 w-7 flex items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                            title="Alle Filter zurücksetzen"
+                            data-testid="filter-reset"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <span className="text-xs text-muted-foreground ml-auto">
+                          {anzeigeEntries.length === entries.length
+                            ? `${entries.length} Einträge`
+                            : `${anzeigeEntries.length} von ${entries.length} Einträgen`}
                         </span>
                       </div>
                     </div>
@@ -2980,7 +3310,7 @@ export default function WarenrechnungenPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredEntries.map((e, i) => (
+                          {anzeigeEntries.map((e, i) => (
                             <tr key={e.id} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10')}>
                               <td className="px-4 py-2.5 text-sm text-muted-foreground">{formatDateLong(e.date)}</td>
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
@@ -2998,28 +3328,44 @@ export default function WarenrechnungenPage() {
                                   );
                                 })()}
                               </td>
-                              <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{fmtChf(e.amountNet)}</td>
-                              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(e.amountGross)}</td>
-                              <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
-                              <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                                {e.kontoSplits && e.kontoSplits.length > 0 ? (
-                                  <div className="flex flex-col gap-0.5">
-                                    {e.kontoSplits.map((s, si) => (
-                                      <span key={si} className="inline-flex items-center gap-1">
-                                        <span className="font-mono font-semibold text-foreground/80">{s.warenkonto}</span>
-                                        <span className="text-muted-foreground/60">CHF {fmtChf(s.amountNet)}</span>
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : e.warenkonto ? (
-                                  <span className="font-mono font-semibold text-foreground/80">{e.warenkonto}</span>
-                                ) : (
-                                  <span className="opacity-30">–</span>
-                                )}
+                              <td className="px-4 py-2.5 text-right tabular-nums font-semibold whitespace-nowrap"
+                                title={listeAnsicht === 'direkt' && Math.abs(direktAnteilNet(e) - e.amountNet) > 0.004
+                                  ? `Nur 4020–4070-Anteil · Rechnungstotal netto CHF ${fmtChf(e.amountNet)}` : undefined}>
+                                {fmtChf(listeAnsicht === 'direkt' ? direktAnteilNet(e) : e.amountNet)}
                               </td>
-                              <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                              <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground whitespace-nowrap">
+                                {listeAnsicht === 'direkt' ? <span className="opacity-30">–</span> : fmtChf(e.amountGross)}
+                              </td>
+                              <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                                {(() => {
+                                  // Kompakt: Hauptkonto (grösster Anteil) + «+n»; Details im Tooltip.
+                                  let shares = kontoShares(e);
+                                  if (listeAnsicht === 'direkt') {
+                                    shares = shares.filter(sh => (DIREKTE_WARENKONTEN as readonly string[]).includes(sh.konto));
+                                  }
+                                  if (shares.length === 0) return <span className="opacity-30">–</span>;
+                                  const sortiert = [...shares].sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+                                  const haupt = sortiert[0];
+                                  const tip = sortiert.map(sh => `${sh.konto}: CHF ${fmtChf(sh.net)}`).join('\n');
+                                  return (
+                                    <span className="inline-flex items-center gap-1 cursor-help" title={tip}
+                                      data-testid={`konto-kompakt-${e.id}`}>
+                                      <span className="font-mono font-semibold text-foreground/80">{haupt.konto}</span>
+                                      {sortiert.length > 1 && (
+                                        <span className="rounded bg-muted px-1 py-px text-[10px] font-medium">+{sortiert.length - 1}</span>
+                                      )}
+                                    </span>
+                                  );
+                                })()}
+                              </td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                                 <span className="inline-flex items-center gap-1.5">
-                                  {e.reference ?? (!e.receiptPath && <span className="opacity-30">–</span>)}
+                                  {e.reference
+                                    ? <span title={e.reference} className={cn(e.reference.length > 14 && 'cursor-help')}>
+                                        {e.reference.length > 14 ? `${e.reference.slice(0, 12)}…` : e.reference}
+                                      </span>
+                                    : (!e.receiptPath && <span className="opacity-30">–</span>)}
                                   {e.quelle === 'fibu_uebernahme' && (
                                     <span className="inline-flex items-center rounded-full border border-sky-400/50 bg-sky-500/10 px-1.5 py-px text-[10px] text-sky-700 dark:text-sky-400"
                                       title="Aus dem FIBU-Abgleich übernommen (provisorisch) — Betrag exakt wie gebucht; Monatsrechnung/Lieferschein kann die Werte noch finalisieren."
@@ -3113,17 +3459,25 @@ export default function WarenrechnungenPage() {
                         <tfoot>
                           <tr className="border-t-2 border-border bg-muted/20 font-bold">
                             <td className="px-4 py-2.5 text-xs text-muted-foreground uppercase tracking-wide" colSpan={2}>
-                              {erfassungSupplierFilter ? erfassungSupplierFilter : 'Total erfasste Rechnungen (Netto)'}
-                              <div className="mt-0.5 text-[11px] font-normal normal-case tracking-normal" data-testid="erfassung-total-split">
-                                davon direkter Warenaufwand (4020–4070) CHF {fmtChf(erfassungTotalSplit.direkt)}
-                                {erfassungTotalSplit.uebrig !== 0 && <> · Betriebsmaterial/übrige (4090/4701) CHF {fmtChf(erfassungTotalSplit.uebrig)}</>}
-                                {erfassungTotalSplit.depot !== 0 && <> · Depot (4800) CHF {fmtChf(erfassungTotalSplit.depot)}</>}
-                              </div>
+                              {listeAnsicht === 'direkt'
+                                ? 'Total direkter Warenaufwand (4020–4070, Netto)'
+                                : erfassungSupplierFilter || 'Total erfasste Rechnungen (Netto)'}
+                              {listeAnsicht === 'total' && (
+                                <div className="mt-0.5 text-[11px] font-normal normal-case tracking-normal" data-testid="erfassung-total-split">
+                                  davon direkter Warenaufwand (4020–4070) CHF {fmtChf(erfassungTotalSplit.direkt)}
+                                  {erfassungTotalSplit.uebrig !== 0 && <> · Betriebsmaterial/übrige (4090/4701) CHF {fmtChf(erfassungTotalSplit.uebrig)}</>}
+                                  {erfassungTotalSplit.depot !== 0 && <> · Depot (4800) CHF {fmtChf(erfassungTotalSplit.depot)}</>}
+                                </div>
+                              )}
                             </td>
-                            <td className="px-4 py-2.5 text-right tabular-nums font-bold">CHF {fmtChf(erfassungSupplierFilter ? filteredTotalNet : stats.totalNet)}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(erfassungSupplierFilter ? filteredTotalGross : stats.totalGross)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums font-bold whitespace-nowrap">
+                              CHF {fmtChf(listeAnsicht === 'direkt' ? filteredDirektNet : filteredTotalNet)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">
+                              {listeAnsicht === 'direkt' ? '' : fmtChf(filteredTotalGross)}
+                            </td>
                             <td colSpan={4} className="px-4 py-2.5 text-right">
-                              {!erfassungSupplierFilter && monthPct !== null && <PctBadge pct={monthPct} />}
+                              {filteredWkqPct !== null && <PctBadge pct={filteredWkqPct} />}
                             </td>
                           </tr>
                         </tfoot>
@@ -3455,12 +3809,12 @@ export default function WarenrechnungenPage() {
                 {!rangeLoading && (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     <KpiBox
-                      label="Umsatz (Zeitraum)" Icon={TrendingUp}
+                      label="Umsatz (Zeitraum)" icon={TrendingUp}
                       value={analyseKPIs.totalRev > 0 ? `CHF ${fmtChf(analyseKPIs.totalRev)}` : '–'}
                       variant="default"
                     />
                     <KpiBox
-                      label="Direkter Warenaufwand netto" Icon={ShoppingCart}
+                      label="Direkter Warenaufwand netto" icon={ShoppingCart}
                       value={analyseKPIs.totalCost > 0 ? `CHF ${fmtChf(analyseKPIs.totalCost)}` : '–'}
                       variant="default"
                       sub="Konten 4020–4070 (= Erfolgsrechnung)"
@@ -3469,14 +3823,14 @@ export default function WarenrechnungenPage() {
                         : undefined}
                     />
                     <KpiBox
-                      label="Warenkosten % · Stand aktuell" Icon={BarChart3}
+                      label="Warenkosten % · Stand aktuell" icon={BarChart3}
                       value={analyseKPIs.pct !== null ? fmtPct(analyseKPIs.pct) : '–'}
                       variant={analyseKPIs.pct === null ? 'muted' : analyseKPIs.pct > targetPct + 2 ? 'alert' : analyseKPIs.pct > targetPct ? 'warn' : 'ok'}
                       sub={analyseKPIs.pct !== null ? `Ziel: ${targetPct} %` : 'Kein Umsatz'}
                       sub2={forecastPct !== null ? `Forecast Endwert: ${fmtPct(forecastPct)}` : undefined}
                     />
                     <KpiBox
-                      label="Lieferanten aktiv" Icon={Package}
+                      label="Lieferanten aktiv" icon={Package}
                       value={String(analyseSuppliers.length)}
                       sub={analyseSuppliers.length > 0 ? analyseSuppliers[0].name : '–'}
                       variant="default"
@@ -4808,17 +5162,37 @@ export default function WarenrechnungenPage() {
                           title="Klicken: Woraus besteht die Differenz?"
                           data-testid="abgleich-diff-total-toggle"
                         >
-                          <p className="text-[11px] text-muted-foreground">Differenz (Buchhaltung − erfasst)</p>
-                          <p className={cn('text-lg font-semibold tabular-nums',
-                            abgleich.diffTotal !== null && Math.abs(abgleich.diffTotal - ignorierteSumme) > 50 && 'text-red-600 dark:text-red-400')}
-                            data-testid="abgleich-diff-total">
-                            {abgleich.diffTotal !== null ? `CHF ${fmtChf(abgleich.diffTotal - ignorierteSumme)}` : '—'}
-                          </p>
-                          {abgleich.diffTotal !== null && ignorierteSumme !== 0 && (
-                            <p className="text-[10px] text-muted-foreground tabular-nums" data-testid="abgleich-diff-ignoriert-hinweis">
-                              vor Ignorieren: CHF {fmtChf(abgleich.diffTotal)} · bewusst ignoriert: CHF {fmtChf(ignorierteSumme)}
-                            </p>
-                          )}
+                          <p className="text-[11px] text-muted-foreground">Offene Differenz (Buchhaltung − erfasst)</p>
+                          {(() => {
+                            if (abgleich.diffTotal === null) {
+                              return <p className="text-lg font-semibold tabular-nums" data-testid="abgleich-diff-total">—</p>;
+                            }
+                            // Offen = Roh-Differenz − bewusst Ignoriertes − erklärte (abgeschlossene) Differenzen.
+                            const offen = Math.round((abgleich.diffTotal - ignorierteSummeKopf - erklaerteKopf.summe) * 100) / 100;
+                            const inToleranz = Math.abs(offen) <= OFFEN_TOLERANZ_CHF;
+                            const gruende = [...new Set(erklaerteKopf.posten.map(pos => pos.grund.split(' (')[0]))].join(' · ');
+                            return (
+                              <>
+                                <p className={cn('text-lg font-semibold tabular-nums',
+                                  inToleranz
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : Math.abs(offen) > 50 && 'text-red-600 dark:text-red-400')}
+                                  data-testid="abgleich-diff-total">
+                                  {inToleranz ? 'CHF 0.00 ✓' : `CHF ${fmtChf(offen)}`}
+                                </p>
+                                {erklaerteKopf.posten.length > 0 && erklaerteKopf.summe !== 0 && (
+                                  <p className="text-[10px] text-muted-foreground tabular-nums" data-testid="abgleich-diff-erklaert">
+                                    Erklärt ({gruende}): CHF {fmtChf(erklaerteKopf.summe)}
+                                  </p>
+                                )}
+                                {ignorierteSummeKopf !== 0 && (
+                                  <p className="text-[10px] text-muted-foreground tabular-nums" data-testid="abgleich-diff-ignoriert-hinweis">
+                                    vor Ignorieren: CHF {fmtChf(abgleich.diffTotal)} · bewusst ignoriert: CHF {fmtChf(ignorierteSummeKopf)}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()}
                           <p className="text-[10px] text-muted-foreground underline">Woraus besteht die Differenz?</p>
                         </button>
                       </div>
@@ -4826,9 +5200,45 @@ export default function WarenrechnungenPage() {
                       {/* SSOT-Aufschlüsselung der Gesamt-Differenz (gebündelt nach Typ).
                           Bewusst UNBEREINIGT (Buchhaltungs-Kontrollsicht) — ignorierte Zeilen
                           erscheinen hier weiterhin, nur die Kopf-Kennzahl ist bereinigt. */}
+                      {diffTotalOffen && erklaerteKopf.posten.length > 0 && (
+                        <div className="rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid="abgleich-diff-erklaerte-positionen">
+                          <p className="font-medium">Erklärte Positionen (abgeschlossen — zählen nicht in die offene Differenz)</p>
+                          <table className="w-full mt-1">
+                            <thead>
+                              <tr className="text-muted-foreground text-left">
+                                <th className="font-normal pr-2">Lieferant</th>
+                                <th className="font-normal pr-2">Grund</th>
+                                <th className="font-normal text-right">Betrag</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {erklaerteKopf.posten.map(pos => (
+                                <tr key={pos.lieferant} className="align-top">
+                                  <td className="pr-2">{pos.lieferant}</td>
+                                  <td className="pr-2">{pos.grund}</td>
+                                  <td className="text-right tabular-nums whitespace-nowrap">{pos.betrag > 0 ? '+' : ''}{fmtChf(pos.betrag)}</td>
+                                </tr>
+                              ))}
+                              <tr className="border-t border-border/50 font-medium">
+                                <td colSpan={2} className="pt-0.5">Summe erklärt</td>
+                                <td className="text-right tabular-nums pt-0.5">{erklaerteKopf.summe > 0 ? '+' : ''}{fmtChf(erklaerteKopf.summe)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                       {diffTotalOffen && (
                         diffAufschluesselung
-                          ? <DiffAufschluesselungPanel data={diffAufschluesselung} testid="abgleich-diff-aufschluesselung" />
+                          ? (
+                            <div className="space-y-1">
+                              {erklaerteKopf.posten.length > 0 && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Offene Positionen (Kontrollsicht — inkl. erklärter und ignorierter Zeilen, unbereinigt):
+                                </p>
+                              )}
+                              <DiffAufschluesselungPanel data={diffAufschluesselung} testid="abgleich-diff-aufschluesselung" />
+                            </div>
+                          )
                           : <p className="text-xs text-muted-foreground">Lade Aufschlüsselung…</p>
                       )}
 

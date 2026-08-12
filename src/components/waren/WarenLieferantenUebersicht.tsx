@@ -167,9 +167,9 @@ export function WarenLieferantenUebersicht({
 
   return (
     <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="lieferanten-uebersicht">
-      <div className="px-5 py-3 border-b border-border bg-muted/20">
-        <h2 className="text-sm font-semibold">Lieferanten-Übersicht · {monthLabel}</h2>
-        <p className="text-[11px] text-muted-foreground mt-0.5">
+      {/* Titel liefert der einklappbare Wrapper auf der Seite — hier nur der Hinweis. */}
+      <div className="px-5 py-2 border-b border-border bg-muted/20">
+        <p className="text-[11px] text-muted-foreground">
           Klick auf einen Lieferanten: Rechnungen des Monats + Upload nur für ihn. Konto je Profil editierbar.
         </p>
       </div>

@@ -1,0 +1,61 @@
+Reine UI-/Layout-Überarbeitung des Erfassungs-Tabs. Funktion/Zahlen unverändert.
+Mandantengetrennt, responsive, „leer statt 0". Kontrollwerte August Oliv (dürfen sich
+NICHT verändern): Total erfasst netto 16'206.95 = direkter Warenaufwand (4020–4070)
+15'076.78 + Betriebsmaterial/übrige (4090/4701) 1'417.57 + Depot (4800) −287.40.
+Monats-WKQ 16.1 % = 15'076.78 / 93'576.37. Heute-WKQ 19.2 % = 608.85 / 3'164.35.
+
+=== 1) KPI-BOXEN: KLARE BESCHRIFTUNG, KEINE ABGESCHNITTENEN WÖRTER ===
+- Alle Boxentitel voll ausschreiben, nie abschneiden. Zeitraum klar kennzeichnen:
+  Trenne sichtbar „HEUTE" von „MONAT".
+  • „Warenkosten heute" CHF … · darunter „WKQ heute 19.2 %"
+  • „Direkter Warenaufwand (Monat)" CHF 15'076.78 · Untertitel „Konten 4020–4070"
+  • „WKQ Monat 16.1 %" · „Ziel ≤ 30 % · im Zielbereich"
+  • „Kum. Umsatz (Monat)" CHF 93'576.37 · „12 Tage"
+  • „Lieferanten aktiv 8 / 22"
+- Die zwei WKQ-Werte (19.2 % heute / 16.1 % Monat) optisch eindeutig einem Zeitraum
+  zuordnen (z.B. Label-Chip „heute" bzw. „Monat"), damit kein Widerspruch entsteht.
+
+=== 2) KPI-BOXEN KLICKBAR → DETAIL-POPUP ===
+- Klick auf „Direkter Warenaufwand (Monat)" öffnet ein Pop-up mit dem Aufbau nach Konto:
+  4020 Wein · 4030 Bier · 4040 Spirituosen · 4050 Mineral · 4060 Küche · 4070 Kaffee/Tee,
+  je Netto-Betrag, Summe = 15'076.78. Konten mit 0 weglassen (leer statt 0).
+- Klick auf „Kum. Umsatz (Monat)" öffnet ein Pop-up mit dem Aufbau: Food netto /
+  Beverage netto (und Tagesliste falls vorhanden), Summe = 93'576.37.
+- Pop-up schliessbar (X / Klick ausserhalb).
+
+=== 3) LISTE: UMSCHALTER „TOTAL NETTO" ↔ „NUR DIREKTER WARENAUFWAND" ===
+- Ganz oben in der Liste ein Umschalter: „Ansicht: [Total Netto] | [Nur direkter
+  Warenaufwand]".
+- Bei „Nur direkter Warenaufwand": pro Eintrag NUR den 4020–4070-Anteil anzeigen,
+  Betriebsmaterial/übrige (4090/4701) und Depot (4800) ausblenden. Die Listensumme muss
+  dann exakt 15'076.78 ergeben = identisch zur oberen Box. Bei „Total Netto" wie bisher
+  16'206.95.
+
+=== 4) KOPFZEILE: TOTAL + WKQ + FILTER IN EINE ZEILE ===
+- In der Zeile „Einträge August 2026": rechts daneben das aktuelle Total (je nach
+  Umschalter 16'206.95 bzw. 15'076.78) UND „WKQ 16.1 %" einblenden.
+- Direkt darunter/daneben die Filter (siehe Punkt 7). Kompakt, damit alles nach oben rutscht.
+
+=== 5) „NEUE RECHNUNG ERFASSEN" VERSCHIEBEN ===
+- Das grosse Panel „+ Neue Rechnung erfassen" aus der Mitte/dem Fluss entfernen.
+- Stattdessen oben rechts ein kompakter Button „+ Neue Rechnung". Klick öffnet das
+  Erfassungsfenster als Pop-up/Modal (oder Weiterleitung) — keine dauerhaft sichtbare
+  grosse Fläche mehr.
+
+=== 6) LIEFERANTEN-ÜBERSICHT AUFKLAPPBAR ===
+- Die „Lieferanten-Übersicht · August 2026" als einklappbaren Abschnitt (Accordion),
+  standardmässig eingeklappt, per Klick aufklappbar. Spart Platz.
+
+=== 7) EINTRÄGE-TABELLE: KOMPAKTE ZEILEN, FILTER, REFERENZ ===
+- Warenkonto-Spalte: NICHT alle Konto-Splits ausschreiben (das macht die Zeilen zu hoch).
+  Kompakt anzeigen: Hauptkonto + „+n" (z.B. „4060 +2"), Details erst per Klick/Hover
+  (Tooltip oder Aufklappen). Zeilen sollen einzeilig bleiben.
+- Referenz-Spalte kompakter: Belegnummer gekürzt mit Tooltip/Link, Positions-/Beleg-Icons
+  klein. Keine Zeilenhöhen-Sprünge.
+- Filter oben erweitern: NICHT nur Lieferant, sondern zusätzlich Datum, Kategorie
+  (Food/Beverage) und Warenkonto. Filter kombinierbar; Total/WKQ in der Kopfzeile
+  rechnen auf der gefilterten Basis.
+
+=== ABSCHLUSS ===
+Reine Anzeige/Filter — keine Buchungen verändern. Kontrollwerte prüfen (16'206.95 /
+15'076.78 / 16.1 %). Mir Screenshot des neuen Kopfs zeigen.
