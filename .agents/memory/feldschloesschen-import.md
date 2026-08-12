@@ -48,3 +48,10 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 - `detectFsPdfTyp` Priorität: sammelrechnung → lieferschein → 'faktura' («Rechnung: <Nr>» im Kopf + «Zusammenfassung MwSt.»). `parseFsFaktura` nutzt die Sammelrechnungs-Zustandsmaschine (Kopf-«Rechnung:» schaltet in den Anhang-Modus; Kopf-«Datum:» separat nachlesen, da schon im Anhang); Pflicht: LS-Positionen, ZSF, Beleg-Nr UND «Endbetrag CHF» — sonst failureReason.
 - `fsFakturenAlsRechnungen`: EINE Buchung je Faktura (LS zusammengelegt, rechnungsNr=FakturaNr matcht kred_*-Übernahmen per Beleg-Nr), datum=letztes Lieferdatum, ZSF massgeblich auch bei mehreren LS (Buchung deckt die ganze Faktura), nettoOffiziell=ΣZSF, bruttoOffiziell=fakturaEndbetrag.
 - Import-Pfad: quelle='monatsrechnung' (final), Mehrfach-Upload appendet mit Dedupe je Faktura-Nr; Upload-Vorschauen sind EXKLUSIV (LS/Faktura/Sammel löschen sich gegenseitig — Review-Fund: sonst alte Vorschau final buchbar). Weicht Positions-Netto von der ZSF ab (>0.10): Warnhinweis, ZSF bleibt massgeblich.
+
+## Einzelrechnung buchen — nie stilles Nichts (08/2026)
+- Der «Fakturen buchen»-Button ist NUR bei busy disabled; offene ZSF-Kategorien
+  melden per Toast die Kategorienamen (vorher: stumm disabled = «Klick tut nichts»).
+- Positions-Netto ≠ ZSF ist NUR Hinweis, nie Blocker (Regressionstest 87750197).
+- Undo-Protokoll-Fehler NACH persistierter Buchung = Warnung, nie «Import fehlgeschlagen».
+- **Why:** Nutzer sah bei gesperrtem Button «keine Reaktion» und hielt die Buchung für kaputt.

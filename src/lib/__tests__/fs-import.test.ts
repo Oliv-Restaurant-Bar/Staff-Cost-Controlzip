@@ -13,6 +13,7 @@ vi.mock('@/lib/supabase-kv', () => ({
   kvGet: vi.fn(async (key: string) => (kv.has(key) ? kv.get(key) : null)),
   kvGetStrict: vi.fn(async (key: string) => (kv.has(key) ? kv.get(key) : null)),
   kvSet: vi.fn(async (key: string, value: unknown) => { kv.set(key, JSON.parse(JSON.stringify(value))); }),
+  kvSetStrict: vi.fn(async (key: string, value: unknown) => { kv.set(key, JSON.parse(JSON.stringify(value))); }),
   kvRemove: vi.fn(async (key: string) => { kv.delete(key); }),
 }));
 
@@ -500,5 +501,44 @@ describe('Sammelrechnung finalisiert NUR die in ihr gelisteten Lieferscheine', (
     const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
     expect(monat).toHaveLength(2);
     expect(monat.find(e => e.reference === 'X9')!.final).toBeUndefined();
+  });
+});
+
+// ── Regression 08/2026: FS-Einzelrechnung 87750197 (Positions-Netto ≠ ZSF) ──
+describe('FS-Einzelrechnung mit Mietmaterial-Ermässigung (Netto-Abweichung 750)', () => {
+  it('bucht nach ZSF (massgeblich) — Abweichung ist NUR Hinweis, nie Blocker', async () => {
+    // Positions-Netto 4413.02, ZSF-Netto 5163.02 (Ermässigung fehlt in den
+    // Positionen), Endbetrag CHF 5475.45 — der Split entspricht der Vorschau.
+    const p = pos(30);
+    const r: ParsedCsvRechnung = {
+      docKey: '87750197|2026-07-01', rechnungsNr: '87750197', datum: '2026-07-01',
+      markt: 'Feldschlösschen', positionen: [p],
+      nettoTotal: 4413.02, mwstTotal: 357.43, bruttoTotal: 4770.45,
+    };
+    const fsKategorien = [
+      { name: 'Bier',        netto81: 2100,    netto26: 0, netto00: 0, nettoTotal: 2100 },
+      { name: 'Spirituosen', netto81: 1031.94, netto26: 0, netto00: 0, nettoTotal: 1031.94 },
+      { name: 'Mineralwasser', netto81: 1090.08, netto26: 0, netto00: 0, nettoTotal: 1090.08 },
+      { name: 'Mietmaterial', netto81: 375,     netto26: 0, netto00: 0, nettoTotal: 375 },
+      { name: 'Leergut',     netto81: 0,       netto26: 0, netto00: 566, nettoTotal: 566 },
+    ];
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      r, fsKategorien, nettoOffiziell: 5163.02, bruttoOffiziell: 5475.45,
+    }], { quelle: 'monatsrechnung' });
+    expect(res.neu).toBe(1);
+    // Abweichung ist sichtbar (Hinweis), blockiert aber NICHT.
+    expect(res.hinweise.some(h => /4413\.02.*weicht.*5163\.02/.test(h))).toBe(true);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    const e = monat[0];
+    expect(e.amountNet).toBe(5163.02);
+    expect(e.amountGross).toBe(5475.45);
+    expect(e.final).toBe(true);
+    const splitOf = (k: string) => e.kontoSplits?.find(s => s.warenkonto === k)?.amountNet;
+    expect(splitOf('4030')).toBe(2100);
+    expect(splitOf('4040')).toBe(1031.94);
+    expect(splitOf('4050')).toBe(1090.08);
+    expect(splitOf('4701')).toBe(375);
+    expect(splitOf('Depot')).toBe(566);
   });
 });

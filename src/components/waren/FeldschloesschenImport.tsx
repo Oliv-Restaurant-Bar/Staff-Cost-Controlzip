@@ -159,13 +159,20 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
     }))];
     const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
     const res = await kernImportiereRechnungen(rechnungen, opts);
-    const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
-    await saveWarenImportUndo(tenantId, {
-      typ: 'fs', zeitpunkt: new Date().toISOString(),
-      label: undoLabel, anzahlRechnungen: rechnungen.length,
-      vorher, nachher,
-    });
-    setUndoRefresh(x => x + 1);
+    // Die Buchung ist ab hier PERSISTIERT — ein Fehler beim Undo-Protokoll darf
+    // nicht mehr als «Import fehlgeschlagen» erscheinen (wäre irreführend).
+    try {
+      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
+      await saveWarenImportUndo(tenantId, {
+        typ: 'fs', zeitpunkt: new Date().toISOString(),
+        label: undoLabel, anzahlRechnungen: rechnungen.length,
+        vorher, nachher,
+      });
+      setUndoRefresh(x => x + 1);
+    } catch (e) {
+      console.error('[FS-FAKTURA] Undo-Protokoll fehlgeschlagen (Buchung OK):', e);
+      toast.warning('Gebucht — aber das Undo-Protokoll konnte nicht gespeichert werden (Rückgängig für diesen Lauf evtl. nicht verfügbar).', { duration: 12000 });
+    }
     return res;
   };
 
@@ -388,13 +395,24 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
 
   // ── Teil A2: einzelne Faktura-PDFs buchen (ersetzt Kreditoren-Übernahme) ──
   const importiereEinzelFakturen = async () => {
-    if (!einzelFakturen || einzelFakturen.length === 0) return;
-    // NIE mit offener Position buchen: jede ZSF-Kategorie braucht ein Konto.
-    if (einzelFakturenOffen > 0) {
-      toast.error(`${einzelFakturenOffen} Kategorie${einzelFakturenOffen === 1 ? '' : 'n'} ohne Konto — bitte zuerst in der Vorschau zuordnen.`);
+    // NIE stilles Nichts: jeder Abbruch-Grund wird dem Nutzer gemeldet.
+    if (!einzelFakturen || einzelFakturen.length === 0) {
+      toast.error('Keine Einzelrechnungen in der Vorschau — bitte PDF erneut hochladen.');
       return;
     }
+    // NIE mit offener Position buchen: jede ZSF-Kategorie braucht ein Konto.
+    if (einzelFakturenOffen > 0) {
+      const offen = offeneKatNamen.filter(n => !katOverrides[n.trim().toLowerCase()]);
+      toast.error(`Buchen gesperrt — ${offen.length} Kategorie${offen.length === 1 ? '' : 'n'} ohne Konto: «${offen.join('», «')}». Bitte in der Vorschau ein Konto wählen.`, { duration: 12000 });
+      return;
+    }
+    console.log(`[FS-FAKTURA] buchen: ${einzelFakturen.length} Faktura/Fakturen (${einzelFakturen.map(s => s.nr).join(', ')})`);
     setBusy(true);
+    // Watchdog: bleibt eine Speicherung hängen (Netzwerk ohne Timeout), NIE
+    // stumm warten lassen — nach 30 s sichtbar melden.
+    const watchdog = window.setTimeout(() => {
+      toast.warning('Die Buchung läuft ungewöhnlich lange — bitte Verbindung prüfen. Es wurde noch nichts bestätigt.', { duration: 12000 });
+    }, 30000);
     try {
       // Gewählte Kategorie→Konto-Zuordnungen ZUERST als Regel merken (Mandanten-
       // Tabelle, gespeicherte Gruppen gewinnen künftig automatisch) — der Import-
@@ -420,8 +438,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
       setEinzelFakturen(null); setKatOverrides({});
       onImported();
     } catch (e) {
-      toast.error(`Import fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+      console.error('[FS-FAKTURA] Buchung fehlgeschlagen:', e);
+      toast.error(`Buchung fehlgeschlagen — nichts gebucht: ${e instanceof Error ? e.message : String(e)}`, { duration: 12000 });
     } finally {
+      window.clearTimeout(watchdog);
       setBusy(false);
     }
   };
@@ -832,7 +852,9 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                 {einzelFakturenOffen} Kategorie{einzelFakturenOffen === 1 ? '' : 'n'} ohne Konto — Buchen gesperrt (nie mit offener Position buchen)
               </span>
             )}
-            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || einzelFakturenOffen > 0}
+            {/* Bewusst NICHT bei offenen Kategorien disabled: ein Klick erklärt
+                per Fehlermeldung, WAS fehlt — nie stilles Nichts. */}
+            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy}
               onClick={() => void importiereEinzelFakturen()} data-testid="fs-faktura-import">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
               {einzelFakturen.length} Faktura/Fakturen buchen (ersetzt Kreditoren-Übernahme)
