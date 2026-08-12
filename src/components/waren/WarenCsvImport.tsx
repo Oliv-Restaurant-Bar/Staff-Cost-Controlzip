@@ -31,6 +31,7 @@ import {
 import { loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
 import {
   loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
+  uploadImportBeleg, importBelegKey, resolveImportReceiptPath,
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
   loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
   loadMarktLieferantenMapping, saveMarktLieferantenMapping, deleteInvoiceEntry, loadFibuMatchToleranz,
@@ -291,10 +292,13 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
     }).catch(() => setHistorie({}));
   }, [tenantId]);
 
+  /** Quelldatei der aktuellen Vorschau — wird beim Import als Beleg abgelegt. */
+  const [quellDatei, setQuellDatei] = useState<File | null>(null);
   const handleFile = async (file: File | null) => {
     if (!file) return;
     const text = await file.text();
     const res = parseTransgourmetCsv(text);
+    setQuellDatei(file);
     setErgebnis(res);
     setAusgewaehlt(new Set(res.rechnungen.map(r => r.docKey)));
     setMarktZuordnung({});
@@ -391,6 +395,20 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
     if (zuImportieren.length === 0) return;
     setBusy(true);
     try {
+      // Quell-CSV als Beleg ablegen (dublettensicher: gleicher Dateiname
+      // ersetzt). BEST EFFORT — ein Upload-Fehler darf den Import nie blockieren.
+      let csvBelegPfad: string | undefined;
+      if (quellDatei) {
+        try {
+          // Identität = DATEIINHALT (nicht Dateiname): ein umbenannter
+          // Re-Export derselben CSV ersetzt den Beleg statt zu duplizieren.
+          const inhalt = await quellDatei.text();
+          csvBelegPfad = await uploadImportBeleg(tenantId, importBelegKey('transgourmet-csv', inhalt), quellDatei);
+        } catch (e) {
+          console.warn('[CSV-IMPORT] Beleg-Ablage fehlgeschlagen (Import läuft weiter):', e);
+          toast.warning(`Quell-CSV konnte nicht als Beleg abgelegt werden: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       // In der Vorschau gesetzte Kontierungen MERKEN (Artikel→Konto, pro Mandant)
       // — gilt sofort für diesen Import und automatisch für künftige Importe.
       const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
@@ -489,7 +507,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
           note: `CSV-Import ${r.markt ? `(${r.markt}) ` : ''}· ${r.positionen.length} Positionen`,
           ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
           kategorie: kategorieFromKonto(haupt),
-          ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
+          ...(() => {
+            const p = resolveImportReceiptPath(vorhanden?.receiptPath, csvBelegPfad);
+            return p ? { receiptPath: p } : {};
+          })(),
           // TG/Prodega hat keine Monatsrechnung: jede Einzelrechnung ist
           // sofort FINAL (Re-Import derselben Nr. bleibt idempotenter Upsert).
           final: true,

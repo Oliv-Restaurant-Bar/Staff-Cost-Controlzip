@@ -31,6 +31,7 @@ import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
   loadMonthInvoices, type InvoiceEntry,
+  uploadImportBeleg, importBelegKey,
 } from '@/lib/waren-db';
 import { WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
 import {
@@ -46,6 +47,8 @@ import type { TenantId } from '@/contexts/TenantContext';
 
 interface VorschauZeile {
   fileName: string;
+  /** Quell-PDF — wird beim Buchen als «📎 Beleg» abgelegt. */
+  datei: File;
   ergebnis: ProfilPdfErgebnis;
   /** Editierbare Felder (Vorschau-Korrektur). */
   lieferant: string;        // Profil-ID oder '' = offen
@@ -214,7 +217,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           neu.push({
             dublette,
             modus, abgleich, mandantFremd,
-            fileName: f.name, ergebnis: erg,
+            fileName: f.name, datei: f, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
             rechnungsNr: erg.rechnungsNr ?? '',
@@ -325,6 +328,16 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       for (const row of bereit) {
         const profil = profilById.get(row.lieferant);
         if (!profil) continue;
+        // Quell-PDF als Beleg ablegen (Schlüssel Lieferant+Rechnungs-Nr —
+        // Re-Import ERSETZT). BEST EFFORT: Fehler blockiert die Buchung nie.
+        let belegPfad: string | undefined;
+        try {
+          belegPfad = await uploadImportBeleg(tenantId,
+            importBelegKey(profil.name, row.rechnungsNr || row.fileName), row.datei);
+        } catch (e) {
+          console.warn('[BEAULIEU-PDF] Beleg-Ablage fehlgeschlagen (Buchung läuft weiter):', e);
+          toast.warning(`${row.fileName}: Beleg konnte nicht abgelegt werden.`);
+        }
         const konto = row.konto.trim() || profil.konto;
         const netto = num(row.netto) ?? 0;
         const mwst = num(row.mwst) ?? 0;
@@ -359,7 +372,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             toast.warning(`${row.fileName}: Die manuell erfassten Treffer haben sich seit der Vorschau geändert — bitte neu prüfen und bestätigen. Nichts importiert.`);
             return;
           }
-          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l });
+          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
           proProfil.set(key, eintrag);
           continue;
         }
@@ -374,7 +387,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           && Math.abs(posSumme - netto) <= 0.05 && datumUnveraendert && nrUnveraendert;
         if (stufe2Deckend) {
           // Stufe 2: eine Buchung PRO LIEFERUNG mit deren LS-Datum.
-          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l });
+          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
         } else {
           // Stufe 1: Kopf-Buchung als Ganzes (editierte Beträge sind führend).
           const satz = netto > 0 ? R2((mwst / netto) * 100) : 0;
@@ -390,7 +403,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             nettoTotal: netto, mwstTotal: mwst, bruttoTotal: R2(netto + mwst),
           };
           void satz;
-          eintrag.rechnungen.push({ r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst) });
+          eintrag.rechnungen.push({ r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst), ...(belegPfad ? { receiptPath: belegPfad } : {}) });
         }
         proProfil.set(key, eintrag);
       }

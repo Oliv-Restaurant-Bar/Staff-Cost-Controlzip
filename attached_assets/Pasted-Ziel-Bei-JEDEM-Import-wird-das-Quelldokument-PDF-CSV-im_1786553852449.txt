@@ -1,0 +1,37 @@
+Ziel: Bei JEDEM Import wird das Quelldokument (PDF/CSV) im privaten Beleg-Speicher
+abgelegt und ist pro Erfassung über „📎 Beleg" abrufbar — so wie es bei Ambro Food
+bereits funktioniert, aber für ALLE Lieferanten und ALLE Import-Wege.
+
+GRUNDREGELN:
+- Mandantengetrennt: Beleg-Speicher pro Mandant (Oliv / Beaulieu) getrennt, privat.
+- Dublettensicher: Bei Re-Import derselben Rechnung wird der hinterlegte Beleg ERSETZT,
+  nicht dupliziert (Schlüssel Belegnummer/Rechnungs-Nr + Lieferant).
+- „Leer statt 0": kein Beleg vorhanden → „kein Beleg hinterlegt", keine leeren Platzhalter.
+
+=== 1) BELEG BEI JEDEM IMPORT ABLEGEN ===
+Alle Import-Pfade legen die Quelldatei im Beleg-Speicher ab und verknüpfen sie mit dem/den
+erzeugten Eintrag/Einträgen:
+- PDF Einzelrechnung  → PDF ablegen, mit dem Eintrag verknüpfen.
+- PDF Lieferschein / Monatsrechnung → PDF ablegen (wie Ambro).
+- CSV-Import (z.B. Transgourmet) → die CSV-Quelldatei ablegen und mit allen daraus
+  erzeugten Einträgen desselben Imports verknüpfen. Wenn die CSV mehrere Rechnungen
+  enthält, beim Eintrag zusätzlich auf die betreffende Rechnungsnummer/Zeilen verweisen.
+
+=== 2) „📎 BELEG"-LINK ÜBERALL ANZEIGEN ===
+- In der Erfassungs-Liste (Referenz-Spalte) bei jedem Eintrag mit hinterlegtem Beleg das
+  kompakte „📎 Beleg" anzeigen (wie bei Ambro). Klick öffnet/lädt das Originaldokument.
+- Der Beleg ist auch aus der Positions-/Detailansicht und aus dem FIBU-Abgleich erreichbar.
+
+=== 3) BESTEHENDE EINTRÄGE NACHRÜSTEN ===
+- Wo die Quelldatei eines früheren Imports noch vorhanden ist, nachträglich verknüpfen.
+- Wo nicht mehr vorhanden: „kein Beleg hinterlegt" + Möglichkeit, den Beleg manuell
+  nachzuladen (Button „Beleg hochladen" pro Eintrag).
+
+=== 4) MANUELLE ERFASSUNG ===
+- Bei manuell erfassten Einträgen (LIDL, Migros, Coop …) optionaler Beleg-Upload
+  (Foto/PDF), kein Zwang. Wenn hochgeladen, gleich als „📎 Beleg" abrufbar.
+
+=== ABSCHLUSS ===
+Reine Ablage/Verknüpfung, keine Beträge/Buchungen verändern. Mandantengetrennt.
+Kontrolltest: Ein Transgourmet-CSV-Eintrag und ein Feldschlösschen-PDF-Eintrag zeigen
+danach ein funktionierendes „📎 Beleg". Mir kurz bestätigen.

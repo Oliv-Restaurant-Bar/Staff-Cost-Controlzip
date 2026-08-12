@@ -116,7 +116,19 @@ const RECEIPT_BUCKET = 'waren-belege';
 const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
 const RECEIPT_MIME_EXT: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf',
+  // Quelldokumente der Importe (z.B. Transgourmet-CSV) sind ebenfalls Belege.
+  'text/csv': 'csv',
 };
+
+/** Datei-Endung für den Beleg-Speicher — MIME zuerst, sonst Dateiname (CSVs
+ *  kommen je nach Browser/OS mit leerem oder Excel-MIME an). */
+function receiptExt(file: File): string | null {
+  if (RECEIPT_MIME_EXT[file.type]) return RECEIPT_MIME_EXT[file.type];
+  const m = /\.(pdf|csv|jpe?g|png|webp)$/i.exec(file.name);
+  if (!m) return null;
+  const e = m[1].toLowerCase();
+  return e === 'jpeg' ? 'jpg' : e;
+}
 
 /** Wirft, wenn der Pfad nicht zum aktuellen Mandanten gehört (Tenant-Grenze). */
 function assertTenantReceiptPath(tenantId: TenantId, path: string): void {
@@ -127,15 +139,72 @@ function assertTenantReceiptPath(tenantId: TenantId, path: string): void {
 
 /** Beleg hochladen (JPEG/PNG/WebP/PDF, max. 10 MB); gibt den Storage-Pfad zurück. */
 export async function uploadInvoiceReceipt(tenantId: TenantId, invoiceId: string, file: File): Promise<string> {
-  const ext = RECEIPT_MIME_EXT[file.type];
-  if (!ext) throw new Error('Nur JPEG, PNG, WebP oder PDF sind als Beleg erlaubt.');
+  return uploadBelegCore(tenantId, invoiceId, file);
+}
+
+async function uploadBelegCore(tenantId: TenantId, key: string, file: File): Promise<string> {
+  const ext = receiptExt(file);
+  if (!ext) throw new Error('Nur JPEG, PNG, WebP, PDF oder CSV sind als Beleg erlaubt.');
   if (file.size > RECEIPT_MAX_BYTES) throw new Error('Beleg zu gross (max. 10 MB).');
-  const path = `${tenantId}/${invoiceId}.${ext}`;
+  const path = `${tenantId}/${key}.${ext}`;
   const { supabase } = await import('@/integrations/supabase/client');
   const { error } = await supabase.storage.from(RECEIPT_BUCKET)
-    .upload(path, file, { contentType: file.type, upsert: true });
+    .upload(path, file, { contentType: file.type || undefined, upsert: true });
   if (error) throw new Error(`Beleg-Upload fehlgeschlagen: ${error.message}`);
   return path;
+}
+
+// ─── Import-Belege (Quelldokument je Import, dublettensicher) ────────────────
+//
+// Schlüssel = Lieferant + Belegnummer (bzw. Dateiname bei CSV-Sammeldateien):
+// ein Re-Import derselben Rechnung ERSETZT den hinterlegten Beleg (upsert),
+// statt ihn zu duplizieren. Pfade liegen unter `<tenant>/import/…` — daran
+// erkennen die Import-Pfade, dass sie einen früheren IMPORT-Beleg ersetzen
+// dürfen; ein manuell hochgeladener Beleg (Pfad `<tenant>/<entryId>.…`) wird
+// von Importen NIE überschrieben.
+
+/** true = Beleg stammt aus einem Import (darf von Re-Importen ersetzt werden). */
+export function istImportBelegPfad(path: string | undefined): boolean {
+  return !!path && path.includes('/import/');
+}
+
+/** Stabiler, dublettensicherer Beleg-Schlüssel (Lieferant + Belegnummer). */
+export function importBelegKey(lieferant: string, referenz: string): string {
+  const slug = (t: string) => t.trim().toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 60) || 'x';
+  // Kollisionsschutz: die Slugs sind auf 60 Zeichen gekürzt und normalisiert —
+  // unterschiedliche Originale könnten denselben Slug ergeben. Ein
+  // deterministischer Hash über die UNGEKÜRZTEN Originale macht den Schlüssel
+  // eindeutig UND stabil (Re-Import derselben Referenz ersetzt weiterhin).
+  return `import/${slug(lieferant)}--${slug(referenz)}-${belegKeyHash(`${lieferant}\u0000${referenz}`)}`;
+}
+
+/** Deterministischer 8-Hex-Hash (FNV-1a 32 Bit) für Beleg-Schlüssel. */
+function belegKeyHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Quelldokument eines Imports ablegen (ersetzt bei gleichem Schlüssel). */
+export async function uploadImportBeleg(tenantId: TenantId, key: string, file: File): Promise<string> {
+  if (!key.startsWith('import/')) throw new Error('Import-Beleg-Schlüssel muss mit import/ beginnen.');
+  return uploadBelegCore(tenantId, key, file);
+}
+
+/**
+ * Beleg-Pfad-Auflösung beim (Re-)Import: ein bestehender MANUELLER Beleg des
+ * Eintrags gewinnt immer; sonst ersetzt der neue Import-Beleg den alten.
+ */
+export function resolveImportReceiptPath(
+  vorhanden: string | undefined, neu: string | undefined,
+): string | undefined {
+  if (vorhanden && !istImportBelegPfad(vorhanden)) return vorhanden;
+  return neu ?? vorhanden;
 }
 
 /** Kurzlebige Anzeige-URL (1 h); nur für Pfade des aktuellen Mandanten. */

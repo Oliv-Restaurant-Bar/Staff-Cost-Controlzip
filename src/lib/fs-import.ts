@@ -28,7 +28,7 @@ import {
 } from '@/lib/waren-positionen';
 import { mitFsDefaults, kontoSplitsAusFsKategorien, type FsKategorieSumme } from '@/lib/feldschloesschen';
 import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
-import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat } from '@/lib/waren-db';
+import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat, resolveImportReceiptPath } from '@/lib/waren-db';
 import type { TenantId } from '@/contexts/TenantContext';
 
 export interface FsImportRechnung {
@@ -42,6 +42,9 @@ export interface FsImportRechnung {
    * (Faktura mit genau einem Lieferschein bzw. Ganz-Rechnung).
    */
   fsKategorien?: FsKategorieSumme[];
+  /** Storage-Pfad des Quelldokuments (Import-Beleg) — wird am Eintrag als
+   *  «📎 Beleg» verknüpft. Ein bestehender manueller Beleg gewinnt immer. */
+  receiptPath?: string;
 }
 
 export interface FsImportErgebnis {
@@ -131,7 +134,7 @@ export async function kernImportiereFsRechnungen(
   };
   // Sortiert nach Lieferdatum, damit die Preis-Historie chronologisch wächst.
   const sortiert = [...rechnungen].sort((a, b) => a.r.datum.localeCompare(b.r.datum));
-  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien } of sortiert) {
+  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
     const lief = lieferant.trim().toLowerCase();
@@ -339,7 +342,10 @@ export async function kernImportiereFsRechnungen(
       })(),
       ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
       kategorie: kategorieFromKonto(haupt),
-      ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
+      ...(() => {
+        const p = resolveImportReceiptPath(vorhanden?.receiptPath, receiptPath);
+        return p ? { receiptPath: p } : {};
+      })(),
       ...(opts?.quelle ? { quelle: opts.quelle } : {}),
       // Monatsrechnung finalisiert die Lieferung — spätere LS/AB-Uploads
       // dürfen diese Werte nicht mehr verschlechtern. finalDirekt: Lieferant

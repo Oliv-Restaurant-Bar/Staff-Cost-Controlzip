@@ -43,6 +43,34 @@ const rechnung = (nr: string, datum: string, preis = 30): ParsedCsvRechnung => {
 beforeEach(() => kv.clear());
 
 describe('kernImportiereFsRechnungen', () => {
+  it('receiptPath: Import-Beleg wird verknüpft, Re-Import ersetzt ihn, manueller Beleg gewinnt', async () => {
+    // 1) Erst-Import mit Import-Beleg
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('B-1', '2026-07-05'), receiptPath: 'oliv/import/feldschloesschen--b-1.pdf' },
+    ]);
+    let monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat[0].receiptPath).toBe('oliv/import/feldschloesschen--b-1.pdf');
+    // 2) Re-Import mit neuem Import-Beleg → ersetzt (nicht dupliziert)
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('B-1', '2026-07-05'), receiptPath: 'oliv/import/feldschloesschen--b-1.v2.pdf' },
+    ]);
+    monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].receiptPath).toBe('oliv/import/feldschloesschen--b-1.v2.pdf');
+    // 3) Manueller Beleg am Eintrag (Pfad ohne /import/) überlebt den Re-Import
+    monat[0].receiptPath = 'oliv/inv-123.pdf';
+    kv.set('supplier_invoices_2026-07', JSON.parse(JSON.stringify(monat)));
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('B-1', '2026-07-05'), receiptPath: 'oliv/import/feldschloesschen--b-1.v3.pdf' },
+    ]);
+    monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat[0].receiptPath).toBe('oliv/inv-123.pdf');
+    // 4) Ohne neuen Beleg bleibt der bestehende erhalten
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('B-1', '2026-07-05') }]);
+    monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat[0].receiptPath).toBe('oliv/inv-123.pdf');
+  });
+
   it('bucht neu mit Lieferdatum und kennzeichnet quelle=monatsrechnung', async () => {
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('L-1', '2026-07-30') }], { quelle: 'monatsrechnung' });
     expect(res.neu).toBe(1);

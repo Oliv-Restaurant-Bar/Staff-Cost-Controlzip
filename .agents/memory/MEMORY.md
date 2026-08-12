@@ -110,4 +110,5 @@
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.
 - [Interne Umbuchungen & Differenz-SSOT](interne-umbuchungen-fibu.md) — «Umb.»-Präfix = Konto-Korrektur, nie im Rechnungs-Vergleich; Gesamt-Differenz überall aus buildWarenAbgleich + waren-diff-Aufschlüsselung.
 - [Waren-Ignore-Liste (Privatbezug)](waren-ignore-liste.md) — Fence nur via saveInvoiceEntry/saveMonthInvoices (nie direkt kvSet auf supplier_invoices_*); Lieferanten-Token-Match wegen kurzer TG-Belegnummern; Lese-Selbstheilung gegen No-CAS-Races.
+- [Import-Belege (Quelldokument-Ablage)](import-belege.md) — Bucket-MIME-Whitelist serverseitig; Key = Slug+Hash über Originale, FS-Typ-Präfixe, CSV-Identität = Inhalt; manueller Beleg gewinnt immer.
 - [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.

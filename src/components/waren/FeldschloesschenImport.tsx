@@ -44,7 +44,7 @@ import { mitFsDefaults } from '@/lib/feldschloesschen';
 import {
   PositionenKontierungListe, effektiveArtikelKonten, offeneAnzahl,
 } from '@/components/waren/PositionenKontierungVorschau';
-import { loadWarengruppenMapping, saveWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
+import { loadWarengruppenMapping, saveWarengruppenMapping, loadArtikelKonten, saveArtikelKonten, uploadImportBeleg, importBelegKey } from '@/lib/waren-db';
 import {
   loadMonthInvoices, loadPreisHistorie,
   loadPreisSchwelle, loadRechnungsPositionen,
@@ -100,6 +100,21 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
    * «Zusammenfassung MwSt.»-Kategorien direkt in der Einzelrechnungs-Vorschau. */
   const [katOverrides, setKatOverrides] = useState<Record<string, string>>({});
   const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
+  /** Quelldatei je Dokument («ls:<Nr>», «fak:<Nr>», «sammel:<Nr>») — wird beim
+   *  Buchen als «📎 Beleg» im privaten Beleg-Speicher abgelegt. */
+  const [quellDateien, setQuellDateien] = useState<Record<string, File>>({});
+
+  /** Beleg ablegen — BEST EFFORT: ein Upload-Fehler blockiert nie die Buchung. */
+  const legeBelegAb = async (referenz: string, file: File | undefined): Promise<string | undefined> => {
+    if (!file) return undefined;
+    try {
+      return await uploadImportBeleg(tenantId, importBelegKey(lieferant, referenz), file);
+    } catch (e) {
+      console.warn('[FS-IMPORT] Beleg-Ablage fehlgeschlagen (Buchung läuft weiter):', e);
+      toast.warning(`Beleg für ${referenz} konnte nicht abgelegt werden: ${e instanceof Error ? e.message : String(e)}`);
+      return undefined;
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -199,6 +214,8 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
               const s = parseFsSammelrechnung(zeilen);
               if (s.failureReason) { fehler.push(`${name}: ${s.failureReason}`); continue; }
               sammelListe.push(s);
+              const pdfDatei = new File([blob], name.split('/').pop() ?? name, { type: 'application/pdf' });
+              setQuellDateien(prev => ({ ...prev, [`sammel:${s.nr}`]: pdfDatei }));
             } catch (e) {
               fehler.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
             }
@@ -222,14 +239,17 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
           const ls = parseFsLieferschein(zeilen);
           if (ls.failureReason) { toast.error(`${f.name}: ${ls.failureReason}`); continue; }
           neueLs.push(ls);
+          setQuellDateien(prev => ({ ...prev, [`ls:${ls.lieferungNr}`]: f }));
         } else if (typ === 'sammelrechnung') {
           const s = parseFsSammelrechnung(zeilen);
           if (s.failureReason) { toast.error(`${f.name}: ${s.failureReason}`); continue; }
           neueSammel = s;
+          setQuellDateien(prev => ({ ...prev, [`sammel:${s.nr}`]: f }));
         } else if (typ === 'faktura') {
           const s = parseFsFaktura(zeilen);
           if (s.failureReason) { toast.error(`${f.name}: ${s.failureReason}`); continue; }
           neueFakturen.push(s);
+          setQuellDateien(prev => ({ ...prev, [`fak:${s.nr}`]: f }));
         } else {
           toast.error(`${f.name}: weder Lieferschein noch (Sammel-)Rechnung erkannt.`);
         }
@@ -343,11 +363,17 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
     if (zu.length === 0) return;
     setBusy(true);
     try {
-      const res = await importiereRechnungen(zu.map(ls => ({
-        r: fsLieferscheinAlsRechnung(ls),
-        nettoOffiziell: ls.totalNetto,
-        bruttoOffiziell: ls.totalLieferung,
-      })), 'Feldschlösschen-Lieferscheine');
+      const rechnungen: FsImportRechnung[] = [];
+      for (const ls of zu) {
+        const receiptPath = await legeBelegAb(`ls-${ls.lieferungNr}`, quellDateien[`ls:${ls.lieferungNr}`]);
+        rechnungen.push({
+          r: fsLieferscheinAlsRechnung(ls),
+          nettoOffiziell: ls.totalNetto,
+          bruttoOffiziell: ls.totalLieferung,
+          ...(receiptPath ? { receiptPath } : {}),
+        });
+      }
+      const res = await importiereRechnungen(rechnungen, 'Feldschlösschen-Lieferscheine');
       toast.success(`${res.neu} Lieferung${res.neu === 1 ? '' : 'en'} importiert${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`
         + `${res.preisAenderungen > 0 ? ` · ${res.preisAenderungen} Preisänderungen` : ''}`
         + `${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}`
@@ -431,7 +457,11 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
         await saveWarengruppenMapping(tenantId, neueTabelle);
         setFsMapping(mitFsDefaults(neueTabelle));
       }
-      const rechnungen = einzelFakturen.flatMap(fsFakturenAlsRechnungen);
+      const rechnungen: FsImportRechnung[] = [];
+      for (const fak of einzelFakturen) {
+        const receiptPath = await legeBelegAb(`fak-${fak.nr}`, quellDateien[`fak:${fak.nr}`]);
+        rechnungen.push(...fsFakturenAlsRechnungen(fak).map(r => receiptPath ? { ...r, receiptPath } : r));
+      }
       const res = await importiereRechnungen(rechnungen, 'Feldschlösschen-Einzelrechnungen', { quelle: 'monatsrechnung' });
       toast.success(`${rechnungen.length} Faktura/Fakturen gebucht: ${res.neu} neu · ${res.ersetzt} ersetzt${res.kreditorenFinalisiert > 0 ? ` · ${res.kreditorenFinalisiert} Kreditoren-Übernahme${res.kreditorenFinalisiert === 1 ? '' : 'n'} finalisiert` : ''}${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
       for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
@@ -472,8 +502,12 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
         toast.error(`Nicht übernommen (mögliches Duplikat — bitte manuell prüfen): ${blockiert.join(' · ')}`, { duration: 12000 });
       }
       if (zuImportieren.length === 0) return;
+      const sammelBeleg = await legeBelegAb(`sammel-${sammel.nr}`, quellDateien[`sammel:${sammel.nr}`]);
       const res = await importiereRechnungen(
-        zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a), fsKategorien: fsKategorienFuerLs(a, sammel) })),
+        zuImportieren.map(a => ({
+          r: fsAnhangAlsRechnung(a), fsKategorien: fsKategorienFuerLs(a, sammel),
+          ...(sammelBeleg ? { receiptPath: sammelBeleg } : {}),
+        })),
         'Monatsrechnung: fehlende Lieferungen ergänzt',
         { quelle: 'monatsrechnung' },
       );
@@ -518,12 +552,22 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true, jahre });
       // Sammelrechnungs-Lieferungen sind MASSGEBLICH (Monatsrechnung, final)
       // — nie als einfache provisorische Lieferscheine buchen.
+      // Beleg je Sammelrechnung EINMAL ablegen und für alle ihre Lieferungen verknüpfen.
+      const zipBelege = new Map<string, string | undefined>();
+      for (const sr of zipVorschau) {
+        zipBelege.set(sr.nr, await legeBelegAb(`sammel-${sr.nr}`, quellDateien[`sammel:${sr.nr}`]));
+      }
       const res = lieferungen.length > 0
         ? await kernImportiereRechnungen(
-            lieferungen.map(a => ({
-              r: fsAnhangAlsRechnung(a),
-              fsKategorien: fsKategorienFuerLs(a, zipVorschau.find(s => s.anhangLieferscheine.includes(a))),
-            })),
+            lieferungen.map(a => {
+              const sr = zipVorschau.find(s => s.anhangLieferscheine.includes(a));
+              const receiptPath = sr ? zipBelege.get(sr.nr) : undefined;
+              return {
+                r: fsAnhangAlsRechnung(a),
+                fsKategorien: fsKategorienFuerLs(a, sr),
+                ...(receiptPath ? { receiptPath } : {}),
+              };
+            }),
             { quelle: 'monatsrechnung' })
         : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[], bereitsFinal: 0, ueberschrieben: 0 };
       const teile: string[] = [];

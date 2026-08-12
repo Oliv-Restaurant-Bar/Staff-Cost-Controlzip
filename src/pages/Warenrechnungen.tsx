@@ -5401,6 +5401,7 @@ export default function WarenrechnungenPage() {
                                         onToleranzChange={speichereToleranz}
                                         onMutate={persistFibuState}
                                         warenGrenze={warenGrenze}
+                                        onOpenReceipt={openReceipt}
                                       />
                                     </td>
                                   </tr>
@@ -6279,6 +6280,22 @@ export default function WarenrechnungenPage() {
           </DialogHeader>
           {positionenDialog && (
             <div className="space-y-3">
+              {(() => {
+                const eintrag = entries.find(x => x.id === positionenDialog.invoiceId);
+                if (!eintrag) return null;
+                return eintrag.receiptPath ? (
+                  <button type="button"
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                    onClick={() => openReceipt(eintrag.receiptPath!)}
+                    data-testid="positionen-beleg-link">
+                    <Paperclip className="h-3 w-3" /> Beleg öffnen
+                  </button>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground" data-testid="positionen-kein-beleg">
+                    kein Beleg hinterlegt — über «Bearbeiten» am Eintrag nachladen
+                  </p>
+                );
+              })()}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -6668,8 +6685,10 @@ function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen, warenGre
 }
 
 function FibuMatchBereich({
-  lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate, warenGrenze,
+  lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate, warenGrenze, onOpenReceipt,
 }: {
+  /** Öffnet den hinterlegten Beleg (signierte URL) — «📎» je Rechnung. */
+  onOpenReceipt?: (path: string) => void;
   /** Kontoklassen-Grenze des Mandanten (Warenaufwand = 4000–Grenze). */
   warenGrenze?: number;
   lieferant: string;
@@ -6870,7 +6889,16 @@ function FibuMatchBereich({
                     onChange={() => toggle(selInv, e.id, setSelInv)}
                     data-testid={`match-inv-${e.id}`} />
                 )}
-                <span className="flex-1">{fmtDatumCH(e.date)}{e.reference ? ` · ${e.reference}` : ''}</span>
+                <span className="flex-1 inline-flex items-center gap-1.5">
+                  {fmtDatumCH(e.date)}{e.reference ? ` · ${e.reference}` : ''}
+                  {e.receiptPath && onOpenReceipt && (
+                    <button type="button" className="text-primary inline-flex items-center shrink-0"
+                      title="Beleg öffnen" data-testid={`match-beleg-${e.id}`}
+                      onClick={ev => { ev.preventDefault(); ev.stopPropagation(); onOpenReceipt(e.receiptPath!); }}>
+                      <Paperclip className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
                 <span>CHF {fmtChf(e.amountNet)}</span>
               </label>
             );
