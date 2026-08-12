@@ -12,6 +12,7 @@
  */
 
 import { Fragment, useMemo, useState } from 'react';
+import { listeUnkontierte, type UnkontiertePosition } from '@/lib/waren-unkontiert';
 import type { InvoiceEntry, Warenkonto } from '@/lib/waren-db';
 import {
   groupTotals, flagAnomalies, topInvoices, wochenWkq, analyseKpis, nurDirektAnteil,
@@ -37,11 +38,26 @@ interface Props {
   zielPct: number;
   periodLabel: string;
   onOpenReceipt?: (path: string) => void;
+  /**
+   * Konto direkt zuweisen (unkontierte Positionen). Rückgabe false = Fehler,
+   * Auswahl bleibt offen. Fehlt der Handler, bleibt der Hinweis reiner Text.
+   */
+  onAssignKonto?: (pos: UnkontiertePosition, konto: string) => Promise<boolean>;
 }
 
-export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, onOpenReceipt }: Props) {
+export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, onOpenReceipt, onAssignKonto }: Props) {
   const [dim, setDim] = useState<AnalyseDim>('supplier');
   const [drill, setDrill] = useState<string | null>(null);
+  const [unkontiertOffen, setUnkontiertOffen] = useState(false);
+  const [zuweisungLaeuft, setZuweisungLaeuft] = useState<string | null>(null);
+  const unkontiertListe = useMemo(() => listeUnkontierte(entries), [entries]);
+  // Dropdown: alle Warenkonten des Mandanten + 4701 (Betrieb) + 4800 (Pfand/Depot).
+  const kontoOptionen = useMemo(() => {
+    const opts = konten.map(k => ({ value: k.value, label: `${k.value} ${k.label}` }));
+    if (!opts.some(o => o.value === '4701')) opts.push({ value: '4701', label: '4701 Betriebsmaterial' });
+    if (!opts.some(o => o.value === '4800')) opts.push({ value: '4800', label: '4800 Pfand/Depot/Gebinde' });
+    return opts;
+  }, [konten]);
 
   // ALLE Sichten dieses Blocks auf der EINEN Definition: direkter
   // Warenaufwand 4020–4070 (Splits anteilig, Depot/übrige Konten raus).
@@ -134,10 +150,23 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
             {gesamtWkq === null ? '–' : `${gesamtWkq.toFixed(1)} %`}
           </div>
           {kpis.unkontiert > 0 && (
-            <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid="wkq-unkontiert-hinweis">
-              <AlertTriangle className="h-3 w-3 shrink-0" />
-              {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'} — nicht in der Quote
-            </div>
+            onAssignKonto ? (
+              <button
+                type="button"
+                onClick={() => setUnkontiertOffen(o => !o)}
+                className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:text-amber-700 cursor-pointer"
+                data-testid="wkq-unkontiert-hinweis"
+                title="Klicken: Positionen anzeigen und direkt kontieren"
+              >
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'} — nicht in der Quote
+              </button>
+            ) : (
+              <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid="wkq-unkontiert-hinweis">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'} — nicht in der Quote
+              </div>
+            )
           )}
         </div>
         <div>
@@ -156,6 +185,64 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
           </div>
         </div>
       </div>
+
+      {/* ── Unkontierte Positionen: Liste + Direkt-Kontierung ─────────── */}
+      {unkontiertOffen && onAssignKonto && unkontiertListe.length > 0 && (
+        <div className="px-5 py-3 border-b border-border/50 bg-amber-50/40 dark:bg-amber-950/10 text-xs" data-testid="unkontiert-panel">
+          <p className="font-medium mb-1.5">
+            Unkontierte Positionen — Konto zuweisen, damit sie in die Quote einfliessen.
+            Bei eindeutiger Artikel-Identität wird die Zuordnung als Artikel→Konto-Regel gemerkt und gilt künftig automatisch.
+          </p>
+          <table className="w-full">
+            <thead>
+              <tr className="text-muted-foreground text-left">
+                <th className="font-normal pr-2 py-0.5">Datum</th>
+                <th className="font-normal pr-2">Lieferant</th>
+                <th className="font-normal pr-2">Beleg-Nr.</th>
+                <th className="font-normal pr-2">Artikel / Warengruppe</th>
+                <th className="font-normal text-right pr-3">Netto</th>
+                <th className="font-normal">Konto zuweisen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unkontiertListe.map(pos => {
+                const rowKey = `${pos.entryId}:${pos.splitIndex ?? 'e'}`;
+                return (
+                  <tr key={rowKey} className="border-t border-border/30" data-testid={`unkontiert-zeile-${rowKey}`}>
+                    <td className="pr-2 py-1 tabular-nums whitespace-nowrap">{pos.datum.split('-').reverse().join('.')}</td>
+                    <td className="pr-2 font-medium">{pos.lieferant}</td>
+                    <td className="pr-2 tabular-nums">{pos.beleg ?? '—'}</td>
+                    <td className="pr-2">{pos.bezeichnung ?? '—'}</td>
+                    <td className="text-right tabular-nums pr-3 whitespace-nowrap">CHF {fmtChf(pos.betragNet)}</td>
+                    <td className="py-0.5">
+                      <select
+                        className="h-7 rounded border border-border bg-background px-1.5 text-xs min-w-[160px] disabled:opacity-50"
+                        defaultValue=""
+                        disabled={zuweisungLaeuft === rowKey}
+                        data-testid={`unkontiert-konto-${rowKey}`}
+                        onChange={async ev => {
+                          const konto = ev.target.value;
+                          if (!konto) return;
+                          setZuweisungLaeuft(rowKey);
+                          try {
+                            const ok = await onAssignKonto(pos, konto);
+                            if (!ok) ev.target.value = '';
+                          } finally {
+                            setZuweisungLaeuft(null);
+                          }
+                        }}
+                      >
+                        <option value="" disabled>Konto wählen…</option>
+                        {kontoOptionen.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-0 lg:divide-x divide-border/50">
         {/* Gruppen-Tabelle mit Anomalie-Markierung + Drilldown */}

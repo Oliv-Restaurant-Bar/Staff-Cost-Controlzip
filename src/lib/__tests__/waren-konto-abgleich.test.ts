@@ -15,6 +15,35 @@ const buchung = (accountNumber: string, soll: number, haben = 0): SageJournalEnt
 } as unknown as SageJournalEntry);
 
 describe('buildKontoAbgleich', () => {
+  it('Pfand-Splits (4800 UND Legacy-Depot) landen in der neutralen «Depot»-Zeile — nie als normales Konto', () => {
+    const zeilen = buildKontoAbgleich({
+      invoices: [
+        // Nicht-FS-Lieferant mit echtem 4800-Split (neuer Standard)
+        inv({ id: 'a', kontoSplits: [
+          { warenkonto: '4020', amountNet: 200, amountGross: 216.2 },
+          { warenkonto: '4800', amountNet: -50, amountGross: -50 },
+        ] }),
+        // Legacy-Split «Depot» — identisch behandelt
+        inv({ id: 'b', kontoSplits: [
+          { warenkonto: '4030', amountNet: 100, amountGross: 108.1 },
+          { warenkonto: 'Depot', amountNet: -20, amountGross: -20 },
+        ] }),
+        // Reine 4800-Rechnung ohne Splits
+        inv({ id: 'c', warenkonto: '4800', amountNet: -10 }),
+      ],
+      journal: [buchung('4020', 200), buchung('4800', -80)],
+    });
+    // Keine normale 4800-Zeile mit Journal-Vergleich auf der erfasst-Seite:
+    const depot = zeilen.find(z => z.konto === 'Depot')!;
+    expect(depot.erfasst).toBeCloseTo(-80, 2);
+    expect(depot.gebucht).toBeNull(); // neutral — nie gegen das Journal gerechnet
+    const vierAchtHundert = zeilen.filter(z => z.konto === '4800');
+    // Journal-only 4800 darf höchstens als reine Journal-Zeile erscheinen (erfasst 0),
+    // nie mit erfassten Pfand-Beträgen befüllt:
+    for (const z of vierAchtHundert) expect(z.erfasst).toBe(0);
+    expect(zeilen.find(z => z.konto === '4020')).toMatchObject({ erfasst: 200, gebucht: 200, diff: 0 });
+  });
+
   it('erfasst je Konto (Splits + Einzelkonto) vs. gebucht je Konto; Diff', () => {
     const zeilen = buildKontoAbgleich({
       invoices: [

@@ -1,0 +1,48 @@
+Baue drei zusammenhängende Funktionen. GRUNDREGELN (gelten überall):
+- Mandantengetrennt: jede Aktion NUR im aktuell gewählten Mandanten (Oliv ODER Beaulieu),
+  nie mandantübergreifend.
+- Immer Vorschau + Bestätigung vor dem Ausführen, danach Undo (mind. 1 Schritt zurück).
+- „Leer statt 0": nichts auf 0 setzen, sondern Zeile entfernen/ausblenden.
+- Nichts still überschreiben: manuell hinzugefügte Konten/Werte bleiben unangetastet.
+
+=== 1) ERFASSUNG DIREKT LÖSCHEN ===
+In der Erfassungs-Liste (erfasste Warenrechnungen) pro Zeile eine Aktion „Löschen"
+hinzufügen.
+- Klick → Vorschau-Dialog: zeigt Lieferant, Rechnungsnummer, Datum, Betrag, betroffene
+  Konten. Text: „Diese Erfassung wird entfernt. Bei einem erneuten Import derselben
+  Rechnung wird sie wieder eingelesen."
+- Bestätigen → Erfassung wird aus dem aktuellen Mandanten entfernt, alle abgeleiteten
+  Summen (Warenkosten, WKQ, Cockpit, FIBU-Abgleich) rechnen sofort neu.
+- Undo verfügbar.
+- WICHTIG: „Löschen" heisst NICHT „ignorieren". Eine gelöschte Rechnung kommt beim
+  nächsten Import wieder (das ist gewollt). Wer eine Rechnung dauerhaft draussen halten
+  will (z.B. Privatbezug), nutzt „Ignorieren" (siehe Punkt 3).
+
+=== 2) „IN DER BUCHHALTUNG, ABER NICHT ERFASST" — MEHR ALS NUR ÜBERNEHMEN ===
+In diesem Abschnitt hat jede Zeile bisher nur [Übernehmen]. Ergänze pro Zeile:
+  [Übernehmen]   [Ignorieren / Abweisen]
+- Übernehmen: wie bisher (erzeugt/ergänzt die Erfassung in der App).
+- Ignorieren / Abweisen: die Buchhaltungszeile verschwindet aus der Differenz-/Abgleich-
+  Anzeige und zählt NICHT mehr in die Differenz. Die Zeile wird NICHT aus der Buchhaltung
+  gelöscht — sie wird nur im Abgleich als „bewusst ignoriert" markiert.
+- KEIN Hart-Löschen einer Buchhaltungszeile anbieten. Begründung im UI kurz anzeigen:
+  „Die Buchhaltung ist die Kontrollquelle. Zeilen werden nicht gelöscht, nur ignoriert."
+- Eine kleine Ansicht/Filter „Ignorierte anzeigen" ergänzen, damit man Ignoriertes wieder
+  zurückholen kann (Aktion „Wieder aufnehmen" hebt Ignorieren auf).
+
+=== 3) IGNORIEREN IST PERSISTENT & IMPORT-FEST ===
+Lege eine Ignorier-Liste pro Mandant an (Tabelle z.B. abgleich_ignoriert):
+  Felder: mandant, rechnungsnummer/belegnummer, datum, betrag, buchungstext, grund,
+          ignoriert_am.
+- Schlüssel für den Wiedererkennungs-Abgleich: mandant + Rechnungs-/Belegnummer.
+  Falls keine Nummer vorhanden: Fallback mandant + Datum + Betrag + Buchungstext.
+- Bei JEDEM neuen Import: Zeilen, deren Schlüssel in der Ignorier-Liste steht, werden
+  automatisch wieder als „ignoriert" behandelt und erscheinen NICHT erneut in der
+  Differenz. So werden sie beim erneuten Hochladen (z.B. Transgourmet-Jahresrechnung)
+  nicht wieder aufgelistet.
+- Dublettensicher: Ersetzen statt Addieren — ein Schlüssel steht nur einmal in der Liste.
+- Undo/„Wieder aufnehmen" entfernt den Eintrag aus der Ignorier-Liste.
+
+=== ABSCHLUSS ===
+Zeige nach jeder Aktion die neue Differenz-Summe an (leer statt 0, wenn keine Differenz).
+Erst Vorschau bauen, mir zeigen, NICHT automatisch importieren.

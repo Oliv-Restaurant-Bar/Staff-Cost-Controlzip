@@ -16,7 +16,14 @@ import {
   saveSuppliers,
   loadMonthInvoices,
   saveInvoiceEntry,
+  saveArtikelKonten,
   deleteInvoiceEntry,
+  loadIgnorierteRechnungen,
+  markiereRechnungIgnoriert,
+  reaktiviereIgnorierteRechnung,
+  filtereIgnorierteRechnungen,
+  saveMonthInvoices,
+  type IgnoreListe,
   uploadInvoiceReceipt,
   getInvoiceReceiptUrl,
   deleteInvoiceReceipt,
@@ -62,7 +69,7 @@ import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import { direkterWarenaufwand, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
-  type UebernahmeDraft,
+  type UebernahmeDraft, type UebernahmeKandidat,
 } from '@/lib/waren-fibu-uebernahme';
 import {
   kontoKlasse, kontoKlasseLabel, sumBetriebNet, nurWarenAnteil,
@@ -85,8 +92,16 @@ import {
   normalizeSupplierKey, type ErkannteRechnung,
 } from '@/lib/waren-pdf-erkennung';
 import { loadLieferantenProfile, findeProfilImText } from '@/lib/lieferanten-profile';
-import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
-import { fibuVergleichsNetto } from '@/lib/waren-cockpit';
+import { buildWarenAbgleich, buchungsBetrag, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
+import { buildDiffAufschluesselung, type DiffAufschluesselung } from '@/lib/waren-diff';
+import { exportTagesverlaufPdf } from '@/lib/waren-tagesverlauf-export';
+import { weiseKontoZu, type UnkontiertePosition } from '@/lib/waren-unkontiert';
+import { artikelKey } from '@/lib/waren-positionen';
+import { fibuVergleichsNetto, depotAnteilNet } from '@/lib/waren-cockpit';
+import {
+  ladeAbgleichIgnoriert, ignoriereAbgleichZeile, wiederAufnehmenAbgleichZeile,
+  filterIgnorierteKandidaten, abgleichIgnoriertKey, type AbgleichIgnoriertListe,
+} from '@/lib/waren-abgleich-ignoriert';
 import { findeDublettenGruppen, type DublettenGruppe } from '@/lib/waren-dubletten';
 import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import {
@@ -131,9 +146,9 @@ import {
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown, ChevronUp, EyeOff, RotateCcw,
   ScanSearch, Loader2, Scale, FileSearch, ChevronRight as ChevronRightSmall, AlertTriangle,
-  Info,
+  Info, FileDown,
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -382,6 +397,8 @@ export default function WarenrechnungenPage() {
   const [showSupplierDialog,setShowSupplierDialog]= useState(false);
   const [newSupplierName,   setNewSupplierName]   = useState('');
   const [deleteConfirm,     setDeleteConfirm]     = useState<string | null>(null);
+  /** Vorschau-Dialog «Erfassung löschen» (null = geschlossen). */
+  const [deleteDialogEntry, setDeleteDialogEntry] = useState<InvoiceEntry | null>(null);
   const [targetPct,         setTargetPct]         = useState<number>(30);
 
   // ─── Schnellerfassung: Warenkonten, zuletzt genutzte Lieferanten, Details ──
@@ -442,6 +459,9 @@ export default function WarenrechnungenPage() {
   const [fibuState, setFibuState] = useState<FibuMatchState>(LEERER_MATCH_STATE);
   const [fibuGeladen, setFibuGeladen] = useState(false); // Auto-Match erst NACH dem Load
   const [fibuToleranz, setFibuToleranz] = useState<number>(DEFAULT_FIBU_MATCH_TOLERANZ);
+  /** Ignorier-Liste des FIBU-Abgleichs (pro Mandant, import-fest). */
+  const [abgleichIgnoriert, setAbgleichIgnoriert] = useState<AbgleichIgnoriertListe>({ eintraege: {} });
+  const [zeigeIgnorierte, setZeigeIgnorierte] = useState(false);
   const fibuMonthKey = `${year}-${String(month).padStart(2, '0')}`;
   useEffect(() => {
     if (tab !== 'abgleich') return;
@@ -451,9 +471,10 @@ export default function WarenrechnungenPage() {
     Promise.all([
       loadFibuMatchState(tenantId, fibuMonthKey),
       loadFibuMatchToleranz(tenantId),
-    ]).then(([st, tol]) => {
+      ladeAbgleichIgnoriert(tenantId),
+    ]).then(([st, tol, ign]) => {
       if (!alive) return;
-      setFibuState(st); setFibuToleranz(tol); setFibuGeladen(true);
+      setFibuState(st); setFibuToleranz(tol); setAbgleichIgnoriert(ign); setFibuGeladen(true);
     }).catch(() => { if (alive) setFibuGeladen(true); });
     return () => { alive = false; };
   }, [tab, tenantId, fibuMonthKey]);
@@ -548,6 +569,17 @@ export default function WarenrechnungenPage() {
     () => buildAliasResolver(abgleich?.effektiveAliasGruppen ?? aliasGruppen),
     [abgleich, aliasGruppen],
   );
+
+  // ── SSOT-Aufschlüsselung der Gesamt-Differenz (klickbare Kennzahl) ──
+  const [diffTotalOffen, setDiffTotalOffen] = useState(false);
+  useEffect(() => { setDiffTotalOffen(false); }, [year, month, tenantId]);
+  const diffAufschluesselung: DiffAufschluesselung | null = useMemo(() => {
+    if (!abgleich || !fibuGeladen) return null;
+    return buildDiffAufschluesselung({
+      abgleich, invoices: entries, resolve: abgleichResolver,
+      gruppen: fibuState.gruppen, warenkostenGrenze: warenGrenze,
+    });
+  }, [abgleich, fibuGeladen, entries, abgleichResolver, fibuState.gruppen, warenGrenze]);
 
   // ─── Journal-Dubletten (FIBU-Buchungszeilen 3× durch Mehrfach-Import) ──────
   // Bereinigt NUR das Lieferanten-Journal (Buchungszeilen). Konto-Ansicht
@@ -675,14 +707,28 @@ export default function WarenrechnungenPage() {
   // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
   // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
   // gematchte Buchungen. Erst nach dem Match-Load rechnen (sonst Flackern).
-  const uebernahmeKandidaten = useMemo(
+  const uebernahmeKandidatenAlle = useMemo(
     () => (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : []),
     [abgleich, fibuState, fibuGeladen, entries],
+  );
+  // Ignorier-Liste anwenden: ignorierte Buchhaltungszeilen verschwinden aus der
+  // Differenz (zählen NICHT mehr), bleiben aber über «Ignorierte anzeigen» erreichbar.
+  const { sichtbar: uebernahmeKandidaten, ignoriert: ignorierteKandidaten } = useMemo(
+    () => filterIgnorierteKandidaten(uebernahmeKandidatenAlle, abgleichIgnoriert),
+    [uebernahmeKandidatenAlle, abgleichIgnoriert],
   );
   const uebernahmeSumme = useMemo(
     () => uebernahmeKandidaten.reduce((s, k) => s + k.betrag, 0),
     [uebernahmeKandidaten],
   );
+  const ignorierteSumme = useMemo(
+    () => ignorierteKandidaten.reduce((s, k) => s + k.betrag, 0),
+    [ignorierteKandidaten],
+  );
+  /** Ignorieren-Dialog (Vorschau + Grund) für eine Buchhaltungszeile. */
+  const [ignorierKandidat, setIgnorierKandidat] = useState<UebernahmeKandidat | null>(null);
+  const [ignorierGrund, setIgnorierGrund] = useState('');
+  const [ignorierBusy, setIgnorierBusy] = useState(false);
   /** Vorschau-Dialog: editierbare Entwürfe (null = geschlossen). */
   const [uebernahmeDrafts, setUebernahmeDrafts] = useState<UebernahmeDraft[] | null>(null);
   const [uebernahmeSaving, setUebernahmeSaving] = useState(false);
@@ -736,19 +782,39 @@ export default function WarenrechnungenPage() {
     localStorage.setItem(`waren_analyse_forecasts_${tenantId}`, JSON.stringify(updated));
   };
 
+  // Ignore-Liste (Privatbezug) — mandantengetrennt, Schlüssel = Rechnungsnummer.
+  const [ignoreListe, setIgnoreListe] = useState<IgnoreListe>({});
+  /** Ignorierte Rechnungen des Seiten-Monats (für den Transparenz-Block). */
+  const ignorierteMonat = useMemo(
+    () => Object.values(ignoreListe)
+      .filter(r => r.datum.startsWith(monthKey))
+      .sort((a, b) => a.datum.localeCompare(b.datum) || a.lieferant.localeCompare(b.lieferant)),
+    [ignoreListe, monthKey],
+  );
+
   const loadData = useCallback(async () => {
     setLoading(true);
     console.log(`[WAREN] tenant: ${tenantId} · month: ${monthKey}`);
     // Umsatzbasis = Netto (Food+Beverage netto, umsatz-SSOT) — GLEICHE Basis
     // wie die Cockpit-WKQ (vorher brutto actualRevenue → Quote zu tief).
-    const [sups, invs, rev] = await Promise.all([
+    const [sups, invs, rev, ign] = await Promise.all([
       loadSuppliers(tenantId),
       loadMonthInvoices(tenantId, monthKey),
       ladeNettoUmsatzByDate(tenantId, `${monthKey}-01`, `${monthKey}-31`),
+      loadIgnorierteRechnungen(tenantId),
     ]);
     setSuppliers(sups);
-    setEntries(invs);
+    // Lese-Selbstheilung: sollte eine ignorierte Rechnung durch ein
+    // check-then-write-Fenster (KV ohne CAS) wieder im Blob stehen, wird sie
+    // hier ausgefiltert und der Monat repariert zurückgeschrieben.
+    const heil = filtereIgnorierteRechnungen(ign, invs);
+    if (heil.entfernt > 0) {
+      console.log(`[WAREN] Selbstheilung: ${heil.entfernt} ignorierte Rechnung(en) aus ${monthKey} entfernt`);
+      saveMonthInvoices(tenantId, monthKey, heil.entries).catch(() => { /* nächster Load heilt erneut */ });
+    }
+    setEntries(heil.entries);
     setRevenueByDate(rev);
+    setIgnoreListe(ign);
     setLoading(false);
   }, [tenantId, monthKey]);
 
@@ -988,6 +1054,27 @@ export default function WarenrechnungenPage() {
 
   const filteredTotalNet   = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountNet, 0),   [filteredEntries]);
   const filteredTotalGross = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountGross, 0), [filteredEntries]);
+
+  /**
+   * Split der Total-Zeile in der Erfassungsliste: volle Rechnungssumme =
+   * direkter Warenaufwand (4020–4070, WKQ-Basis) + Betriebsmaterial/übrige
+   * (4090/4701/…) + Depot (4800). Damit ist sofort sichtbar, dass die
+   * Differenz zur oberen Kennzahl KEIN Fehler ist. Basis = dieselben Einträge
+   * wie die Total-Zeile (Lieferanten-/FIBU-Filter inklusive).
+   */
+  const erfassungTotalSplit = useMemo(() => {
+    // EXAKT dieselbe Basis wie die angezeigte Total-Zahl der Zeile
+    // (filteredTotalNet nur bei aktivem Lieferantenfilter, sonst ganzer Monat).
+    const basis = erfassungSupplierFilter ? filteredEntries : entries;
+    const total = basis.reduce((sum, e) => sum + (Number.isFinite(e.amountNet) ? e.amountNet : 0), 0);
+    const direkt = direkterWarenaufwand(basis).direktNet;
+    const depot = basis.reduce((sum, e) => sum + depotAnteilNet(e), 0);
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    return { total: r2(total), direkt: r2(direkt), depot: r2(depot), uebrig: r2(total - direkt - depot) };
+  }, [entries, filteredEntries, erfassungSupplierFilter]);
+
+  /** Obere Kennzahl: direkter Warenaufwand 4020–4070 des Monats (WKQ-Basis). */
+  const monthDirektNet = useMemo(() => direkterWarenaufwand(entries).direktNet, [entries]);
 
   // Alle Lieferanten die im aktuellen Monat Einträge haben (für Dropdown)
   const entrySupplierNames = useMemo(() =>
@@ -1306,12 +1393,13 @@ export default function WarenrechnungenPage() {
     ? `${aYear}-${String(aMonth).padStart(2, '0')}` : null;
   const [kontoErklaert, setKontoErklaert] = useState<Record<string, ErklaerteDifferenz>>({});
   const [kontoErklaertGeladen, setKontoErklaertGeladen] = useState(false);
+  const [analyseFibuGruppen, setAnalyseFibuGruppen] = useState<FibuMatchGruppe[]>([]);
   useEffect(() => {
-    if (tab !== 'analyse' || !analyseMonthKey) { setKontoErklaert({}); setKontoErklaertGeladen(false); return; }
+    if (tab !== 'analyse' || !analyseMonthKey) { setKontoErklaert({}); setKontoErklaertGeladen(false); setAnalyseFibuGruppen([]); return; }
     let alive = true;
-    setKontoErklaert({}); setKontoErklaertGeladen(false);
+    setKontoErklaert({}); setKontoErklaertGeladen(false); setAnalyseFibuGruppen([]);
     loadFibuMatchState(tenantId, analyseMonthKey)
-      .then(st => { if (alive) { setKontoErklaert(st.erklaert); setKontoErklaertGeladen(true); } })
+      .then(st => { if (alive) { setKontoErklaert(st.erklaert); setAnalyseFibuGruppen(st.gruppen); setKontoErklaertGeladen(true); } })
       .catch(() => { if (alive) setKontoErklaertGeladen(true); });
     return () => { alive = false; };
   }, [tab, tenantId, analyseMonthKey]);
@@ -1346,13 +1434,102 @@ export default function WarenrechnungenPage() {
   // ── Konto-Drilldown: Woraus besteht die Differenz? (nur Einmonats-Sicht) ──
   const [kontoDrill, setKontoDrill] = useState<string | null>(null);
   const [vorschlaegeOpen, setVorschlaegeOpen] = useState(false);
+  // Klickbare Gesamt-Differenz in der Analyse: gleiche SSOT wie der FIBU-Abgleich.
+  const [analyseDiffOpen, setAnalyseDiffOpen] = useState(false);
+  // Tagesverlauf: aufgeklappter Tag (YYYY-MM-DD) — zeigt die Rechnungen des Tages.
+  const [tagesDrill, setTagesDrill] = useState<string | null>(null);
+  useEffect(() => { setTagesDrill(null); }, [analyseMode, analyseDates.from, analyseDates.to, tenantId]);
+
+  /**
+   * Unkontierte Position direkt kontieren (Analyse-Block).
+   * - Quelle ist die ANALYSE-Datenbasis (rangeEntries) — der Analyse-Zeitraum
+   *   kann andere Monate umfassen als der Seiten-Monat (entries).
+   * - Zuweisungen laufen SERIALISIERT über eine Kette: saveInvoiceEntry ist
+   *   ein unversioniertes load-modify-write auf den Monats-Blob; parallele
+   *   Splits derselben Rechnung würden sich sonst gegenseitig überschreiben.
+   *   Dazu wird der Eintrag IN der Kette frisch aus dem Ref gelesen (zwei
+   *   Splits derselben Rechnung bauen aufeinander auf).
+   * - Regel-Lernen NUR bei eindeutiger Artikel-Identität aus den persistierten
+   *   Rechnungspositionen (genau EINE Position) — nie aus der freien Notiz,
+   *   nie raten. 4800 (Pfand/Depot) darf als Regel gespeichert werden —
+   *   Pfand-Artikel sind lieferantenübergreifend immer 4800.
+   */
+  const kontierChain = useRef<Promise<void>>(Promise.resolve());
+  const rangeEntriesRef = useRef<InvoiceEntry[]>([]);
+  useEffect(() => { rangeEntriesRef.current = rangeEntries; }, [rangeEntries]);
+  const handleUnkontiertZuweisen = useCallback((pos: UnkontiertePosition, konto: string): Promise<boolean> => {
+    if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten.'); return Promise.resolve(false); }
+    const run = kontierChain.current.then(async (): Promise<boolean> => {
+      // Frisch aus dem Ref — vorherige Ketten-Glieder haben den State evtl. schon aktualisiert.
+      const entry = rangeEntriesRef.current.find(e => e.id === pos.entryId)
+        ?? entries.find(e => e.id === pos.entryId);
+      if (!entry) { toast.error('Eintrag nicht gefunden — bitte Seite aktualisieren.'); return false; }
+      const updated = weiseKontoZu(entry, pos.splitIndex, konto);
+      try {
+        await saveInvoiceEntry(tenantId, updated);
+      } catch (e) {
+        toast.error(`Kontierung fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
+      }
+      // BEIDE Datenbasen patchen: Analyse (rangeEntries) + Seiten-Monat (entries).
+      rangeEntriesRef.current = rangeEntriesRef.current.map(x => (x.id === updated.id ? updated : x));
+      setRangeEntries(prev => prev.map(x => (x.id === updated.id ? updated : x)));
+      setEntries(prev => prev.map(x => (x.id === updated.id ? updated : x)));
+      // Regel merken — nur mit echter Positions-Identität (eindeutig), 4-stelliges Konto.
+      if (/^\d{4}$/.test(konto)) {
+        try {
+          const monat = updated.date.slice(0, 7);
+          const posProRechnung = await loadRechnungsPositionen(tenantId, monat);
+          const positionen = posProRechnung[updated.id] ?? [];
+          if (positionen.length === 1) {
+            const key = artikelKey(updated.supplierName, positionen[0]);
+            if (key) await saveArtikelKonten(tenantId, { [key]: konto });
+          }
+        } catch (e) {
+          console.log(`[WAREN] Artikel-Regel nicht gespeichert: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      toast.success(`Kontiert auf ${konto === 'Depot' || konto === '4800' ? 'Konto 4800 (Pfand/Depot)' : `Konto ${konto}`}.`);
+      return true;
+    });
+    kontierChain.current = run.then(() => undefined, () => undefined);
+    return run;
+  }, [canEdit, entries, tenantId]);
   const [analyseJournal, setAnalyseJournal] = useState<SageJournalEntry[] | null>(null);
   const [analyseJournalGeladen, setAnalyseJournalGeladen] = useState(false);
-  useEffect(() => { setKontoDrill(null); setVorschlaegeOpen(false); }, [analyseMonthKey, tenantId]);
+  useEffect(() => { setKontoDrill(null); setVorschlaegeOpen(false); setAnalyseDiffOpen(false); }, [analyseMonthKey, tenantId]);
+
+  /**
+   * SSOT der Gesamt-Differenz in der Analyse: DERSELBE buildWarenAbgleich wie
+   * im FIBU-Abgleich-Tab (erfasst-Basis fibuVergleichsNetto, Journal-Seite ohne
+   * interne Umbuchungen) — die Kennzahl ist damit in beiden Ansichten identisch.
+   * Nur Einmonats-Sicht; lädt das Journal lazy beim ersten Klick.
+   */
+  const analyseAbgleich: WarenAbgleich | null = useMemo(() => {
+    if (!analyseMonthKey || analyseJournal === null || analyseJournal.length === 0) return null;
+    return buildWarenAbgleich({
+      invoices: analyseKPIs.periodEntries,
+      journal: analyseJournal,
+      warenkontoNummern: warenkonten.map(k => k.value),
+      supplierNames: suppliers.map(s => s.name),
+      aliases,
+      buchhaltungTotal: null,
+      aliasGruppen,
+      warenkostenGrenze: warenGrenze,
+    });
+  }, [analyseMonthKey, analyseJournal, analyseKPIs.periodEntries, warenkonten, suppliers, aliases, aliasGruppen, warenGrenze]);
+  const analyseDiffAufschluesselung: DiffAufschluesselung | null = useMemo(() => {
+    if (!analyseAbgleich || !kontoErklaertGeladen) return null;
+    const resolve = buildAliasResolver(analyseAbgleich.effektiveAliasGruppen);
+    return buildDiffAufschluesselung({
+      abgleich: analyseAbgleich, invoices: analyseKPIs.periodEntries, resolve,
+      gruppen: analyseFibuGruppen, warenkostenGrenze: warenGrenze,
+    });
+  }, [analyseAbgleich, kontoErklaertGeladen, analyseKPIs.periodEntries, analyseFibuGruppen, warenGrenze]);
   useEffect(() => {
     // LAZY: Journal erst laden, wenn eine Konto-Zeile oder die
     // Korrektur-Vorschläge aufgeklappt werden.
-    if (tab !== 'analyse' || !analyseMonthKey || (!kontoDrill && !vorschlaegeOpen)) { setAnalyseJournal(null); setAnalyseJournalGeladen(false); return; }
+    if (tab !== 'analyse' || !analyseMonthKey || (!kontoDrill && !vorschlaegeOpen && !analyseDiffOpen)) { setAnalyseJournal(null); setAnalyseJournalGeladen(false); return; }
     if (!journalVerfuegbarFuerTenant(tenantId)) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); return; }
     let alive = true;
     setAnalyseJournal(null); setAnalyseJournalGeladen(false);
@@ -1360,7 +1537,7 @@ export default function WarenrechnungenPage() {
       .then(j => { if (alive) { setAnalyseJournal(j); setAnalyseJournalGeladen(true); } })
       .catch(() => { if (alive) { setAnalyseJournal(null); setAnalyseJournalGeladen(true); } });
     return () => { alive = false; };
-  }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill, vorschlaegeOpen]);
+  }, [tab, tenantId, analyseMonthKey, aYear, aMonth, kontoDrill, vorschlaegeOpen, analyseDiffOpen]);
   // Cross-Konto-Check «MwSt-Satz-Bündelung» (z.B. Feldschlösschen): EIN Befund
   // pro Lieferant über die Geschwister-Konten hinweg — statt Einzel-Abweichungen.
   const buendelungsBefunde = useMemo(() => {
@@ -1579,6 +1756,7 @@ export default function WarenrechnungenPage() {
     return `year_${aRangeYear}`;
   })();
   const [forecastOpen, setForecastOpen] = useState(false);
+  const [periodePickerOpen, setPeriodePickerOpen] = useState(false);
   const forecastRev      = forecastRevs[forecastKey] ?? 0;         // nur der Zusatzumsatz
   const forecastTotal    = analyseKPIs.totalRev + forecastRev;     // aktuell + zusatz
   const forecastPct      = forecastRev > 0 && analyseKPIs.relevantCost > 0 && forecastTotal > 0
@@ -1912,6 +2090,30 @@ export default function WarenrechnungenPage() {
     setSaving(false);
   }
 
+  /** Als privat/ignorieren: dauerhaft & import-fest (Ignore-Liste je Mandant). */
+  async function handleIgnorieren(entry: InvoiceEntry) {
+    if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten.'); return; }
+    try {
+      await markiereRechnungIgnoriert(tenantId, entry);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    await loadData();
+    toast.success(`${entry.supplierName} ${entry.reference ?? ''} ignoriert (privat) — zählt nicht mehr als Warenkosten und wird bei Importen übersprungen.`);
+  }
+
+  async function handleReaktivieren(refKey: string) {
+    if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten.'); return; }
+    try {
+      const wieder = await reaktiviereIgnorierteRechnung(tenantId, refKey);
+      await loadData();
+      toast.success(wieder ? `${wieder.supplierName} ${wieder.reference ?? ''} wieder aktiviert.` : 'Von der Ignore-Liste entfernt.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   async function handleDelete(entry: InvoiceEntry) {
     if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     await deleteInvoiceEntry(tenantId, entry.id, entry.date);
@@ -1921,7 +2123,71 @@ export default function WarenrechnungenPage() {
     }
     await loadData();
     setDeleteConfirm(null);
-    toast.success('Eintrag gelöscht.');
+    // Undo (1 Schritt): Erfassung ohne Anhang wiederherstellen — gleiche ID,
+    // alle Splits/Kontierungen bleiben erhalten.
+    const restore: InvoiceEntry = { ...entry, receiptPath: undefined };
+    toast.success('Erfassung entfernt. Beim nächsten Import derselben Rechnung wird sie wieder eingelesen.', {
+      action: {
+        label: 'Rückgängig',
+        onClick: () => {
+          void (async () => {
+            try {
+              await saveInvoiceEntry(tenantId, restore);
+              await loadData();
+              toast.success('Erfassung wiederhergestellt.');
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'Wiederherstellen fehlgeschlagen.');
+            }
+          })();
+        },
+      },
+      duration: 8000,
+    });
+  }
+
+  /** Neue Differenz-Summe (nach einer Abgleich-Aktion) für den Toast — «leer statt 0». */
+  function differenzText(anzahl: number, summe: number): string {
+    return anzahl === 0 ? 'Keine Differenz mehr.' : `Neue Differenz: ${anzahl} Buchung${anzahl === 1 ? '' : 'en'} · CHF ${fmtChf(summe)}.`;
+  }
+
+  /** Buchhaltungszeile im Abgleich ignorieren (persistiert, import-fest; Zeile wird NICHT gelöscht). */
+  async function handleAbgleichIgnorieren(k: UebernahmeKandidat, grund: string) {
+    setIgnorierBusy(true);
+    try {
+      await ignoriereAbgleichZeile(tenantId, {
+        belegNr: k.belegNr, datumIso: k.datumIso, betrag: k.betrag, text: k.text,
+        lieferant: k.lieferant, grund,
+      });
+      const frisch = await ladeAbgleichIgnoriert(tenantId);
+      setAbgleichIgnoriert(frisch);
+      setIgnorierKandidat(null); setIgnorierGrund('');
+      const { sichtbar } = filterIgnorierteKandidaten(uebernahmeKandidatenAlle, frisch);
+      const key = abgleichIgnoriertKey(k);
+      toast.success(`Buchung ignoriert. ${differenzText(sichtbar.length, sichtbar.reduce((sm, x) => sm + x.betrag, 0))}`, {
+        action: {
+          label: 'Rückgängig',
+          onClick: () => { void handleAbgleichWiederAufnehmen(key); },
+        },
+        duration: 8000,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ignorieren fehlgeschlagen.');
+    } finally {
+      setIgnorierBusy(false);
+    }
+  }
+
+  /** «Wieder aufnehmen»: Ignorieren aufheben — Zeile zählt wieder in die Differenz. */
+  async function handleAbgleichWiederAufnehmen(key: string) {
+    try {
+      await wiederAufnehmenAbgleichZeile(tenantId, key);
+      const frisch = await ladeAbgleichIgnoriert(tenantId);
+      setAbgleichIgnoriert(frisch);
+      const { sichtbar } = filterIgnorierteKandidaten(uebernahmeKandidatenAlle, frisch);
+      toast.success(`Wieder aufgenommen. ${differenzText(sichtbar.length, sichtbar.reduce((sm, x) => sm + x.betrag, 0))}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Wieder aufnehmen fehlgeschlagen.');
+    }
   }
 
   async function openReceipt(path: string) {
@@ -2119,12 +2385,12 @@ export default function WarenrechnungenPage() {
                 variant={kpiVariant(todayPct)}
               />
               <KpiBox
-                label="Warenkosten Monat"
-                value={`CHF ${fmtChf(monthTotals.totalNet)}`}
-                sub={`${stats.entryCount} Einträge (exkl. MWST) · Konten 4000–${warenGrenze}`}
+                label="Direkter Warenaufwand"
+                value={`CHF ${fmtChf(monthDirektNet)}`}
+                sub={`Konten 4020–4070 (WKQ-Basis) · ${stats.entryCount} Einträge, exkl. MWST`}
                 sub2={monthBetrieb > 0 ? `Betriebskosten (≥ ${warenGrenze + 1}): CHF ${fmtChf(monthBetrieb)}` : undefined}
                 icon={Package}
-                variant={monthTotals.totalNet > 0 ? 'default' : 'muted'}
+                variant={monthDirektNet > 0 ? 'default' : 'muted'}
               />
               <KpiBox
                 label="Warenkosten Monat %"
@@ -2817,15 +3083,25 @@ export default function WarenrechnungenPage() {
                                     Edit
                                   </Button>
                                   )}
-                                  {canDelete && (deleteConfirm === e.id ? (
-                                    <Button variant="destructive" size="sm" className="h-7 px-2 text-xs" onClick={() => handleDelete(e)}>
-                                      Löschen?
+                                  {canEdit && e.reference?.trim() && (
+                                    <Button
+                                      variant="ghost" size="sm"
+                                      className="h-7 px-2 text-xs text-muted-foreground hover:text-amber-600"
+                                      title="Als privat/ignorieren — zählt nicht als Warenkosten, Importe überspringen diese Rechnungsnummer künftig"
+                                      data-testid={`ignore-entry-${e.id}`}
+                                      onClick={() => handleIgnorieren(e)}
+                                    >
+                                      <EyeOff className="h-3 w-3" />
                                     </Button>
-                                  ) : (
-                                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive/50 hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteConfirm(e.id)}>
+                                  )}
+                                  {canDelete && (
+                                    <Button variant="ghost" size="sm" title="Erfassung löschen (mit Vorschau)"
+                                      className="h-7 px-2 text-xs text-destructive/50 hover:text-destructive hover:bg-destructive/10"
+                                      data-testid={`delete-entry-${e.id}`}
+                                      onClick={() => setDeleteDialogEntry(e)}>
                                       <Trash2 className="h-3 w-3" />
                                     </Button>
-                                  ))}
+                                  )}
                                   {!canEdit && !canDelete && (
                                     <span className="text-[10px] text-muted-foreground/40 px-1">Lesezugriff</span>
                                   )}
@@ -2837,7 +3113,12 @@ export default function WarenrechnungenPage() {
                         <tfoot>
                           <tr className="border-t-2 border-border bg-muted/20 font-bold">
                             <td className="px-4 py-2.5 text-xs text-muted-foreground uppercase tracking-wide" colSpan={2}>
-                              {erfassungSupplierFilter ? erfassungSupplierFilter : 'Total'}
+                              {erfassungSupplierFilter ? erfassungSupplierFilter : 'Total erfasste Rechnungen (Netto)'}
+                              <div className="mt-0.5 text-[11px] font-normal normal-case tracking-normal" data-testid="erfassung-total-split">
+                                davon direkter Warenaufwand (4020–4070) CHF {fmtChf(erfassungTotalSplit.direkt)}
+                                {erfassungTotalSplit.uebrig !== 0 && <> · Betriebsmaterial/übrige (4090/4701) CHF {fmtChf(erfassungTotalSplit.uebrig)}</>}
+                                {erfassungTotalSplit.depot !== 0 && <> · Depot (4800) CHF {fmtChf(erfassungTotalSplit.depot)}</>}
+                              </div>
                             </td>
                             <td className="px-4 py-2.5 text-right tabular-nums font-bold">CHF {fmtChf(erfassungSupplierFilter ? filteredTotalNet : stats.totalNet)}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{fmtChf(erfassungSupplierFilter ? filteredTotalGross : stats.totalGross)}</td>
@@ -2848,6 +3129,80 @@ export default function WarenrechnungenPage() {
                         </tfoot>
                       </table>
                     </div>
+                  {/* ── Lösch-Vorschau: Erfassung entfernen (mit Undo) ────────── */}
+                  <Dialog open={deleteDialogEntry !== null} onOpenChange={o => { if (!o) setDeleteDialogEntry(null); }}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Erfassung löschen</DialogTitle>
+                      </DialogHeader>
+                      {deleteDialogEntry && (
+                        <div className="space-y-3 text-sm">
+                          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Lieferant</span><span className="font-medium text-right">{deleteDialogEntry.supplierName}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Rechnungsnummer</span><span>{deleteDialogEntry.reference || '–'}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Datum</span><span className="tabular-nums">{deleteDialogEntry.date}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">Betrag (netto)</span><span className="tabular-nums font-medium">CHF {fmtChf(deleteDialogEntry.amountNet)}</span></div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">Betroffene Konten</span>
+                              <span className="text-right tabular-nums">
+                                {deleteDialogEntry.kontoSplits?.length
+                                  ? deleteDialogEntry.kontoSplits.map(sp => sp.warenkonto).join(', ')
+                                  : (deleteDialogEntry.warenkonto || '–')}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Diese Erfassung wird entfernt. Bei einem erneuten Import derselben Rechnung wird sie
+                            wieder eingelesen. Soll eine Rechnung dauerhaft draussen bleiben (z.B. Privatbezug),
+                            nutze stattdessen «Ignorieren». Alle abgeleiteten Summen (Warenkosten, WKQ, Cockpit,
+                            FIBU-Abgleich) rechnen sofort neu; Rückgängig ist direkt nach dem Löschen möglich
+                            {deleteDialogEntry.receiptPath ? ' (der Beleg-Anhang wird dabei nicht wiederhergestellt)' : ''}.
+                          </p>
+                          <div className="flex justify-end gap-2 pt-1">
+                            <Button variant="outline" size="sm" onClick={() => setDeleteDialogEntry(null)}>Abbrechen</Button>
+                            <Button variant="destructive" size="sm" data-testid="delete-entry-bestaetigen"
+                              onClick={() => { const e = deleteDialogEntry; setDeleteDialogEntry(null); void handleDelete(e); }}>
+                              Löschen
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </DialogContent>
+                  </Dialog>
+                  </section>
+                )}
+
+                {/* ── Ignoriert / Privatbezug (leer statt 0: nur wenn vorhanden) ── */}
+                {ignorierteMonat.length > 0 && (
+                  <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="ignoriert-block">
+                    <div className="px-4 py-2.5 border-b border-border/50 flex items-center gap-2 text-sm font-semibold">
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                      Ignoriert / Privatbezug ({ignorierteMonat.length} Rechnung{ignorierteMonat.length === 1 ? '' : 'en'} · CHF {fmtChf(ignorierteMonat.reduce((a, r) => a + r.betragNet, 0))})
+                      <span className="ml-auto text-[10px] font-normal text-muted-foreground">zählt nicht in Warenkosten/WKQ/FIBU-Abgleich · Importe überspringen diese Nummern</span>
+                    </div>
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {ignorierteMonat.map(r => (
+                          <tr key={r.referenz} className="border-b border-border/30 last:border-0" data-testid={`ignoriert-zeile-${r.referenz}`}>
+                            <td className="px-4 py-1.5 tabular-nums whitespace-nowrap">{r.datum.split('-').reverse().join('.')}</td>
+                            <td className="px-2 py-1.5 font-medium">{r.lieferant}</td>
+                            <td className="px-2 py-1.5 tabular-nums text-muted-foreground">{r.referenzAnzeige}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">CHF {fmtChf(r.betragNet)}</td>
+                            <td className="px-2 py-1.5 text-right">
+                              {canEdit && (
+                                <Button
+                                  variant="ghost" size="sm" className="h-6 px-2 text-[11px] gap-1"
+                                  data-testid={`reaktivieren-${r.referenz}`}
+                                  onClick={() => handleReaktivieren(r.referenz)}
+                                >
+                                  <RotateCcw className="h-3 w-3" /> Wieder aktivieren
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </section>
                 )}
               </div>
@@ -2859,24 +3214,76 @@ export default function WarenrechnungenPage() {
 
                 {/* ── Zeitraum-Auswahl ─────────────────────────────────────── */}
                 <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  <div className="flex flex-wrap items-center gap-2 p-2 bg-muted/20">
-                    <select
-                      value={analyseMode}
-                      onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
-                      data-testid="analyse-mode-select"
-                      className="h-8 rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
-                    >
-                      {([
-                        ['week',        'Woche'],
-                        ['month',       'Monat'],
-                        ['multi_month', 'Mehrere Monate'],
-                        ['year',        'Jahr'],
-                        ['ytd',         'YTD'],
-                      ] as [AnalyseMode, string][]).map(([m, label]) => (
-                        <option key={m} value={m}>{label}</option>
-                      ))}
-                    </select>
-                    <div className="ml-auto flex items-center gap-3">
+                  {/* EINE kompakte Zeile: zentrierte Periode (klickbar → Auswahl) + Blätter-Pfeile; rechts Export/Ziel */}
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2 p-2 bg-muted/20">
+                    <div className="hidden sm:block" />
+                    <div className="flex items-center justify-center gap-1 min-w-0" data-testid="analyse-periode-zeile">
+                      {analyseMode !== 'multi_month' && (
+                        <button
+                          onClick={analyseMode === 'week' ? prevAWeek : analyseMode === 'month' ? prevAMonth : () => setARangeYear(y => y - 1)}
+                          className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                          data-testid="analyse-periode-prev"
+                        ><ChevronLeft className="h-4 w-4" /></button>
+                      )}
+                      <Popover open={periodePickerOpen} onOpenChange={setPeriodePickerOpen}>
+                        <PopoverTrigger asChild>
+                          <button
+                            data-testid="analyse-periode-trigger"
+                            title="Periode wählen (Woche / Monat / Mehrere Monate / Jahr / YTD)"
+                            className="inline-flex items-center gap-1 px-2 h-8 rounded-lg font-semibold text-sm hover:bg-muted transition-colors min-w-[120px] justify-center"
+                          >
+                            <span className="truncate">{analyseMode === 'year' ? aRangeYear : analyseRangeLabel}</span>
+                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-3 space-y-2" align="center">
+                          <p className="text-xs font-medium text-muted-foreground">Periode</p>
+                          <select
+                            value={analyseMode}
+                            onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
+                            data-testid="analyse-mode-select"
+                            className="h-8 w-full rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            {([
+                              ['week',        'Woche'],
+                              ['month',       'Monat'],
+                              ['multi_month', 'Mehrere Monate'],
+                              ['year',        'Jahr'],
+                              ['ytd',         'YTD'],
+                            ] as [AnalyseMode, string][]).map(([m, label]) => (
+                              <option key={m} value={m}>{label}</option>
+                            ))}
+                          </select>
+                          {analyseMode === 'multi_month' && (
+                            <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 text-sm pt-1">
+                              <span className="text-muted-foreground text-xs">Von</span>
+                              <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                                {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                              </select>
+                              <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                                {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                              </select>
+                              <span className="text-muted-foreground text-xs">Bis</span>
+                              <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                                {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                              </select>
+                              <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                                {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                              </select>
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                      {analyseMode !== 'multi_month' && (
+                        <button
+                          onClick={analyseMode === 'week' ? nextAWeek : analyseMode === 'month' ? nextAMonth : () => setARangeYear(y => y + 1)}
+                          disabled={analyseMode === 'week' ? isCurrentAWeek : analyseMode === 'month' ? isCurrentAMonth : aRangeYear >= today.getFullYear()}
+                          className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"
+                          data-testid="analyse-periode-next"
+                        ><ChevronRight className="h-4 w-4" /></button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-center sm:justify-end gap-3">
                       {canExport && (
                         <button
                           onClick={handleWarenkostenExport}
@@ -2898,60 +3305,6 @@ export default function WarenrechnungenPage() {
                         <span>%</span>
                       </div>
                     </div>
-                  </div>
-
-                  {/* Range Picker */}
-                  <div className="px-3 py-2 border-t border-border flex items-center gap-2 flex-wrap">
-                    {analyseMode === 'week' && (
-                      <>
-                        <button onClick={prevAWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors"><ChevronLeft className="h-4 w-4" /></button>
-                        <span className="font-semibold text-sm min-w-[140px] text-center">{analyseRangeLabel}</span>
-                        <button onClick={nextAWeek} disabled={isCurrentAWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
-                      </>
-                    )}
-                    {analyseMode === 'month' && (
-                      <>
-                        <button onClick={prevAMonth} className="p-1.5 rounded-lg hover:bg-muted transition-colors"><ChevronLeft className="h-4 w-4" /></button>
-                        <span className="font-semibold text-sm min-w-[140px] text-center">{analyseRangeLabel}</span>
-                        <button onClick={nextAMonth} disabled={isCurrentAMonth} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
-                      </>
-                    )}
-                    {analyseMode === 'multi_month' && (
-                      <div className="flex items-center gap-2 flex-wrap text-sm">
-                        <span className="text-muted-foreground text-xs">Von</span>
-                        <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                          {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                        </select>
-                        <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm w-[80px] focus:outline-none focus:ring-1 focus:ring-ring">
-                          {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
-                        <span className="text-muted-foreground text-xs">Bis</span>
-                        <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                          {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                        </select>
-                        <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm w-[80px] focus:outline-none focus:ring-1 focus:ring-ring">
-                          {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
-                      </div>
-                    )}
-                    {(analyseMode === 'year' || analyseMode === 'ytd') && (
-                      <>
-                        {analyseMode === 'year' && (
-                          <>
-                            <button onClick={() => setARangeYear(y => y - 1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors"><ChevronLeft className="h-4 w-4" /></button>
-                            <span className="font-semibold text-sm min-w-[80px] text-center">{aRangeYear}</span>
-                            <button onClick={() => setARangeYear(y => y + 1)} disabled={aRangeYear >= today.getFullYear()} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
-                          </>
-                        )}
-                        {analyseMode === 'ytd' && (
-                          <>
-                            <button onClick={() => setARangeYear(y => y - 1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors"><ChevronLeft className="h-4 w-4" /></button>
-                            <span className="font-semibold text-sm min-w-[80px] text-center">{analyseRangeLabel}</span>
-                            <button onClick={() => setARangeYear(y => y + 1)} disabled={aRangeYear >= today.getFullYear()} className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
-                          </>
-                        )}
-                      </>
-                    )}
                   </div>
                 </div>
 
@@ -3094,6 +3447,7 @@ export default function WarenrechnungenPage() {
                     zielPct={zielWkqPct}
                     periodLabel={analyseRangeLabel}
                     onOpenReceipt={openReceipt}
+                    onAssignKonto={canEdit ? handleUnkontiertZuweisen : undefined}
                   />
                 )}
 
@@ -3529,12 +3883,33 @@ export default function WarenrechnungenPage() {
                               <td className="text-right px-2">{kontoVergleich.totalEr !== null ? `CHF ${fmtChf(kontoVergleich.totalEr)}` : '–'}</td>
                               <td className={cn('text-right px-2',
                                 kontoVergleich.totalDiff !== null && Math.abs(kontoVergleich.totalDiff) > 0.05 && 'text-red-600 dark:text-red-400')}>
-                                {kontoVergleich.totalDiff !== null ? fmtChf(kontoVergleich.totalDiff) : '–'}
+                                {analyseMonthKey ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAnalyseDiffOpen(o => !o)}
+                                    className="underline decoration-dotted underline-offset-2 hover:text-foreground tabular-nums cursor-pointer"
+                                    title="Klicken: Woraus besteht die Differenz? (gleiche Quelle wie der FIBU-Abgleich)"
+                                    data-testid="analyse-diff-total-toggle"
+                                  >
+                                    {(analyseAbgleich?.diffTotal ?? kontoVergleich.totalDiff) !== null
+                                      ? fmtChf((analyseAbgleich?.diffTotal ?? kontoVergleich.totalDiff) as number) : '–'}
+                                  </button>
+                                ) : (kontoVergleich.totalDiff !== null ? fmtChf(kontoVergleich.totalDiff) : '–')}
                               </td>
                               <td className="pl-2" />
                             </tr>
                           </tbody>
                         </table>
+                        {/* SSOT-Aufschlüsselung (gleiche Quelle/Zerlegung wie im FIBU-Abgleich) */}
+                        {analyseDiffOpen && analyseMonthKey && (
+                          analyseDiffAufschluesselung
+                            ? <DiffAufschluesselungPanel data={analyseDiffAufschluesselung} testid="analyse-diff-aufschluesselung" />
+                            : <p className="text-xs text-muted-foreground mt-2">
+                                {analyseJournalGeladen && (analyseJournal === null || analyseJournal.length === 0)
+                                  ? 'Keine FIBU-Buchungszeilen für diesen Monat — Aufschlüsselung braucht das importierte Kontoblatt/Journal.'
+                                  : 'Lade FIBU-Buchungen…'}
+                              </p>
+                        )}
                         {!analyseMonthKey && (
                           <p className="text-[11px] text-muted-foreground/70 mt-1">
                             Abschliessen (erklären) ist nur in der Einmonats-Sicht möglich.
@@ -4078,11 +4453,37 @@ export default function WarenrechnungenPage() {
                     )}
 
                     {/* ── Tages-Detail-Tabelle (nur Woche / Monat) ─────────── */}
-                    {(analyseMode === 'week' || analyseMode === 'month') && analyseChartPoints.filter(p => p.hasEntry).length > 0 && (
+                    {(analyseMode === 'week' || analyseMode === 'month') && analyseChartPoints.filter(p => p.hasEntry || p.dayRev > 0).length > 0 && (
                     <section className="bg-card border border-border rounded-xl overflow-hidden">
-                      <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between">
+                      <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center justify-between flex-wrap gap-2">
                         <h2 className="text-sm font-semibold">Tagesverlauf · {analyseRangeLabel}</h2>
-                        <span className="text-xs text-muted-foreground">{analyseChartPoints.filter(p => p.hasEntry).length} Tage mit Einträgen</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-muted-foreground">{analyseChartPoints.filter(p => p.hasEntry).length} Tage mit Einträgen</span>
+                          {canExport && (
+                          <Button
+                            variant="outline" size="sm" className="h-7 text-xs"
+                            data-testid="tagesverlauf-pdf-export"
+                            onClick={() => {
+                              if (!canExport) { toast.error('Keine Berechtigung zum Export.'); return; }
+                              try {
+                                exportTagesverlaufPdf({
+                                  points: analyseChartPoints,
+                                  periodLabel: analyseRangeLabel,
+                                  tenantName: tenant.name,
+                                  targetPct,
+                                  totalPct: analyseKPIs.pct,
+                                  fileBase: `tagesverlauf-warenkosten-${tenantId}-${analyseDates.from}_${analyseDates.to}`,
+                                });
+                                toast.success('PDF-Export erstellt.');
+                              } catch (e) {
+                                toast.error(`PDF-Export fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+                              }
+                            }}
+                          >
+                            <FileDown className="h-3.5 w-3.5 mr-1" /> PDF exportieren
+                          </Button>
+                          )}
+                        </div>
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -4100,19 +4501,68 @@ export default function WarenrechnungenPage() {
                           <tbody>
                             {analyseChartPoints.filter(p => p.hasEntry || p.dayRev > 0).map((p, i) => {
                               const isToday = p.date === todayStr;
+                              const offen = tagesDrill === p.date;
+                              const tagEntries = offen ? analysisEntries.filter(e => e.date === p.date) : [];
                               return (
-                                <tr key={p.date} className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors', i % 2 === 1 && 'bg-muted/10', isToday && 'ring-1 ring-inset ring-blue-200 dark:ring-blue-800')}>
+                                <Fragment key={p.date}>
+                                <tr
+                                  className={cn('border-b border-border/40 hover:bg-muted/20 transition-colors cursor-pointer', i % 2 === 1 && 'bg-muted/10', isToday && 'ring-1 ring-inset ring-blue-200 dark:ring-blue-800', offen && 'bg-muted/30')}
+                                  onClick={() => setTagesDrill(offen ? null : p.date)}
+                                  title="Klicken: Rechnungen dieses Tages anzeigen"
+                                  data-testid={`tagesverlauf-zeile-${p.date}`}
+                                >
                                   <td className="px-4 py-2.5 font-medium text-sm">
-                                    {formatDateLong(p.date)}
+                                    <span className="inline-flex items-center gap-1">
+                                      {offen ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground/50" />}
+                                      {formatDateLong(p.date)}
+                                    </span>
                                     {isToday && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded px-1 py-0.5">heute</span>}
                                   </td>
                                   <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{p.dayNet > 0 ? `CHF ${fmtChf(p.dayNet)}` : <span className="text-muted-foreground/30">–</span>}</td>
                                   <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{p.dayRev > 0 ? fmtChf(p.dayRev) : <span className="opacity-30">–</span>}</td>
                                   <td className="px-4 py-2.5 text-right"><PctBadge pct={p.dayPct} /></td>
-                                  <td className="px-4 py-2.5 text-right tabular-nums font-bold border-l border-border/50 text-foreground/80">CHF {fmtChf(p.cumNet)}</td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-bold border-l border-border/50 text-foreground/80 underline decoration-dotted underline-offset-2">CHF {fmtChf(p.cumNet)}</td>
                                   <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground">{p.cumRev > 0 ? fmtChf(p.cumRev) : <span className="opacity-30">–</span>}</td>
                                   <td className="px-4 py-2.5 text-right"><PctBadge pct={p.cumPct} /></td>
                                 </tr>
+                                {offen && (
+                                  <tr className="border-b border-border/40 bg-muted/10">
+                                    <td colSpan={7} className="px-6 py-3" data-testid={`tagesverlauf-detail-${p.date}`}>
+                                      {tagEntries.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">Keine Warenrechnungen an diesem Tag{p.dayRev > 0 ? ' — nur Umsatz erfasst' : ''}.</p>
+                                      ) : (
+                                        <div className="text-xs space-y-1.5">
+                                          <p className="font-medium text-muted-foreground">Rechnungen am {formatDateLong(p.date)} — Tages-Warenkosten CHF {fmtChf(p.dayNet)} · Kum. bis hier CHF {fmtChf(p.cumNet)}</p>
+                                          <table className="w-full">
+                                            <thead>
+                                              <tr className="text-muted-foreground text-left">
+                                                <th className="font-normal pr-2 py-0.5">Lieferant</th>
+                                                <th className="font-normal pr-2">Beleg-/Rechnungs-Nr.</th>
+                                                <th className="font-normal pr-2">Konto</th>
+                                                <th className="font-normal text-right">Netto</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {[...tagEntries].sort((a, b) => b.amountNet - a.amountNet).map(e => (
+                                                <tr key={e.id} className="border-t border-border/30">
+                                                  <td className="pr-2 py-1 font-medium">{e.supplierName}</td>
+                                                  <td className="pr-2 tabular-nums">{e.reference || '—'}</td>
+                                                  <td className="pr-2 tabular-nums">{e.kontoSplits && e.kontoSplits.length > 0 ? e.kontoSplits.map(k => k.warenkonto).join(' + ') : (e.warenkonto || '—')}</td>
+                                                  <td className="text-right tabular-nums whitespace-nowrap">CHF {fmtChf(e.amountNet)}</td>
+                                                </tr>
+                                              ))}
+                                              <tr className="border-t border-border/50 font-semibold">
+                                                <td colSpan={3} className="py-1">Total Tag</td>
+                                                <td className="text-right tabular-nums">CHF {fmtChf(tagEntries.reduce((s2, e) => s2 + e.amountNet, 0))}</td>
+                                              </tr>
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                                </Fragment>
                               );
                             })}
                           </tbody>
@@ -4351,15 +4801,36 @@ export default function WarenrechnungenPage() {
                             {abgleich.gebuchtTotal !== null ? `CHF ${fmtChf(abgleich.gebuchtTotal)}` : '— keine FIBU-Daten'}
                           </p>
                         </div>
-                        <div className="rounded-lg border border-border px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setDiffTotalOffen(o => !o)}
+                          className="rounded-lg border border-border px-4 py-3 text-left hover:bg-muted/30 transition-colors cursor-pointer"
+                          title="Klicken: Woraus besteht die Differenz?"
+                          data-testid="abgleich-diff-total-toggle"
+                        >
                           <p className="text-[11px] text-muted-foreground">Differenz (Buchhaltung − erfasst)</p>
                           <p className={cn('text-lg font-semibold tabular-nums',
-                            abgleich.diffTotal !== null && Math.abs(abgleich.diffTotal) > 50 && 'text-red-600 dark:text-red-400')}
+                            abgleich.diffTotal !== null && Math.abs(abgleich.diffTotal - ignorierteSumme) > 50 && 'text-red-600 dark:text-red-400')}
                             data-testid="abgleich-diff-total">
-                            {abgleich.diffTotal !== null ? `CHF ${fmtChf(abgleich.diffTotal)}` : '—'}
+                            {abgleich.diffTotal !== null ? `CHF ${fmtChf(abgleich.diffTotal - ignorierteSumme)}` : '—'}
                           </p>
-                        </div>
+                          {abgleich.diffTotal !== null && ignorierteSumme !== 0 && (
+                            <p className="text-[10px] text-muted-foreground tabular-nums" data-testid="abgleich-diff-ignoriert-hinweis">
+                              vor Ignorieren: CHF {fmtChf(abgleich.diffTotal)} · bewusst ignoriert: CHF {fmtChf(ignorierteSumme)}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-muted-foreground underline">Woraus besteht die Differenz?</p>
+                        </button>
                       </div>
+
+                      {/* SSOT-Aufschlüsselung der Gesamt-Differenz (gebündelt nach Typ).
+                          Bewusst UNBEREINIGT (Buchhaltungs-Kontrollsicht) — ignorierte Zeilen
+                          erscheinen hier weiterhin, nur die Kopf-Kennzahl ist bereinigt. */}
+                      {diffTotalOffen && (
+                        diffAufschluesselung
+                          ? <DiffAufschluesselungPanel data={diffAufschluesselung} testid="abgleich-diff-aufschluesselung" />
+                          : <p className="text-xs text-muted-foreground">Lade Aufschlüsselung…</p>
+                      )}
 
                       {/* Lieferanten-Tabelle */}
                       {abgleich.zeilen.length === 0 ? (
@@ -4532,6 +5003,19 @@ export default function WarenrechnungenPage() {
                         </div>
                       )}
 
+                      {/* Interne Umbuchungen — informativ, NICHT Teil der Differenz (leer statt 0) */}
+                      {abgleich.interneUmbuchungen.length > 0 && (
+                        <div className="text-xs text-muted-foreground border-t border-border/50 pt-3" data-testid="abgleich-interne-umbuchungen">
+                          <p className="font-medium text-foreground mb-1">
+                            Interne Umbuchungen (Konto-Korrekturen, keine Rechnung): CHF {fmtChf(abgleich.interneUmbuchungenSumme)}
+                          </p>
+                          {abgleich.interneUmbuchungen.map((b, i) => (
+                            <p key={i} className="tabular-nums">{b.date} · {buchungAnzeigeText(b)} · CHF {fmtChf(buchungsBetrag(b))}</p>
+                          ))}
+                          <p className="mt-1">Diese Zeilen verschieben Wert zwischen Konten (z.B. auf 4701/Depot) und zählen bewusst NICHT in den Rechnungs-Vergleich.</p>
+                        </div>
+                      )}
+
                       {/* Nicht zugeordnete Buchungen */}
                       {abgleich.mode === 'lieferanten' && abgleich.nichtZugeordnet.length > 0 && (
                         <div className="text-xs text-muted-foreground border-t border-border/50 pt-3">
@@ -4596,6 +5080,14 @@ export default function WarenrechnungenPage() {
                         <span className="text-xs text-muted-foreground tabular-nums" data-testid="fibu-uebernahme-summe">
                           {uebernahmeKandidaten.length} Buchung{uebernahmeKandidaten.length === 1 ? '' : 'en'} · CHF {fmtChf(uebernahmeSumme)}
                         </span>
+                        {(ignorierteKandidaten.length > 0 || zeigeIgnorierte) && (
+                          <button
+                            onClick={() => setZeigeIgnorierte(v => !v)}
+                            className="text-xs text-muted-foreground hover:text-foreground underline decoration-dotted underline-offset-2"
+                            data-testid="fibu-ignorierte-toggle">
+                            {zeigeIgnorierte ? 'Ignorierte ausblenden' : `Ignorierte anzeigen (${ignorierteKandidaten.length})`}
+                          </button>
+                        )}
                         {canCreate && uebernahmeKandidaten.length > 1 && (
                           <Button size="sm" variant="outline" className="h-7 text-xs"
                             onClick={() => openUebernahme(uebernahmeKandidaten.map(k => k.key))}
@@ -4649,11 +5141,19 @@ export default function WarenrechnungenPage() {
                                         Dublette
                                       </Badge>
                                     ) : canCreate ? (
-                                      <Button size="sm" variant="outline" className="h-7 text-xs"
-                                        onClick={() => openUebernahme([k.key])}
-                                        data-testid={`fibu-uebernehmen-${k.key}`}>
-                                        Übernehmen…
-                                      </Button>
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => openUebernahme([k.key])}
+                                          data-testid={`fibu-uebernehmen-${k.key}`}>
+                                          Übernehmen…
+                                        </Button>
+                                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground hover:text-amber-600"
+                                          title="Im Abgleich ignorieren — zählt nicht mehr in die Differenz; die Buchhaltungszeile bleibt bestehen"
+                                          onClick={() => { setIgnorierKandidat(k); setIgnorierGrund(''); }}
+                                          data-testid={`fibu-ignorieren-${k.key}`}>
+                                          <EyeOff className="h-3 w-3 mr-1" /> Ignorieren
+                                        </Button>
+                                      </span>
                                     ) : null}
                                   </td>
                                 </tr>
@@ -4663,8 +5163,85 @@ export default function WarenrechnungenPage() {
                         </table>
                       </div>
                     )}
+                    {zeigeIgnorierte && (
+                      <div className="border-t border-border bg-muted/10 px-5 py-3 space-y-2" data-testid="fibu-ignorierte-liste">
+                        <p className="text-xs text-muted-foreground">
+                          Bewusst ignorierte Buchhaltungszeilen — zählen nicht in die Differenz. Die Buchhaltung ist die
+                          Kontrollquelle: Zeilen werden nicht gelöscht, nur ignoriert.
+                        </p>
+                        {ignorierteKandidaten.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">Keine ignorierten Zeilen im gewählten Zeitraum.</p>
+                        ) : (
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {ignorierteKandidaten.map(k => {
+                                const key = abgleichIgnoriertKey(k);
+                                const eintrag = abgleichIgnoriert.eintraege[key];
+                                return (
+                                  <tr key={k.key} className="border-b border-border/30 text-muted-foreground">
+                                    <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{k.datum}</td>
+                                    <td className="py-1.5 pr-3">{k.lieferant ?? k.text}
+                                      {eintrag?.grund && <span className="block text-[11px] opacity-70">Grund: {eintrag.grund}</span>}
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{k.belegNr ?? '–'}</td>
+                                    <td className="py-1.5 pr-3 text-right tabular-nums">{fmtChf(k.betrag)}</td>
+                                    <td className="py-1.5 text-right">
+                                      {canCreate && (
+                                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                                          onClick={() => { void handleAbgleichWiederAufnehmen(key); }}
+                                          data-testid={`fibu-wiederaufnehmen-${k.key}`}>
+                                          <RotateCcw className="h-3 w-3 mr-1" /> Wieder aufnehmen
+                                        </Button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
                   </section>
                 )}
+
+                {/* ── Ignorieren-Vorschau: Buchhaltungszeile im Abgleich ausblenden ── */}
+                <Dialog open={ignorierKandidat !== null} onOpenChange={o => { if (!o) setIgnorierKandidat(null); }}>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Buchhaltungszeile ignorieren</DialogTitle>
+                    </DialogHeader>
+                    {ignorierKandidat && (
+                      <div className="space-y-3 text-sm">
+                        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Datum</span><span className="tabular-nums">{ignorierKandidat.datum}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Text</span><span className="text-right">{ignorierKandidat.lieferant ?? ignorierKandidat.text}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Beleg</span><span>{ignorierKandidat.belegNr ?? '–'}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Betrag (netto)</span><span className="tabular-nums font-medium">CHF {fmtChf(ignorierKandidat.betrag)}</span></div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Die Zeile verschwindet aus der Differenz-Anzeige und zählt nicht mehr in die Differenz —
+                          auch nach einem erneuten Import. Die Buchhaltung ist die Kontrollquelle: Zeilen werden
+                          nicht gelöscht, nur ignoriert. Über «Ignorierte anzeigen» jederzeit wieder aufnehmbar.
+                        </p>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Grund (optional)</label>
+                          <Input value={ignorierGrund} onChange={e => setIgnorierGrund(e.target.value)}
+                            placeholder="z.B. Privatbezug, Korrekturbuchung…" className="mt-1 h-8 text-sm"
+                            data-testid="fibu-ignorieren-grund" />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button variant="outline" size="sm" onClick={() => setIgnorierKandidat(null)}>Abbrechen</Button>
+                          <Button size="sm" disabled={ignorierBusy}
+                            onClick={() => { void handleAbgleichIgnorieren(ignorierKandidat, ignorierGrund); }}
+                            data-testid="fibu-ignorieren-bestaetigen">
+                            {ignorierBusy ? 'Speichern…' : 'Ignorieren'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </DialogContent>
+                </Dialog>
 
                 {/* ── Abgleich PRO KONTO: erfasst je Warenkonto vs. Kontoblatt ── */}
                 <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="konto-abgleich">
@@ -5331,7 +5908,7 @@ export default function WarenrechnungenPage() {
                               {warenkonten.map(k => (
                                 <SelectItem key={k.value} value={k.value}>{k.value} · {k.label}</SelectItem>
                               ))}
-                              <SelectItem value={KONTO_LABEL_PFAND}>Pfand/Depot (kein Warenkonto)</SelectItem>
+                              <SelectItem value={KONTO_LABEL_PFAND}>4800 · Pfand/Depot/Gebinde</SelectItem>
                               <SelectItem value={KONTO_LABEL_OFFEN}>Konto offen</SelectItem>
                             </SelectContent>
                           </Select>
@@ -5347,7 +5924,7 @@ export default function WarenrechnungenPage() {
                 {kontoSplitsAusPositionen(positionenDialog.positionen).map(s => (
                   <p key={s.warenkonto} className="flex justify-between tabular-nums">
                     <span className={cn('font-mono', s.warenkonto === KONTO_LABEL_OFFEN && 'text-amber-600 dark:text-amber-400')}>
-                      {s.warenkonto === KONTO_LABEL_PFAND ? 'Pfand/Depot' : s.warenkonto === KONTO_LABEL_OFFEN ? 'Konto offen' : s.warenkonto}
+                      {s.warenkonto === KONTO_LABEL_PFAND || s.warenkonto === 'Depot' ? '4800 Pfand/Depot' : s.warenkonto === KONTO_LABEL_OFFEN ? 'Konto offen' : s.warenkonto}
                     </span>
                     <span>CHF {fmtChf(s.amountNet)}</span>
                   </p>
@@ -5552,6 +6129,91 @@ function ErklaertMarkierung({ lieferant, info, aktuelleDiff, onSave, onRemove }:
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+const DIFF_GRUPPEN_META: Record<string, { titel: string; hinweis?: string }> = {
+  luecke: { titel: 'Echte Rechnungs-Lücken (nicht gebuchte / periodenfremde Rechnungen)' },
+  umbuchung: { titel: 'Interne Umbuchungen / Konto-Korrekturen (KEINE Rechnung)', hinweis: 'nicht Teil der Differenz — rein informativ' },
+  pfand_rest: { titel: 'Pfand/Leergut & Betrags-Reste (separat, nicht im Warenaufwand-Vergleich)' },
+};
+
+/**
+ * Gesamt-Aufschlüsselung «Woraus besteht die Differenz?» — gebündelt nach Typ
+ * mit Zwischensumme je Gruppe (SSOT: buildDiffAufschluesselung). Wird im
+ * FIBU-Abgleich UND in der Analyse mit identischen Daten gerendert.
+ */
+function DiffAufschluesselungPanel({ data, testid }: { data: DiffAufschluesselung; testid: string }) {
+  if (data.gruppen.length === 0) {
+    return (
+      <div className="rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid={testid}>
+        <p className="font-medium">Woraus besteht die Differenz?</p>
+        <p className="text-muted-foreground mt-1">
+          {data.vollstaendig ? 'Keine offenen Posten — Erfasst und Buchhaltung decken sich.' : 'Keine FIBU-Buchungszeilen — Aufschlüsselung braucht das importierte Kontoblatt/Journal.'}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs space-y-2" data-testid={testid}>
+      <div>
+        <p className="font-medium">Woraus besteht die Differenz? (Buchhaltung − Erfasst)</p>
+        {/* Kopfzeile: sofortiger Überblick — leer statt 0 (nur vorhandene Gruppen) */}
+        <p className="text-muted-foreground mt-0.5 tabular-nums">
+          {[
+            data.gruppen.some(g => g.kategorie === 'luecke') ? `davon echte Lücken CHF ${fmtChf(data.lueckenSumme)}` : '',
+            data.gruppen.some(g => g.kategorie === 'umbuchung') ? `interne Umbuchungen CHF ${fmtChf(data.umbuchungenSumme)} (separat)` : '',
+            data.gruppen.some(g => g.kategorie === 'pfand_rest') ? `Pfand/Rest CHF ${fmtChf(data.pfandRestSumme)}` : '',
+          ].filter(Boolean).join(' · ')}
+        </p>
+        {!data.vollstaendig && (
+          <p className="text-muted-foreground mt-0.5">Ohne Journal-Buchungszeilen sind nur die internen Umbuchungen aufschlüsselbar.</p>
+        )}
+      </div>
+      {data.gruppen.map(g => (
+        <div key={g.kategorie} data-testid={`${testid}-${g.kategorie}`}>
+          <p className="font-medium">{DIFF_GRUPPEN_META[g.kategorie].titel}</p>
+          {DIFF_GRUPPEN_META[g.kategorie].hinweis && (
+            <p className="text-muted-foreground">{DIFF_GRUPPEN_META[g.kategorie].hinweis}</p>
+          )}
+          <table className="w-full mt-1">
+            <thead>
+              <tr className="text-muted-foreground text-left">
+                <th className="font-normal pr-2">Konto</th>
+                <th className="font-normal pr-2">Lieferant</th>
+                <th className="font-normal pr-2">Beleg-Nr.</th>
+                <th className="font-normal pr-2">Bezeichnung</th>
+                <th className="font-normal text-right">Betrag</th>
+              </tr>
+            </thead>
+            <tbody>
+              {g.zeilen.map((z, i) => (
+                <tr key={i} className="align-top">
+                  <td className="pr-2 tabular-nums">{z.konto ?? '—'}</td>
+                  <td className="pr-2">{z.lieferant ?? '—'}</td>
+                  <td className="pr-2 tabular-nums">{z.beleg ?? '—'}</td>
+                  <td className="pr-2">{z.label}</td>
+                  <td className={cn('text-right tabular-nums whitespace-nowrap',
+                    g.kategorie === 'umbuchung' ? 'text-muted-foreground' : z.betrag < 0 ? 'text-amber-600' : 'text-red-600 dark:text-red-400')}>
+                    {z.betrag > 0 ? '+' : ''}{fmtChf(z.betrag)}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-border/50 font-medium">
+                <td colSpan={4} className="pt-0.5">Zwischensumme</td>
+                <td className="text-right tabular-nums pt-0.5">{g.summe > 0 ? '+' : ''}{fmtChf(g.summe)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ))}
+      {data.vollstaendig && data.diffTotal !== null && (
+        <p className="flex justify-between gap-3 border-t border-border/50 pt-1 font-medium">
+          <span>Differenz total (ohne interne Umbuchungen)</span>
+          <span className="tabular-nums">{data.diffTotal > 0 ? '+' : ''}{fmtChf(data.diffTotal)}</span>
+        </p>
+      )}
+    </div>
   );
 }
 

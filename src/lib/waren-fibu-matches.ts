@@ -12,6 +12,7 @@
  */
 
 import type { InvoiceEntry } from '@/lib/waren-db';
+import { istPfandKonto } from './waren-klassen';
 import type { SageJournalEntry } from '@/types/reporting';
 // Pfand/Depot UND Betriebskosten-Splits (4701 Non-Food etc.) sind aus dem
 // FIBU-Vergleich ausgeklammert — das Journal zählt nur Warenaufwand-Konten
@@ -468,6 +469,10 @@ export interface DiffPosten {
   betrag: number;
   /** Zusatzinfo (z.B. Depot-Hinweis). */
   detail?: string;
+  /** Strukturfelder für die gebündelte Gesamt-Aufschlüsselung (leer = unbekannt). */
+  konto?: string | null;
+  beleg?: string | null;
+  datum?: string | null;
 }
 
 /** Depot-/Leergut-Anteil einer Rechnung (zentral in waren-cockpit definiert). */
@@ -556,11 +561,17 @@ export function zerlegeLieferantDifferenz(
       depot !== 0 ? `Pfand/Leergut CHF ${depot.toFixed(2)} separat als Depot (nicht im Vergleich)` : '',
       betrieb !== 0 ? `Non-Food/Betriebsmaterial CHF ${betrieb.toFixed(2)} separat auf 4701 (nicht im Warenaufwand-Vergleich)` : '',
     ].filter(Boolean);
+    const kontoAnzeige = e.kontoSplits && e.kontoSplits.length > 0
+      ? [...new Set(e.kontoSplits.map(s => s.warenkonto))].filter(k => !istPfandKonto(k)).join('/')
+      : (e.warenkonto ?? null);
     posten.push({
       typ: 'nur_erfasst',
       label: `Nicht in FIBU: ${e.reference ? `Rechnung ${e.reference}` : 'Rechnung'} vom ${fmtDatumCH(e.date)}`,
       betrag: rp(-fibuVergleichsNetto(e, warenkostenGrenze)),
       detail: ['noch nicht gebucht / fehlt in FIBU' + (hinweise.length === 0 ? ' / periodenfremd' : ''), ...hinweise].join(' · '),
+      konto: kontoAnzeige || null,
+      beleg: e.reference ?? null,
+      datum: e.date ?? null,
     });
   }
   // Ungematchte Buchungen: nur in der FIBU.
@@ -571,6 +582,9 @@ export function zerlegeLieferantDifferenz(
       label: `Nur in FIBU: ${buchungAnzeigeText(b) || 'Buchung'} vom ${b.date}`,
       betrag: rp(buchungBetrag(b)),
       detail: 'fehlende Rechnung / Bar-Einkauf / Zahlungskorrektur?',
+      konto: b.accountNumber ? String(b.accountNumber) : null,
+      beleg: b.belegNr ?? null,
+      datum: b.date ?? null,
     });
   });
 

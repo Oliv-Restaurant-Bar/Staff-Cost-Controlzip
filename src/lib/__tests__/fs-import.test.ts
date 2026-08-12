@@ -539,6 +539,6 @@ describe('FS-Einzelrechnung mit Mietmaterial-Ermässigung (Netto-Abweichung 750)
     expect(splitOf('4040')).toBe(1031.94);
     expect(splitOf('4050')).toBe(1090.08);
     expect(splitOf('4701')).toBe(375);
-    expect(splitOf('Depot')).toBe(566);
+    expect(splitOf('4800')).toBe(566);
   });
 });

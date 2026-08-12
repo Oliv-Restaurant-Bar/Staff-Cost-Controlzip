@@ -87,7 +87,7 @@
 - [Feldschlösschen PDF-Import](feldschloesschen-import.md) — MWST-Satz als hartes Kategorie-Signal, Sammelrechnung nur Kontrolle, Duplikat-Wache bei Anhang-Übernahme, Jahr-Lock frisch im Save-Pfad.
 - [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang MwSt-0-Pfand>Artikel>Text-Pfand>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
-- [Pfand/Leergut = Depot](pfand-depot-ausklammerung.md) — Depot-Splits aus ALLEN Warenkosten-Summen + FIBU-Abgleich ausgeklammert (nettoOhneDepot-SSOT); Token-Text-Erkennung, nie Präfix-Raten.
+- [Pfand/Depot = Konto 4800](pfand-konto-4800.md) — Pfand/Leergut/Gebinde universal auf echtes 4800 (neutral, nie WKQ/Betriebskosten) via istPfandKonto; Legacy-«Depot»-Splits gleichwertig, nie migrieren.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
 - [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE; Gast, Stundenbestätigung, Onboarding- UND Personaleintritt-per-Link entfernt; 0 öffentliche Routen (auch App.tsx-Early-Returns geprüft).
 - [PDF-Zeilen-Clustering](pdf-zeilen-clustering.md) — Tabellen-PDFs nie mit festen y-Buckets zeilen; Namens-Anker + nächster-|Δy|-Zuordnung, Fixture-Tests via extract-pdf-items.
@@ -108,3 +108,6 @@
 - [FIBU-Journal Dublettensicherung](journal-dedupe.md) — saveJournalEntries dedupliziert immer (Schlüssel Datum+Beleg+Konto+Betrag+Text); Strict bleibt verbatim für Undo; Bereinigung mit Kontext-Wache.
 - [MwSt-Satz-Bündelungs-Check](mwst-buendelungs-check.md) — nur Beverage-Überschuss (4020–4050)+4090/4701; Unterdrückung pro Lieferant|Konto-Paar, nie global; Gutschriften separat, nie im Umbuchungs-Text.
 - [ER-Konto-Sichtbarkeit](er-konto-sichtbarkeit.md) — leere Default-Konten auto-ausgeblendet; Persistenz NUR via isForceVisible im budget_v1; Monat-vs-Monat braucht showHidden:true.
+- [Interne Umbuchungen & Differenz-SSOT](interne-umbuchungen-fibu.md) — «Umb.»-Präfix = Konto-Korrektur, nie im Rechnungs-Vergleich; Gesamt-Differenz überall aus buildWarenAbgleich + waren-diff-Aufschlüsselung.
+- [Waren-Ignore-Liste (Privatbezug)](waren-ignore-liste.md) — Fence nur via saveInvoiceEntry/saveMonthInvoices (nie direkt kvSet auf supplier_invoices_*); Lieferanten-Token-Match wegen kurzer TG-Belegnummern; Lese-Selbstheilung gegen No-CAS-Races.
+- [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.

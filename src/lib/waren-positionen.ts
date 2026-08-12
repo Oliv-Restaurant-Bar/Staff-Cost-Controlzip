@@ -269,6 +269,7 @@ export function istPfandBezeichnungSchwach(bezeichnung: string | undefined): boo
   for (const tok of tokens(bezeichnung)) {
     if (/^gebinde[a-zäöü]*$/.test(tok)) return true;
     if (/^harass(e|en)?$/.test(tok)) return true;
+    if (/^container(s)?$/.test(tok)) return true; // z.B. «FGG Container/Fass»
   }
   return false;
 }
@@ -319,7 +320,13 @@ export function kontoFuerPositionMitArtikel(
 }
 
 /** Anzeige-Labels für nicht kontierte Positionen in Splits/Exporten. */
-export const KONTO_LABEL_PFAND = 'Depot';
+/**
+ * Seit 08/2026: Pfand/Leergut/Gebinde wird als ECHTES Konto 4800 gebucht
+ * (Gebinde-Verrechnung), nicht mehr als Pseudo-Split «Depot». 4800 bleibt
+ * neutral (nie WKQ/direkter Warenaufwand) — siehe istPfandKonto in
+ * waren-klassen.ts. Legacy-«Depot»-Splits bleiben gültig.
+ */
+export const KONTO_LABEL_PFAND = '4800';
 export const KONTO_LABEL_OFFEN = 'offen';
 
 /**

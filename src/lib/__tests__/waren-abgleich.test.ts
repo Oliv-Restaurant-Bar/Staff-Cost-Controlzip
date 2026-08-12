@@ -5,7 +5,7 @@
  * Buchhaltungsdaten» pro Lieferant, NIE ein Fehler) + Dublettencheck.
  */
 import { describe, it, expect } from 'vitest';
-import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant } from '../waren-abgleich';
+import { buildWarenAbgleich, buildKontoAbgleich, findeDublette, istInterneUmbuchung, journalVerfuegbarFuerTenant } from '../waren-abgleich';
 import type { InvoiceEntry } from '../waren-db';
 import type { SageJournalEntry } from '@/types/reporting';
 
@@ -160,5 +160,87 @@ describe('buildWarenAbgleich: 4701/Depot aus der Erfasst-Seite ausgeklammert', (
     expect(a.mode).toBe('nur-total');
     expect(a.erfasstTotal).toBe(6000);
     expect(a.diffTotal).toBe(0); // 4701 erzeugt KEINE Scheindifferenz mehr
+  });
+});
+
+// ── Interne Umbuchungen («Umb.» / «Umbuchung») — 08/2026 ─────────────────────
+describe('interne Umbuchungen werden aus dem Rechnungs-Vergleich genommen', () => {
+  it('«Umb. …»-Zeilen matchen NIE einen Lieferanten und fehlen im gebuchtTotal', () => {
+    const invoices = [
+      inv({ supplierName: 'Feldschlösschen', amountNet: 1000 }),
+    ];
+    const journal = [
+      buch('Feldschlösschen Rechnung Juli', 1000),
+      buch('Umb. gemäss Webapp', -1830, '4020'),               // TG Non-Food 4060→4701
+      buch('Umb. Kontierung Feldschlösschen', -1110),          // FS-Re-Kontierung
+      buch('Umbuchung Korrektur Prodega', -50, '4020'),
+    ];
+    const r = buildWarenAbgleich({ ...BASE, supplierNames: ['Feldschlösschen', 'Prodega'], invoices, journal });
+    // FS-Zeile: NUR die echte Rechnung, keine Re-Kontierung → Differenz 0.
+    const fs = r.zeilen.find(z => z.lieferant === 'Feldschlösschen')!;
+    expect(fs.gebucht).toBe(1000);
+    expect(fs.diff).toBe(0);
+    expect(r.zeilen.find(z => z.lieferant === 'Prodega')).toBeUndefined();
+    // Total-Differenz frei von Umbuchungen; separat ausgewiesen.
+    expect(r.gebuchtTotal).toBe(1000);
+    expect(r.diffTotal).toBe(0);
+    expect(r.interneUmbuchungen).toHaveLength(3);
+    expect(r.interneUmbuchungenSumme).toBeCloseTo(-2990, 2);
+    expect(r.nichtZugeordnet).toHaveLength(0);
+  });
+
+  it('nur ECHTE «Umb.»-Präfixe zählen — «Umbau»/Mitte-Text nicht; leer statt 0', () => {
+    expect(istInterneUmbuchung('Umb. gemäss Webapp')).toBe(true);
+    expect(istInterneUmbuchung('  umbuchung Kontierung')).toBe(true);
+    expect(istInterneUmbuchung('Umbau Küche Material')).toBe(false);
+    expect(istInterneUmbuchung('Rechnung Umbuchung folgt')).toBe(false);
+    expect(istInterneUmbuchung(null)).toBe(false);
+    const r = buildWarenAbgleich({ ...BASE, invoices: [], journal: [buch('Prodega Juli', 200)] });
+    expect(r.interneUmbuchungen).toHaveLength(0);
+    expect(r.interneUmbuchungenSumme).toBe(0);
+  });
+
+  it('degradierter Modus (nur Umb.-Zeilen im Journal) bleibt nur-total, Umbuchungen separat', () => {
+    const r = buildWarenAbgleich({
+      ...BASE, buchhaltungTotal: 500,
+      invoices: [inv({ supplierName: 'Prodega', amountNet: 500 })],
+      journal: [buch('Umb. gemäss Webapp', -1830, '4020')],
+    });
+    expect(r.mode).toBe('nur-total');
+    expect(r.interneUmbuchungen).toHaveLength(1);
+    expect(r.interneUmbuchungenSumme).toBe(-1830);
+    // ER-/Kontoblatt-Total enthält die Umbuchung — für den Vergleich
+    // herausgerechnet: 500 − (−1830) = 2330, Differenz gegen erfasst 500.
+    expect(r.gebuchtTotal).toBe(2330);
+    expect(r.diffTotal).toBe(1830);
+  });
+
+  it('degradiert OHNE Journal (null): buchhaltungTotal bleibt unkorrigiert', () => {
+    const r = buildWarenAbgleich({
+      ...BASE, buchhaltungTotal: 500, journal: null,
+      invoices: [inv({ supplierName: 'Prodega', amountNet: 500 })],
+    });
+    expect(r.mode).toBe('nur-total');
+    expect(r.gebuchtTotal).toBe(500);
+    expect(r.diffTotal).toBe(0);
+    expect(r.interneUmbuchungenSumme).toBe(0);
+  });
+});
+
+describe('buildKontoAbgleich — interne Umbuchungen ausgeklammert', () => {
+  it('Umb.-Zeile fliesst weder ins Konto noch in die Pro-Lieferant-Sammelzeile', () => {
+    const zeilen = buildKontoAbgleich({
+      invoices: [inv({ supplierName: 'Feldschlösschen', amountNet: 1000, warenkonto: '4030' })],
+      journal: [
+        { date: '10.07.2026', text: 'Feldschlösschen Juli', accountNumber: '4030', accountName: 'Bier', soll: 1000, haben: 0, amount: 1000 },
+        { date: '11.07.2026', text: 'Umb. Kontierung Feldschlösschen', accountNumber: '4030', accountName: 'Bier', soll: 0, haben: 1110, amount: -1110 },
+      ],
+      relevanteKonten: ['4030'],
+      lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
+    });
+    const fs = zeilen.find(z => z.konto === '~Feldschlösschen')!;
+    expect(fs.gebucht).toBe(1000);
+    expect(fs.diff).toBe(0);
+    expect(zeilen.find(z => z.konto === '4030')).toBeUndefined();
   });
 });

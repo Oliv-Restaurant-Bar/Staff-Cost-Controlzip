@@ -23,6 +23,7 @@ import type { GnPdfLine } from './gn-pdf-lines';
 import type {
   WarenPosition, ParsedCsvRechnung, WarengruppenMapping,
 } from './waren-positionen';
+import { KONTO_LABEL_PFAND } from './waren-positionen';
 
 // ── Zahlen/Datum ──────────────────────────────────────────────────────────────
 
@@ -925,11 +926,14 @@ export function kontoSplitsAusFsKategorien(
     // ALLE Depot-Typen der Zusammenfassung (Leergut, Gebinde/Harasse,
     // Ladungsträger, Pfand/Depot) → Depot, NIE auf 4030/4040/4050.
     // Recyclinggebühren bleiben bewusst im Mapping (echte Gebühr, kein Depot).
-    if (/^(leergut|ladungsträger|pfand|depot|gebinde|harass(e|en)?)$/i.test(name)) konto = 'Depot';
+    // Pfand/Leergut/Gebinde → Konto 4800 (Gebinde-Verrechnung, neutral).
+    // Token-Match statt exaktem Namen: Kategorien wie «Pfand geliefert»,
+    // «FGG Container/Fass», «FGG Harasse», «Harasse 5+20» zählen alle dazu.
+    if (/(^|[^a-zäöü])(leergut|ladungsträger|pfand|depot|gebinde|container|harass)/i.test(name)) konto = KONTO_LABEL_PFAND;
     else {
       const regel = effektiv.find(r => r.gruppe.trim().toLowerCase() === name.toLowerCase());
       if (regel) konto = regel.konto;
-      else if (nurNull) konto = 'Depot';        // reine 0%-Kategorie = Pfand-artig
+      else if (nurNull) konto = KONTO_LABEL_PFAND; // reine 0%-Kategorie = Pfand-artig → 4800
       else { konto = 'offen'; offen.push(name); } // nie raten
     }
     const gross = kat.netto81 * 1.081 + kat.netto26 * 1.026 + kat.netto00;

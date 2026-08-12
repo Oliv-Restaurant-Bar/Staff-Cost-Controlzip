@@ -107,7 +107,7 @@ export function kategorieOf(
   const vomKonto = kategorieFromKonto(entry.warenkonto, grenze);
   if (vomKonto !== 'Sonstiges') return vomKonto; // Warenkonto → autoritativ
   const konto = entry.warenkonto;
-  if (konto === 'Depot') return 'Sonstiges'; // Pfand: neutral, nie in Quote
+  if (konto === 'Depot') return 'Sonstiges'; // Legacy-Pfand: neutral, nie in Quote (4800 fällt schon oben als «ausserhalb Grenze» raus)
   if (normalisiereKontoNummer(konto) === null) {
     // Legacy-/Pseudo-Konto («offen»): zählt als Warenkosten → in die Quote.
     return entry.kategorie ?? 'Food';
@@ -122,12 +122,17 @@ export function kategorieOf(
  * unscharf und muss das sichtbar ausweisen (nie still verfälschen).
  */
 export function zaehleUnkontierte(
-  entries: Array<WarenkostenEntryInput & { splits?: Array<{ warenkonto: string }> }>,
+  entries: Array<WarenkostenEntryInput & {
+    splits?: Array<{ warenkonto: string }>;
+    /** InvoiceEntry-Feldname — alle echten Aufrufer übergeben kontoSplits. */
+    kontoSplits?: Array<{ warenkonto: string }>;
+  }>,
 ): number {
   let n = 0;
   for (const e of entries) {
-    if (e.splits && e.splits.length > 0) {
-      n += e.splits.filter(s =>
+    const sp = e.splits ?? e.kontoSplits;
+    if (sp && sp.length > 0) {
+      n += sp.filter(s =>
         s.warenkonto !== 'Depot' && normalisiereKontoNummer(s.warenkonto) === null).length;
       continue;
     }

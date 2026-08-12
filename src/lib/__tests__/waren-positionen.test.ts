@@ -426,6 +426,7 @@ import { istPfandBezeichnung, kontoFuerPosition as kfp, DEFAULT_WARENGRUPPEN_MAP
 describe('istPfandBezeichnung (Text-Kennzeichen → Depot, nie raten)', () => {
   it('erkennt Ifco/Harasse/Gebinde/Depot/Leergut/Pfand (case-insensitiv)', () => {
     for (const s of ['IFCO Liftlock 6416', 'Harasse 24er', 'Harass', 'Gebinde-Depot',
+      'FGG Container/Fass', 'Container 800L',
       'Leergut Retour', 'PFAND CHF 0.50', 'depotgebühr']) {
       expect(istPfandBezeichnung(s), s).toBe(true);
     }

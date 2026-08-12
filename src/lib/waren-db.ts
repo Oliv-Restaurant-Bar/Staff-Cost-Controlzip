@@ -12,6 +12,7 @@
  */
 
 import { kvGet, kvSet } from './supabase-kv';
+import { normRef } from './waren-ref';
 import { tenantKey } from './tenant-utils';
 import type { TenantId } from '@/contexts/TenantContext';
 import {
@@ -546,6 +547,146 @@ export async function saveSuppliers(tenantId: TenantId, suppliers: Supplier[]): 
   console.log(`[WAREN] suppliers saved: ${suppliers.length} entries for tenant "${tenantId}"`);
 }
 
+// ─── Ignore-Liste (Privatbezug) ──────────────────────────────────────────────
+// Rechnungen, die dauerhaft NICHT als Warenkosten zählen (z.B. private
+// Markt-Barbezüge). Schlüssel = normalisierte Rechnungsnummer (normRef),
+// mandantengetrennt. Markieren LÖSCHT den Eintrag aus dem Monats-Blob (damit
+// zählt er nirgends mehr — WKQ, Warenaufwand, FIBU-Abgleich) und legt einen
+// Snapshot für «wieder aktivieren» ab. Import-fest: saveInvoiceEntry und
+// saveMonthInvoices überspringen Rechnungen mit Nummer auf der Liste.
+
+export interface IgnorierteRechnung {
+  /** Normalisierter Schlüssel (normRef). */
+  referenz: string;
+  /** Original-Rechnungsnummer für die Anzeige. */
+  referenzAnzeige: string;
+  lieferant: string;
+  datum: string; // YYYY-MM-DD
+  betragNet: number;
+  markiertAm: string; // ISO
+  /** Voller Eintrag als Snapshot — Basis für «wieder aktivieren». */
+  entry?: InvoiceEntry;
+}
+export type IgnoreListe = Record<string, IgnorierteRechnung>;
+
+const ignoreListeKey = (tenantId: TenantId) => tenantKey(tenantId, 'waren_ignorierte_rechnungen_v1');
+
+export async function loadIgnorierteRechnungen(tenantId: TenantId): Promise<IgnoreListe> {
+  const raw = await kvGet(ignoreListeKey(tenantId));
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: IgnoreListe = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v && typeof v === 'object' && typeof (v as IgnorierteRechnung).referenz === 'string') {
+      out[k] = v as IgnorierteRechnung;
+    }
+  }
+  return out;
+}
+
+// Die Fence liest die Ignore-Liste bei JEDEM Schreibvorgang frisch — kein
+// Cache. Ein Cache wäre nur pro Browser-Tab invalidierbar; ein zweiter Tab
+// könnte eine frisch markierte Rechnung sonst bis zum TTL-Ablauf wieder
+// anlegen (bzw. eine reaktivierte fälschlich überspringen). Der Mehrpreis ist
+// eine KV-Leseoperation pro Schreibvorgang — akzeptiert für Korrektheit.
+async function ignorierteRefs(tenantId: TenantId): Promise<Map<string, string>> {
+  const liste = await loadIgnorierteRechnungen(tenantId);
+  return new Map(Object.entries(liste).map(([k, v]) => [k, (v.lieferant ?? '').trim()]));
+}
+
+/** Tokenisierte Lieferanten-Normalisierung (lowercase, nur Wort-Tokens). */
+function lieferantTokens(name: string): string[] {
+  return name.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(t => t.length > 0);
+}
+
+/**
+ * Fence-Treffer: Rechnungsnummer auf der Liste UND Lieferant passt.
+ * Kurze Belegnummern (z.B. TG-Markt-Barbezüge «58») dürfen nicht Rechnungen
+ * ANDERER Lieferanten blockieren; Lieferantennamen variieren aber zwischen
+ * Importen («Transgourmet» vs. «Transgourmet bern») → Token-Teilmengen-
+ * Vergleich in beide Richtungen (nie Substring: «Gourmet AG» darf nicht mit
+ * «Transgourmet» kollidieren). Leerer EINGEHENDER Lieferant matcht nicht
+ * (nie raten); nur ein leerer Listen-Lieferant matcht alles.
+ */
+/**
+ * Bekannte Grenze (wie alle KV-Schreibpfade dieser App): der KV-Store bietet
+ * kein Compare-and-Swap. Ein Import-Tab, der den Monats-Blob VOR einem
+ * Markieren gelesen hat, kann die ignorierte Rechnung theoretisch wieder
+ * hineinschreiben (check-then-write-Fenster). Deshalb gibt es zusätzlich die
+ * Lese-Selbstheilung `filtereIgnorierteRechnungen` + Repair beim Laden der
+ * Seite — eine wiederauferstandene Rechnung überlebt die nächste Anzeige nicht.
+ */
+function istIgnoriert(refs: Map<string, string>, reference: string | undefined, supplierName: string): boolean {
+  const k = normRef(reference);
+  if (!k || !refs.has(k)) return false;
+  const listeTokens = lieferantTokens(refs.get(k)!);
+  if (listeTokens.length === 0) return true;
+  const supTokens = lieferantTokens(supplierName);
+  if (supTokens.length === 0) return false;
+  const subset = (a: string[], b: string[]) => a.every(t => b.includes(t));
+  return subset(listeTokens, supTokens) || subset(supTokens, listeTokens);
+}
+
+/**
+ * Rechnung als privat/ignorieren markieren: auf die Ignore-Liste setzen und
+ * aus dem Monats-Blob entfernen. Wirft, wenn keine Rechnungsnummer vorhanden
+ * ist — ohne Nummer wäre die Markierung nicht import-fest (nie raten).
+ */
+export async function markiereRechnungIgnoriert(tenantId: TenantId, entry: InvoiceEntry): Promise<void> {
+  const key = normRef(entry.reference);
+  if (!key) throw new Error('Ohne Rechnungsnummer nicht möglich — die Ignore-Liste ist über die Rechnungsnummer import-fest.');
+  const liste = await loadIgnorierteRechnungen(tenantId);
+  liste[key] = {
+    referenz: key,
+    referenzAnzeige: entry.reference!.trim(),
+    lieferant: entry.supplierName,
+    datum: entry.date,
+    betragNet: entry.amountNet,
+    markiertAm: new Date().toISOString(),
+    entry,
+  };
+  await kvSet(ignoreListeKey(tenantId), liste);
+  await deleteInvoiceEntry(tenantId, entry.id, entry.date);
+  console.log(`[WAREN] ignoriert (privat): ref=${key} supplier=${entry.supplierName} net=${entry.amountNet.toFixed(2)} tenant="${tenantId}"`);
+}
+
+/**
+ * «Wieder aktivieren»: von der Ignore-Liste nehmen und den Snapshot-Eintrag
+ * zurückschreiben (falls vorhanden). Liefert den reaktivierten Eintrag.
+ */
+export async function reaktiviereIgnorierteRechnung(tenantId: TenantId, refKey: string): Promise<InvoiceEntry | null> {
+  const liste = await loadIgnorierteRechnungen(tenantId);
+  const rec = liste[refKey];
+  if (!rec) return null;
+  delete liste[refKey];
+  await kvSet(ignoreListeKey(tenantId), liste);
+  if (rec.entry) {
+    await saveInvoiceEntry(tenantId, rec.entry);
+    // Bestätigen, dass der Snapshot wirklich persistiert wurde — die Fence
+    // eines anderen Kontexts könnte den Save übersprungen haben.
+    const monat = await loadMonthInvoices(tenantId, monthKey(rec.entry.date));
+    if (!monat.some(e => e.id === rec.entry!.id)) {
+      throw new Error('Reaktivierung nicht bestätigt — Rechnung wurde nicht zurückgeschrieben. Bitte erneut versuchen.');
+    }
+    console.log(`[WAREN] reaktiviert: ref=${refKey} supplier=${rec.lieferant} tenant="${tenantId}"`);
+    return rec.entry;
+  }
+  return null;
+}
+
+/**
+ * Lese-Selbstheilung: Einträge einer geladenen Liste gegen die Ignore-Liste
+ * filtern. Liefert die bereinigte Liste + ob etwas entfernt wurde (dann sollte
+ * der Aufrufer den Monat repariert zurückschreiben).
+ */
+export function filtereIgnorierteRechnungen(
+  liste: IgnoreListe, entries: InvoiceEntry[],
+): { entries: InvoiceEntry[]; entfernt: number } {
+  const refs = new Map(Object.entries(liste).map(([k, v]) => [k, (v.lieferant ?? '').trim()]));
+  if (refs.size === 0) return { entries, entfernt: 0 };
+  const ok = entries.filter(e => !istIgnoriert(refs, e.reference, e.supplierName));
+  return { entries: ok, entfernt: entries.length - ok.length };
+}
+
 // ─── Rechnungseinträge ────────────────────────────────────────────────────────
 
 export async function loadMonthInvoices(
@@ -562,6 +703,12 @@ export async function saveInvoiceEntry(
   tenantId: TenantId,
   entry: InvoiceEntry,
 ): Promise<void> {
+  // Import-Fence: Rechnungen auf der Ignore-Liste (Privatbezug) werden nie
+  // (wieder) angelegt — gilt für Importe UND manuelle Neuerfassung.
+  if (istIgnoriert(await ignorierteRefs(tenantId), entry.reference, entry.supplierName)) {
+    console.log(`[WAREN] entry übersprungen (Ignore-Liste/privat): ref=${normRef(entry.reference)} supplier=${entry.supplierName} tenant="${tenantId}"`);
+    return;
+  }
   const month = monthKey(entry.date);
   const key = invoicesKey(tenantId, month);
   const existing = await loadMonthInvoices(tenantId, month);
@@ -582,6 +729,15 @@ export async function saveMonthInvoices(
   month: string, // YYYY-MM
   entries: InvoiceEntry[],
 ): Promise<void> {
+  // Import-Fence: ignorierte Rechnungsnummern (Privatbezug) fliegen raus.
+  const refs = await ignorierteRefs(tenantId);
+  if (refs.size > 0) {
+    const vorher = entries.length;
+    entries = entries.filter(e => !istIgnoriert(refs, e.reference, e.supplierName));
+    if (entries.length < vorher) {
+      console.log(`[WAREN] ${vorher - entries.length} Rechnung(en) übersprungen (Ignore-Liste/privat) für ${month} tenant="${tenantId}"`);
+    }
+  }
   await kvSet(invoicesKey(tenantId, month), entries);
   console.log(`[WAREN] month saved: ${month} (${entries.length} entries) tenant="${tenantId}"`);
 }
@@ -1023,14 +1179,20 @@ export async function undoWarenImport(tenantId: TenantId, typ: WarenImportTyp): 
     throw new Error('Undo-Datensatz wurde zwischenzeitlich ersetzt oder bereits verwendet — Undo abgebrochen.');
   }
 
-  // Stand VOR dem Import zurückschreiben.
+  // Stand VOR dem Import zurückschreiben. Auch der Restore respektiert die
+  // Ignore-Liste (Privatbezug): ein Undo darf zwischenzeitlich ignorierte
+  // Rechnungen nicht wieder anlegen (frischer Listen-Stand, direkt vor dem Schreiben).
+  const undoIgnoreRefs = await ignorierteRefs(tenantId);
   for (const [m, invoices] of Object.entries(rec.vorher.invoicesProMonat)) {
-    await kvSet(invoicesKey(tenantId, m), invoices);
+    const gefiltert = undoIgnoreRefs.size > 0
+      ? (invoices ?? []).filter(e => !istIgnoriert(undoIgnoreRefs, e.reference, e.supplierName))
+      : invoices;
+    await kvSet(invoicesKey(tenantId, m), gefiltert);
     // FIBU-Match-Zuordnungen gegen den wiederhergestellten Stand bereinigen —
     // Matches auf Rechnungs-IDs, die es nach dem Undo nicht mehr gibt, würden
     // im FIBU-Abgleich fälschlich «gematcht» anzeigen. (Matches selbst sind
     // bewusst NICHT im Snapshot — rein visuell, kumulativ.)
-    await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set((invoices ?? []).map(e => e.id)));
+    await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set((gefiltert ?? []).map(e => e.id)));
   }
   for (const [m, pos] of Object.entries(rec.vorher.positionenProMonat)) {
     await kvSet(tenantKey(tenantId, `waren_positionen_${m}_v1`), pos ?? {});

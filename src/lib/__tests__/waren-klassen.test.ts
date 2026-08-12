@@ -26,7 +26,7 @@ describe('kontoKlasse', () => {
     expect(kontoKlasse('4090')).toBe('warenkosten'); // Übriger Handelswaren Aufwand
     expect(kontoKlasse('4091')).toBe('betriebskosten');
     expect(kontoKlasse('4701')).toBe('betriebskosten'); // Betriebsmaterial
-    expect(kontoKlasse('4800')).toBe('betriebskosten'); // Gebinde
+    expect(kontoKlasse('4800')).toBe('neutral'); // Pfand/Depot/Gebinde — NIE Waren- oder Betriebskosten
     expect(kontoKlasse('6040')).toBe('betriebskosten');
     expect(kontoKlasse('3000')).toBe('betriebskosten');
   });
@@ -44,6 +44,7 @@ describe('kontoKlasse', () => {
 describe('Pseudo-Konten (CSV-Positionsimport)', () => {
   it('«Depot» (Pfand) ist neutral, «offen» zählt bewusst als Warenkosten', () => {
     expect(kontoKlasse('Depot')).toBe('neutral');
+    expect(kontoKlasse('48001')).toBe('neutral'); // 5-stellig normalisiert → 4800
     expect(kontoKlasse('offen')).toBe('warenkosten');
     const e = inv({
       amountNet: 100,

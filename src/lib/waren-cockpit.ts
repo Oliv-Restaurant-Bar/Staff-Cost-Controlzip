@@ -11,7 +11,7 @@
  */
 
 import { kontoKategorie, type WarenKategorie } from './warenkosten-quote';
-import { kontoKlasse, DEFAULT_WARENKOSTEN_GRENZE } from './waren-klassen';
+import { kontoKlasse, istPfandKonto, DEFAULT_WARENKOSTEN_GRENZE } from './waren-klassen';
 import type { InvoiceEntry, Warenkonto } from './waren-db';
 import type { TenantId } from './cockpit-budget';
 
@@ -125,7 +125,7 @@ export function supplierRowIds(names: string[]): string[] {
  * behalten ihr volles amountNet (kein Raten).
  */
 export const istDepotSplitKonto = (warenkonto: string): boolean =>
-  /depot|leergut|pfand/i.test(warenkonto);
+  /depot|leergut|pfand/i.test(warenkonto) || istPfandKonto(warenkonto);
 
 /** Depot-/Leergut-Anteil einer Rechnung (0 ohne entsprechende Splits). */
 export function depotAnteilNet(e: InvoiceEntry): number {

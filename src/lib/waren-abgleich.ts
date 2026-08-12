@@ -14,6 +14,7 @@
  */
 
 import type { InvoiceEntry } from '@/lib/waren-db';
+import { istPfandKonto } from './waren-klassen';
 import type { SageJournalEntry } from '@/types/reporting';
 import { findSupplierInText, type SupplierAliasMap } from '@/lib/waren-pdf-erkennung';
 import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
@@ -57,6 +58,13 @@ export interface WarenAbgleich {
   nichtZugeordnet: SageJournalEntry[];
   nichtZugeordnetSumme: number;
   /**
+   * Interne Umbuchungen («Umb.»/«Umbuchung …») auf den Warenkonten: aus dem
+   * Rechnungs-Vergleich AUSGENOMMEN (weder Lieferanten-Buchung noch «fehlende
+   * Rechnung»), nur informativ ausgewiesen. Leer = keine.
+   */
+  interneUmbuchungen: SageJournalEntry[];
+  interneUmbuchungenSumme: number;
+  /**
    * Tatsächlich verwendete Alias-Gruppen: abgeleitete Barausgaben-Standard-
    * Aliasse + Nutzer-Gruppen (Nutzer gewinnt). Die UI MUSS für Drilldown-/
    * Rechnungs-Filter einen Resolver aus DIESEN Gruppen bauen, sonst sehen
@@ -81,6 +89,21 @@ export function buchungsBetrag(e: SageJournalEntry): number {
  */
 export function journalVerfuegbarFuerTenant(tenantId: string): boolean {
   return tenantId === 'oliv' || tenantId === 'beaulieu';
+}
+
+// ─── Interne Umbuchungen (Konto-Korrekturen — KEINE Rechnungen) ──────────────
+
+/**
+ * Journal-Zeilen, deren Text mit «Umb.»/«Umbuchung» beginnt, sind INTERNE
+ * Konto-Umbuchungen (z.B. «Umb. gemäss Webapp» 4060→4701, «Umb. Kontierung
+ * Feldschlösschen»). Sie gehören zu KEINER Rechnung: die Gegenseite liegt oft
+ * auf ausgeklammerten Konten (4701/Depot), darum erzeugen sie im Rechnungs-
+ * Vergleich Phantom-Differenzen. Sie werden VOR der Lieferanten-Zuordnung
+ * herausgefiltert (sonst matcht «Umb. Kontierung Feldschlösschen» auf FS)
+ * und separat informativ ausgewiesen.
+ */
+export function istInterneUmbuchung(text: string | null | undefined): boolean {
+  return /^umb(\.|uchung)/i.test((text ?? '').trim());
 }
 
 // ─── Barausgaben (Bar-/Kasseneinkäufe auf Warenkonten) ──────────────────────
@@ -153,8 +176,12 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const schwelle = input.schwelleChf ?? 50;
   // ── Journal auf Warenkonten filtern (früh — Barausgaben-Aliasse hängen dran) ──
   const kontoSet = new Set(input.warenkontoNummern);
-  const warenBuchungen = (input.journal ?? []).filter(e =>
+  const alleWarenBuchungen = (input.journal ?? []).filter(e =>
     kontoSet.has(String(e.accountNumber).replace(/^0+/, '')) || kontoSet.has(String(e.accountNumber)));
+  // Interne Umbuchungen VOR jeder Zuordnung aussortieren (siehe istInterneUmbuchung).
+  const interneUmbuchungen = alleWarenBuchungen.filter(e => istInterneUmbuchung(e.text));
+  const warenBuchungen = alleWarenBuchungen.filter(e => !istInterneUmbuchung(e.text));
+  const interneUmbuchungenSumme = interneUmbuchungen.reduce((a, e) => a + buchungsBetrag(e), 0);
 
   // Alias-Gruppen: Namen beider Quellen auf den kanonischen Gruppennamen
   // abbilden; Original-Namen je Zeile für die Transparenz mitführen.
@@ -193,7 +220,12 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   if (warenBuchungen.length === 0) {
     // Defensive Wache: fehlender/kaputter Buchhaltungswert (null/NaN/Infinity)
     // ⇒ null — Anzeige «—», nie 0 und nie «CHF NaN» rechnen.
-    const gebuchtTotal = Number.isFinite(input.buchhaltungTotal) ? input.buchhaltungTotal : null;
+    // Interne Umbuchungen stecken auch im ER-/Kontoblatt-Total der Warenkonten —
+    // für den Rechnungs-Vergleich herausrechnen, sonst bleibt die Phantom-
+    // Differenz im degradierten Modus stehen.
+    const gebuchtTotal = Number.isFinite(input.buchhaltungTotal)
+      ? Math.round(((input.buchhaltungTotal as number) - interneUmbuchungenSumme) * 100) / 100
+      : null;
     const zeilen: AbgleichZeile[] = [...erfasstMap.entries()]
       .map(([lieferant, v]) => ({
         lieferant, erfasst: v.sum, gebucht: null, diff: null,
@@ -206,6 +238,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
       gebuchtTotal,
       diffTotal: gebuchtTotal !== null ? gebuchtTotal - erfasstTotal : null,
       nichtZugeordnet: [], nichtZugeordnetSumme: 0,
+      interneUmbuchungen, interneUmbuchungenSumme,
       effektiveAliasGruppen: effektiveGruppen,
     };
   }
@@ -286,6 +319,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     mode: 'lieferanten', zeilen, erfasstTotal, gebuchtTotal,
     diffTotal: gebuchtTotal - erfasstTotal,
     nichtZugeordnet, nichtZugeordnetSumme,
+    interneUmbuchungen, interneUmbuchungenSumme,
     effektiveAliasGruppen: effektiveGruppen,
   };
 }
@@ -344,20 +378,22 @@ export function buildKontoAbgleich(input: {
     if (lz) {
       if (inv.kontoSplits && inv.kontoSplits.length > 0) {
         for (const s of inv.kontoSplits) {
-          if (s.warenkonto === 'Depot') add('Depot', s.amountNet);
+          if (istPfandKonto(s.warenkonto)) add('Depot', s.amountNet); // «Depot» + 4800
           else add(`~${lz}`, s.amountNet);
         }
-      } else if (inv.warenkonto === 'Depot') {
-        add('Depot', inv.amountNet); // reine Depot-/Leergut-Rechnung bleibt neutral
+      } else if (istPfandKonto(inv.warenkonto)) {
+        add('Depot', inv.amountNet); // reine Depot-/Leergut-Rechnung (auch 4800) bleibt neutral
       } else {
         add(`~${lz}`, inv.amountNet);
       }
       continue;
     }
     if (inv.kontoSplits && inv.kontoSplits.length > 0) {
-      for (const s of inv.kontoSplits) add(s.warenkonto, s.amountNet);
+      // Pfand/Depot (auch echtes Konto 4800) IMMER in die neutrale
+      // «Depot»-Zeile — nie als normales Konto gegen das Journal rechnen.
+      for (const s of inv.kontoSplits) add(istPfandKonto(s.warenkonto) ? 'Depot' : s.warenkonto, s.amountNet);
     } else {
-      add(inv.warenkonto, inv.amountNet);
+      add(istPfandKonto(inv.warenkonto) ? 'Depot' : inv.warenkonto, inv.amountNet);
     }
   }
 
@@ -366,6 +402,9 @@ export function buildKontoAbgleich(input: {
   for (const e of input.journal ?? []) {
     const k = String(e.accountNumber ?? '').replace(/^0+/, '').trim();
     if (!k) continue;
+    // Interne Umbuchungen verzerren auch den Pro-Konto-Vergleich (und würden
+    // via lieferantZeilen-Regex z.B. der FS-Sammelzeile zugeschlagen) — raus.
+    if (istInterneUmbuchung(e.text)) continue;
     const lz = lieferantZeile(e.text ?? '');
     if (lz) {
       gebuchtLieferant.set(lz, (gebuchtLieferant.get(lz) ?? 0) + buchungsBetrag(e));

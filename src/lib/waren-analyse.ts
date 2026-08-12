@@ -8,7 +8,7 @@
 
 import type { InvoiceEntry, Warenkonto } from './waren-db';
 import { zaehleUnkontierte } from './warenkosten-quote';
-import { PSEUDO_KONTO_PFAND } from './waren-klassen';
+import { PSEUDO_KONTO_PFAND, istPfandKonto } from './waren-klassen';
 import { normalizeWarenKonto } from './warenaufwand-gruppierung';
 import type { SageJournalEntry } from '@/types/reporting';
 import { barausgabenLieferant, barausgabenAliasGruppen, buchungsBetrag } from './waren-abgleich';
@@ -225,7 +225,7 @@ export function direkterWarenaufwand(entries: InvoiceEntry[]): DirekterAufwand {
   for (const e of entries) {
     for (const s of kontoShares(e)) {
       const roh = (s.konto ?? '').trim();
-      if (roh === PSEUDO_KONTO_PFAND) continue; // Depot/Pfand: neutral
+      if (istPfandKonto(roh)) continue; // Depot/Pfand (auch 4800): neutral, nie «übrig»
       const n = normalizeWarenKonto(roh);
       if (n !== null && DIREKT_SET.has(n)) {
         const k = String(n);

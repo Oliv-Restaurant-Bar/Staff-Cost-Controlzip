@@ -296,7 +296,7 @@ describe('parseFsFaktura / fsFakturenAlsRechnungen (einzelne Faktura-PDF)', () =
     expect(fr.bruttoOffiziell).toBe(463.5);
     const { splits } = kontoSplitsAusFsKategorien(fr.fsKategorien!, []);
     const m = Object.fromEntries(splits.map(x => [x.warenkonto, x.amountNet]));
-    expect(m).toEqual({ '4030': 300, '4050': 100, 'Depot': 36.6 });
+    expect(m).toEqual({ '4030': 300, '4050': 100, '4800': 36.6 });
   });
   it('ohne Zusammenfassung MwSt. → failureReason (Kontierung nicht belegbar)', () => {
     const ohne = zeilen([
@@ -335,9 +335,9 @@ describe('kontoSplitsAusFsKategorien', () => {
     expect(m['4040']).toBe(195.13);
     expect(m['4020']).toBe(100);
     expect(m['4701']).toBeCloseTo(101.95, 2); // Zu-/Abschläge + Mietmaterial + Recycling
-    expect(m['Depot']).toBe(185.4);
+    expect(m['4800']).toBe(185.4);
     // Brutto: 8.1%- und 2.6%-Anteile hochgerechnet, 0% unverändert
-    expect(splits.find(s2 => s2.warenkonto === 'Depot')?.amountGross).toBe(185.4);
+    expect(splits.find(s2 => s2.warenkonto === '4800')?.amountGross).toBe(185.4);
     expect(splits.find(s2 => s2.warenkonto === '4030')?.amountGross).toBeCloseTo(488.61, 2);
   });
   it('unbekannte Kategorie → «offen», nie raten; leere Kategorien übersprungen', () => {
@@ -478,7 +478,7 @@ describe('FS Juli Kontrollwerte: Depot separat, Warenkosten ohne Leergut', () =>
     ], []);
     expect(offen).toEqual([]);
     const m = Object.fromEntries(splits.map(s2 => [s2.warenkonto, s2.amountNet]));
-    expect(m['Depot']).toBeCloseTo(645.00, 2);
+    expect(m['4800']).toBeCloseTo(645.00, 2);
     expect(m['4701']).toBeCloseTo(465.00, 2);
     const waren = (m['4030'] ?? 0) + (m['4040'] ?? 0) + (m['4050'] ?? 0);
     expect(waren).toBeCloseTo(15064.15, 2);
@@ -489,6 +489,6 @@ describe('FS Juli Kontrollwerte: Depot separat, Warenkosten ohne Leergut', () =>
   });
   it('gemischt-sätzige Depot-Kategorie (Name zählt, nicht nur 0 %)', () => {
     const { splits } = kontoSplitsAusFsKategorien([kat2('Harasse', 10, 0, 90)], []);
-    expect(splits).toEqual([{ warenkonto: 'Depot', amountNet: 100, amountGross: expect.any(Number) }]);
+    expect(splits).toEqual([{ warenkonto: '4800', amountNet: 100, amountGross: expect.any(Number) }]);
   });
 });

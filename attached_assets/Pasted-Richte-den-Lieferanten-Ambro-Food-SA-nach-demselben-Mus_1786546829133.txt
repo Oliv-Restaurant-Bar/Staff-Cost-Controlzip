@@ -1,0 +1,37 @@
+Richte den Lieferanten „Ambro Food SA" nach demselben Muster ein wie Terravigna/Caporaso:
+Lieferscheine laufen provisorisch während des Monats, am Monatsende Abgleich gegen die
+Ambro-Monatsrechnung.
+
+GRUNDREGELN (gelten überall):
+- Mandant: NUR Oliv (Oliv Gastro AG). Nicht Beaulieu.
+- Dublettensicher: Ersetzen statt Addieren — ein Beleg (Belegnummer) wird bei erneutem
+  Import ERSETZT, nicht ein zweites Mal addiert.
+- Konto: 4060 Küche (direkter Warenaufwand, WKQ-relevant) für alle Ambro-Positionen.
+- Beträge NETTO verwenden (Nettobetrag, ohne MwSt) für Warenkosten/WKQ.
+- „Leer statt 0", nie durch 0 teilen. Erst Vorschau zeigen, NICHT automatisch importieren.
+- Manuell hinzugefügte Konten/Werte nicht überschreiben.
+
+=== 1) 3 LIEFERSCHEINE ALS PROVISORISCH ERFASSEN (Mandant Oliv, Konto 4060) ===
+Beleg 26116806 · 05.08.2026 · Netto 31.62 · Brutto 32.45
+Beleg 26117033 · 07.08.2026 · Netto 560.80 · Brutto 575.40
+Beleg 26117323 · 12.08.2026 · Netto 608.85 · Brutto 624.70
+Markiere alle drei als Status „provisorisch (Lieferschein)".
+Kontroll-Summe, die die Vorschau anzeigen muss:
+  Netto 1'201.27 · Brutto 1'232.55 · MwSt 2.6% 31.23.
+
+=== 2) MONATSABGLEICH AMBRO (wie andere Lieferanten) ===
+Wenn später die Ambro-MONATSRECHNUNG importiert wird:
+- Gleiche die Monatsrechnung gegen die Summe der provisorischen Ambro-Lieferscheine
+  desselben Monats/Mandanten ab (Matching über Belegnummer der Lieferscheine).
+- Ersetze die provisorischen Lieferscheine durch die definitive Monatsrechnung
+  (Ersetzen statt Addieren — keine Dopplung).
+- Zeige eine Differenz an, falls Monatsrechnung ≠ Summe Lieferscheine (leer, wenn 0).
+- Ambro bleibt auf Konto 4060, Mandant Oliv.
+
+=== 3) FIBU-ABGLEICH ===
+Ambro erscheint im FIBU-Abgleich wie jeder andere Warenlieferant (Warenaufwand direkt,
+Variante A). Kein Pfand/Depot/Non-Food in diesen Belegen — alles 4060 Küche.
+
+=== ABSCHLUSS ===
+Vorschau bauen, mir Kontroll-Summen zeigen (Netto 1'201.27), auf Bestätigung warten,
+Undo verfügbar. Erst dann importieren.

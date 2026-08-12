@@ -35,6 +35,20 @@ export type KontoKlasse = 'warenkosten' | 'betriebskosten' | 'neutral';
  */
 export const PSEUDO_KONTO_PFAND = 'Depot';
 /**
+ * ECHTES Pfand-/Depot-Konto 4800 (Gebinde-Verrechnung): seit 08/2026 werden
+ * Pfand/Leergut/Gebinde-Positionen universal auf 4800 gebucht (statt auf das
+ * Pseudo-Konto «Depot»). 4800 ist NEUTRAL — nie Warenkosten (WKQ), nie
+ * Betriebskosten; Depot gleicht sich über Rückgaben aus. Legacy-Splits mit
+ * «Depot» bleiben gültig und werden identisch behandelt.
+ */
+export const KONTO_PFAND = '4800';
+/** Pfand-/Depot-Konto? Matcht das Legacy-Pseudo-Konto «Depot» UND 4800/4800x. */
+export function istPfandKonto(konto: string | undefined): boolean {
+  if (!konto) return false;
+  if (konto === PSEUDO_KONTO_PFAND) return true;
+  return normalizeWarenKonto(konto) === 4800;
+}
+/**
  * Pseudo-Konto «offen» (unbekannte Warengruppe, noch nicht zugeordnet):
  * BEWUSSTE Policy — zählt bis zur Zuordnung als Warenkosten (wie die
  * Legacy-Regel für kontolose Einträge), damit Totale/WKQ nicht absacken,
@@ -47,7 +61,7 @@ export const PSEUDO_KONTO_OFFEN = 'offen';
  * (Legacy-Regel, siehe Kopfkommentar). Ausnahme: Pseudo-Konto «Depot» → neutral.
  */
 export function kontoKlasse(konto: string | undefined, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): KontoKlasse {
-  if (konto === PSEUDO_KONTO_PFAND) return 'neutral';
+  if (istPfandKonto(konto)) return 'neutral'; // «Depot» UND 4800 (Pfand/Gebinde)
   if (!konto) return 'warenkosten';
   // Konsistent zu istWarenJournalKonto: 5-stellige Konten über die ersten
   // 4 Stellen klassifizieren (normalizeWarenKonto), nie roher parseInt.
