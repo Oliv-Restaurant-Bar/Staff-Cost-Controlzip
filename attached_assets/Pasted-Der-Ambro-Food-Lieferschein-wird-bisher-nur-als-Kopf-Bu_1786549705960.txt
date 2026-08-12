@@ -1,0 +1,46 @@
+Der Ambro-Food-Lieferschein wird bisher nur als „Kopf-Buchung (ohne Positionen)" erfasst.
+Erweitere den Ambro-Parser so, dass er — wie bei Terravigna/Spahni/Transgourmet — die
+Positionstabelle UND die Belegnummer ausliest. Ziel: Preisüberwachung und Artikel-Historie
+funktionieren, Dublettensicherung greift.
+
+GRUNDREGELN:
+- Mandant Oliv. Konto 4060 Küche für alle Ambro-Positionen (Standard aus Lieferantenprofil).
+- Netto-Beträge. Dublettensicher über Belegnummer (Ersetzen statt Addieren).
+- Erst Vorschau zeigen, NICHT automatisch importieren. Undo verfügbar.
+
+=== 1) BELEGNUMMER ALS RECHNUNGS-NR ===
+Lies die Belegnummer aus dem Lieferschein-Kopf (Feld „Belegnummer", z.B. 26116806) und
+trage sie als Rechnungs-Nr des Belegs ein. Damit greift Dedup und der spätere Monatsabgleich.
+
+=== 2) POSITIONEN AUSLESEN ===
+Pro Lieferschein die Positionstabelle parsen, je Zeile:
+  Artikelnr · Beschreibung · Menge · Einheit (SCA/PZ/KG/BOT) · Nettopreis/Einheit · Netto-Gesamt.
+Positionen an Preisüberwachung und Artikel-Historie übergeben (Schlüssel = Artikelnr,
+mandantengetrennt). Summe der Positionen muss dem Kopf-Netto entsprechen.
+
+=== KONTROLLWERTE (aus den 3 August-Lieferscheinen, alle geprüft) ===
+Beleg 26116806 · 05.08.2026 · Netto 31.62 · 1 Position:
+  540.402 · Pelati San Marzano DOP Casa Marrazzo · 3.000 SCA · 10.54 · 31.62
+
+Beleg 26117033 · 07.08.2026 · Netto 560.80 · 3 Positionen:
+  450.725 · Pelati kg 3/1 STRIANESE · 48.000 SCA · 5.45 · 261.60
+  120.296 · Burrata 120gr vaschetta (crtx8pz) · 104.000 PZ · 2.20 · 228.80
+  120.228 · Mozzarella di bufala DOP 16x125gr · 4.000 KG · 17.60 · 70.40
+
+Beleg 26117323 · 12.08.2026 · Netto 608.85 · 4 Positionen:
+  460.852 · Olio Extravergine "Gustolio" PET 1 LT · 36.000 BOT · 6.94 · 249.98
+  120.296 · Burrata 120gr vaschetta (crtx8pz) · 104.000 PZ · 2.20 · 228.80
+  120.228 · Mozzarella di bufala DOP 16x125gr · 4.000 KG · 17.60 · 70.40
+  450.037 · Doppio Concentrato di Pomodoro "Strianese" 12x1/1 800gr · 17.000 PZ · 3.51 · 59.67
+
+Hinweis: Artikel 120.296 (Burrata, 2.20) und 120.228 (Mozzarella, 17.60) kommen in beiden
+Belegen 26117033 und 26117323 vor — identischer Stückpreis. Das ist der Testfall für die
+Preisüberwachung/Historie (zwei Lieferungen desselben Artikels, Preis stabil).
+
+=== 3) DATUM ===
+Als Belegdatum das LIEFERSCHEINDATUM verwenden (05.08 / 07.08 / 12.08), NICHT das
+Auftragsdatum (04.08 / 06.08 / 11.08).
+
+=== ABSCHLUSS ===
+Vorschau bauen mit Positionen, Konto 4060, Belegnummer als Rechnungs-Nr, Kontroll-Summen
+Netto 1'201.27. Mir zeigen, auf Bestätigung warten.

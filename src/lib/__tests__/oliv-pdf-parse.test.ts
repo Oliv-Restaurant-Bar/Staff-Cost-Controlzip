@@ -142,6 +142,59 @@ describe('Ambro Monatsrechnungen', () => {
   });
 });
 
+describe('Ambro EINZEL-LIEFERSCHEINE (provisorisch, Positionen + Belegnummer)', () => {
+  it('26116806: 1 Position, Lieferdatum 05.08. (nicht Auftragsdatum 04.08.)', () => {
+    const e = parse('ambro-ls-26116806.txt');
+    expect(e.profil?.id).toBe('ambro');
+    expect(e.dokumenttyp).toBe('lieferschein');
+    expect(e.rechnungsNr).toBe('26116806');
+    expect(e.netto).toBe(31.62);
+    expect(e.positionenErkannt).toBe(true);
+    expect(e.lieferungen).toHaveLength(1);
+    const l = e.lieferungen[0];
+    expect(l.rechnungsNr).toBe('26116806');
+    expect(l.datum).toBe('2026-08-05');           // Lieferdatum, NIE 2026-08-04
+    expect(l.nettoTotal).toBe(31.62);
+    expect(l.positionen).toHaveLength(1);
+    expect(l.positionen[0]).toMatchObject({
+      artNr: '540.402', menge: 3, einheit: 'SCA', preis: 10.54, positionspreis: 31.62,
+    });
+    expect(l.positionen[0].bezeichnung).toContain('Pelati San Marzano');
+    expect(e.hinweise).toHaveLength(0);           // Positionssumme = Kopf-Netto
+  });
+  it('26117033: 3 Positionen, Netto 560.80', () => {
+    const e = parse('ambro-ls-26117033.txt');
+    expect(e.rechnungsNr).toBe('26117033');
+    expect(e.dokumenttyp).toBe('lieferschein');
+    const l = e.lieferungen[0];
+    expect(l.datum).toBe('2026-08-07');
+    expect(l.nettoTotal).toBe(560.8);
+    expect(l.positionen.map(p => [p.artNr, p.menge, p.preis, p.positionspreis])).toEqual([
+      ['450.725', 48, 5.45, 261.6],
+      ['120.296', 104, 2.2, 228.8],
+      ['120.228', 4, 17.6, 70.4],
+    ]);
+    expect(e.hinweise).toHaveLength(0);
+  });
+  it('26117323: 4 Positionen, Netto 608.85; Burrata/Mozzarella-Preise stabil (Historie-Testfall)', () => {
+    const e = parse('ambro-ls-26117323.txt');
+    expect(e.rechnungsNr).toBe('26117323');
+    const l = e.lieferungen[0];
+    expect(l.datum).toBe('2026-08-12');           // Lieferdatum, NIE 11.08.
+    expect(l.nettoTotal).toBe(608.85);
+    expect(l.positionen.map(p => [p.artNr, p.menge, p.preis, p.positionspreis])).toEqual([
+      ['460.852', 36, 6.94, 249.98],
+      ['120.296', 104, 2.2, 228.8],
+      ['120.228', 4, 17.6, 70.4],
+      ['450.037', 17, 3.51, 59.67],
+    ]);
+    // Mehrzeilige Bezeichnungen: Zeile über der Positionszeile
+    expect(l.positionen[0].bezeichnung).toContain('Olio Extravergine');
+    expect(l.positionen[3].bezeichnung).toContain('Doppio Concentrato');
+    expect(e.hinweise).toHaveLength(0);
+  });
+});
+
 describe('Spahni OLIV Rechnung 8649975', () => {
   const e = parse('spahni-8649975.txt');
   it('3 Lieferungen 22./28./31.07, Netto 1842.85, Brutto 1890.75', () => {

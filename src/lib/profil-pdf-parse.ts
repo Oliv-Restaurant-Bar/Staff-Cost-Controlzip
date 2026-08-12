@@ -356,17 +356,10 @@ const istBetragZelle = (z: string) => /^-?[\d’'.,]*\d(?:[.,]\d{1,2})?$/.test(z
  */
 function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const header = /Basierend auf Lieferschein\s+(\d+)\s+vom\s+\d{1,2}\.\d{1,2}\.\d{2,4}\.\s*Lieferdatum\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i;
-  const { bloecke } = teileInBloecke(lines, header);
-  // Blöcke gleicher LS-Nr (Seitenumbruch) zusammenführen.
-  const proNr = new Map<string, LieferungBlock>();
-  for (const b of bloecke) {
-    const alt = proNr.get(`${b.nr}|${b.datum}`);
-    if (alt) alt.zeilen.push(...b.zeilen); else proNr.set(`${b.nr}|${b.datum}`, b);
-  }
-  return [...proNr.values()].map(b => {
+  const parsePositionen = (zeilenListe: string[]): WarenPosition[] => {
     const positionen: WarenPosition[] = [];
     let vorherige = '';
-    for (const z of b.zeilen) {
+    for (const z of zeilenListe) {
       const c = zellen(z);
       // [pos, artNr, (bez), menge, einheit, listpreis, rabatt%, nettopreis, betrag]
       const ok = (c.length === 8 || c.length === 9)
@@ -385,8 +378,36 @@ function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstS
       }));
       vorherige = '';
     }
-    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
-  }).filter(l => l.positionen.length > 0);
+    return positionen;
+  };
+  const { bloecke } = teileInBloecke(lines, header);
+  // Blöcke gleicher LS-Nr (Seitenumbruch) zusammenführen.
+  const proNr = new Map<string, LieferungBlock>();
+  for (const b of bloecke) {
+    const alt = proNr.get(`${b.nr}|${b.datum}`);
+    if (alt) alt.zeilen.push(...b.zeilen); else proNr.set(`${b.nr}|${b.datum}`, b);
+  }
+  if (proNr.size > 0) {
+    return [...proNr.values()]
+      .map(b => baueLieferung(profil.name, b.nr, b.datum, parsePositionen(b.zeilen), mwstSatz))
+      .filter(l => l.positionen.length > 0);
+  }
+  // EINZEL-LIEFERSCHEIN (eigener Beleg, keine «Basierend auf Lieferschein»-
+  // Blöcke): Belegnummer + Daten stehen in der Kopftabelle «Belegnummer
+  // Datum  Lieferdatum  Seite» — z.B. «Oliv Gastro AG  26116806  05.08.26
+  // 05.08.26  1 / 1». Massgeblich ist das LIEFERDATUM (2. Datum), NIE das
+  // «Basierend auf Auftrag … vom …»-Auftragsdatum. Die Belegnummer wird als
+  // Rechnungs-Nr geführt (Dedup + späterer Monatsabgleich über LS-Nr).
+  const kopfRe = /(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/;
+  for (const line of lines.slice(0, 30)) {
+    const m = kopfRe.exec(line);
+    if (!m) continue;
+    const lieferdatum = parseDatumCH(m[3]);
+    if (!lieferdatum) break;
+    const l = baueLieferung(profil.name, m[1], lieferdatum, parsePositionen(lines), mwstSatz);
+    return l.positionen.length > 0 ? [l] : [];
+  }
+  return [];
 }
 
 /** Transgourmet-Sparten (Rechnung, «Aufteilung Spartung»): Food vs Non-Food. */
@@ -668,16 +689,22 @@ const KOPF_PARSER: Record<string, KopfParser> = {
   },
   ambro: (text) => {
     const g = generischerKopf(text);
-    // Tabellenzeile unter «Belegnummer  Datum  Fälligkeitsdatum  Seite».
-    const kopf = /(?:^|\n)\s*(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d{1,2}\.\d{1,2}\.\d{2,4}\s{2,}\d+\s*\/\s*\d+/.exec(text);
+    // Tabellenzeile unter «Belegnummer  Datum  Fälligkeitsdatum  Seite» —
+    // beim LIEFERSCHEIN steht davor die Empfängerzeile («Oliv Gastro AG
+    // 26116806  05.08.26  05.08.26  1 / 1»), daher Prefix zulassen.
+    const kopf = /(?:^|\n)[^\n]*?(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/.exec(text);
     const netto = sucheBetrag(text, [new RegExp(`Nettobetrag\\s+(${BETRAG_RE.source})`, 'i')]);
     const mwst = sucheBetrag(text, [new RegExp(`Mehrwertsteuer\\s+[\\d.,]+%[^\\n]*?(${BETRAG_RE.source})\\s*$`, 'im')]);
     // Rundung dem MwSt-Betrag zuschlagen, damit netto+mwst = «Gesamtbetrag CHF».
     const rundung = sucheBetrag(text, [new RegExp(`(?:^|\\n)\\s*Rundung\\s+(${BETRAG_RE.source})`, 'i')]) ?? 0;
+    // Lieferschein-Dokument: 3. Spalte ist das LIEFERDATUM (bei der
+    // Rechnung ist sie das Fälligkeitsdatum — dort NICHT als Lieferdatum führen).
+    const istLieferschein = /(?:^|\n)\s*Lieferschein\b/i.test(text.split('\n').slice(0, 25).join('\n'));
     return {
       ...g,
       rechnungsNr: kopf ? kopf[1] : g.rechnungsNr,
       rechnungsdatum: kopf ? parseDatumCH(kopf[2]) : g.rechnungsdatum,
+      lieferdatum: istLieferschein && kopf ? parseDatumCH(kopf[3]) : g.lieferdatum,
       netto: netto ?? g.netto,
       mwst: mwst !== null ? rundung2(mwst + rundung) : g.mwst,
       mwstSatz: 2.6,

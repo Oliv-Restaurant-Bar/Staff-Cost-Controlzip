@@ -96,7 +96,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // erfasst (freie Mandantenwahl) — siehe BOHNENBLUST_AUSGESCHLOSSEN.
   // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).
   { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet', monatsrechnung: false },
-  { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'monatsrechnung', monatsrechnung: true },
+  // Ambro: DUAL — Lieferscheine (eigener Beleg mit Belegnummer) laufen
+  // provisorisch während des Monats, die Monatsrechnung ersetzt sie (wie
+  // Terravigna). Alle Positionen Küche → Konto 4060.
+  { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4060', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'dual', monatsrechnung: true },
   { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
   { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6, monatsrechnung: false },
   // Caporaso: LIEFERSCHEIN-RECHNUNG (Einzelbeleg, bucht sofort final);
