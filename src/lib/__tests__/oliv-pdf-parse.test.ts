@@ -193,6 +193,14 @@ describe('Ambro EINZEL-LIEFERSCHEINE (provisorisch, Positionen + Belegnummer)', 
     expect(l.positionen[3].bezeichnung).toContain('Doppio Concentrato');
     expect(e.hinweise).toHaveLength(0);
   });
+  it('Monatsrechnung mit unlesbaren Blöcken fällt NICHT in den LS-Fallback (Kopf-Buchung statt falscher Lieferung)', () => {
+    const roh = fx('ambro-26210060.txt').split('\n')
+      .filter(z => !/Basierend auf Lieferschein/i.test(z)).join('\n');
+    const e = parseProfilPdf(roh, P);
+    expect(e.profil?.id).toBe('ambro');
+    expect(e.positionenErkannt).toBe(false);   // keine Lieferungen — Fallback gesperrt
+    expect(e.lieferungen).toHaveLength(0);
+  });
 });
 
 describe('Spahni OLIV Rechnung 8649975', () => {

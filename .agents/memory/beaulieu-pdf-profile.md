@@ -64,3 +64,9 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 
 ## Universeller Upload (Warenrechnungen)
 Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschlösschen, sonst Profil-PDF-Import inkl. Unbekannt-Zuordnung) und speist sie über `externalFilesRef`-Kanäle der weiterhin gemounteten (CSS-versteckten) Import-Komponenten ein. **Regeln:** CSV-Kanal arbeitet als verlustfreie Warteschlange (nächste Datei erst wenn Vorschau frei); Direkt-Upload je Lieferant in der Übersicht ist fail-closed (fremde/unerkannte Dateien werden abgewiesen, nie umgeleitet); Upload-Steuerelemente nur mit canCreate.
+
+## Ambro Einzel-Lieferscheine (08/2026)
+- Ambro ist DUAL: Einzel-LS (eigener Beleg) provisorisch, Monatsrechnung ersetzt via LS-Nr; Konto 4060.
+- LS-Kopftabelle «Belegnummer Datum Lieferdatum Seite» — Empfängerzeile davor («Oliv Gastro AG 26116806 …»), darum KOPF_PARSER mit Prefix-Toleranz; 3. Spalte ist nur beim LS das Lieferdatum (bei Rechnung = Fälligkeit — Gate über «Lieferschein»-Überschrift in Kopfzone).
+- Massgebliches Buchungsdatum = LIEFERDATUM (2. Datum), NIE das «Basierend auf Auftrag … vom»-Datum.
+- Positions-Zeilenparser (8/9 Zellen, Bezeichnung ggf. auf Vorzeile) ist für Monatsrechnung und LS identisch.

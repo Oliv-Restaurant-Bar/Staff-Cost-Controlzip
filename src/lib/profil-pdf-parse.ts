@@ -398,8 +398,15 @@ function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstS
   // 05.08.26  1 / 1». Massgeblich ist das LIEFERDATUM (2. Datum), NIE das
   // «Basierend auf Auftrag … vom …»-Auftragsdatum. Die Belegnummer wird als
   // Rechnungs-Nr geführt (Dedup + späterer Monatsabgleich über LS-Nr).
+  // WACHE: Fallback NUR bei expliziter «Lieferschein»-Überschrift in der
+  // Kopfzone — eine Monatsrechnung mit unlesbaren Blöcken darf NIE als eine
+  // einzelne provisorische Lieferung durchrutschen (lieber Kopf-Buchung).
+  const kopfzone = lines.slice(0, 30);
+  const istLieferschein = kopfzone.some(z => /^\s*Lieferschein\b(?!\s*[\/.])/i.test(z))
+    && !lines.some(z => /\b(?:Sammel|Monats)-?rechnung\b/i.test(z));
+  if (!istLieferschein) return [];
   const kopfRe = /(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/;
-  for (const line of lines.slice(0, 30)) {
+  for (const line of kopfzone) {
     const m = kopfRe.exec(line);
     if (!m) continue;
     const lieferdatum = parseDatumCH(m[3]);
@@ -692,7 +699,8 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     // Tabellenzeile unter «Belegnummer  Datum  Fälligkeitsdatum  Seite» —
     // beim LIEFERSCHEIN steht davor die Empfängerzeile («Oliv Gastro AG
     // 26116806  05.08.26  05.08.26  1 / 1»), daher Prefix zulassen.
-    const kopf = /(?:^|\n)[^\n]*?(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/.exec(text);
+    const kopfzoneText = text.split('\n').slice(0, 30).join('\n');
+    const kopf = /(?:^|\n)[^\n]*?(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/.exec(kopfzoneText);
     const netto = sucheBetrag(text, [new RegExp(`Nettobetrag\\s+(${BETRAG_RE.source})`, 'i')]);
     const mwst = sucheBetrag(text, [new RegExp(`Mehrwertsteuer\\s+[\\d.,]+%[^\\n]*?(${BETRAG_RE.source})\\s*$`, 'im')]);
     // Rundung dem MwSt-Betrag zuschlagen, damit netto+mwst = «Gesamtbetrag CHF».
