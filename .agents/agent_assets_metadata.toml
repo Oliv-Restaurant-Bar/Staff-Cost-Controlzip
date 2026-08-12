@@ -45,3 +45,10 @@ uri = "file://screenshots/cockpit-monat-seite.pdf"
 type = "pdf"
 title = "Cockpit — Monatsübersicht (neue Seite 1)"
 description = "Vektor-Design August 2026 Oliv: KPI-Karten, 4 Abschnitte, Ampeln — Zahlen unverändert."
+
+[[outputs]]
+id = "fR4Ko_CW0xZqNn7Bbr7ck"
+uri = "file://screenshots/cockpit-personal-block.pdf"
+type = "pdf"
+title = "Cockpit — mit Personal-Block (August, Oliv)"
+description = "Cockpit-Seite + Waren-Block + neuer 2-seitiger Personal-Block (Überstunden & Flex je Woche/Mitarbeiter)."

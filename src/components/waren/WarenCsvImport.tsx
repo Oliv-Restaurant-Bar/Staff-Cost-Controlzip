@@ -36,7 +36,8 @@ import {
   loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
   loadMarktLieferantenMapping, saveMarktLieferantenMapping, deleteInvoiceEntry, loadFibuMatchToleranz,
   erstelleWarenImportSnapshot, saveWarenImportUndo, loadWarenImportUndo, undoWarenImport,
-  kategorieFromKonto, type InvoiceEntry, type Supplier, type WarenImportTyp,
+  kategorieFromKonto, loadIgnorierteRechnungen, istRechnungIgnoriert,
+  type IgnoreListe, type InvoiceEntry, type Supplier, type WarenImportTyp,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
@@ -278,6 +279,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
   const [artikelKonten, setArtikelKonten] = useState<ArtikelKontenMapping>({});
   const [kontoOverrides, setKontoOverrides] = useState<ArtikelKontenMapping>({});
   const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
+  // Ignore-Liste (Privatbezug): wird bei jedem Datei-Load FRISCH gelesen —
+  // ignorierte Rechnungen erscheinen nie als angehakte Import-Zeilen.
+  const [ignoreListe, setIgnoreListe] = useState<IgnoreListe>({});
   const geladen = useRef(false);
 
   useEffect(() => {
@@ -298,9 +302,20 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
     if (!file) return;
     const text = await file.text();
     const res = parseTransgourmetCsv(text);
+    // Ignore-Liste (Privatbezug) VOR dem Aufbau der Vorschau frisch laden —
+    // ignorierte Rechnungen (Nr + Lieferant) starten NIE angehakt.
+    let ign: IgnoreListe = {};
+    try { ign = await loadIgnorierteRechnungen(tenantId); }
+    catch (e) { console.warn('[CSV-IMPORT] Ignore-Liste nicht ladbar (Vorschau ohne Filter, Schreib-Fence greift trotzdem):', e); }
+    setIgnoreListe(ign);
     setQuellDatei(file);
     setErgebnis(res);
-    setAusgewaehlt(new Set(res.rechnungen.map(r => r.docKey)));
+    setAusgewaehlt(new Set(res.rechnungen
+      .filter(r => {
+        const lf = lieferantFuerMarkt(r.markt, marktMap);
+        return !(lf && istRechnungIgnoriert(ign, r.rechnungsNr, lf));
+      })
+      .map(r => r.docKey)));
     setMarktZuordnung({});
     setKontoOverrides({}); setAufgeklappt(new Set());
     if (res.failureReason) toast.error(res.failureReason);
@@ -339,6 +354,28 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
 
   /** Lieferant pro Rechnung aus der Markt-Spalte; null = «Lieferant offen». */
   const lieferantFuer = (markt: string) => lieferantFuerMarkt(markt, marktMap);
+
+  // Ignorierte Rechnungen (Privatbezug) dieser Vorschau — hängt am Markt-
+  // Mapping (Lieferant ändert sich mit der Zuordnung) und an der Ignore-Liste.
+  // Ohne Lieferant («Lieferant offen») wird nie gematcht — wie die Schreib-Fence.
+  const ignorierteKeys = useMemo(() => {
+    if (!ergebnis) return new Set<string>();
+    return new Set(ergebnis.rechnungen
+      .filter(r => {
+        const lf = lieferantFuerMarkt(r.markt, marktMap);
+        return lf !== null && istRechnungIgnoriert(ignoreListe, r.rechnungsNr, lf);
+      })
+      .map(r => r.docKey));
+  }, [ergebnis, ignoreListe, marktMap]);
+  // Zuordnung eines offenen Markts kann Rechnungen nachträglich als ignoriert
+  // entlarven — die Auswahl darf sie dann nicht behalten.
+  useEffect(() => {
+    if (ignorierteKeys.size === 0) return;
+    setAusgewaehlt(prev => {
+      const next = new Set([...prev].filter(k => !ignorierteKeys.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [ignorierteKeys]);
 
   // Preisänderungen je Rechnung — sequenziell gegen die fortgeschriebene
   // Historie (Datei-interne Änderungen werden ebenfalls erkannt).
@@ -386,8 +423,17 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
 
   const importieren = async () => {
     if (!ergebnis || !vorschau) return;
+    // Doppelte Absicherung: Ignore-Liste beim Import FRISCH lesen (ein anderer
+    // Tab kann seit dem Datei-Load markiert haben) — zusätzlich zur Fence in
+    // saveInvoiceEntry, damit ignorierte Rechnungen auch nie gezählt werden.
+    let ignAktuell = ignoreListe;
+    try { ignAktuell = await loadIgnorierteRechnungen(tenantId); setIgnoreListe(ignAktuell); } catch { /* Fence in saveInvoiceEntry greift trotzdem */ }
+    const istIgn = (r: (typeof ergebnis.rechnungen)[number]) => {
+      const lf = lieferantFuer(r.markt);
+      return lf !== null && istRechnungIgnoriert(ignAktuell, r.rechnungsNr, lf);
+    };
     // Rechnungen ohne Lieferanten-Zuordnung («Lieferant offen») werden NIE importiert.
-    const zuImportieren = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) !== null);
+    const zuImportieren = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) !== null && !istIgn(r));
     const offen = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) === null);
     if (offen.length > 0) {
       toast.error(`${offen.length} Rechnung${offen.length === 1 ? '' : 'en'} mit unbekanntem Markt übersprungen — bitte Markt zuordnen.`);
@@ -434,6 +480,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
       // gerechnet (Bestands-Name gewinnt, z. B. umgehängte TG-Bar-Rechnungen)
       // — die Vorschau nutzt den Markt-Default und ist nur Anzeige.
       let histLauf: PreisHistorie = historie ?? {};
+      let aenTotal = 0; // Preisänderungen des TATSÄCHLICHEN Laufs (nicht der evtl. veralteten Vorschau)
       const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
       for (const r of zuImportieren) {
         const lieferant = lieferantFuer(r.markt)!; // oben gefiltert
@@ -522,6 +569,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
         // Preisvergleich/Historie mit dem tatsächlich persistierten Lieferanten.
         const effLieferant = entry.supplierName;
         const aen = berechnePreisAenderungen(r, effLieferant, histLauf, schwelle);
+        aenTotal += aen.length;
         histLauf = aktualisierePreisHistorie(histLauf, [r], effLieferant);
         const monat = hinweiseProMonat.get(month) ?? {};
         if (aen.length > 0) monat[id] = aen; else delete monat[id];
@@ -550,7 +598,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
         vorher, nachher,
       });
       setUndoRefresh(x => x + 1);
-      toast.success(`${neu} Rechnung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${finalisiert > 0 ? ` · ${finalisiert} Kreditoren-Übernahme${finalisiert === 1 ? '' : 'n'} finalisiert` : ''} · ${vorschau.alle.length} Preisänderung${vorschau.alle.length === 1 ? '' : 'en'}.`);
+      toast.success(`${neu} Rechnung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''}${finalisiert > 0 ? ` · ${finalisiert} Kreditoren-Übernahme${finalisiert === 1 ? '' : 'n'} finalisiert` : ''} · ${aenTotal} Preisänderung${aenTotal === 1 ? '' : 'en'}.`);
       for (const w of warnungen) toast.warning(w, { duration: 12000 });
       setErgebnis(null);
       onImported();
@@ -562,6 +610,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
   };
 
   const toggleRechnung = (nr: string) => {
+    if (ignorierteKeys.has(nr)) return; // ignorierte Rechnungen sind nicht auswählbar
     setAusgewaehlt(prev => {
       const next = new Set(prev);
       if (next.has(nr)) next.delete(nr); else next.add(nr);
@@ -600,16 +649,21 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
       {ergebnis && ergebnis.rechnungen.length > 0 && (
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs space-y-3" data-testid="csv-import-vorschau">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="font-medium">{ergebnis.rechnungen.length} Rechnungen · {ergebnis.debug.zeilenVerwendet} Positionen</span>
+            <span className="font-medium">
+              {ergebnis.rechnungen.length - ignorierteKeys.size} Rechnungen · {ergebnis.debug.zeilenVerwendet} Positionen
+              {ignorierteKeys.size > 0 && <span className="text-muted-foreground font-normal"> · {ignorierteKeys.size} ignoriert (Privatbezug)</span>}
+            </span>
             <span className="text-muted-foreground">Lieferant je Rechnung aus der Markt-Spalte (BGH → Transgourmet, Prodega-Märkte → Prodega)</span>
             <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setErgebnis(null)}>
               <X className="h-3 w-3 mr-0.5" /> Verwerfen
             </Button>
           </div>
 
-          {/* Rechnungsliste — Lieferant pro Rechnung aus Markt abgeleitet */}
+          {/* Rechnungsliste — Lieferant pro Rechnung aus Markt abgeleitet;
+              ignorierte Rechnungen (Privatbezug) erscheinen NICHT hier,
+              sondern im ausgegrauten Abschnitt darunter. */}
           <div className="max-h-48 overflow-y-auto space-y-0.5">
-            {ergebnis.rechnungen.map(r => {
+            {ergebnis.rechnungen.filter(r => !ignorierteKeys.has(r.docKey)).map(r => {
               const lf = lieferantFuer(r.markt);
               const warnung = marktNummernWarnung(lf, r.rechnungsNr);
               const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
@@ -667,6 +721,35 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
               );
             })}
           </div>
+
+          {/* Ignorierte Rechnungen (Privatbezug): ausgegraut, ohne Häkchen,
+              nicht auswählbar, zählen nicht zu Import-Anzahl/-Summe.
+              Reaktivierung nur über den Block «Ignoriert/Privatbezug». */}
+          {ignorierteKeys.size > 0 && (() => {
+            const ignorierte = ergebnis.rechnungen.filter(r => ignorierteKeys.has(r.docKey));
+            const summe = ignorierte.reduce((s, r) => s + r.nettoTotal, 0);
+            return (
+              <div className="rounded border border-border/50 bg-muted/30 px-3 py-2 space-y-1 opacity-70"
+                data-testid="csv-ignoriert-block">
+                <p className="font-medium text-muted-foreground">
+                  Ignoriert / Privatbezug — wird nicht importiert ({ignorierte.length} · CHF {fmt(summe)} netto)
+                </p>
+                {ignorierte.map(r => (
+                  <div key={r.docKey} className="flex items-center gap-2 tabular-nums text-muted-foreground px-1"
+                    data-testid={`csv-ignoriert-${r.docKey}`}>
+                    <span className="w-20">{fmtDatumCH(r.datum)}</span>
+                    <span className="w-24 truncate" title={r.rechnungsNr}>Nr. {r.rechnungsNr}</span>
+                    <span className="w-24 truncate" title={`Markt: ${r.markt || '—'}`}>{r.markt || '—'}</span>
+                    <span className="truncate">{lieferantFuer(r.markt) ?? '—'}</span>
+                    <span className="ml-auto">CHF {fmt(r.nettoTotal)} netto</span>
+                  </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground">
+                  Wieder aufnehmen: Erfassung → Block «Ignoriert/Privatbezug».
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Unbekannte Märkte — «Lieferant offen», Zuordnung direkt hier speichern */}
           {(() => {

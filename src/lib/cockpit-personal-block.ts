@@ -1,39 +1,39 @@
 /**
  * cockpit-personal-block.ts — optionaler Personal-Block für den Cockpit-PDF-Export.
  * ==================================================================================
- * Drei zusätzliche Seiten (je eigene Seite) für den GEWÄHLTEN Monat/Stichtag —
+ * Zwei zusätzliche Seiten (je eigene Seite) für den GEWÄHLTEN Monat/Stichtag —
  * gleiches Report-Design wie der Waren-Block (Kopfband, KPI-Zeile, Zebra,
  * Chips/Ampel; Fusszeile zentral via zeichneFusszeilen):
  *
  *  A) Überstunden Wochen-Ansicht — IMMER die letzten 4 Kalenderwochen bis zum
  *     Stichtag (rollierend). Je Fix-MA: Pensum · Wochen-Saldo je KW · Laufend.
+ *     FARBLOGIK (Kosten): Überstunden (+) = ROT · Minusstunden (−) = GRÜN.
  *     «Keine Zeiterfassung»-MA: «–» + Chip «ausgenommen · kein ÜStd-Konto»,
  *     NICHT im Total. Quelle: ueberstunden.ts (SSOT, leer statt 0).
  *
- *  B) Flex Kosten pro Mitarbeiter — Name · Abt. · Total AG/h · Plan Std ·
- *     Ist Std · Flex Plan · Flex Ist · Diff. Plan = ganzer Monat (Dienstplan),
- *     Ist = NUR hochgeladene Ist-Stunden (leer statt 0, kein Plan-Fallback).
- *     Quelle: personalkosten.ts (ladePersonalkostenDaten, Lohn-SSOT inkl.
- *     ::flexsplit und «ohne AG»-Flags via employee-rate.ts).
- *
- *  C) Flex-Auswertung Plan vs. Ist je KW — nur Wochen MIT hochgeladenem Ist
- *     (Wochen ohne Ist werden WEGGELASSEN, nicht als 0). Status-Punkt:
- *     grün = im/unter Plan · amber = bis 5 % darüber · rot = >5 % darüber.
+ *  B) Flex-Auswertung Plan vs. Ist — VERSCHACHTELT je Woche & Mitarbeiter
+ *     (wie die Waren-Anomalie-Analyse): pro Woche eine fette Kopfzeile
+ *     (Zeitraum · Plan Std · Ist Std · Flex Plan · Flex Ist · Diff. mit
+ *     Diff-% und Status-Ampelpunkt), darunter je Mitarbeiter eine Zeile.
+ *     NUR Wochen MIT hochgeladenem Mirus-Ist (offene Wochen weggelassen,
+ *     nicht als 0); je MA nur bis zum abgerechneten Stand. KEINE AG/h-Spalte.
+ *     Die MA-Zeilen einer Woche summieren exakt aufs Wochentotal (Totale =
+ *     Summe der gerundeten MA-Werte). Quelle: personalkosten.ts
+ *     (ladePersonalkostenDaten, Lohn-SSOT inkl. ::flexsplit und «ohne AG»-
+ *     Flags via employee-rate.ts).
  */
 import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { RestaurantBranding } from '@/lib/pl-branding';
 import {
-  ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H, UEBERSTUNDEN_START,
+  ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H,
 } from '@/lib/ueberstunden';
 import { ladePersonalkostenDaten, type PersonalkostenDaten } from '@/lib/personalkosten';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
-import { getEmployerCostRate, getEffectiveHourlyRate } from '@/lib/employee-rate';
-import { loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
-import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import { getEmployerCostRate } from '@/lib/employee-rate';
 import {
-  PW, M, INK2, MUTED, GRUEN_INK, AMBER_INK, ROT_INK, type Rgb,
+  M, INK2, MUTED, GRUEN_INK, AMBER_INK, ROT_INK, type Rgb,
   kopfband, folgeKopf, kpiZeileBoxen, abschnitt, tabellenStil,
   zeichneChip, zeichneAmpelPunktFarbe,
 } from '@/lib/cockpit-block-stil';
@@ -52,15 +52,13 @@ export interface PbUeberstundenZeile {
   ausgenommen: boolean;
 }
 
-export interface PbFlexMaZeile {
+/** Mitarbeiter-Detailzeile innerhalb einer abgerechneten Woche. */
+export interface PbWocheMaZeile {
   name: string;
-  dept: string;
-  /** Total AG-Kosten pro Stunde (CHF/h); null = Lohn fehlt. */
-  satz: number | null;
   /** true = ohne AG-Sozialkosten gerechnet (Flag pro Flex-MA). */
   agOff: boolean;
   planH: number;
-  istH: number;   // nur hochgeladenes Ist
+  istH: number;    // nur hochgeladenes Ist (bis Stichtag)
   planChf: number;
   istChf: number;
   diffChf: number; // Ist − Plan
@@ -70,11 +68,14 @@ export interface PbWochenZeile {
   label: string;      // «KW 32»
   von: string;        // ISO (auf Monat geklemmt)
   bis: string;
+  planH: number;
+  istH: number;
   planChf: number;
   istChf: number;
   diffChf: number;    // Ist − Plan
   diffPct: number | null;
-  kumAbw: number;
+  /** MA-Zeilen; summieren exakt aufs Wochentotal. */
+  mitarbeiter: PbWocheMaZeile[];
 }
 
 export interface PersonalBlockDaten {
@@ -83,14 +84,13 @@ export interface PersonalBlockDaten {
   kwLabels: string[];
   ueZeilen: PbUeberstundenZeile[];
   totalLaufend: number | null;
-  /** Flex-Teil. */
-  flexZeilen: PbFlexMaZeile[];
+  /** Flex-Teil: nur Wochen MIT hochgeladenem Ist. */
+  wochen: PbWochenZeile[];
   flexTotalPlanH: number;
   flexTotalIstH: number;
   flexTotalPlanChf: number;
   flexTotalIstChf: number;
   flexAgOffCount: number;
-  wochen: PbWochenZeile[];
 }
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli',
@@ -142,7 +142,7 @@ export async function ladePersonalBlockDaten(
   const ergebnisse: UeErg[] = [];
   for (const jd of jahresDaten) if (jd) ergebnisse.push(jd.ergebnis);
 
-  // Pro MA (Name-basiert über Jahre gemerged; ids sind stabil): Saldi je KW.
+  // Pro MA (id-basiert über Jahre gemerged): Saldi je KW.
   const ueZeilen: PbUeberstundenZeile[] = [];
   const proId = new Map<string, PbUeberstundenZeile & { _laufendJeJahr: Array<number | null> }>();
   for (const erg of ergebnisse) {
@@ -182,103 +182,48 @@ export async function ladePersonalBlockDaten(
   }
   ueZeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
-  // ── B/C) Flex: Personalkosten-SSOT (Plan ganzer Monat, Ist nur Upload) ────
+  // ── B) Flex je Woche & Mitarbeiter: Personalkosten-SSOT ───────────────────
   const ratesBlob = await loadSocialCostRates(tenantId);
   const daten: PersonalkostenDaten = await ladePersonalkostenDaten(
     year, month, tenantId, tenantKey, ratesBlob.rates,
   );
 
-  const flexZeilen: PbFlexMaZeile[] = [];
-  let flexAgOffCount = 0;
+  const flexIds = new Set(daten.flexEmployees.map(e => String(e.id)));
+  const infoVonId = new Map<string, { name: string; agOff: boolean; satz: number }>();
   for (const emp of daten.flexEmployees) {
     const br = getEmployerCostRate(emp, daten.rates);
-    const satz = br?.totalHourly ?? null;
-    const agOff = br?.agOff === true;
-    let planH = 0, istH = 0;
-    for (const [_date, perEmp] of Object.entries(daten.planStdProTag)) {
-      planH += perEmp[emp.id] ?? 0;
-    }
-    for (const [date, perEmp] of Object.entries(daten.istStdProTag)) {
-      if (date <= heuteIso) istH += perEmp[emp.id] ?? 0;
-    }
-    if (planH <= 0 && istH <= 0) continue; // leer statt 0 — MA ohne Einsatz weglassen
-    if (agOff) flexAgOffCount++;
     const istSplit = String(emp.id).endsWith('::flexsplit');
-    flexZeilen.push({
+    infoVonId.set(String(emp.id), {
       name: istSplit ? `${emp.name} (Stundenlohn-Phase)` : (emp.name ?? String(emp.id)),
-      dept: emp.department ?? '–',
-      satz, agOff,
-      planH: r1(planH), istH: r1(istH),
-      planChf: r2(planH * (satz ?? 0)),
-      istChf: r2(istH * (satz ?? 0)),
-      diffChf: r2(istH * (satz ?? 0) - planH * (satz ?? 0)),
+      agOff: br?.agOff === true,
+      satz: br?.totalHourly ?? 0,
     });
   }
-  // Zusatzkosten-Zeilen für Fixlohn-MA (isAdditionalCost / isAdditionalCostPlan)
-  // — identisch zur Flex-Kosten-Tabelle in PersonalFix (Plan aus Dienstplan-
-  // Zusatz-Tagen, Ist aus als Zusatzkosten markierten Ist-Stunden).
-  const monthDate = new Date(year, month - 1, 1);
-  const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  const [scheduleRaw, actualRaw] = await Promise.all([
-    loadScheduleForMonth(monthDate, tenantId),
-    loadActualHoursForMonth(monthDate, tenantId),
-  ]);
-  for (const emp of daten.fixEmployees) {
-    const wage = getEffectiveHourlyRate(emp, daten.rates);
-    if (!wage) continue;
-    let planH = 0, planChf = 0, istH = 0, istChf = 0;
-    for (const [cellKey, ds] of Object.entries(scheduleRaw ?? {})) {
-      const date = cellKey.slice(-10);
-      if (!date.startsWith(prefix)) continue;
-      if (cellKey.slice(0, cellKey.length - 11) !== String(emp.id)) continue;
-      if (typeof ds !== 'object' || ds == null || !(ds as { isAdditionalCostPlan?: boolean }).isAdditionalCostPlan) continue;
-      const net = calculateDayNetHours(ds);
-      if (net > 0) { planH += Math.round(net * 100) / 100; planChf += Math.round(net * wage * 100) / 100; }
-    }
-    for (const [cellKey, entry] of Object.entries(actualRaw ?? {})) {
-      const date = cellKey.slice(-10);
-      if (!date.startsWith(prefix) || date > heuteIso) continue;
-      if (cellKey.slice(0, cellKey.length - 11) !== String(emp.id)) continue;
-      if (!entry?.isAdditionalCost) continue;
-      const h = entry.hours ?? 0;
-      if (h > 0) { istH += Math.round(h * 100) / 100; istChf += Math.round(h * wage * 100) / 100; }
-    }
-    if (planH <= 0 && istH <= 0) continue;
-    flexZeilen.push({
-      name: `${emp.name} (Zusatzkosten)`,
-      dept: emp.department ?? '–',
-      satz: wage, agOff: false,
-      planH: r1(planH), istH: r1(istH),
-      planChf: r2(planChf), istChf: r2(istChf),
-      diffChf: r2(istChf - planChf),
-    });
-  }
-  flexZeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
 
-  // ── C) Wochen: nur KWs MIT hochgeladenem Flex-Ist ─────────────────────────
-  const flexIds = new Set(daten.flexEmployees.map(e => String(e.id)));
-  const satzVonId = new Map<string, number>();
-  for (const emp of daten.flexEmployees) {
-    satzVonId.set(String(emp.id), getEmployerCostRate(emp, daten.rates)?.totalHourly ?? 0);
-  }
-  interface W { planChf: number; istChf: number; hatIst: boolean; von: string; bis: string; label: string }
+  interface WMa { planH: number; istH: number; hatIst: boolean }
+  interface W { von: string; bis: string; label: string; hatIst: boolean; ma: Map<string, WMa> }
   const wochenMap = new Map<string, W>();
   const wocheFuer = (date: string): W => {
     const mo = mondayOf(date);
     let w = wochenMap.get(mo);
     if (!w) {
       const { kw } = isoWeekOf(mo);
-      w = { planChf: 0, istChf: 0, hatIst: false, von: date, bis: date, label: `KW ${kw}` };
+      w = { von: date, bis: date, label: `KW ${kw}`, hatIst: false, ma: new Map() };
       wochenMap.set(mo, w);
     }
     if (date < w.von) w.von = date;
     if (date > w.bis) w.bis = date;
     return w;
   };
+  const maFuer = (w: W, id: string): WMa => {
+    let m = w.ma.get(id);
+    if (!m) { m = { planH: 0, istH: 0, hatIst: false }; w.ma.set(id, m); }
+    return m;
+  };
   for (const [date, perEmp] of Object.entries(daten.planStdProTag)) {
     const w = wocheFuer(date);
     for (const [id, h] of Object.entries(perEmp)) {
-      if (flexIds.has(id)) w.planChf += h * (satzVonId.get(id) ?? 0);
+      if (flexIds.has(id)) maFuer(w, id).planH += h;
     }
   }
   for (const [date, perEmp] of Object.entries(daten.istStdProTag)) {
@@ -286,42 +231,67 @@ export async function ladePersonalBlockDaten(
     const w = wocheFuer(date);
     for (const [id, h] of Object.entries(perEmp)) {
       if (!flexIds.has(id)) continue;
-      w.istChf += h * (satzVonId.get(id) ?? 0);
+      const m = maFuer(w, id);
+      m.istH += h;
+      m.hatIst = true;
       w.hatIst = true;
     }
   }
+
   const wochen: PbWochenZeile[] = [];
-  let kum = 0;
+  const rohProWoche: Array<{ planH: number; istH: number }> = [];
+  const agOffMitEinsatz = new Set<string>();
   for (const [mo, w] of [...wochenMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     void mo;
     if (!w.hatIst) continue; // «noch offen / kein Ist» — weglassen, nicht 0
-    const plan = r2(w.planChf), ist = r2(w.istChf);
-    const diff = r2(ist - plan);
-    kum = r2(kum + diff);
+    const maZeilen: PbWocheMaZeile[] = [];
+    let planHRoh = 0, istHRoh = 0;
+    for (const [id, m] of w.ma.entries()) {
+      if (m.planH <= 0 && m.istH <= 0) continue; // leer statt 0
+      const info = infoVonId.get(id);
+      if (!info) continue;
+      const planChf = r2(m.planH * info.satz);
+      const istChf = r2(m.istH * info.satz);
+      if (info.agOff) agOffMitEinsatz.add(id);
+      planHRoh += m.planH; istHRoh += m.istH;
+      maZeilen.push({
+        name: info.name, agOff: info.agOff,
+        planH: r1(m.planH), istH: r1(m.istH),
+        planChf, istChf, diffChf: r2(istChf - planChf),
+      });
+    }
+    maZeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
+    // CHF-Wochentotal = Summe der GERUNDETEN MA-Zeilen → Zeilen summieren exakt
+    // auf. Stunden-Totale aus den ROH-Summen (wie die Personal-Ansichten).
+    const planH = r1(planHRoh);
+    const istH = r1(istHRoh);
+    rohProWoche.push({ planH: planHRoh, istH: istHRoh });
+    const planChf = r2(maZeilen.reduce((s, z) => s + z.planChf, 0));
+    const istChf = r2(maZeilen.reduce((s, z) => s + z.istChf, 0));
+    const diffChf = r2(istChf - planChf);
     wochen.push({
       label: w.label, von: w.von, bis: w.bis,
-      planChf: plan, istChf: ist, diffChf: diff,
-      diffPct: plan > 0 ? r1((diff / plan) * 100) : null,
-      kumAbw: kum,
+      planH, istH, planChf, istChf, diffChf,
+      diffPct: planChf > 0 ? r1((diffChf / planChf) * 100) : null,
+      mitarbeiter: maZeilen,
     });
   }
 
   return {
     monatLabel: `${MONATE[month - 1]} ${year}`,
     kwLabels, ueZeilen, totalLaufend,
-    flexZeilen,
-    flexTotalPlanH: r1(flexZeilen.reduce((s, z) => s + z.planH, 0)),
-    flexTotalIstH: r1(flexZeilen.reduce((s, z) => s + z.istH, 0)),
-    flexTotalPlanChf: r2(flexZeilen.reduce((s, z) => s + z.planChf, 0)),
-    flexTotalIstChf: r2(flexZeilen.reduce((s, z) => s + z.istChf, 0)),
-    flexAgOffCount,
     wochen,
+    flexTotalPlanH: r1(rohProWoche.reduce((s, w) => s + w.planH, 0)),
+    flexTotalIstH: r1(rohProWoche.reduce((s, w) => s + w.istH, 0)),
+    flexTotalPlanChf: r2(wochen.reduce((s, w) => s + w.planChf, 0)),
+    flexTotalIstChf: r2(wochen.reduce((s, w) => s + w.istChf, 0)),
+    flexAgOffCount: agOffMitEinsatz.size,
   };
 }
 
 // ─── PDF-Zeichnung ───────────────────────────────────────────────────────────
 
-/** Status-Farbe Flex-Woche: grün = im/unter Plan · amber bis 5 % · rot >5 %. */
+/** Status-Farbe Flex-Diff (Kosten): unter/im Plan = grün · bis 5 % darüber = amber · sonst rot. */
 function flexStatusFarbe(diffPct: number | null, diffChf: number): Rgb {
   if (diffChf <= 0) return GRUEN_INK;
   if (diffPct !== null && diffPct <= 5) return AMBER_INK;
@@ -337,7 +307,7 @@ function kpiZeile(pdf: jsPDF, y: number, d: PersonalBlockDaten): number {
       wert: d.totalLaufend === null ? '–' : `${fmtSaldo(d.totalLaufend)} h`,
       ampel: { dot: laufendFarbe, ink: laufendFarbe },
     },
-    { label: 'Flex Plan (Monat)', wert: `CHF ${fmtChf(d.flexTotalPlanChf)}` },
+    { label: 'Flex Plan (abger. Wochen)', wert: `CHF ${fmtChf(d.flexTotalPlanChf)}` },
     { label: 'Flex Ist (hochgeladen)', wert: `CHF ${fmtChf(d.flexTotalIstChf)}` },
     {
       label: 'Flex Diff Ist-Plan', wert: `CHF ${fmtChf(flexDiff)}`,
@@ -349,7 +319,16 @@ function kpiZeile(pdf: jsPDF, y: number, d: PersonalBlockDaten): number {
   ]);
 }
 
-/** Fügt die drei Personal-Seiten ans PDF an (gleiches Design wie Waren-Block). */
+/** Kleine graue Legende unterhalb der zuletzt gezeichneten Tabelle. */
+function legende(pdf: jsPDF, text: string): void {
+  const nachTabelle = (pdf as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY;
+  if (typeof nachTabelle !== 'number') return;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
+  pdf.setTextColor(...MUTED);
+  pdf.text(text, M, Math.min(nachTabelle + 4, 285));
+}
+
+/** Fügt die beiden Personal-Seiten ans PDF an (gleiches Design wie Waren-Block). */
 export function zeichnePersonalBlock(
   pdf: jsPDF, d: PersonalBlockDaten, branding: RestaurantBranding, heute: Date = new Date(),
 ): void {
@@ -402,7 +381,7 @@ export function zeichnePersonalBlock(
           && data.row.raw && (data.row.raw as unknown[])[laufendCol] === ausgenommenChip) {
         data.cell.text = [''];
       }
-      // Negative/positive Laufend-Werte einfärben.
+      // Kosten-Farblogik: Überstunden (+) rot, Minusstunden (−) grün.
       if (data.section === 'body' && data.column.index >= 2 && typeof data.cell.raw === 'string') {
         if (data.cell.raw.startsWith('+')) data.cell.styles.textColor = ROT_INK;
         else if (data.cell.raw.startsWith('-') || data.cell.raw.startsWith('−')) data.cell.styles.textColor = GRUEN_INK;
@@ -416,84 +395,65 @@ export function zeichnePersonalBlock(
     },
     didDrawPage: mitFolgeKopf('Personal · Überstunden Wochen-Ansicht'),
   });
+  legende(pdf, 'Farblogik (Kosten): Überstunden (+) = rot · Minusstunden (-) = grün · 0/leer neutral');
 
-  // ── B) Flex Kosten pro Mitarbeiter ──
-  pdf.addPage('a4', 'portrait');
-  y = kopfband(pdf, branding, 'Personal · Flex Kosten pro Mitarbeiter', d.monatLabel, heute);
-  y = kpiZeile(pdf, y, d);
-  y = abschnitt(pdf, y, accent, 'Flex Kosten pro Mitarbeiter',
-    `${d.flexZeilen.length} MA · ${d.flexAgOffCount} ohne AG-Sozialkosten gerechnet`);
-  autoTable(pdf, {
-    ...stil,
-    styles: { ...stil.styles, fontSize: 7.8, cellPadding: { top: 1.7, bottom: 1.7, left: 2.2, right: 2.2 } },
-    startY: y,
-    head: [['Name', 'Abt.', 'Total AG/h', 'Plan Std', 'Ist Std', 'Flex Plan', 'Flex Ist', 'Diff.']],
-    body: [
-      ...d.flexZeilen.map(z => [
-        z.agOff ? `${z.name} *` : z.name,
-        z.dept,
-        z.satz === null ? 'Lohn fehlt' : fmtChf(z.satz),
-        fmtH(z.planH), z.istH > 0 ? fmtH(z.istH) : '–',
-        z.planChf > 0 ? fmtChf(z.planChf) : '–',
-        z.istChf > 0 ? fmtChf(z.istChf) : '–',
-        fmtChf(z.diffChf),
-      ]),
-      [{ content: 'Total', styles: { fontStyle: 'bold' as const } }, '', '',
-        { content: fmtH(d.flexTotalPlanH), styles: { fontStyle: 'bold' as const, ...rechts } },
-        { content: fmtH(d.flexTotalIstH), styles: { fontStyle: 'bold' as const, ...rechts } },
-        { content: fmtChf(d.flexTotalPlanChf), styles: { fontStyle: 'bold' as const, ...rechts } },
-        { content: fmtChf(d.flexTotalIstChf), styles: { fontStyle: 'bold' as const, ...rechts } },
-        { content: fmtChf(r2(d.flexTotalIstChf - d.flexTotalPlanChf)), styles: { fontStyle: 'bold' as const, ...rechts } }],
-    ] as Parameters<typeof autoTable>[1]['body'],
-    columnStyles: { 2: rechts, 3: rechts, 4: rechts, 5: rechts, 6: rechts, 7: rechts },
-    didDrawPage: mitFolgeKopf('Personal · Flex Kosten pro Mitarbeiter'),
-  });
-  const nachTabelle = (pdf as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY;
-  if (typeof nachTabelle === 'number') {
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
-    pdf.setTextColor(...MUTED);
-    pdf.text('Plan = ganzer Monat (Dienstplan) · Ist = nur hochgeladene Ist-Stunden (leer statt 0)'
-      + (d.flexAgOffCount > 0 ? ' · * = ohne AG-Sozialkosten gerechnet' : ''),
-      M, Math.min(nachTabelle + 4, 285));
-  }
-
-  // ── C) Flex-Auswertung Plan vs. Ist ──
+  // ── B) Flex-Auswertung Plan vs. Ist je Woche & Mitarbeiter ──
   pdf.addPage('a4', 'portrait');
   y = kopfband(pdf, branding, 'Personal · Flex-Auswertung Plan vs. Ist', d.monatLabel, heute);
   y = kpiZeile(pdf, y, d);
-  y = abschnitt(pdf, y, accent, 'Wochen mit hochgeladenem Ist',
-    'offene Wochen ohne Ist werden weggelassen');
-  const statusZeilen = new Map<number, Rgb>();
-  const wBody: Parameters<typeof autoTable>[1]['body'] = d.wochen.map((w, i) => {
+  y = abschnitt(pdf, y, accent, 'Flex je Woche & Mitarbeiter — nur abgerechnete Wochen',
+    'offene Wochen ohne hochgeladenes Ist werden weggelassen');
+  const diffFarbe = (diff: number): Rgb => (diff < 0 ? GRUEN_INK : diff > 0 ? ROT_INK : INK2);
+  const wBody: Parameters<typeof autoTable>[1]['body'] = [];
+  const wochenKopfZeilen = new Map<number, Rgb>();
+  let agOffSichtbar = false;
+  for (const w of d.wochen) {
     const farbe = flexStatusFarbe(w.diffPct, w.diffChf);
-    statusZeilen.set(i, farbe);
-    return [
-      `${w.label}  (${fmtDat(w.von)}–${fmtDat(w.bis)})`,
-      fmtChf(w.planChf), fmtChf(w.istChf),
-      { content: fmtChf(w.diffChf), styles: { halign: 'right' as const, textColor: farbe } },
-      { content: w.diffPct === null ? '–' : `${w.diffPct > 0 ? '+' : ''}${w.diffPct.toFixed(1)} %`, styles: { halign: 'right' as const, textColor: farbe } },
-      fmtChf(w.kumAbw),
-    ];
-  });
-  if (d.wochen.length > 0) {
-    const letzte = d.wochen[d.wochen.length - 1];
+    wochenKopfZeilen.set(wBody.length, farbe);
+    const b = { fontStyle: 'bold' as const };
     wBody.push([
-      { content: 'Total (Wochen mit Ist)', styles: { fontStyle: 'bold' as const } },
-      { content: fmtChf(r2(d.wochen.reduce((s, w) => s + w.planChf, 0))), styles: { fontStyle: 'bold' as const, ...rechts } },
-      { content: fmtChf(r2(d.wochen.reduce((s, w) => s + w.istChf, 0))), styles: { fontStyle: 'bold' as const, ...rechts } },
-      { content: fmtChf(letzte.kumAbw), styles: { fontStyle: 'bold' as const, ...rechts } },
-      '', '',
+      { content: `${w.label}  (${fmtDat(w.von)}–${fmtDat(w.bis)})`, styles: b },
+      { content: fmtH(w.planH), styles: { ...b, ...rechts } },
+      { content: fmtH(w.istH), styles: { ...b, ...rechts } },
+      { content: fmtChf(w.planChf), styles: { ...b, ...rechts } },
+      { content: fmtChf(w.istChf), styles: { ...b, ...rechts } },
+      {
+        content: `${fmtChf(w.diffChf)}${w.diffPct === null ? '' : `  (${w.diffPct > 0 ? '+' : ''}${w.diffPct.toFixed(1)} %)`}`,
+        styles: { ...b, ...rechts, textColor: farbe },
+      },
+    ]);
+    for (const z of w.mitarbeiter) {
+      if (z.agOff) agOffSichtbar = true;
+      wBody.push([
+        `   ${z.agOff ? `${z.name} *` : z.name}`,
+        fmtH(z.planH), z.istH > 0 ? fmtH(z.istH) : '–',
+        z.planChf > 0 ? fmtChf(z.planChf) : '–',
+        z.istChf > 0 ? fmtChf(z.istChf) : '–',
+        { content: fmtChf(z.diffChf), styles: { ...rechts, textColor: diffFarbe(z.diffChf) } },
+      ]);
+    }
+  }
+  if (d.wochen.length > 0) {
+    const totalDiff = r2(d.flexTotalIstChf - d.flexTotalPlanChf);
+    wBody.push([
+      { content: 'Total (abgerechnete Wochen)', styles: { fontStyle: 'bold' as const } },
+      { content: fmtH(d.flexTotalPlanH), styles: { fontStyle: 'bold' as const, ...rechts } },
+      { content: fmtH(d.flexTotalIstH), styles: { fontStyle: 'bold' as const, ...rechts } },
+      { content: fmtChf(d.flexTotalPlanChf), styles: { fontStyle: 'bold' as const, ...rechts } },
+      { content: fmtChf(d.flexTotalIstChf), styles: { fontStyle: 'bold' as const, ...rechts } },
+      { content: fmtChf(totalDiff), styles: { fontStyle: 'bold' as const, ...rechts, textColor: diffFarbe(totalDiff) } },
     ]);
   }
   autoTable(pdf, {
     ...stil,
+    styles: { ...stil.styles, fontSize: 7.6, cellPadding: { top: 1.5, bottom: 1.5, left: 2.2, right: 2.2 } },
     startY: y,
-    head: [['Woche', 'Flex Plan (CHF)', 'Flex Ist (CHF)', 'Diff. CHF', 'Diff. %', 'Kum. Abw.']],
+    head: [['Woche / Mitarbeiter', 'Plan Std', 'Ist Std', 'Flex Plan', 'Flex Ist', 'Diff.']],
     body: wBody,
     columnStyles: { 1: rechts, 2: rechts, 3: rechts, 4: rechts, 5: rechts },
     didDrawCell: data => {
-      if (data.section === 'body' && data.column.index === 3 && statusZeilen.has(data.row.index)) {
-        zeichneAmpelPunktFarbe(pdf, data.cell, statusZeilen.get(data.row.index)!);
+      if (data.section === 'body' && data.column.index === 5 && wochenKopfZeilen.has(data.row.index)) {
+        zeichneAmpelPunktFarbe(pdf, data.cell, wochenKopfZeilen.get(data.row.index)!);
       }
     },
     didDrawPage: mitFolgeKopf('Personal · Flex-Auswertung Plan vs. Ist'),
@@ -502,6 +462,9 @@ export function zeichnePersonalBlock(
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5);
     pdf.setTextColor(...INK2);
     pdf.text('Noch keine Woche mit hochgeladenen Ist-Stunden in diesem Monat.', M, y + 6);
+  } else {
+    legende(pdf, 'Diff = Ist - Plan: unter Plan (Ersparnis) = grün · über Plan = rot'
+      + ' · Plan = ganze Woche (Dienstplan), Ist = nur hochgeladene Ist-Stunden'
+      + (agOffSichtbar ? ' · * = ohne AG-Sozialkosten gerechnet' : ''));
   }
-  void PW;
 }

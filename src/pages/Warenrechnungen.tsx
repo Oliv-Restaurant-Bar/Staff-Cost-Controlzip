@@ -64,7 +64,7 @@ import { klassifiziereWarenDateien, type UploadRouting } from '@/components/ware
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
-import { kontoSplitsAusPositionen, erzwingePfandPosition, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
+import { kontoSplitsAusPositionen, erzwingeRegelPosition, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
@@ -1079,9 +1079,10 @@ export default function WarenrechnungenPage() {
   /** Manuelles Konto-Override einer Position speichern + Rechnungs-Splits neu ableiten. */
   const speicherePositionen = async (invoiceId: string, positionenRoh: GespeichertePosition[]) => {
     const entry = entries.find(e => e.id === invoiceId);
-    // Universelle Pfand-Regel: Pfand/Leergut steht IMMER auf 4800 —
-    // auch eine manuelle Dialog-Wahl kann das nicht auf 6040/Warenkonto legen.
-    const positionen = positionenRoh.map(erzwingePfandPosition);
+    // Universelle Zwangs-Regeln: Pfand/Leergut IMMER 4800, Gebühren/
+    // Konditionen (VEG/Recycling/Logistikpauschale) IMMER 4701 — auch eine
+    // manuelle Dialog-Wahl kann das nicht auf ein Warenkonto legen.
+    const positionen = positionenRoh.map(erzwingeRegelPosition);
     try {
       const next = { ...rechnungsPositionen, [invoiceId]: positionen };
       await saveRechnungsPositionen(tenantId, monthKey, next);

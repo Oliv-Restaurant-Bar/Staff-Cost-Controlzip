@@ -1935,7 +1935,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 <span className="text-sm">
                   <span className="font-medium">Personal-Block</span>
                   <span className="block text-muted-foreground text-xs">
-                    Überstunden Wochen-Ansicht · Flex Kosten pro Mitarbeiter · Flex Plan vs. Ist
+                    Überstunden Wochen-Ansicht · Flex-Auswertung Plan vs. Ist je Woche &amp; Mitarbeiter
                   </span>
                 </span>
               </label>

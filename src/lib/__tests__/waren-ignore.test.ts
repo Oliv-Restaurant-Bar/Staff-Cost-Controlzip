@@ -93,6 +93,42 @@ describe('Ignore-Liste (Privatbezug)', () => {
     expect((await loadMonthInvoices(T, '2026-07')).some(x => x.id === 'h5')).toBe(true);
   });
 
+  it('Konzern-Familie Transgourmet↔Prodega: Fence matcht in beide Richtungen', async () => {
+    // Bern-Barbezug steht mit «Transgourmet» auf der Liste, der CSV-Import
+    // leitet aus Markt «Bern» aber «Prodega» ab → gleiche Familie = gesperrt.
+    const e = inv('f1', '58', 21.3);
+    await saveInvoiceEntry(T, e);
+    await markiereRechnungIgnoriert(T, e);
+    const prodega = { ...inv('f2', '58', 21.3), supplierName: 'Prodega' } as InvoiceEntry;
+    await saveInvoiceEntry(T, prodega);
+    expect(await loadMonthInvoices(T, '2026-07')).toHaveLength(0);
+    // Umgekehrt: Liste trägt «Prodega», eingehend «Transgourmet» → ebenfalls gesperrt.
+    const p = { ...inv('f3', '215', 150.35), supplierName: 'Prodega' } as InvoiceEntry;
+    await saveInvoiceEntry(T, p);
+    await markiereRechnungIgnoriert(T, p);
+    const tg = inv('f4', '215', 150.35);
+    await saveInvoiceEntry(T, tg);
+    expect(await loadMonthInvoices(T, '2026-07')).toHaveLength(0);
+    // Fremder Lieferant mit gleicher kurzer Nummer bleibt unberührt.
+    const fremd = { ...inv('f5', '58', 99), supplierName: 'Feldschlösschen' } as InvoiceEntry;
+    await saveInvoiceEntry(T, fremd);
+    expect((await loadMonthInvoices(T, '2026-07')).map(x => x.id)).toEqual(['f5']);
+  });
+
+  it('istRechnungIgnoriert (Vorschau-Check): gleiche Logik wie die Schreib-Fence', async () => {
+    const { istRechnungIgnoriert } = await import('../waren-db');
+    const e = inv('v1', '59', 283.23);
+    await saveInvoiceEntry(T, e);
+    await markiereRechnungIgnoriert(T, e);
+    const liste = await loadIgnorierteRechnungen(T);
+    expect(istRechnungIgnoriert(liste, '59', 'Transgourmet')).toBe(true);
+    expect(istRechnungIgnoriert(liste, '59', 'Prodega')).toBe(true);          // Konzern-Familie
+    expect(istRechnungIgnoriert(liste, '59', 'Transgourmet bern')).toBe(true); // Token-Teilmenge
+    expect(istRechnungIgnoriert(liste, '59', 'Feldschlösschen')).toBe(false);
+    expect(istRechnungIgnoriert(liste, '159', 'Transgourmet')).toBe(false);
+    expect(istRechnungIgnoriert(liste, '59', '')).toBe(false);                // nie raten
+  });
+
   it('Lese-Selbstheilung: race-wiederauferstandene Rechnung wird beim Laden ausgefiltert', async () => {
     const e = inv('r1', '26070302200059', 283.23);
     await saveInvoiceEntry(T, e);

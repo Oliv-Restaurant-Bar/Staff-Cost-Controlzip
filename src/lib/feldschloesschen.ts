@@ -23,7 +23,7 @@ import type { GnPdfLine } from './gn-pdf-lines';
 import type {
   WarenPosition, ParsedCsvRechnung, WarengruppenMapping,
 } from './waren-positionen';
-import { KONTO_LABEL_PFAND } from './waren-positionen';
+import { KONTO_LABEL_PFAND, KONTO_GEBUEHR, istGebuehrenText } from './waren-positionen';
 
 // ── Zahlen/Datum ──────────────────────────────────────────────────────────────
 
@@ -930,6 +930,10 @@ export function kontoSplitsAusFsKategorien(
     // Token-Match statt exaktem Namen: Kategorien wie «Pfand geliefert»,
     // «FGG Container/Fass», «FGG Harasse», «Harasse 5+20» zählen alle dazu.
     if (/(^|[^a-zäöü])(leergut|ladungsträger|pfand|depot|gebinde|container|harass)/i.test(name)) konto = KONTO_LABEL_PFAND;
+    // Gebühren/Konditionen-Kategorien (Recyclinggebühren, Zu-/Abschläge, VEG)
+    // → IMMER 4701, VOR dem konfigurierten Mapping: ein gespeichertes Mapping
+    // darf Gebühren nie auf ein Warenkonto (4020–4070) routen.
+    else if (istGebuehrenText(name)) konto = KONTO_GEBUEHR;
     else {
       const regel = effektiv.find(r => r.gruppe.trim().toLowerCase() === name.toLowerCase());
       if (regel) konto = regel.konto;

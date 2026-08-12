@@ -692,7 +692,29 @@ function istIgnoriert(refs: Map<string, string>, reference: string | undefined, 
   const supTokens = lieferantTokens(supplierName);
   if (supTokens.length === 0) return false;
   const subset = (a: string[], b: string[]) => a.every(t => b.includes(t));
-  return subset(listeTokens, supTokens) || subset(supTokens, listeTokens);
+  if (subset(listeTokens, supTokens) || subset(supTokens, listeTokens)) return true;
+  // Konzern-Familie Transgourmet/Prodega (wie kreditoren-abgleich): die
+  // Bern-Barbezüge stehen mit «Transgourmet» auf der Liste, der CSV-Import
+  // leitet aus dem Markt «Bern» aber «Prodega» ab — gleiche Familie = Match.
+  const familie = (toks: string[]) =>
+    toks.some(t => t.includes('transgourmet') || t === 'prodega') ? 'tg' : null;
+  const fl = familie(listeTokens);
+  return fl !== null && fl === familie(supTokens);
+}
+
+/**
+ * Vorschau-Check für Import-Komponenten: matcht eine eingehende Rechnung
+ * (Nummer + Lieferant) gegen eine bereits geladene Ignore-Liste — dieselbe
+ * Token-Teilmengen-Logik wie die Schreib-Fence (istIgnoriert). Die Liste
+ * VOR dem Aufbau der Vorschau frisch via loadIgnorierteRechnungen laden.
+ */
+export function istRechnungIgnoriert(
+  liste: IgnoreListe,
+  reference: string | undefined,
+  supplierName: string,
+): boolean {
+  const refs = new Map(Object.entries(liste).map(([k, v]) => [k, (v.lieferant ?? '').trim()]));
+  return istIgnoriert(refs, reference, supplierName);
 }
 
 /**

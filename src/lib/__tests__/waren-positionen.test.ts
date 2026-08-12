@@ -485,3 +485,57 @@ describe('istPfandBezeichnung (Text-Kennzeichen → Depot, nie raten)', () => {
     expect(kfp({ warengruppe: 'Unbekannt', mwstCode: 1, bezeichnung: 'Trüffelöl' }, MAP2).status).toBe('offen');
   });
 });
+
+import {
+  istGebuehrenText, istZwingendGebuehr, erzwingeGebuehrPosition, erzwingeRegelPosition,
+  KONTO_GEBUEHR,
+} from '@/lib/waren-positionen';
+
+describe('Gebühren/Konditionen → IMMER 4701 (universelle Zwangs-Regel)', () => {
+  it('istGebuehrenText: echte Gebühren-Kennungen matchen', () => {
+    for (const s of ['VEG EW Glas 9 bis 33 cl', 'VRG', 'Recycl.-Geb. PET ab 50cl',
+      'Recycling-Gebühr', 'Recyclinggebühren', 'Logistikpauschale', 'Logistik Pauschale',
+      'Zu-/Abschläge', 'Fassgebühr', 'sonstige Gebühren']) {
+      expect(istGebuehrenText(s), s).toBe(true);
+    }
+  });
+  it('istGebuehrenText: normale Artikel und Komposita matchen NICHT', () => {
+    for (const s of ['Gebührenfrei Premium Lager', 'Vegi-Burger', 'Veganes Schnitzel',
+      'Logistik-Handbuch', 'Coca-Cola Harass 24X0,33', 'Zuschlagstoffe', '', undefined]) {
+      expect(istGebuehrenText(s as string | undefined), String(s)).toBe(false);
+    }
+  });
+  it('Pfand hat Vorrang: Depotgebühr/MwSt-0 bleibt Pfand (4800), nie 4701', () => {
+    expect(istZwingendGebuehr({ mwstCode: 0, bezeichnung: 'Recycl.-Geb. PET' })).toBe(false);
+    expect(istZwingendGebuehr({ mwstCode: 1, bezeichnung: 'Depotgebühr' })).toBe(false);
+    expect(kontoFuerPosition({ warengruppe: 'Leergut', mwstCode: 0, bezeichnung: 'Depotgebühr' }, DEFAULT_WARENGRUPPEN_MAPPING))
+      .toEqual({ konto: null, status: 'pfand' });
+  });
+  it('Regel schlägt Warengruppen-Tabelle UND gelernte Artikel-Zuordnung', () => {
+    // Warengruppe würde 4050 liefern — Gebühren-Bezeichnung erzwingt 4701:
+    expect(kontoFuerPosition({ warengruppe: 'Andere alk. freie Getränke', mwstCode: 2, bezeichnung: 'VEG EW Glas 9 bis 33 cl' }, DEFAULT_WARENGRUPPEN_MAPPING))
+      .toEqual({ konto: KONTO_GEBUEHR, status: 'zugeordnet' });
+    // Gelernte Artikel-Zuordnung auf 4050 wird überstimmt:
+    const p = { artNr: '', bezeichnung: 'Recycl.-Geb. PET ab 50cl', warengruppe: 'Mineralwasser', mwstCode: 2 as const };
+    const konten = { [artikelKey('Feldschlösschen', p)]: '4050' };
+    expect(kontoFuerPositionMitArtikel('Feldschlösschen', p, DEFAULT_WARENGRUPPEN_MAPPING, konten))
+      .toEqual({ konto: KONTO_GEBUEHR, status: 'zugeordnet' });
+    // Normaler Artikel mit gelernter Zuordnung bleibt unberührt:
+    const n = { artNr: '11133', bezeichnung: 'Coca-Cola Harass', warengruppe: 'Andere alk. freie Getränke', mwstCode: 2 as const };
+    const konten2 = { [artikelKey('Feldschlösschen', n)]: '4050' };
+    expect(kontoFuerPositionMitArtikel('Feldschlösschen', n, DEFAULT_WARENGRUPPEN_MAPPING, konten2).konto).toBe('4050');
+  });
+  it('erzwingeGebuehrPosition: korrigiert Warenkonto + manuell-Flag; Pfand bleibt Pfand', () => {
+    const g: GespeichertePosition = { artNr: '', bezeichnung: 'VEG EW Glas ab 60cl', warengruppe: 'Spirituosen', menge: 1, einheit: '', preis: 0.6, mwstBetrag: 0.05, mwstCode: 1, positionspreis: 0.6, konto: '4040', status: 'zugeordnet', manuell: true };
+    expect(erzwingeGebuehrPosition(g)).toMatchObject({ konto: KONTO_GEBUEHR, status: 'zugeordnet' });
+    expect('manuell' in erzwingeGebuehrPosition(g)).toBe(false);
+    const pf: GespeichertePosition = { artNr: '', bezeichnung: 'Depotgebühr', warengruppe: 'Leergut', menge: 1, einheit: '', preis: -5, mwstBetrag: 0, mwstCode: 0, positionspreis: -5, konto: '4040', status: 'zugeordnet' };
+    expect(erzwingeRegelPosition(pf)).toMatchObject({ konto: null, status: 'pfand' });
+  });
+  it('uebernehmeManuelleKontierung: manuelle Alt-Kontierung holt Gebühr nie auf ein Warenkonto zurück', () => {
+    const neu: GespeichertePosition[] = [{ artNr: '', bezeichnung: 'Logistikpauschale', warengruppe: 'Zu-/Abschläge', menge: 1, einheit: '', preis: 15, mwstBetrag: 1.22, mwstCode: 1, positionspreis: 15, konto: KONTO_GEBUEHR, status: 'zugeordnet' }];
+    const alt: GespeichertePosition[] = [{ artNr: '', bezeichnung: 'Logistikpauschale', warengruppe: 'Zu-/Abschläge', menge: 1, einheit: '', preis: 15, mwstBetrag: 1.22, mwstCode: 1, positionspreis: 15, konto: '4050', status: 'zugeordnet', manuell: true }];
+    const res = uebernehmeManuelleKontierung(neu, alt);
+    expect(res[0]).toMatchObject({ konto: KONTO_GEBUEHR, status: 'zugeordnet' });
+  });
+});

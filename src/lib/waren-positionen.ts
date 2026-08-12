@@ -280,6 +280,44 @@ export function istZwingendPfand(
 }
 
 /**
+ * Gebühren/Konditionen (VEG, Recycl.-Geb., Recycling-Gebühr, Logistik-
+ * pauschale, Zu-/Abschläge, sonstige Gebühren) → IMMER Konto 4701
+ * (Betriebsmaterial/übrige): nie auf ein Warenkonto (4020–4070) und damit
+ * nie in die WKQ; auch nicht auf 4800 (das bleibt Pfand/Leergut/Gebinde).
+ */
+export const KONTO_GEBUEHR = '4701';
+
+/** Token-genaue Gebühren-Erkennung auf Bezeichnung ODER Warengruppe. */
+export function istGebuehrenText(s: string | undefined): boolean {
+  if (!s) return false;
+  const toks = tokens(s);
+  for (const tok of toks) {
+    if (tok === 'veg' || tok === 'vrg') return true;          // vorgezogene Entsorgungs-/Recyclinggebühr
+    if (/^recycl/.test(tok)) return true;                     // «Recycl.-Geb.», «Recyclinggebühren»
+    // «…gebühr(en)» nur am TOKEN-ENDE (Fassgebühr, Recyclinggebühren) —
+    // «gebührenfrei» u.ä. Produktnamen-Komposita matchen NICHT.
+    // Depotgebühr fängt die Pfand-Regel vorher (istZwingendGebuehr prüft Pfand zuerst).
+    if (/geb(ü|ue)hr(en)?$/.test(tok)) return true;
+    if (tok === 'logistikpauschale') return true;
+    if (/^(zu|ab)schl(ä|ae)g/.test(tok)) return true;         // Warengruppe «Zu-/Abschläge»
+  }
+  if (toks.includes('logistik') && toks.includes('pauschale')) return true;
+  return false;
+}
+
+/**
+ * Universelle Zwangs-Gebühren-Regel: läuft VOR gelernter Artikel-Zuordnung
+ * und vor der Warengruppen-Tabelle — NACH der Pfand-Regel (Pfand hat Vorrang,
+ * die beiden Regeln kollidieren nie: was zwingend Pfand ist, ist nie Gebühr).
+ */
+export function istZwingendGebuehr(
+  p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
+): boolean {
+  if (istZwingendPfand(p)) return false;
+  return istGebuehrenText(p.bezeichnung) || istGebuehrenText(p.warengruppe);
+}
+
+/**
  * SCHWACHE Kennwörter (Gebinde/Harasse): können auch in normalen Artikel-
  * namen vorkommen (z.B. Bier «10×33 Harass» mit 8.1 % MwSt) — sie schlagen
  * NUR im Zweifel durch, d.h. wenn die Warengruppe keinem Konto zuordenbar
@@ -313,6 +351,11 @@ export function kontoFuerPosition(
   // Pfand-Warengruppe (z.B. «Leergut») schlägt die konfigurierte Tabelle —
   // ein gespeichertes Mapping darf Pfand nie auf 6040/ein Warenkonto routen.
   if (istPfandWarengruppe(p.warengruppe)) return { konto: null, status: 'pfand' };
+  // Gebühren/Konditionen → 4701, VOR der Warengruppen-Tabelle (eine
+  // gespeicherte 4050-/Warenkonto-Zuordnung darf Gebühren nie überstimmen).
+  if (istGebuehrenText(p.bezeichnung) || istGebuehrenText(p.warengruppe)) {
+    return { konto: KONTO_GEBUEHR, status: 'zugeordnet' };
+  }
   const g = normGruppe(p.warengruppe);
   if (g) {
     const regel = mapping.find(r => normGruppe(r.gruppe) === g);
@@ -339,6 +382,10 @@ export function kontoFuerPositionMitArtikel(
   // läuft VOR der gelernten Artikel-Zuordnung: Pfand ist IMMER 4800 —
   // eine gespeicherte 6040-/Warenkonto-Zuordnung wird überschrieben.
   if (istZwingendPfand(p)) return { konto: null, status: 'pfand' };
+  // Universelle Gebühren-Regel (VEG/Recycling/Logistikpauschale/…): läuft
+  // ebenfalls VOR der gelernten Artikel-Zuordnung — eine gespeicherte
+  // 4050-/Warenkonto-Zuordnung wird überschrieben (immer 4701).
+  if (istZwingendGebuehr(p)) return { konto: KONTO_GEBUEHR, status: 'zugeordnet' };
   const key = artikelKey(lieferant, p);
   const artikel = key ? artikelKonten?.[key] : undefined;
   if (artikel) return { konto: artikel, status: 'zugeordnet', manuell: true };
@@ -444,7 +491,7 @@ export function positionenAusRechnung(
       konto: pk.konto, status: pk.status,
       ...('manuell' in pk && pk.manuell ? { manuell: true } : {}),
     };
-  }).map(erzwingePfandPosition);
+  }).map(erzwingeRegelPosition);
 }
 
 /**
@@ -460,6 +507,25 @@ export function erzwingePfandPosition(p: GespeichertePosition): GespeichertePosi
   const { manuell: _m, ...rest } = p;
   void _m;
   return { ...rest, konto: null, status: 'pfand' };
+}
+
+/**
+ * Zwangs-Gebühr auf GESPEICHERTEN Positionen (analog erzwingePfandPosition):
+ * VEG/Recycling/Logistikpauschale/… steht IMMER auf 4701 — auch beim
+ * Re-Import und beim manuellen Speichern im Positionen-Dialog. Läuft NACH
+ * der Pfand-Regel (istZwingendGebuehr schliesst Pfand aus).
+ */
+export function erzwingeGebuehrPosition(p: GespeichertePosition): GespeichertePosition {
+  if (!istZwingendGebuehr(p)) return p;
+  if (p.konto === KONTO_GEBUEHR && p.status === 'zugeordnet' && !p.manuell) return p;
+  const { manuell: _m, ...rest } = p;
+  void _m;
+  return { ...rest, konto: KONTO_GEBUEHR, status: 'zugeordnet' };
+}
+
+/** Beide Zwangs-Regeln (Pfand→4800, Gebühr→4701) als EIN Post-Pass. */
+export function erzwingeRegelPosition(p: GespeichertePosition): GespeichertePosition {
+  return erzwingeGebuehrPosition(erzwingePfandPosition(p));
 }
 
 /** kontoSplits aus GESPEICHERTEN Positionen (nach manuellen Overrides) neu ableiten. */
@@ -503,7 +569,7 @@ export function uebernehmeManuelleKontierung(
     if (p.manuell) return p;
     const m = manuelle.get(posKey(p));
     return m ? { ...p, konto: m.konto, status: m.status, manuell: true } : p;
-  }).map(erzwingePfandPosition); // Alt-Kontierung darf Pfand nie zurück auf 6040 holen
+  }).map(erzwingeRegelPosition); // Alt-Kontierung darf Pfand/Gebühr nie auf ein Warenkonto zurückholen
 }
 
 export function normalizePositionenProRechnung(raw: unknown): PositionenProRechnung {

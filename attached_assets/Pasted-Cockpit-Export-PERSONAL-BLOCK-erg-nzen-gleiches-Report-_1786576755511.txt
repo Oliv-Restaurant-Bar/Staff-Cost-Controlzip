@@ -1,0 +1,41 @@
+Cockpit-Export: PERSONAL-BLOCK ergänzen — gleiches Report-Design wie Cockpit-/Waren-Seiten
+(Kopfband Olivgrün+Gold, Abschnittsbänder, Zebra, Ampel, Kopf/Fuss). Mandantengetrennt,
+„leer statt 0", Zahlen exakt. Umsetzung als gestaltete Vektor-Seiten (wie die Waren-Seiten),
+nicht als Screenshot.
+
+=== ABFRAGE VOR DEM EXPORT (beide Blöcke) ===
+- Der Export-Dialog fragt jetzt zwei Zusatzblöcke ab:
+  „Zusätzlich mitexportieren?  [ ] Waren-Block   [ ] Personal-Block".
+- Jeder Block nur, wenn angehakt. Cockpit-Grundseite kommt immer.
+
+=== SEITE A: ÜBERSTUNDEN (LETZTE 4 KALENDERWOCHEN bis Stichtag, rollierend) ===
+- Tabelle: Mitarbeiter · Pensum · je KW der Wochen-Saldo · „Laufend".
+- FARBLOGIK (Kosten!): Überstunden (positiv, +) = ROT · Minusstunden (negativ, −) = GRÜN.
+  0/neutral grau. (Kleine Legende unter der Tabelle.)
+- Ausgenommene Mitarbeiter (Haken „keine Zeiterfassung"): alle Zellen „–" + Badge
+  „ausgenommen · kein ÜStd-Konto", NICHT im Total. Konkret Lokaj Mendim und Ramadani Mejdi
+  ausgenommen; Ramadani Asim normal (+15.6 h).
+- „Total laufend" ausweisen. Kontrolle Stand 12.08.: −47.9 h (grün, weil negativ).
+
+=== SEITE B: FLEX-AUSWERTUNG PLAN vs. IST — JE WOCHE & MITARBEITER (verschachtelt) ===
+- Aufbau wie die Waren-Anomalie-Analyse (Woche-Header + Detailzeilen darunter):
+  Pro Woche eine fette Kopfzeile: Zeitraum · Plan Std · Ist Std · Flex Plan · Flex Ist ·
+  Diff. (mit Diff-% und Status-Ampelpunkt). DARUNTER je Mitarbeiter eine Zeile:
+  Name · Plan Std · Ist Std · Flex Plan · Flex Ist · Diff.
+- NUR Wochen MIT hochgeladenen Mirus-Ist-Stunden. Offene Wochen (kein Ist) WEGLASSEN —
+  nicht als 0. Je Mitarbeiter nur bis zum abgerechneten Mirus-Stand.
+- Spalte „AG/h" NICHT anzeigen/exportieren.
+- FARBLOGIK Diff: unter Plan (Ersparnis, negativ) = GRÜN · über Plan (positiv) = ROT.
+- Die Mitarbeiter-Zeilen einer Woche müssen exakt auf das Wochentotal aufsummieren.
+- ECHTE Werte aus den Daten ziehen (nicht schätzen).
+
+=== KONTROLLWERTE (August Oliv, dürfen sich nicht ändern) ===
+- Überstunden Total laufend: −47.9 h.
+- Flex-Auswertung nur KW31/KW32 (KW33+ offen, fehlen korrekt):
+  KW31 Flex Plan 1'662 / Flex Ist 1'362 · KW32 Flex Plan 7'392 / Flex Ist 6'893.
+  Summe abgerechnete Wochen: Flex Ist CHF 8'254 · Ist 271.7 h.
+
+=== ABSCHLUSS ===
+Neues PDF (August Oliv) mit Cockpit + Waren-Block + Personal-Block zeigen. Kontrolle:
+Überstunden Total −47.9 h · Flex-Auswertung nur KW31/KW32, Mitarbeiter-Summen = Wochentotal,
+Flex Ist gesamt CHF 8'254 · keine AG/h-Spalte · Farblogik wie beschrieben.
