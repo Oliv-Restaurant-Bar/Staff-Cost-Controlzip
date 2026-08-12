@@ -111,4 +111,5 @@
 - [Interne Umbuchungen & Differenz-SSOT](interne-umbuchungen-fibu.md) — «Umb.»-Präfix = Konto-Korrektur, nie im Rechnungs-Vergleich; Gesamt-Differenz überall aus buildWarenAbgleich + waren-diff-Aufschlüsselung.
 - [Waren-Ignore-Liste (Privatbezug)](waren-ignore-liste.md) — Fence nur via saveInvoiceEntry/saveMonthInvoices (nie direkt kvSet auf supplier_invoices_*); Lieferanten-Token-Match wegen kurzer TG-Belegnummern; Lese-Selbstheilung gegen No-CAS-Races.
 - [Import-Belege (Quelldokument-Ablage)](import-belege.md) — Bucket-MIME-Whitelist serverseitig; Key = Slug+Hash über Originale, FS-Typ-Präfixe, CSV-Identität = Inhalt; manueller Beleg gewinnt immer.
+- [Warenrechnungen Wochen-Granularität](waren-wochen-granularitaet.md) — Sicht-Memos (viewEntries) statt entries-Umbau; FIBU-Mutationen in Wochenansicht sperren; Nachbarmonats-Cache tenant-keyen.
 - [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.

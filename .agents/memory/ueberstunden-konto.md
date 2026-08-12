@@ -21,6 +21,11 @@ description: Regeln des Überstunden-Features (src/lib/ueberstunden.ts, /ueberst
 
 **UI (08/2026):** KW-Kopf-Klick = Tage-Drilldown (nutzt die bereits gedeckelten Tages-Gutschriften aus `UeWoche.tage`, Tages-Saldo = Ist+Gutschrift−Soll, KEINE Tages-Kostenaufteilung); Kosten-Spalte per Toggle, Default verborgen. Seiten-Tests: Context-Hook-Mocks (useTenant/useToast) brauchen STABILE Referenzen, sonst feuert der reload-Effect endlos (Render-Loop → Vitest-OOM).
 
+## Ausnahme «Keine Zeiterfassung erforderlich» (08/2026)
+- Personalstamm-Haken = SSOT in KV `no_time_tracking_v1` (mandantengetrennt); localStorage nur Legacy-Fallback. MA mit Flag: eligible() false → alle Werte null («–» + Badge), zählen NIE in Totale/Cockpit.
+- Save-Pfad: strikt lesen+schreiben + Verify-Read (kein CAS im KV — Lesefehler darf nie als leere Map alle Flags löschen); nach Mutation `ueberstundenTotalCacheLeeren()`.
+- Achtung Namensverwechslung: Ramadani Mejdi ≠ Ramadani Asim — Ausnahmen immer per employeeId, nie per Name.
+
 ## Dienstplan-Absenzen & Deckelung (08/2026)
 - FE/K/U kommen automatisch aus dem Dienstplan (schedule_entries, mandantengefiltert); manuelle Maske «Absenzen erfassen» ist Override und sticht den Plan (Tages-Vorrang `manuell ?? plan`).
 - **Deckelung:** Wochen-Gutschrift ≤ max(0, Wochen-Soll − Arbeits-Ist) — Absenzen füllen höchstens bis Saldo 0, nie Plus-Überstunden; proportional auf Absenz-Tage verteilt (Monats-Splits bleiben tageanteilig).

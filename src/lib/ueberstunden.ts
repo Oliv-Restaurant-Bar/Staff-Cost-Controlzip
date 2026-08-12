@@ -29,6 +29,7 @@ import { loadEmployees, loadActualHoursForMonth, loadScheduleForMonth } from '@/
 import { VACATION_CODES, SICK_CODES, ACCIDENT_CODES, SKIP_CODES } from '@/lib/absence-utils';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { ladeNoTimeTracking } from '@/lib/no-time-tracking';
 import { applyEffectiveWagesForMonth } from '@/lib/wage-history';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { pkHasFixedSalary } from '@/lib/personalkosten';
@@ -182,6 +183,12 @@ export interface UeMitarbeiterInput {
    */
   contractStart?: string | null;
   employmentEndDate?: string | null;
+  /**
+   * true = «Keine Zeiterfassung erforderlich» (Personalstamm-Haken) —
+   * MA ist vom Überstundenkonto AUSGENOMMEN: alle Wochen/Monate/Laufend
+   * bleiben leer (–), zählt NICHT in die Totale. Reversibel über den Haken.
+   */
+  ausgenommen?: boolean;
   /** AG-Stundenkostensatz (CHF/h, wie Personalkosten fix); null = Lohn fehlt. */
   stundensatz?: number | null;
   /** Ist-Arbeitsstunden je ISO-Datum (MIRUS). */
@@ -237,6 +244,8 @@ export interface UeMitarbeiterErgebnis {
   laufend: number | null;
   /** true = kein Eintrittsdatum im Personalstamm — nicht gerechnet, nur Hinweis. */
   ohneEintritt: boolean;
+  /** true = per Personalstamm-Haken vom Überstundenkonto ausgenommen (Badge in der UI). */
+  ausgenommen: boolean;
   /** AG-Stundenkostensatz (CHF/h); null = Lohn fehlt (Kosten dann leer). */
   stundensatz: number | null;
   /**
@@ -279,6 +288,7 @@ export function berechneUeberstundenJahr(
         id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
         wochen: [], monatsSaldo: Array(12).fill(null), laufend: null,
         ohneEintritt: !emp.contractStart,
+        ausgenommen: emp.ausgenommen === true,
         stundensatz: emp.stundensatz ?? null, kosten: null,
       })),
       totalLaufend: null,
@@ -298,6 +308,9 @@ export function berechneUeberstundenJahr(
     const ohneEintritt = !emp.contractStart;
     /** Zählt der Tag für diesen MA? (Konto-Start, ≤heute, FIX-Monat, Anstellung) */
     const eligible = (day: string): boolean => {
+      // «Keine Zeiterfassung erforderlich» → komplett ausgenommen: kein Tag
+      // zählt (Soll/Ist/Laufend bleiben null, damit auch Totale unberührt).
+      if (emp.ausgenommen === true) return false;
       if (ohneEintritt) return false; // kein Eintrittsdatum → nie Voll-Soll unterstellen
       if (day < kontoStart || day > ende) return false;
       const monat = Number(day.slice(5, 7));
@@ -387,6 +400,7 @@ export function berechneUeberstundenJahr(
     return {
       id: emp.id, name: emp.name, wochenSollH: emp.wochenSollH,
       wochen, monatsSaldo, laufend, ohneEintritt, stundensatz, kosten,
+      ausgenommen: emp.ausgenommen === true,
     };
   });
 
@@ -512,10 +526,15 @@ export async function ladeUeberstundenJahr(
   const ratesBlob = await loadSocialCostRates(tenantId).catch(() => null);
   const rates = ratesBlob?.rates ?? null;
 
+  // «Keine Zeiterfassung erforderlich» (Personalstamm-Haken, KV, mandanten-
+  // getrennt) → MA erscheint in der Liste, aber ohne Konto (Badge in der UI).
+  const ausgenommenMap = await ladeNoTimeTracking(tenantId);
+
   const inputs: UeMitarbeiterInput[] = [...fixMonate.entries()].map(([id, monate]) => {
     const e = empById.get(id)!;
     return {
       stundensatz: rates ? getEffectiveHourlyRate(e, rates) : null,
+      ausgenommen: ausgenommenMap[id] === true,
       id,
       name: e.name ?? id,
       wochenSollH: typeof e.weeklyHours === 'number' && e.weeklyHours > 0 ? e.weeklyHours : VOLLZEIT_WOCHE_H,

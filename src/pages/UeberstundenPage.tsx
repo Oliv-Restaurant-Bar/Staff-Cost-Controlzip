@@ -315,8 +315,8 @@ export default function UeberstundenPage() {
                           </th>
                         );
                       })}
-                      <th className="text-right pl-2 font-semibold sticky right-24 bg-background w-20 min-w-20">Laufend</th>
-                      {showKosten && <th className="text-right pl-2 font-semibold sticky right-0 bg-background w-24 min-w-24">ÜStd-Kosten</th>}
+                      <th className={`text-right pl-2 font-semibold sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background w-20 min-w-20`}>Laufend</th>
+                      {showKosten && <th className="text-right pl-2 font-semibold sticky right-0 border-l border-border bg-background w-24 min-w-24">ÜStd-Kosten</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -329,7 +329,7 @@ export default function UeberstundenPage() {
                           onClick={() => { setSelEmp(m.id); setSelWeek(drillWeek); setStaged({}); }}
                           data-testid={`drill-row-emp-${m.id}`}
                         >
-                          <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
+                          <td className="py-1 pr-2 whitespace-nowrap">{m.name}{m.ausgenommen && <span className="ml-1.5 inline-block rounded border border-border bg-muted px-1 py-px text-[9px] text-muted-foreground align-middle" data-testid={`badge-ausgenommen-${m.id}`}>ausgenommen · kein ÜStd-Konto</span>}</td>
                           <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
                           {drillRef.tage.map((refTag, i) => {
                             const t = wo?.tage[i];
@@ -351,11 +351,11 @@ export default function UeberstundenPage() {
                               </td>
                             );
                           })}
-                          <td className={`text-right pl-2 tabular-nums font-semibold sticky right-24 bg-background ${saldoClass(m.laufend)}`}>
+                          <td className={`text-right pl-2 tabular-nums font-semibold sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background ${saldoClass(m.laufend)}`}>
                             {fmtH(m.laufend)}
                           </td>
                           {showKosten && (
-                            <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid={`drill-kosten-${m.id}`}>
+                            <td className="text-right pl-2 tabular-nums sticky right-0 border-l border-border bg-background" data-testid={`drill-kosten-${m.id}`}>
                               {m.kosten === null ? '–' : m.kosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                           )}
@@ -374,9 +374,9 @@ export default function UeberstundenPage() {
                           </td>
                         );
                       })}
-                      <td className={`text-right pl-2 tabular-nums sticky right-24 bg-background ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
+                      <td className={`text-right pl-2 tabular-nums sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
                       {showKosten && (
-                        <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid="drill-total-kosten">
+                        <td className="text-right pl-2 tabular-nums sticky right-0 border-l border-border bg-background" data-testid="drill-total-kosten">
                           {erg.totalKosten === null ? '–' : erg.totalKosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       )}
@@ -441,8 +441,8 @@ export default function UeberstundenPage() {
                           </th>
                         );
                       })}
-                      <th className="text-right pl-2 font-semibold sticky right-24 bg-background w-20 min-w-20">Laufend</th>
-                      {showKosten && <th className="text-right pl-2 font-semibold sticky right-0 bg-background w-24 min-w-24">ÜStd-Kosten</th>}
+                      <th className={`text-right pl-2 font-semibold sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background w-20 min-w-20`}>Laufend</th>
+                      {showKosten && <th className="text-right pl-2 font-semibold sticky right-0 border-l border-border bg-background w-24 min-w-24">ÜStd-Kosten</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -455,7 +455,7 @@ export default function UeberstundenPage() {
                           onClick={() => { setSelEmp(m.id); setSelWeek(null); setStaged({}); }}
                           data-testid={`row-emp-${m.id}`}
                         >
-                          <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
+                          <td className="py-1 pr-2 whitespace-nowrap">{m.name}{m.ausgenommen && <span className="ml-1.5 inline-block rounded border border-border bg-muted px-1 py-px text-[9px] text-muted-foreground align-middle" data-testid={`badge-ausgenommen-${m.id}`}>ausgenommen · kein ÜStd-Konto</span>}</td>
                           <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
                           {wochenSpalten.map(ws => {
                             const s = byMonday.get(ws.monday)?.saldo ?? null;
@@ -471,11 +471,11 @@ export default function UeberstundenPage() {
                               </td>
                             );
                           })}
-                          <td className={`text-right pl-2 tabular-nums font-semibold sticky right-24 bg-background ${saldoClass(m.laufend)}`}>
+                          <td className={`text-right pl-2 tabular-nums font-semibold sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background ${saldoClass(m.laufend)}`}>
                             {fmtH(m.laufend)}
                           </td>
                           {showKosten && (
-                            <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid={`kosten-${m.id}`}>
+                            <td className="text-right pl-2 tabular-nums sticky right-0 border-l border-border bg-background" data-testid={`kosten-${m.id}`}>
                               {m.kosten === null ? '–' : `${m.kosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </td>
                           )}
@@ -494,9 +494,9 @@ export default function UeberstundenPage() {
                           </td>
                         );
                       })}
-                      <td className={`text-right pl-2 tabular-nums sticky right-24 bg-background ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
+                      <td className={`text-right pl-2 tabular-nums sticky ${showKosten ? 'right-24' : 'right-0'} border-l border-border bg-background ${saldoClass(erg.totalLaufend)}`}>{fmtH(erg.totalLaufend)}</td>
                       {showKosten && (
-                        <td className="text-right pl-2 tabular-nums sticky right-0 bg-background" data-testid="text-total-kosten">
+                        <td className="text-right pl-2 tabular-nums sticky right-0 border-l border-border bg-background" data-testid="text-total-kosten">
                           {erg.totalKosten === null ? '–' : erg.totalKosten.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       )}
@@ -523,7 +523,7 @@ export default function UeberstundenPage() {
                         onClick={() => { setSelEmp(m.id); setSelWeek(null); setStaged({}); }}
                         data-testid={`row-emp-${m.id}`}
                       >
-                        <td className="py-1 pr-2 whitespace-nowrap">{m.name}</td>
+                        <td className="py-1 pr-2 whitespace-nowrap">{m.name}{m.ausgenommen && <span className="ml-1.5 inline-block rounded border border-border bg-muted px-1 py-px text-[9px] text-muted-foreground align-middle" data-testid={`badge-ausgenommen-${m.id}`}>ausgenommen · kein ÜStd-Konto</span>}</td>
                         <td className="text-right pr-2">{Math.round(m.wochenSollH / VOLLZEIT_WOCHE_H * 100)}%</td>
                         {m.monatsSaldo.slice(startMonatIdx).map((s, i) => (
                           <td key={i} className={`text-right px-1 tabular-nums ${saldoClass(s)}`}>

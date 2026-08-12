@@ -64,7 +64,7 @@ import { klassifiziereWarenDateien, type UploadRouting } from '@/components/ware
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
-import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
+import { kontoSplitsAusPositionen, erzwingePfandPosition, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
 import {
@@ -402,6 +402,24 @@ export default function WarenrechnungenPage() {
   const [month, setMonth] = useState(today.getMonth() + 1);
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
 
+  // ─── Perioden-Granularität: wirkt auf die GANZE Seite (Monat ↔ Woche) ────
+  const [granular, setGranular] = useState<'monat' | 'woche'>('monat');
+  const [wochenStart, setWochenStart] = useState<string>(() => {
+    const w = getIsoWeek(ymdLocal(new Date()));
+    return isoWeekRange(w.isoYear, w.week).from;
+  });
+  const wochenEnde = useMemo(() => {
+    const d = new Date(wochenStart + 'T12:00:00');
+    d.setDate(d.getDate() + 6);
+    return ymdLocal(d);
+  }, [wochenStart]);
+  /** Zu einer Woche springen: der geladene Monat folgt dem MONTAG der Woche. */
+  const geheZuWoche = (montag: string) => {
+    setWochenStart(montag);
+    setYear(Number(montag.slice(0, 4)));
+    setMonth(Number(montag.slice(5, 7)));
+  };
+
   const [suppliers,      setSuppliers]      = useState<Supplier[]>([]);
   const [entries,        setEntries]        = useState<InvoiceEntry[]>([]);
   const [revenueByDate,  setRevenueByDate]  = useState<Record<string, number>>({});
@@ -527,6 +545,16 @@ export default function WarenrechnungenPage() {
       fibuSaveChain.current = run.catch(() => undefined);
       return run;
     }, [tenantId, fibuMonthKey]);
+  /** Wochenansicht = reine Anzeige: persistente FIBU-Mutationen (Match,
+   *  Erklärt, Übernahme) sind gesperrt — Markierungen gelten pro MONAT. */
+  const persistFibuStateView = useCallback(
+    (mutate: (cur: FibuMatchState) => FibuMatchState): Promise<boolean> => {
+      if (granular === 'woche') {
+        toast.error('Matches/Markierungen nur in der Monatsansicht möglich.');
+        return Promise.resolve(false);
+      }
+      return persistFibuState(mutate);
+    }, [granular, persistFibuState]);
   const speichereToleranz = useCallback(async (tol: number) => {
     setFibuToleranz(tol);
     try { await saveFibuMatchToleranz(tenantId, tol); }
@@ -568,17 +596,26 @@ export default function WarenrechnungenPage() {
       // Import) darf NIE als «CHF NaN» in Total/Differenz durchschlagen.
       buchhaltungTotal = row && Number.isFinite(row.values.actual) ? Math.abs(row.values.actual as number) : null;
     } catch { buchhaltungTotal = null; }
+    // Wochenansicht: beide Seiten auf die Woche (∩ geladener Monat) filtern;
+    // das ER-Monats-Total ist dann keine gültige Vergleichsbasis (→ null).
+    const istWoche = granular === 'woche';
     return buildWarenAbgleich({
-      invoices: entries,
-      journal,
+      invoices: istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
       warenkontoNummern: warenkonten.map(k => k.value),
       supplierNames: suppliers.map(s => s.name),
       aliases,
-      buchhaltungTotal,
+      buchhaltungTotal: istWoche ? null : buchhaltungTotal,
       aliasGruppen,
       warenkostenGrenze: warenGrenze,
     });
-  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey, warenGrenze]);
+  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey, warenGrenze, granular, wochenStart, wochenEnde]);
+
+  /** FIBU-/Drilldown-Basis: in der Wochenansicht nur der Wochen-Anteil. */
+  const fibuEntries = useMemo(
+    () => granular === 'woche' ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+    [granular, entries, wochenStart, wochenEnde],
+  );
 
   /**
    * Resolver für Drilldown-/Rechnungs-Filter im Abgleich: MUSS aus den
@@ -597,10 +634,10 @@ export default function WarenrechnungenPage() {
   const diffAufschluesselung: DiffAufschluesselung | null = useMemo(() => {
     if (!abgleich || !fibuGeladen) return null;
     return buildDiffAufschluesselung({
-      abgleich, invoices: entries, resolve: abgleichResolver,
+      abgleich, invoices: fibuEntries, resolve: abgleichResolver,
       gruppen: fibuState.gruppen, warenkostenGrenze: warenGrenze,
     });
-  }, [abgleich, fibuGeladen, entries, abgleichResolver, fibuState.gruppen, warenGrenze]);
+  }, [abgleich, fibuGeladen, fibuEntries, abgleichResolver, fibuState.gruppen, warenGrenze]);
 
   // ─── Journal-Dubletten (FIBU-Buchungszeilen 3× durch Mehrfach-Import) ──────
   // Bereinigt NUR das Lieferanten-Journal (Buchungszeilen). Konto-Ansicht
@@ -728,9 +765,12 @@ export default function WarenrechnungenPage() {
   // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
   // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
   // gematchte Buchungen. Erst nach dem Match-Load rechnen (sonst Flackern).
+  // NUR Monatsansicht: Kandidaten aus einem Wochen-Abgleich wären inkonsistent
+  // (Abgleich = Woche, Rechnungen = Monat) und würden Monats-Mutationen aus
+  // einer reinen Anzeige-Navigation ermöglichen.
   const uebernahmeKandidatenAlle = useMemo(
-    () => (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : []),
-    [abgleich, fibuState, fibuGeladen, entries],
+    () => (fibuGeladen && granular === 'monat' ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : []),
+    [abgleich, fibuState, fibuGeladen, entries, granular],
   );
   // Ignorier-Liste anwenden: ignorierte Buchhaltungszeilen verschwinden aus der
   // Differenz (zählen NICHT mehr), bleiben aber über «Ignorierte anzeigen» erreichbar.
@@ -756,7 +796,9 @@ export default function WarenrechnungenPage() {
    */
   const erklaerteKopf = useMemo(() => {
     const leer = { summe: 0, posten: [] as Array<{ lieferant: string; grund: string; betrag: number }> };
-    if (!abgleich || !fibuGeladen) return leer;
+    // Erklärungen beziehen sich auf MONATS-Differenzen — in der Wochenansicht
+    // zählen sie nicht (reine Anzeige, keine Markierung wird verändert).
+    if (!abgleich || !fibuGeladen || granular === 'woche') return leer;
     const posten: Array<{ lieferant: string; grund: string; betrag: number }> = [];
     for (const z of abgleich.zeilen) {
       const e = fibuState.erklaert[z.lieferant];
@@ -769,7 +811,7 @@ export default function WarenrechnungenPage() {
     }
     const summe = Math.round(posten.reduce((sum, pos) => sum + pos.betrag, 0) * 100) / 100;
     return { summe, posten };
-  }, [abgleich, fibuGeladen, fibuState]);
+  }, [abgleich, fibuGeladen, fibuState, granular]);
   /** Rundungstoleranz der offenen Kopf-Differenz (|Betrag| ≤ 0.10 → «0.00» grün). */
   const OFFEN_TOLERANZ_CHF = 0.10;
   /**
@@ -798,13 +840,17 @@ export default function WarenrechnungenPage() {
   const kontoAbgleich = useMemo(() => {
     if (tab !== 'abgleich') return [];
     const kontoNamen = Object.fromEntries(warenkonten.map(k => [k.value, k.label]));
+    // Wochenansicht: gleiche Basis wie der Lieferanten-Abgleich (Woche ∩ Monat).
+    const istWoche = granular === 'woche';
     return buildKontoAbgleich({
-      invoices: entries, journal, kontoNamen, relevanteKonten: warenkonten.map(k => k.value),
+      invoices: istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
+      kontoNamen, relevanteKonten: warenkonten.map(k => k.value),
       // Feldschlösschen: FIBU bucht pauschal (grob 4030), Erfassung splittet nach
       // Zusammenfassung MwSt. (4030/4040/4050) → PRO LIEFERANT vergleichen.
       lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
     });
-  }, [tab, entries, journal, warenkonten]);
+  }, [tab, entries, journal, warenkonten, granular, wochenStart, wochenEnde]);
 
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
@@ -830,7 +876,11 @@ export default function WarenrechnungenPage() {
    *  (Import-Boxen mit externalFilesRef dürfen nie unmounten). */
   const [neuOpen, setNeuOpen] = useState(false);
   /** KPI-Detail-Popups (direkter Warenaufwand nach Konto · Umsatz-Aufbau). */
-  const [kpiDialog, setKpiDialog] = useState<null | 'direkt' | 'umsatz'>(null);
+  const [kpiDialog, setKpiDialog] = useState<null | 'heute' | 'direkt' | 'wkq' | 'umsatz' | 'lieferanten'>(null);
+  /** Direkter-Warenaufwand-Popup: Aufbau nach Konto ↔ nach Lieferant. */
+  const [direktAnsicht, setDirektAnsicht] = useState<'konto' | 'lieferant'>('konto');
+  /** Perioden-Dropdown im Seitenkopf. */
+  const [kopfPeriodeOpen, setKopfPeriodeOpen] = useState(false);
   /** Listen-Umschalter: Total Netto ↔ nur direkter Warenaufwand (4020–4070). */
   const [listeAnsicht, setListeAnsicht] = useState<'total' | 'direkt'>('total');
   /** Zusätzliche Listen-Filter (kombinierbar). */
@@ -898,6 +948,43 @@ export default function WarenrechnungenPage() {
   }, [tenantId, monthKey]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // ── Wochenansicht über die Monatsgrenze: Nachbarmonat nachladen ──────────
+  const [wocheExtra, setWocheExtra] = useState<{ key: string; entries: InvoiceEntry[]; revenue: Record<string, number> } | null>(null);
+  useEffect(() => {
+    const endKey = wochenEnde.slice(0, 7);
+    if (granular !== 'woche' || endKey === monthKey) { setWocheExtra(null); return; }
+    setWocheExtra(null); // alte (ggf. fremde Mandanten-)Daten sofort verwerfen
+    let aktiv = true;
+    void (async () => {
+      try {
+        const [invs, rev] = await Promise.all([
+          loadMonthInvoices(tenantId, endKey),
+          ladeNettoUmsatzByDate(tenantId, `${endKey}-01`, `${endKey}-31`),
+        ]);
+        if (!aktiv) return;
+        setWocheExtra({ key: `${tenantId}|${endKey}`, entries: filtereIgnorierteRechnungen(ignoreListe, invs).entries, revenue: rev });
+      } catch {
+        if (aktiv) setWocheExtra({ key: `${tenantId}|${endKey}`, entries: [], revenue: {} });
+      }
+    })();
+    return () => { aktiv = false; };
+  }, [granular, wochenEnde, monthKey, tenantId, ignoreListe]);
+
+  /** Sicht-Periode der Seite: ganzer Monat (wie bisher) oder gewählte Woche. */
+  const viewEntries = useMemo(() => {
+    if (granular === 'monat') return entries;
+    const extra = wocheExtra?.key === `${tenantId}|${wochenEnde.slice(0, 7)}` ? wocheExtra.entries : [];
+    return [...entries, ...extra].filter(e => e.date >= wochenStart && e.date <= wochenEnde);
+  }, [granular, entries, wocheExtra, wochenStart, wochenEnde, tenantId]);
+  const viewRevenueByDate = useMemo(() => {
+    if (granular === 'monat') return revenueByDate;
+    const extraRev = wocheExtra?.key === `${tenantId}|${wochenEnde.slice(0, 7)}` ? wocheExtra.revenue : {};
+    const merged: Record<string, number> = { ...revenueByDate, ...extraRev };
+    const res: Record<string, number> = {};
+    for (const [d, v] of Object.entries(merged)) if (d >= wochenStart && d <= wochenEnde) res[d] = v;
+    return res;
+  }, [granular, revenueByDate, wocheExtra, wochenStart, wochenEnde, tenantId]);
 
   const openUebernahme = useCallback((keys: string[]) => {
     const drafts = uebernahmeKandidaten
@@ -990,8 +1077,11 @@ export default function WarenrechnungenPage() {
   useEffect(() => { void ladePositionen(); }, [ladePositionen]);
 
   /** Manuelles Konto-Override einer Position speichern + Rechnungs-Splits neu ableiten. */
-  const speicherePositionen = async (invoiceId: string, positionen: GespeichertePosition[]) => {
+  const speicherePositionen = async (invoiceId: string, positionenRoh: GespeichertePosition[]) => {
     const entry = entries.find(e => e.id === invoiceId);
+    // Universelle Pfand-Regel: Pfand/Leergut steht IMMER auf 4800 —
+    // auch eine manuelle Dialog-Wahl kann das nicht auf 6040/Warenkonto legen.
+    const positionen = positionenRoh.map(erzwingePfandPosition);
     try {
       const next = { ...rechnungsPositionen, [invoiceId]: positionen };
       await saveRechnungsPositionen(tenantId, monthKey, next);
@@ -1103,26 +1193,40 @@ export default function WarenrechnungenPage() {
     else setMonth(m => m + 1);
   };
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1;
+  const prevWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() - 7); geheZuWoche(ymdLocal(d)); };
+  const nextWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() + 7); geheZuWoche(ymdLocal(d)); };
+  const istAktuelleWoche = todayStr >= wochenStart && todayStr <= wochenEnde;
+  /** Granularität umschalten: Woche startet in der Woche von heute (aktueller
+   *  Monat) bzw. des Monatsersten; Monat folgt immer dem Montag. */
+  const wechsleGranular = (g: 'monat' | 'woche') => {
+    setGranular(g);
+    if (g === 'woche') {
+      const ref = isCurrentMonth ? todayStr : `${monthKey}-01`;
+      const w = getIsoWeek(ref);
+      geheZuWoche(isoWeekRange(w.isoYear, w.week).from);
+    }
+  };
 
   // «Neue Rechnung»-Overlay: beim Öffnen Fokus ins Panel (Escape schliesst).
   useEffect(() => { if (neuOpen) neuPanelRef.current?.focus(); }, [neuOpen]);
 
   // Umsatz-Popup: Tage lazy laden; Cache bei Monats-/Mandantenwechsel leeren.
-  useEffect(() => { setUmsatzTage(null); }, [monthKey, tenantId]);
+  useEffect(() => { setUmsatzTage(null); }, [monthKey, tenantId, granular, wochenStart]);
   useEffect(() => {
     if (kpiDialog !== 'umsatz' || umsatzTage !== null) return;
-    void ladeUmsatzTage(tenantId, `${monthKey}-01`, `${monthKey}-31`).then(setUmsatzTage).catch(() => setUmsatzTage(new Map()));
-  }, [kpiDialog, umsatzTage, tenantId, monthKey]);
+    const [von, bis] = granular === 'woche' ? [wochenStart, wochenEnde] : [`${monthKey}-01`, `${monthKey}-31`];
+    void ladeUmsatzTage(tenantId, von, bis).then(setUmsatzTage).catch(() => setUmsatzTage(new Map()));
+  }, [kpiDialog, umsatzTage, tenantId, monthKey, granular, wochenStart, wochenEnde]);
 
-  const stats = useMemo(() => computeMonthStats(entries, revenueByDate), [entries, revenueByDate]);
+  const stats = useMemo(() => computeMonthStats(viewEntries, viewRevenueByDate), [viewEntries, viewRevenueByDate]);
   // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
   // Kontoklassen: nur Warenkosten-Anteile (4000–Grenze); Betriebskosten separat.
-  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(entries, warenGrenze), warenGrenze), [entries, warenGrenze]);
-  const monthBetrieb = useMemo(() => sumBetriebNet(entries, warenGrenze), [entries, warenGrenze]);
+  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(viewEntries, warenGrenze), warenGrenze), [viewEntries, warenGrenze]);
+  const monthBetrieb = useMemo(() => sumBetriebNet(viewEntries, warenGrenze), [viewEntries, warenGrenze]);
 
   const totalRevenue = useMemo(
-    () => Object.values(revenueByDate).reduce((s, v) => s + v, 0),
-    [revenueByDate],
+    () => Object.values(viewRevenueByDate).reduce((s, v) => s + v, 0),
+    [viewRevenueByDate],
   );
   // Quote = relevante Warenkosten (Food+Beverage) / Umsatz; Sonstiges ausgeschlossen.
   const monthPct     = warenkostenQuote(monthTotals.relevantNet, totalRevenue);
@@ -1131,12 +1235,12 @@ export default function WarenrechnungenPage() {
   const todayRevenue = revenueByDate[todayStr] ?? 0;
   const todayPct     = warenkostenQuote(relevantNetOf(todayEntries, warenGrenze), todayRevenue);
 
-  const datesWithEntries = useMemo(() => Array.from(new Set(entries.map(e => e.date))).sort(), [entries]);
+  const datesWithEntries = useMemo(() => Array.from(new Set(viewEntries.map(e => e.date))).sort(), [viewEntries]);
 
   // Gefilterte Einträge für Erfassung-Tab (Lieferant · Datum · Kategorie ·
   // Warenkonto · FIBU — kombinierbar; Total/WKQ rechnen auf dieser Basis).
   const filteredEntries = useMemo(() => {
-    let sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+    let sorted = [...viewEntries].sort((a, b) => b.date.localeCompare(a.date));
     if (nurFibuUebernahmen) sorted = sorted.filter(e => e.quelle === 'fibu_uebernahme');
     if (erfassungSupplierFilter) sorted = sorted.filter(e => e.supplierName === erfassungSupplierFilter);
     if (erfassungDatumFilter) sorted = sorted.filter(e => e.date === erfassungDatumFilter);
@@ -1145,7 +1249,7 @@ export default function WarenrechnungenPage() {
     if (erfassungKontoFilter) sorted = sorted.filter(e =>
       kontoShares(e).some(sh => sh.konto === erfassungKontoFilter));
     return sorted;
-  }, [entries, erfassungSupplierFilter, nurFibuUebernahmen, erfassungDatumFilter, erfassungKategorieFilter, erfassungKontoFilter, warenkonten]);
+  }, [viewEntries, erfassungSupplierFilter, nurFibuUebernahmen, erfassungDatumFilter, erfassungKategorieFilter, erfassungKontoFilter, warenkonten]);
 
   const filteredTotalNet   = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountNet, 0),   [filteredEntries]);
   const filteredTotalGross = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountGross, 0), [filteredEntries]);
@@ -1161,10 +1265,10 @@ export default function WarenrechnungenPage() {
    *  bewusst Anteile am Monatsumsatz — gleiche Basis wie die Monats-WKQ). */
   const filteredWkqPct = useMemo(() => {
     const basisUmsatz = erfassungDatumFilter
-      ? (revenueByDate[erfassungDatumFilter] ?? 0)
+      ? (viewRevenueByDate[erfassungDatumFilter] ?? 0)
       : totalRevenue;
     return warenkostenQuote(relevantNetOf(filteredEntries, warenGrenze), basisUmsatz);
-  }, [filteredEntries, warenGrenze, totalRevenue, erfassungDatumFilter, revenueByDate]);
+  }, [filteredEntries, warenGrenze, totalRevenue, erfassungDatumFilter, viewRevenueByDate]);
   /** In der Liste sichtbare Einträge (direkt-Ansicht blendet reine 4090/4701/4800-Einträge aus). */
   const anzeigeEntries = useMemo(
     () => listeAnsicht === 'direkt' ? filteredEntries.filter(e => Math.abs(direktAnteilNet(e)) > 0.004) : filteredEntries,
@@ -1177,7 +1281,7 @@ export default function WarenrechnungenPage() {
       '4050': 'Mineral', '4060': 'Küche', '4070': 'Kaffee/Tee',
     };
     const sums = new Map<string, number>();
-    for (const e of entries) {
+    for (const e of viewEntries) {
       for (const sh of kontoShares(e)) {
         if (!(DIREKTE_WARENKONTEN as readonly string[]).includes(sh.konto)) continue;
         sums.set(sh.konto, (sums.get(sh.konto) ?? 0) + sh.net);
@@ -1186,13 +1290,36 @@ export default function WarenrechnungenPage() {
     return (DIREKTE_WARENKONTEN as readonly string[])
       .map(k => ({ konto: k, name: KONTO_NAMEN[k] ?? '', net: Math.round((sums.get(k) ?? 0) * 100) / 100 }))
       .filter(r => Math.abs(r.net) > 0.004); // Konten mit 0 weglassen (leer statt 0)
-  }, [entries]);
+  }, [viewEntries]);
+
+  /** Aufbau des direkten Warenaufwands nach LIEFERANT (Popup-Switch). */
+  const lieferantAufbau = useMemo(() => {
+    const sums = new Map<string, number>();
+    for (const e of viewEntries) {
+      const n = direktAnteilNet(e);
+      if (Math.abs(n) < 0.005) continue; // 0-Anteile weglassen (leer statt 0)
+      sums.set(e.supplierName, (sums.get(e.supplierName) ?? 0) + n);
+    }
+    return [...sums.entries()]
+      .map(([name, net]) => ({ name, net: Math.round(net * 100) / 100 }))
+      .filter(r => Math.abs(r.net) > 0.004)
+      .sort((a, b) => b.net - a.net);
+  }, [viewEntries]);
+  /** «Warenkosten heute» nach Lieferant (Summe = KPI-Box). */
+  const heuteAufbau = useMemo(() => {
+    const sums = new Map<string, number>();
+    for (const e of todayEntries) sums.set(e.supplierName, (sums.get(e.supplierName) ?? 0) + e.amountNet);
+    return [...sums.entries()]
+      .map(([name, net]) => ({ name, net: Math.round(net * 100) / 100 }))
+      .filter(r => Math.abs(r.net) > 0.004)
+      .sort((a, b) => b.net - a.net);
+  }, [todayEntries]);
   /** Alle in den Einträgen vorkommenden Warenkonten (Filter-Dropdown). */
   const entryKontos = useMemo(() => {
     const set = new Set<string>();
-    for (const e of entries) for (const sh of kontoShares(e)) if (sh.konto) set.add(sh.konto);
+    for (const e of viewEntries) for (const sh of kontoShares(e)) if (sh.konto) set.add(sh.konto);
     return [...set].sort();
-  }, [entries]);
+  }, [viewEntries]);
 
   /**
    * Split der Total-Zeile in der Erfassungsliste: volle Rechnungssumme =
@@ -1213,12 +1340,12 @@ export default function WarenrechnungenPage() {
   }, [filteredEntries]);
 
   /** Obere Kennzahl: direkter Warenaufwand 4020–4070 des Monats (WKQ-Basis). */
-  const monthDirektNet = useMemo(() => direkterWarenaufwand(entries).direktNet, [entries]);
+  const monthDirektNet = useMemo(() => direkterWarenaufwand(viewEntries).direktNet, [viewEntries]);
 
   // Alle Lieferanten die im aktuellen Monat Einträge haben (für Dropdown)
   const entrySupplierNames = useMemo(() =>
-    Array.from(new Set(entries.map(e => e.supplierName))).sort(),
-    [entries],
+    Array.from(new Set(viewEntries.map(e => e.supplierName))).sort(),
+    [viewEntries],
   );
 
   const tableDates = useMemo(() => {
@@ -1252,11 +1379,38 @@ export default function WarenrechnungenPage() {
     [recentSuppliers, suppliers], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const suppliersWithEntries = stats.supplierTotals.length;
+  /** Aktive Lieferanten OHNE Einträge in der Periode (Lieferanten-Popup).
+   *  Zuordnung tolerant: normalisierter Name ODER Alias-Gruppe — Eintrags-
+   *  Namen aus Importen weichen sonst vom Stammdaten-Namen ab (falsche
+   *  «Ohne Einträge»-Treffer). */
+  const lieferantenOhne = useMemo(() => {
+    // Signifikante Namens-Token (ohne Rechtsform/«Barausgaben»/Zahlen/Kürzel).
+    const STOP = new Set(['gmbh', 'barausgaben', 'barausgabe']);
+    const tokens = (name: string) => normalizeSupplierKey(name)
+      .split(' ')
+      .filter(t => t.length >= 4 && !STOP.has(t) && !/^\d+$/.test(t));
+    const mitKeys = new Set<string>();
+    const mitTokens = new Set<string>();
+    for (const t of stats.supplierTotals) {
+      for (const variante of [t.supplierName, aliasResolver(t.supplierName), aliases[normalizeSupplierKey(t.supplierName)] ?? '']) {
+        if (!variante) continue;
+        mitKeys.add(normalizeSupplierKey(variante));
+        for (const tok of tokens(variante)) mitTokens.add(tok);
+      }
+    }
+    return activeSuppliers
+      .filter(sup => {
+        if (mitKeys.has(normalizeSupplierKey(sup.name)) || mitKeys.has(normalizeSupplierKey(aliasResolver(sup.name)))) return false;
+        return !tokens(sup.name).some(tok => mitTokens.has(tok));
+      })
+      .map(sup => sup.name)
+      .sort();
+  }, [stats, activeSuppliers, aliasResolver, aliases]);
 
   function getCumulative(upToDate: string) {
-    const list   = entries.filter(e => e.date <= upToDate);
+    const list   = viewEntries.filter(e => e.date <= upToDate);
     const cumNet = list.reduce((s, e) => s + e.amountNet, 0);
-    const cumRev = Object.entries(revenueByDate).filter(([d]) => d <= upToDate).reduce((s, [, v]) => s + v, 0);
+    const cumRev = Object.entries(viewRevenueByDate).filter(([d]) => d <= upToDate).reduce((s, [, v]) => s + v, 0);
     // Quote nur auf relevante Warenkosten (Food+Beverage); cumNet bleibt Gesamtanzeige.
     return { cumNet, cumRev, pct: warenkostenQuote(relevantNetOf(list, warenGrenze), cumRev) };
   }
@@ -2421,6 +2575,21 @@ export default function WarenrechnungenPage() {
   }
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' });
+  const fmtKurzDatum = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+  const periodenLabel = granular === 'woche'
+    ? `KW ${String(getIsoWeek(wochenStart).week).padStart(2, '0')} · ${fmtKurzDatum(wochenStart)}–${fmtKurzDatum(wochenEnde)}${wochenEnde.slice(0, 4)}`
+    : monthLabel;
+  const periodenWort = granular === 'woche' ? 'Woche' : 'Monat';
+  const periodenChip = granular === 'woche' ? 'WOCHE' : 'MONAT';
+  /** Wochenliste eines Jahres fürs Perioden-Dropdown. */
+  const wochenDesJahres = (jahr: number) => {
+    const max = getIsoWeek(`${jahr}-12-28`).week;
+    return Array.from({ length: max }, (_, i) => {
+      const r = isoWeekRange(jahr, i + 1);
+      return { week: i + 1, from: r.from, to: r.to };
+    });
+  };
+  const pickerJahre = Array.from({ length: today.getFullYear() - 2024 + 1 }, (_, i) => 2024 + i);
   const kpiVariant = (pct: number | null): 'ok' | 'warn' | 'alert' | 'muted' => {
     if (pct === null) return 'muted';
     if (pct > 35) return 'alert';
@@ -2447,16 +2616,180 @@ export default function WarenrechnungenPage() {
             </div>
           </div>
 
-          {/* Monat */}
+          {/* Periode: Pfeile + klickbares Dropdown — im Analyse-Tab steuert
+              dieselbe Kopf-Steuerung die Analyse-Periode (einzige Steuerung). */}
+          {tab === 'analyse' ? (
           <div className="flex items-center gap-1.5">
-            <button onClick={prevMonth} className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors">
+            {analyseMode !== 'multi_month' && (
+              <button
+                onClick={analyseMode === 'week' ? prevAWeek : analyseMode === 'month' ? prevAMonth : () => setARangeYear(y => y - 1)}
+                className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors"
+                data-testid="analyse-periode-prev" aria-label="Vorherige Periode"
+              ><ChevronLeft className="h-4 w-4" /></button>
+            )}
+            <Popover open={periodePickerOpen} onOpenChange={setPeriodePickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  data-testid="analyse-periode-trigger"
+                  title="Periode wählen (Woche / Monat / Mehrere Monate / Jahr / YTD)"
+                  className="h-8 px-3 rounded-md border border-border flex items-center justify-center gap-1.5 hover:bg-muted transition-colors text-sm font-semibold tabular-nums min-w-[170px]"
+                >
+                  <span className="truncate">{analyseMode === 'year' ? `Jahr ${aRangeYear}` : analyseRangeLabel}</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-3 space-y-2" align="center">
+                <p className="text-xs font-medium text-muted-foreground">Periode</p>
+                <select
+                  value={analyseMode}
+                  onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
+                  data-testid="analyse-mode-select"
+                  className="h-8 w-full rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {([
+                    ['week',        'Woche'],
+                    ['month',       'Monat'],
+                    ['multi_month', 'Mehrere Monate'],
+                    ['year',        'Jahr'],
+                    ['ytd',         'YTD'],
+                  ] as [AnalyseMode, string][]).map(([m, label]) => (
+                    <option key={m} value={m}>{label}</option>
+                  ))}
+                </select>
+                {analyseMode === 'month' && (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <select value={aMonth} onChange={e => setAMonth(Number(e.target.value))}
+                      data-testid="analyse-monat-select"
+                      className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                    </select>
+                    <select value={aYear} onChange={e => setAYear(Number(e.target.value))}
+                      data-testid="analyse-jahr-select"
+                      className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
+                )}
+                {analyseMode === 'multi_month' && (
+                  <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 text-sm pt-1">
+                    <span className="text-muted-foreground text-xs">Von</span>
+                    <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                    </select>
+                    <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <span className="text-muted-foreground text-xs">Bis</span>
+                    <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                    </select>
+                    <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+            {analyseMode !== 'multi_month' && (
+              <button
+                onClick={analyseMode === 'week' ? nextAWeek : analyseMode === 'month' ? nextAMonth : () => setARangeYear(y => y + 1)}
+                disabled={analyseMode === 'week' ? isCurrentAWeek : analyseMode === 'month' ? isCurrentAMonth : aRangeYear >= today.getFullYear()}
+                className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40"
+                data-testid="analyse-periode-next" aria-label="Nächste Periode"
+              ><ChevronRight className="h-4 w-4" /></button>
+            )}
+          </div>
+          ) : (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={granular === 'woche' ? prevWoche : prevMonth}
+              className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors"
+              data-testid="periode-zurueck" aria-label="Vorherige Periode"
+            >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="text-sm font-semibold tabular-nums min-w-[148px] text-center">{monthLabel}</span>
-            <button onClick={nextMonth} disabled={isCurrentMonth} className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40">
+            <Popover open={kopfPeriodeOpen} onOpenChange={setKopfPeriodeOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className="h-8 px-3 rounded-md border border-border flex items-center justify-center gap-1.5 hover:bg-muted transition-colors text-sm font-semibold tabular-nums min-w-[170px]"
+                  data-testid="periode-dropdown"
+                >
+                  {periodenLabel}
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="center" className="w-64 p-3 space-y-2.5">
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground mb-1">Granularität</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(['woche', 'monat'] as const).map(g => (
+                      <button
+                        key={g}
+                        onClick={() => wechsleGranular(g)}
+                        className={cn('h-7 rounded-md border text-xs font-medium transition-colors',
+                          granular === g ? 'border-foreground bg-foreground text-background' : 'border-border hover:bg-muted')}
+                        data-testid={`granular-${g}`}
+                      >
+                        {g === 'woche' ? 'Woche' : 'Monat'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {granular === 'monat' ? (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <select
+                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                      value={month}
+                      onChange={e => setMonth(Number(e.target.value))}
+                      data-testid="periode-monat-select"
+                    >
+                      {MONTHS_LONG.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                    </select>
+                    <select
+                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                      value={year}
+                      onChange={e => setYear(Number(e.target.value))}
+                      data-testid="periode-jahr-select"
+                    >
+                      {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                    <select
+                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                      value={wochenStart}
+                      onChange={e => geheZuWoche(e.target.value)}
+                      data-testid="periode-woche-select"
+                    >
+                      {wochenDesJahres(getIsoWeek(wochenStart).isoYear).map(w => (
+                        <option key={w.from} value={w.from}>
+                          KW {String(w.week).padStart(2, '0')} · {fmtKurzDatum(w.from)}–{fmtKurzDatum(w.to)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                      value={getIsoWeek(wochenStart).isoYear}
+                      onChange={e => { const j = Number(e.target.value); geheZuWoche(isoWeekRange(j, 1).from); }}
+                      data-testid="periode-wochenjahr-select"
+                    >
+                      {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
+                    </select>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+            <button
+              onClick={granular === 'woche' ? nextWoche : nextMonth}
+              disabled={granular === 'woche' ? istAktuelleWoche || wochenStart > todayStr : isCurrentMonth}
+              className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40"
+              data-testid="periode-vor" aria-label="Nächste Periode"
+            >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
+          )}
 
           {/* Lieferanten – nur für Benutzer mit Schreibrecht */}
           {canCreate && (
@@ -2487,9 +2820,9 @@ export default function WarenrechnungenPage() {
             >
               <t.Icon className="h-3.5 w-3.5" />
               {t.label}
-              {t.id === 'erfassung' && entries.length > 0 && (
+              {t.id === 'erfassung' && viewEntries.length > 0 && (
                 <span className="ml-1 text-[10px] bg-muted text-muted-foreground rounded-full px-1.5 py-0.5 font-mono">
-                  {entries.length}
+                  {viewEntries.length}
                 </span>
               )}
             </button>
@@ -2512,14 +2845,16 @@ export default function WarenrechnungenPage() {
                 label="Warenkosten heute"
                 chip="HEUTE"
                 value={`CHF ${fmtChf(todayNet)}`}
-                sub={todayPct !== null ? `WKQ heute ${fmtPct(todayPct)}` : 'Kein Umsatz'}
+                sub={todayPct !== null ? `WKQ heute ${fmtPct(todayPct)} · Klick für Aufbau` : 'Kein Umsatz · Klick für Aufbau'}
                 sub2={todayRevenue > 0 ? `Umsatz heute CHF ${fmtChf(todayRevenue)}` : undefined}
                 icon={ShoppingCart}
                 variant={todayNet === 0 ? 'muted' : kpiVariant(todayPct)}
+                onClick={() => setKpiDialog('heute')}
+                testId="kpi-heute"
               />
               <KpiBox
-                label="Direkter Warenaufwand (Monat)"
-                chip="MONAT"
+                label={`Direkter Warenaufwand (${periodenWort})`}
+                chip={periodenChip}
                 value={`CHF ${fmtChf(monthDirektNet)}`}
                 sub="Konten 4020–4070 · Klick für Aufbau"
                 sub2={monthBetrieb > 0 ? `Betriebskosten (≥ ${warenGrenze + 1}): CHF ${fmtChf(monthBetrieb)}` : undefined}
@@ -2529,19 +2864,21 @@ export default function WarenrechnungenPage() {
                 testId="kpi-direkt-monat"
               />
               <KpiBox
-                label="WKQ Monat"
-                chip="MONAT"
+                label={`WKQ ${periodenWort}`}
+                chip={periodenChip}
                 value={monthPct !== null ? fmtPct(monthPct) : '–'}
-                sub={monthPct !== null ? 'Ziel ≤ 30 %' : 'Kein Umsatz'}
+                sub={monthPct !== null ? 'Ziel ≤ 30 % · Klick für Rechenweg' : 'Kein Umsatz'}
                 sub2={monthPct !== null && monthPct <= 30 ? '✓ Im Zielbereich' : monthPct !== null ? '↑ Über Ziel' : undefined}
                 icon={TrendingUp}
                 variant={kpiVariant(monthPct)}
+                onClick={() => setKpiDialog('wkq')}
+                testId="kpi-wkq"
               />
               <KpiBox
-                label="Kum. Umsatz (Monat)"
-                chip="MONAT"
+                label={`Kum. Umsatz (${periodenWort})`}
+                chip={periodenChip}
                 value={totalRevenue > 0 ? `CHF ${fmtChf(totalRevenue)}` : '–'}
-                sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : `${Object.keys(revenueByDate).length} Tage · Klick für Aufbau`}
+                sub={totalRevenue === 0 ? 'Keine Umsatzdaten' : `${Object.keys(viewRevenueByDate).length} Tage · Klick für Aufbau`}
                 icon={TrendingUp}
                 variant={totalRevenue > 0 ? 'default' : 'muted'}
                 onClick={() => setKpiDialog('umsatz')}
@@ -2549,11 +2886,13 @@ export default function WarenrechnungenPage() {
               />
               <KpiBox
                 label="Lieferanten aktiv"
-                chip="MONAT"
+                chip={periodenChip}
                 value={`${suppliersWithEntries} / ${activeSuppliers.length}`}
-                sub={`${suppliersWithEntries} mit Einträgen von ${activeSuppliers.length} verfügbaren`}
+                sub={`${suppliersWithEntries} mit Einträgen von ${activeSuppliers.length} verfügbaren · Klick für Liste`}
                 icon={CheckCircle2}
                 variant={suppliersWithEntries > 0 ? 'ok' : 'muted'}
+                onClick={() => setKpiDialog('lieferanten')}
+                testId="kpi-lieferanten"
               />
             </div>
 
@@ -2561,15 +2900,38 @@ export default function WarenrechnungenPage() {
             <Dialog open={kpiDialog === 'direkt'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
               <DialogContent className="max-w-sm" aria-describedby={undefined} data-testid="dialog-kpi-direkt">
                 <DialogHeader>
-                  <DialogTitle className="text-sm">Direkter Warenaufwand · {monthLabel}</DialogTitle>
+                  <DialogTitle className="text-sm">Direkter Warenaufwand · {periodenLabel}</DialogTitle>
                 </DialogHeader>
+                <div className="grid grid-cols-2 gap-1 mb-1">
+                  {([['konto', 'nach Konto'], ['lieferant', 'nach Lieferant']] as const).map(([k, lbl]) => (
+                    <button
+                      key={k}
+                      onClick={() => setDirektAnsicht(k)}
+                      className={cn('h-7 rounded-md border text-xs font-medium transition-colors',
+                        direktAnsicht === k ? 'border-foreground bg-foreground text-background' : 'border-border hover:bg-muted')}
+                      data-testid={`direkt-switch-${k}`}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
                 <div className="text-sm">
-                  {kontoAufbau.map(r => (
+                  {direktAnsicht === 'konto' ? kontoAufbau.map(r => (
                     <div key={r.konto} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
                       <span><span className="font-mono font-semibold">{r.konto}</span> <span className="text-muted-foreground">{r.name}</span></span>
                       <span className="tabular-nums">CHF {fmtChf(r.net)}</span>
                     </div>
-                  ))}
+                  )) : (
+                    <div className="max-h-64 overflow-y-auto pr-1">
+                      {lieferantAufbau.map(r => (
+                        <div key={r.name} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
+                          <span className="truncate pr-2">{r.name}</span>
+                          <span className="tabular-nums shrink-0">CHF {fmtChf(r.net)}</span>
+                        </div>
+                      ))}
+                      {lieferantAufbau.length === 0 && <p className="text-xs text-muted-foreground py-2">Keine Einträge in der Periode.</p>}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-2 mt-1 border-t border-border font-semibold">
                     <span>Summe (Konten 4020–4070)</span>
                     <span className="tabular-nums">CHF {fmtChf(monthDirektNet)}</span>
@@ -2580,7 +2942,7 @@ export default function WarenrechnungenPage() {
             <Dialog open={kpiDialog === 'umsatz'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
               <DialogContent className="max-w-md" aria-describedby={undefined} data-testid="dialog-kpi-umsatz">
                 <DialogHeader>
-                  <DialogTitle className="text-sm">Kum. Umsatz (netto) · {monthLabel}</DialogTitle>
+                  <DialogTitle className="text-sm">Kum. Umsatz (netto) · {periodenLabel}</DialogTitle>
                 </DialogHeader>
                 {umsatzTage === null ? (
                   <p className="text-xs text-muted-foreground py-3">Wird geladen…</p>
@@ -2623,6 +2985,87 @@ export default function WarenrechnungenPage() {
                 })()}
               </DialogContent>
             </Dialog>
+            <Dialog open={kpiDialog === 'heute'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
+              <DialogContent className="max-w-sm" aria-describedby={undefined} data-testid="dialog-kpi-heute">
+                <DialogHeader>
+                  <DialogTitle className="text-sm">Warenkosten heute · {formatDateLong(todayStr)}</DialogTitle>
+                </DialogHeader>
+                <div className="text-sm">
+                  {heuteAufbau.map(r => (
+                    <div key={r.name} className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
+                      <span className="truncate pr-2">{r.name}</span>
+                      <span className="tabular-nums shrink-0">CHF {fmtChf(r.net)}</span>
+                    </div>
+                  ))}
+                  {heuteAufbau.length === 0 && <p className="text-xs text-muted-foreground py-2">Heute keine Warenkosten erfasst.</p>}
+                  {heuteAufbau.length > 0 && (
+                    <div className="flex items-center justify-between pt-2 mt-1 border-t border-border font-semibold">
+                      <span>Summe</span>
+                      <span className="tabular-nums">CHF {fmtChf(todayNet)}</span>
+                    </div>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={kpiDialog === 'wkq'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
+              <DialogContent className="max-w-sm" aria-describedby={undefined} data-testid="dialog-kpi-wkq">
+                <DialogHeader>
+                  <DialogTitle className="text-sm">WKQ · Rechenweg · {periodenLabel}</DialogTitle>
+                </DialogHeader>
+                {monthPct === null ? (
+                  <p className="text-xs text-muted-foreground py-2">Kein Umsatz in der Periode — WKQ nicht berechenbar.</p>
+                ) : (
+                  <div className="text-sm">
+                    <div className="flex items-center justify-between py-1.5 border-b border-border/40">
+                      <span>Direkter Warenaufwand (WKQ-Basis)</span>
+                      <span className="tabular-nums">CHF {fmtChf(monthTotals.relevantNet)}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1.5 border-b border-border/40">
+                      <span>÷ Kum. Umsatz (netto)</span>
+                      <span className="tabular-nums">CHF {fmtChf(totalRevenue)}</span>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 mt-1 border-t border-border font-semibold">
+                      <span>= WKQ</span>
+                      <span className="tabular-nums">{fmtPct(monthPct)}</span>
+                    </div>
+                    <p className={cn('text-xs mt-2', monthPct <= 30 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                      Ziel ≤ 30 % — {monthPct <= 30 ? '✓ im Zielbereich' : '↑ über Ziel'}
+                    </p>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+            <Dialog open={kpiDialog === 'lieferanten'} onOpenChange={o => { if (!o) setKpiDialog(null); }}>
+              <DialogContent className="max-w-md" aria-describedby={undefined} data-testid="dialog-kpi-lieferanten">
+                <DialogHeader>
+                  <DialogTitle className="text-sm">Lieferanten aktiv · {periodenLabel}</DialogTitle>
+                </DialogHeader>
+                <div className="text-sm space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Mit Einträgen ({stats.supplierTotals.length})</p>
+                    <div className="max-h-56 overflow-y-auto pr-1">
+                      {stats.supplierTotals.map(t => (
+                        <div key={t.supplierName} className="flex items-center justify-between py-1 border-b border-border/30 last:border-0">
+                          <span className="truncate pr-2">{t.supplierName}</span>
+                          <span className="tabular-nums text-muted-foreground shrink-0">CHF {fmtChf(t.totalNet)}</span>
+                        </div>
+                      ))}
+                      {stats.supplierTotals.length === 0 && <p className="text-xs text-muted-foreground py-1">Keine Einträge in der Periode.</p>}
+                    </div>
+                  </div>
+                  {lieferantenOhne.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Ohne Einträge ({lieferantenOhne.length})</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {lieferantenOhne.map(n => (
+                          <span key={n} className="text-[11px] rounded-full border border-border px-2 py-0.5 text-muted-foreground">{n}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* ── Tab: Erfassung ────────────────────────────────────────── */}
             {tab === 'erfassung' && (
@@ -2646,7 +3089,7 @@ export default function WarenrechnungenPage() {
                   >
                     <span className="text-sm font-semibold flex items-center gap-2">
                       <Truck className="h-4 w-4" style={{ color: tenant.color }} />
-                      Lieferanten-Übersicht · {monthLabel}
+                      Lieferanten-Übersicht · {periodenLabel}
                     </span>
                     {lieferantenOffen
                       ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -2656,11 +3099,11 @@ export default function WarenrechnungenPage() {
                   <div className={cn('px-3 pb-3', !lieferantenOffen && 'hidden')}>
                     <WarenLieferantenUebersicht
                       tenantId={tenantId}
-                      entries={entries}
+                      entries={viewEntries}
                       suppliers={suppliers}
                       canEdit={canEdit}
                       canUpload={canCreate}
-                      monthLabel={monthLabel}
+                      monthLabel={periodenLabel}
                       onUploadFor={handleUploadFor}
                     />
                   </div>
@@ -3566,77 +4009,9 @@ export default function WarenrechnungenPage() {
             {tab === 'analyse' && (
               <div className="space-y-3">
 
-                {/* ── Zeitraum-Auswahl ─────────────────────────────────────── */}
+                {/* ── Export/Ziel-Leiste (Perioden-Steuerung NUR oben rechts im Seitenkopf) ── */}
                 <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  {/* EINE kompakte Zeile: zentrierte Periode (klickbar → Auswahl) + Blätter-Pfeile; rechts Export/Ziel */}
-                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2 p-2 bg-muted/20">
-                    <div className="hidden sm:block" />
-                    <div className="flex items-center justify-center gap-1 min-w-0" data-testid="analyse-periode-zeile">
-                      {analyseMode !== 'multi_month' && (
-                        <button
-                          onClick={analyseMode === 'week' ? prevAWeek : analyseMode === 'month' ? prevAMonth : () => setARangeYear(y => y - 1)}
-                          className="p-1.5 rounded-lg hover:bg-muted transition-colors"
-                          data-testid="analyse-periode-prev"
-                        ><ChevronLeft className="h-4 w-4" /></button>
-                      )}
-                      <Popover open={periodePickerOpen} onOpenChange={setPeriodePickerOpen}>
-                        <PopoverTrigger asChild>
-                          <button
-                            data-testid="analyse-periode-trigger"
-                            title="Periode wählen (Woche / Monat / Mehrere Monate / Jahr / YTD)"
-                            className="inline-flex items-center gap-1 px-2 h-8 rounded-lg font-semibold text-sm hover:bg-muted transition-colors min-w-[120px] justify-center"
-                          >
-                            <span className="truncate">{analyseMode === 'year' ? aRangeYear : analyseRangeLabel}</span>
-                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-3 space-y-2" align="center">
-                          <p className="text-xs font-medium text-muted-foreground">Periode</p>
-                          <select
-                            value={analyseMode}
-                            onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
-                            data-testid="analyse-mode-select"
-                            className="h-8 w-full rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
-                          >
-                            {([
-                              ['week',        'Woche'],
-                              ['month',       'Monat'],
-                              ['multi_month', 'Mehrere Monate'],
-                              ['year',        'Jahr'],
-                              ['ytd',         'YTD'],
-                            ] as [AnalyseMode, string][]).map(([m, label]) => (
-                              <option key={m} value={m}>{label}</option>
-                            ))}
-                          </select>
-                          {analyseMode === 'multi_month' && (
-                            <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 text-sm pt-1">
-                              <span className="text-muted-foreground text-xs">Von</span>
-                              <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                                {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                              </select>
-                              <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                                {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                              </select>
-                              <span className="text-muted-foreground text-xs">Bis</span>
-                              <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                                {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                              </select>
-                              <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                                {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                              </select>
-                            </div>
-                          )}
-                        </PopoverContent>
-                      </Popover>
-                      {analyseMode !== 'multi_month' && (
-                        <button
-                          onClick={analyseMode === 'week' ? nextAWeek : analyseMode === 'month' ? nextAMonth : () => setARangeYear(y => y + 1)}
-                          disabled={analyseMode === 'week' ? isCurrentAWeek : analyseMode === 'month' ? isCurrentAMonth : aRangeYear >= today.getFullYear()}
-                          className="p-1.5 rounded-lg hover:bg-muted transition-colors disabled:opacity-30"
-                          data-testid="analyse-periode-next"
-                        ><ChevronRight className="h-4 w-4" /></button>
-                      )}
-                    </div>
+                  <div className="flex items-center justify-end gap-2 p-2 bg-muted/20">
                     <div className="flex items-center justify-center sm:justify-end gap-3">
                       {canExport && (
                         <button
@@ -5112,7 +5487,12 @@ export default function WarenrechnungenPage() {
                 <section className="bg-card border border-border rounded-xl overflow-hidden">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
                     <Scale className="h-4 w-4" style={{ color: tenant.color }} />
-                    <h2 className="text-sm font-semibold">Warenrechnungen ↔ Buchhaltung · {MONTHS_LONG[month - 1]} {year}</h2>
+                    <h2 className="text-sm font-semibold">Warenrechnungen ↔ Buchhaltung · {periodenLabel}</h2>
+                    {granular === 'woche' && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="abgleich-wochen-hinweis">
+                        Wochenansicht: Vergleich nur mit Buchungen dieser Woche{wochenEnde.slice(0, 7) !== monthKey ? ` — Anteil im ${monthLabel}` : ''}; Abschluss-Markierungen gelten pro Monat.
+                      </span>
+                    )}
                     <InfoTip text={<span>Erfasste Warenrechnungen (netto) gegen die importierten Buchhaltungskosten. Mit Buchungszeilen («Ist Kosten Buchhaltung»-Import mit Kontoblatt/Journal) erfolgt der Abgleich <b>pro Lieferant</b> über Buchungstext ↔ Name/Alias; ohne Buchungszeilen nur Total gegen die Erfolgsrechnung. Verglichen wird das <b>Gesamt-Total pro Lieferant über ALLE Konten</b> (Warenkosten + Betriebskosten) — nur so stimmt der Vergleich mit dem Kontoblatt.</span>} />
                   </div>
 
@@ -5261,7 +5641,7 @@ export default function WarenrechnungenPage() {
                               {abgleich.zeilen.map(z => {
                                 const offen = abgleichOffen === z.lieferant;
                                 const kannDrilldown = abgleich.mode === 'lieferanten';
-                                const erklaertRaw = fibuGeladen ? fibuState.erklaert[z.lieferant] : undefined;
+                                const erklaertRaw = fibuGeladen && granular === 'monat' ? fibuState.erklaert[z.lieferant] : undefined;
                                 // Re-Bewertung nach Kostenblatt-Re-Import: passt der beim
                                 // Abschluss festgehaltene Betrag nicht mehr zur AKTUELLEN
                                 // Differenz (z.B. weil umgebuchte Zeilen aus dem Journal
@@ -5335,7 +5715,7 @@ export default function WarenrechnungenPage() {
                                           )}
                                         </>
                                       )}
-                                      {canEdit && fibuGeladen && z.status !== 'keine-fibu' && (
+                                      {canEdit && fibuGeladen && granular === 'monat' && z.status !== 'keine-fibu' && (
                                         <ErklaertMarkierung
                                           lieferant={z.lieferant}
                                           // RAW-Marker (auch wenn veraltet): «Markierung aufheben»
@@ -5385,7 +5765,7 @@ export default function WarenrechnungenPage() {
                                       {fibuGeladen && (
                                         <DiffZusammensetzung
                                           lieferant={z.lieferant}
-                                          invoices={entries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
+                                          invoices={fibuEntries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
                                           buchungen={z.buchungen}
                                           gruppen={fibuState.gruppen}
                                           warenGrenze={warenGrenze}
@@ -5393,13 +5773,13 @@ export default function WarenrechnungenPage() {
                                       )}
                                       <FibuMatchBereich
                                         lieferant={z.lieferant}
-                                        invoices={entries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
+                                        invoices={fibuEntries.filter(e => abgleichResolver(e.supplierName) === z.lieferant)}
                                         buchungen={z.buchungen}
                                         state={fibuState}
                                         stateGeladen={fibuGeladen}
                                         toleranz={fibuToleranz}
                                         onToleranzChange={speichereToleranz}
-                                        onMutate={persistFibuState}
+                                        onMutate={persistFibuStateView}
                                         warenGrenze={warenGrenze}
                                         onOpenReceipt={openReceipt}
                                       />
@@ -6302,6 +6682,8 @@ export default function WarenrechnungenPage() {
                     <tr className="border-b border-border text-muted-foreground">
                       <th className="text-left  px-2 py-1.5 font-medium">Artikel</th>
                       <th className="text-left  px-2 py-1.5 font-medium">Warengruppe</th>
+                      <th className="text-right px-2 py-1.5 font-medium">Menge</th>
+                      <th className="text-right px-2 py-1.5 font-medium">Einzelpreis</th>
                       <th className="text-right px-2 py-1.5 font-medium">Netto</th>
                       <th className="text-left  px-2 py-1.5 font-medium">Konto</th>
                     </tr>
@@ -6311,6 +6693,12 @@ export default function WarenrechnungenPage() {
                       <tr key={i} className="border-b border-border/30">
                         <td className="px-2 py-1 max-w-[220px] truncate" title={p.artNr ? `Art. ${p.artNr}` : undefined}>{p.bezeichnung}</td>
                         <td className="px-2 py-1 text-muted-foreground">{p.status === 'pfand' ? 'Pfand/Gebinde' : p.warengruppe || '—'}</td>
+                        <td className="px-2 py-1 text-right tabular-nums" data-testid={`position-menge-${i}`}>
+                          {p.menge ? `${Math.round(p.menge * 100) / 100}${p.einheit ? ` ${p.einheit}` : ''}` : '—'}
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums" data-testid={`position-einzelpreis-${i}`}>
+                          {p.preis ? fmtChf(p.preis) : '—'}
+                        </td>
                         <td className="px-2 py-1 text-right tabular-nums">{fmtChf(p.positionspreis)}</td>
                         <td className="px-2 py-1">
                           <Select

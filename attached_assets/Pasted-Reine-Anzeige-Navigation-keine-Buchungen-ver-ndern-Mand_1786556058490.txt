@@ -1,0 +1,40 @@
+Reine Anzeige/Navigation, keine Buchungen verändern. Mandantengetrennt, „leer statt 0".
+Kontrollwerte Juli Oliv (dürfen sich nicht ändern): Direkter Warenaufwand 75'176.13,
+WKQ 28.9 %, Kum. Umsatz 260'174.54, Lieferanten 21/22.
+
+=== 1) ALLE 5 KPI-BOXEN KLICKBAR MIT DETAIL-POPUP ===
+Jede der oberen Boxen öffnet bei Klick ein Detail-Popup:
+- „Warenkosten heute" → Aufbau der heutigen Warenkosten (nach Lieferant, Summe = Box).
+- „Direkter Warenaufwand (Monat)" → Aufbau (siehe Punkt 2, mit Konto/Lieferant-Switch).
+- „WKQ Monat" → Rechenweg zeigen: direkter Warenaufwand 75'176.13 ÷ Kum. Umsatz
+  260'174.54 = 28.9 %. Ziel ≤ 30 %.
+- „Kum. Umsatz (Monat)" → Food/Beverage + Tagesliste (wie bisher).
+- „Lieferanten aktiv (Monat)" → Liste der aktiven Lieferanten mit Einträgen (21) und
+  darunter, welche(r) der 22 im Monat KEINE Einträge hat.
+Popup schliessbar (X / Klick ausserhalb / Escape). Werte mit 0 weglassen (leer statt 0).
+
+=== 2) DIREKTER-WARENAUFWAND-POPUP: SWITCH KONTO ↔ LIEFERANT ===
+- Im Popup „Direkter Warenaufwand" ein Umschalter „nach Konto | nach Lieferant".
+- „nach Konto" (wie bisher): 4020 Wein · 4030 Bier · 4040 Spirituosen · 4050 Mineral ·
+  4060 Küche · 4070 Kaffee/Tee, Summe 75'176.13.
+- „nach Lieferant" (neu): pro Lieferant der direkte-Warenaufwand-Anteil (nur 4020–4070),
+  absteigend sortiert, Summe ebenfalls 75'176.13.
+
+=== 3) WOCHEN-/MONATSANSICHT FÜR DIE GANZE WARENRECHNUNGEN-SEITE ===
+- Oben neben „Juli 2026" eine Umschaltung der Granularität: Woche / Monat.
+- Die Auswahl wirkt auf die GANZE Warenrechnungen-Seite: KPI-Boxen, Erfassungs-Liste,
+  Lieferanten-Übersicht und FIBU-Abgleich rechnen alle auf die gewählte Periode.
+- Bei Wochenansicht: KPI-Boxen und Totale beziehen sich auf die gewählte Woche
+  (Kum. Umsatz und WKQ entsprechend auf die Woche umgerechnet — nie durch 0 teilen).
+
+=== 4) PERIODEN-NAVIGATION: IMMER DROPDOWN + PFEILE ===
+- Bei JEDER Monats- und Wochenauswahl (Warenrechnungen-Kopf; konsistent auch mit dem
+  bereits gebauten Analyse-Tab) immer BEIDES anbieten:
+  • die Periode als anklickbares Dropdown (direkt zu einer Periode springen), UND
+  • Pfeile links/rechts zum Blättern (am Rand deaktiviert).
+- Kompakt, zentriert, responsive.
+
+=== ABSCHLUSS ===
+Reine Anzeige/Navigation. Kontrollwerte Juli prüfen (75'176.13 / 28.9 % / 260'174.54 /
+21/22). Mir den neuen Kopf + ein geöffnetes „Lieferanten aktiv"-Popup und den
+Konto/Lieferant-Switch zeigen.

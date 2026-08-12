@@ -14,3 +14,8 @@ description: Pfand/Leergut/Gebinde wird universal auf echtes Konto 4800 gebucht;
 - Legacy-«Depot»-Splits in Altdaten NIE migrieren/umschreiben — alle Leser behandeln beide identisch.
 - Neue Konsumenten, die Konten klassifizieren, müssen istPfandKonto nutzen, nie `=== 'Depot'` oder Nummernkreis allein.
 - 4800 ist regel-lernbar (artikelKonten) — Pfand-Artikel sind lieferantenübergreifend immer 4800.
+
+## Universal-Zwangsregel (08/2026, verschärft)
+- `istZwingendPfand` (MwSt-Code 0 ODER starke Kennwörter inkl. FGG ODER Pfand-WARENGRUPPE wie «Leergut») läuft VOR gelernter Artikel-Zuordnung UND vor der Warengruppen-Tabelle — gespeicherte/gelernte 6040-/Warenkonto-Zuordnungen können Pfand nicht mehr überstimmen.
+- `erzwingePfandPosition` als Post-Pass in positionenAusRechnung, uebernehmeManuelleKontierung und im Positionen-Dialog-Save: normalisiert JEDEN Zwangs-Pfandfall kanonisch (konto null, status pfand, manuell entfernt) — auch inkonsistenten Altbestand (status pfand mit gesetztem Konto), sonst zählt kontoSplitsAusPositionen das Konto weiter.
+- Schwache Kennwörter (gebinde/harasse/container/fass) bleiben Fallback bei unbekannter Warengruppe — Bier «… Fass 20L»/«… Container» mit gemappter Gruppe bleibt Warenkonto.

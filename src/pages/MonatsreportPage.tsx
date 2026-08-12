@@ -41,9 +41,7 @@ import {
 import type { CockpitBudgetPosition } from '@/types/budget';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 import { exportCockpitMixedPDF, naechsterFrame, type CockpitExportPart } from '@/lib/cockpit-pdf-export';
-import {
-  buildWochenPdfModel, buildVerlaufPdfModel, buildJahresvergleichPdfModel, exportCockpitReportPdf,
-} from '@/lib/cockpit-report-pdf';
+import { buildWochenPdfModel, buildVerlaufPdfModel } from '@/lib/cockpit-report-pdf';
 import { getBranding } from '@/lib/pl-branding';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -944,6 +942,9 @@ export default function MonatsreportPage() {
   // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
   //    Wochen (quer, Ist|Budget|Δ), optional Wochenverlauf als weitere Seite.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  /** Frage vor JEDEM Export: Waren-Block mitexportieren? */
+  const [warenFrageOffen, setWarenFrageOffen] = useState(false);
+  const [warenFrageModus, setWarenFrageModus] = useState<'einzel' | 'auswahl'>('einzel');
   const [expAktuell, setExpAktuell] = useState(true);
   const [expVierWochen, setExpVierWochen] = useState(false);
   const [expVerlauf, setExpVerlauf] = useState(false);
@@ -1286,70 +1287,58 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
   // Hinweis: Die früheren PDF-Fussnoten/-Legenden sind bewusst entfernt —
   // das Report-Design zeigt nur Kopfband + Tabelle + schmale Fusszeile.
 
-  /** Wochen-Spalten der 2-Wochen-Ansicht (Vorwoche + Woche) fürs Vektor-PDF. */
-  const wochePdfModel = useCallback(() => {
-    if (!daten) return null;
-    return buildWochenPdfModel([
-      {
-        rows: datenPrev?.rows ?? null,
-        header: datenPrev?.weekLabel ?? 'Vorwoche',
-        sub: datenPrev?.weekFrom && datenPrev?.weekTo
-          ? `${fmtDate(datenPrev.weekFrom)}–${fmtDate(datenPrev.weekTo)}` : null,
-      },
-      { rows: daten.rows, header: daten.weekLabel ?? 'Woche', sub: wocheRange || null },
-    ], {
-      reportTyp: 'Wochenübersicht',
-      zeitraum: `${MONATE[month - 1]} ${year}${daten.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
-    });
-  }, [daten, datenPrev, wocheRange, month, year]);
+  /** Rastert die aktive Ansicht 1:1 «wie angezeigt» als Export-Teil. */
+  const aktuelleAnsichtRaster = useCallback((): CockpitExportPart | null => {
+    const refs: Record<string, React.RefObject<HTMLDivElement>> = {
+      jahr: jahrPanelRef, monat: monatPanelRef, woche: wochePanelRef, verlauf: verlaufPanelRef,
+    };
+    const el = refs[activeTab]?.current;
+    if (!el) return null;
+    const titel: Record<string, string> = {
+      jahr: 'Jahresübersicht', monat: 'Monatsübersicht',
+      woche: 'Wochenübersicht', verlauf: 'Wochenverlauf',
+    };
+    const subtitle =
+      activeTab === 'jahr' ? (jahrMeta?.subtitle ?? `${year}`)
+        : activeTab === 'verlauf' ? (verlaufMeta?.subtitle ?? `${year}`)
+          : activeTab === 'woche'
+            ? `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`
+            : `${MONATE[month - 1]} ${year}`;
+    return {
+      kind: 'raster', element: el,
+      opts: { title: `Cockpit — ${titel[activeTab] ?? ''}`, subtitle, fileName: '' },
+    };
+  }, [activeTab, jahrMeta, verlaufMeta, year, month, daten, wocheRange]);
 
-  /** Monatsübersicht als strukturiertes Vektor-Modell (gleicher Stil wie Woche). */
-  const monatPdfModel = useCallback(() => {
-    if (!daten) return null;
-    return buildWochenPdfModel(
-      [{ rows: daten.rows, header: `${MONATE[month - 1]} ${year}`, sub: null }],
-      {
-        reportTyp: 'Monatsübersicht',
-        zeitraum: `${MONATE[month - 1]} ${year}`,
-        granularity: 'monat',
-      });
-  }, [daten, month, year]);
+  /** Lädt die Waren-Daten des gewählten Monats und liefert den PDF-Zeichner. */
+  const ladeWarenTeil = useCallback(async (): Promise<CockpitExportPart> => {
+    const mod = await import('@/lib/cockpit-waren-block');
+    const heuteIso = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-${String(heute.getDate()).padStart(2, '0')}`;
+    const wd = await mod.ladeWarenBlockDaten(tenantId, year, month, heuteIso);
+    return { kind: 'zeichner', zeichne: pdf => mod.zeichneWarenBlock(pdf, wd) };
+  }, [tenantId, year, month, heute]);
 
-  // PDF-Export der aktiven Ansicht — ALLE Reporttypen im selben Vektor-Stil.
-  const handlePdfExport = useCallback(async () => {
+  // PDF-Export der aktiven Ansicht — 1:1 wie angezeigt (DOM-Raster), optional
+  // mit Waren-Block (Frage vorab im Dialog).
+  const handlePdfExport = useCallback(async (mitWaren: boolean) => {
     const branding = getBranding(tenantId);
-    let model = null;
-    let fileName = '';
-    if (activeTab === 'woche') {
-      model = wochePdfModel();
-      fileName = `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`;
-    } else if (activeTab === 'verlauf') {
-      if (verlaufDatenRef.current) {
-        model = buildVerlaufPdfModel(verlaufDatenRef.current, {
-          zeitraum: verlaufMeta?.subtitle ?? `${year}`,
-        });
-        fileName = verlaufMeta?.fileName ?? `cockpit-wochenverlauf-${year}`;
-      }
-    } else if (activeTab === 'monat') {
-      model = monatPdfModel();
-      fileName = `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`;
-    } else {
-      const jd = jahrDatenRef.current;
-      if (jd) {
-        model = buildJahresvergleichPdfModel(jd, {
-          zeitraum: jahrMeta?.subtitle ?? `${jd.curYear} vs. ${jd.vjYear}`,
-          spaltenHeader: jd.modus === 'ytd' ? `YTD ${jd.curYear}` : `${jd.curYear}`,
-        });
-        fileName = jahrMeta?.fileName ?? `cockpit-jahresvergleich-${jd.curYear}`;
-      }
-    }
-    if (!model) {
+    const teil = aktuelleAnsichtRaster();
+    if (!teil) {
       toast({ title: 'PDF-Export nicht möglich', description: 'Ansicht ist noch nicht geladen.', variant: 'destructive' });
       return;
     }
+    const mk = `${year}-${String(month).padStart(2, '0')}`;
+    const fileName =
+      activeTab === 'jahr' ? (jahrMeta?.fileName ?? `cockpit-jahresvergleich-${year}`)
+        : activeTab === 'verlauf' ? (verlaufMeta?.fileName ?? `cockpit-wochenverlauf-${year}`)
+          : activeTab === 'woche' ? `cockpit-wochenuebersicht-${mk}`
+            : `cockpit-monatsuebersicht-${mk}`;
     setPdfLaeuft(true);
     try {
-      await exportCockpitReportPdf([model], branding, fileName, heute);
+      const parts: CockpitExportPart[] = [teil];
+      if (mitWaren) parts.push(await ladeWarenTeil());
+      await naechsterFrame();
+      await exportCockpitMixedPDF(parts, branding, fileName, heute);
     } catch (e) {
       toast({
         title: 'PDF-Export fehlgeschlagen',
@@ -1360,7 +1349,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       setPdfLaeuft(false);
     }
   }, [activeTab, month, year, verlaufMeta, jahrMeta, heute, toast,
-    tenantId, wochePdfModel, monatPdfModel]);
+    tenantId, aktuelleAnsichtRaster, ladeWarenTeil]);
 
   /** Pollt, bis cond wahr ist (Export-Hilfe: off-screen-Inhalte fertig gerendert). */
   const warteAuf = async (cond: () => boolean, timeoutMs = 20000): Promise<void> => {
@@ -1376,7 +1365,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
    * angehakten Teilen — aktuelle Ansicht, letzte 4 Wochen (Querformat,
    * Ist|Budget|Δ je Woche) und/oder Wochenverlauf.
    */
-  const handleAuswahlExport = useCallback(async () => {
+  const handleAuswahlExport = useCallback(async (mitWaren: boolean) => {
     if (!expAktuell && !expVierWochen && !expVerlauf) {
       toast({ title: 'Nichts ausgewählt', description: 'Bitte mindestens einen Bestandteil anhaken.' });
       return;
@@ -1390,9 +1379,9 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       // 1) Aktuelle Ansicht: Wochenübersicht = strukturierter Vektor-Report,
       //    Monatsübersicht = weiterhin Raster «wie angezeigt».
       if (expAktuell) {
-        const model = activeTab === 'woche' ? wochePdfModel() : monatPdfModel();
-        if (!model) throw new Error('Ansicht ist noch nicht geladen.');
-        pages.push({ kind: 'model', model });
+        const teil = aktuelleAnsichtRaster();
+        if (!teil) throw new Error('Ansicht ist noch nicht geladen.');
+        pages.push(teil);
       }
 
       // 2) Letzte 4 Wochen: gewählte Woche + 3 Vorwochen laden (jede Woche =
@@ -1460,6 +1449,8 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         });
       }
 
+      if (mitWaren) pages.push(await ladeWarenTeil());
+
       await naechsterFrame();
       // Nur «aktuelle Ansicht» angehakt → reportspezifischer Dateiname
       // (wie der Direkt-Export), sonst generischer Sammelname.
@@ -1480,7 +1471,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       setPdfLaeuft(false);
     }
   }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
-    heute, budgetModus, year, month, monatPdfModel, wochePdfModel, verlaufMeta, toast]);
+    heute, budgetModus, year, month, aktuelleAnsichtRaster, ladeWarenTeil, verlaufMeta, toast]);
 
   return (
     <PageShell>
@@ -1546,7 +1537,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   </label>
                   <Button
                     size="sm" className="w-full h-8"
-                    onClick={handleAuswahlExport}
+                    onClick={() => { setExportMenuOpen(false); setWarenFrageModus('auswahl'); setWarenFrageOffen(true); }}
                     disabled={pdfLaeuft || (!expAktuell && !expVierWochen && !expVerlauf)}
                     data-testid="button-pdf-export-los"
                   >
@@ -1557,7 +1548,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             ) : (
               <Button
                 variant="outline" size="sm" className="h-8 gap-1.5"
-                onClick={handlePdfExport}
+                onClick={() => { setWarenFrageModus('einzel'); setWarenFrageOffen(true); }}
                 disabled={pdfLaeuft}
                 data-testid="button-pdf-export"
               >
@@ -1878,6 +1869,41 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
             />
           </TabsContent>
         </Tabs>
+
+        {/* ── Frage vor dem Export: Waren-Block mitexportieren? ── */}
+        <Dialog open={warenFrageOffen} onOpenChange={setWarenFrageOffen}>
+          <DialogContent className="max-w-md" data-testid="dialog-waren-frage">
+            <DialogHeader>
+              <DialogTitle>Waren-Block mitexportieren?</DialogTitle>
+              <DialogDescription>
+                Lieferanten-Übersicht · kumulierte Warenkosten/Umsatz · Anomalie-Analyse
+                — für {MONATE[month - 1]} {year}, als zusätzliche Seiten im PDF.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline" size="sm"
+                onClick={() => {
+                  setWarenFrageOffen(false);
+                  void (warenFrageModus === 'auswahl' ? handleAuswahlExport(false) : handlePdfExport(false));
+                }}
+                data-testid="button-waren-nein"
+              >
+                Nein, ohne Waren-Block
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setWarenFrageOffen(false);
+                  void (warenFrageModus === 'auswahl' ? handleAuswahlExport(true) : handlePdfExport(true));
+                }}
+                data-testid="button-waren-ja"
+              >
+                Ja, mitexportieren
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Warenkosten-Block (folgt dem Cockpit-Monat) ── */}
         <div className="pdf-hide">

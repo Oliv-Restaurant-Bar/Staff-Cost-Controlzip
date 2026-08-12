@@ -24,3 +24,10 @@ id = "fkumhNp21ZakiPyElt1Oe"
 uri = "file://review-package.zip"
 type = "unspecified"
 title = "Review-Paket für Claude (3.6 MB)"
+
+[[outputs]]
+id = "-VWM-OxkdnAXmfEL4_zXm"
+uri = "file://screenshots/cockpit-monatsuebersicht-2026-08.pdf"
+type = "pdf"
+title = "Cockpit-PDF August 2026 (Oliv) mit Waren-Block"
+description = "Seite 1: Monatsübersicht 1:1 wie angezeigt · Seiten 2–4: Lieferanten-Übersicht, kumulierte Warenkosten/Umsatz, Anomalie-Analyse pro KW."

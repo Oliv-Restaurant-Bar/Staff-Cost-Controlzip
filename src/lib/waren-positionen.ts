@@ -254,8 +254,29 @@ export function istPfandBezeichnungStark(bezeichnung: string | undefined): boole
     if (/^(pfand|leergut)[a-zäöü]*$/.test(tok)) return true;
     if (/^ifco[a-z0-9äöü-]*$/.test(tok)) return true; // Marken-Mehrwegkisten
     if (/^depot(s|gebühr(en)?)?$/.test(tok)) return true;
+    if (/^fgg$/.test(tok)) return true; // Feldschlösschen-Gebinde-Positionen («FGG Container/Fass», «FGG Harasse»)
   }
   return false;
+}
+
+/**
+ * Pfand-WARENGRUPPE (z.B. Feldschlösschen «Leergut», TG «Gebinde/Pfand»):
+ * die Gruppe selbst sagt Depot — sie darf NIE über die Warengruppen-Tabelle
+ * oder eine gelernte Artikel-Zuordnung auf 6040/ein Warenkonto laufen.
+ */
+export function istPfandWarengruppe(warengruppe: string | undefined): boolean {
+  if (!warengruppe) return false;
+  for (const tok of tokens(warengruppe)) {
+    if (/^(pfand|leergut|depot|gebinde|ladungsträger|ladungstraeger)[a-zäöü]*$/.test(tok)) return true;
+  }
+  return false;
+}
+
+/** Universelle Zwangs-Pfand-Erkennung (läuft VOR Artikel-/Warengruppen-Regeln). */
+export function istZwingendPfand(
+  p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
+): boolean {
+  return p.mwstCode === 0 || istPfandBezeichnungStark(p.bezeichnung) || istPfandWarengruppe(p.warengruppe);
 }
 
 /**
@@ -270,6 +291,7 @@ export function istPfandBezeichnungSchwach(bezeichnung: string | undefined): boo
     if (/^gebinde[a-zäöü]*$/.test(tok)) return true;
     if (/^harass(e|en)?$/.test(tok)) return true;
     if (/^container(s)?$/.test(tok)) return true; // z.B. «FGG Container/Fass»
+    if (/^f(a|ä)ss(er)?$/.test(tok) || tok === 'fass') return true; // Leer-Fässer (Bier «Lager Fass 20L» bleibt via Warengruppe Bier)
   }
   return false;
 }
@@ -288,6 +310,9 @@ export function kontoFuerPosition(
 ): PositionsKonto {
   if (p.mwstCode === 0) return { konto: null, status: 'pfand' }; // Pfand/Gebinde → neutral/Depot
   if (istPfandBezeichnungStark(p.bezeichnung)) return { konto: null, status: 'pfand' };
+  // Pfand-Warengruppe (z.B. «Leergut») schlägt die konfigurierte Tabelle —
+  // ein gespeichertes Mapping darf Pfand nie auf 6040/ein Warenkonto routen.
+  if (istPfandWarengruppe(p.warengruppe)) return { konto: null, status: 'pfand' };
   const g = normGruppe(p.warengruppe);
   if (g) {
     const regel = mapping.find(r => normGruppe(r.gruppe) === g);
@@ -310,9 +335,10 @@ export function kontoFuerPositionMitArtikel(
   mapping: WarengruppenMapping,
   artikelKonten?: ArtikelKontenMapping,
 ): PositionsKonto & { manuell?: boolean } {
-  if (p.mwstCode === 0) return { konto: null, status: 'pfand' };
-  // Manuelle Artikel-Zuordnung schlägt die TEXT-Pfand-Erkennung (explizite
-  // User-Entscheidung ist kein «Zweifel»); der harte MwSt-Code 0 bleibt davor.
+  // Universelle Pfand-Regel (MwSt 0 / starke Kennwörter / Pfand-Warengruppe)
+  // läuft VOR der gelernten Artikel-Zuordnung: Pfand ist IMMER 4800 —
+  // eine gespeicherte 6040-/Warenkonto-Zuordnung wird überschrieben.
+  if (istZwingendPfand(p)) return { konto: null, status: 'pfand' };
   const key = artikelKey(lieferant, p);
   const artikel = key ? artikelKonten?.[key] : undefined;
   if (artikel) return { konto: artikel, status: 'zugeordnet', manuell: true };
@@ -418,7 +444,22 @@ export function positionenAusRechnung(
       konto: pk.konto, status: pk.status,
       ...('manuell' in pk && pk.manuell ? { manuell: true } : {}),
     };
-  });
+  }).map(erzwingePfandPosition);
+}
+
+/**
+ * Zwangs-Pfand auf GESPEICHERTEN Positionen: läuft nach JEDER Kontierungs-
+ * Quelle (Auto, gelernte Artikel, übernommene manuelle Alt-Kontierung) —
+ * Pfand/Leergut steht IMMER auf 4800, nie auf 6040/einem Warenkonto.
+ */
+export function erzwingePfandPosition(p: GespeichertePosition): GespeichertePosition {
+  if (!istZwingendPfand(p)) return p;
+  // Kanonisch normalisieren — auch bereits als «pfand» markierte Altbestände
+  // mit gesetztem Konto (z.B. 6040) oder manuell-Flag werden bereinigt.
+  if (p.konto === null && p.status === 'pfand' && !p.manuell) return p;
+  const { manuell: _m, ...rest } = p;
+  void _m;
+  return { ...rest, konto: null, status: 'pfand' };
 }
 
 /** kontoSplits aus GESPEICHERTEN Positionen (nach manuellen Overrides) neu ableiten. */
@@ -462,7 +503,7 @@ export function uebernehmeManuelleKontierung(
     if (p.manuell) return p;
     const m = manuelle.get(posKey(p));
     return m ? { ...p, konto: m.konto, status: m.status, manuell: true } : p;
-  });
+  }).map(erzwingePfandPosition); // Alt-Kontierung darf Pfand nie zurück auf 6040 holen
 }
 
 export function normalizePositionenProRechnung(raw: unknown): PositionenProRechnung {

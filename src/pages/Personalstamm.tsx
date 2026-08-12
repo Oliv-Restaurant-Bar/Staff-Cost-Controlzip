@@ -100,6 +100,8 @@ import {
 import { getEffectiveIstQuelle } from '@/lib/personalkosten';
 import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { getEmployerCostRate } from '@/lib/employee-rate';
+import { ladeNoTimeTracking, setzeNoTimeTracking } from '@/lib/no-time-tracking';
+import { ueberstundenTotalCacheLeeren } from '@/lib/ueberstunden';
 import { TABLE, TABLE_SCROLL, TABLE_WRAP, TH, TH_NUM, TH_STICKY, TD, TD_NUM } from '@/components/ui/table-style';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -309,6 +311,10 @@ function emptyEmployee(id: string): Employee {
 
 const Personalstamm = () => {
   const { tenantId, tenantKey } = useTenant();
+  // «Keine Zeiterfassung erforderlich» — mandantengetrennte KV-Map (SSOT für
+  // Überstunden-Ausnahme); localStorage bleibt nur als Legacy-Fallback.
+  const [noTimeMap, setNoTimeMap] = useState<Record<string, true>>({});
+  useEffect(() => { let on = true; ladeNoTimeTracking(tenantId).then(m => { if (on) setNoTimeMap(m); }); return () => { on = false; }; }, [tenantId]);
   const { positions } = usePositions();
   const {
     role, isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
@@ -586,7 +592,7 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, emp.id);
     setEditNotes(local.notes);
     setEditActive(local.active);
-    setEditNoTimeTracking(local.no_time_tracking_required ?? false);
+    setEditNoTimeTracking(noTimeMap[emp.id] ?? local.no_time_tracking_required ?? false);
     setShowMobile('detail');
     setShowContractInfo(false);
     setOpenPersonal(false);
@@ -645,7 +651,7 @@ const Personalstamm = () => {
     const local = getLocalEntry(localData, selectedId);
     setEditNotes(local.notes);
     setEditActive(local.active);
-    setEditNoTimeTracking(local.no_time_tracking_required ?? false);
+    setEditNoTimeTracking(noTimeMap[selectedId] ?? local.no_time_tracking_required ?? false);
     setEditMode(false);
   };
 
@@ -808,6 +814,18 @@ const Personalstamm = () => {
       };
       setLocalData(newLocal);
       saveLocalData(newLocal);
+
+      // KV (mandantengetrennt) — SSOT für die Überstunden-Ausnahme; Fehler
+      // sichtbar melden, nie still verschlucken.
+      try {
+        const m = await setzeNoTimeTracking(tenantId, String(finalData.id), editNoTimeTracking);
+        setNoTimeMap(m);
+        // Cockpit-Zeile «Überstunden total» cached 5 min — Flag-Änderung
+        // muss sofort durchschlagen.
+        ueberstundenTotalCacheLeeren();
+      } catch {
+        toast.error('«Keine Zeiterfassung»-Flag konnte nicht gespeichert werden (Überstunden-Ausnahme evtl. nicht aktualisiert).');
+      }
 
       if (isNew) {
         // Neuer Mitarbeiter: Komplette Liste aus Supabase neu laden → Persistenz-Check
@@ -1663,7 +1681,7 @@ const Personalstamm = () => {
                           : <DataRow label="Wochenstunden" value={selectedEmp?.weeklyHours ? `${selectedEmp.weeklyHours} h` : '–'} />
                         }
                       </div>
-                      {canEditEmployees && selectedLocal.no_time_tracking_required && (
+                      {canEditEmployees && (selectedId ? noTimeMap[selectedId] ?? selectedLocal.no_time_tracking_required : selectedLocal.no_time_tracking_required) && (
                         <div className="flex items-center gap-1.5 text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2.5 py-1.5">
                           <Shield className="h-3 w-3 shrink-0" />
                           Keine Zeiterfassung erforderlich

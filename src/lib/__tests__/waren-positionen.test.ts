@@ -4,7 +4,8 @@ import {
   parseTransgourmetCsv, kontoFuerPosition, kontoSplitsFuerRechnung,
   kontoSplitsAusPositionen, positionenAusRechnung, offeneWarengruppen, uebernehmeManuelleKontierung,
   artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie, istGebuehrenPosition,
-  kontoFuerPositionMitArtikel, normalizeArtikelKonten,
+  kontoFuerPositionMitArtikel, normalizeArtikelKonten, erzwingePfandPosition,
+  type GespeichertePosition,
   normalizePreisHistorie, normalizePreisSchwelle, normalizeWarengruppenMapping,
   DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, normalizeMarktLieferantenMapping,
@@ -146,7 +147,7 @@ describe('Artikel → Konto (in der Vorschau gelernte Zuordnungen)', () => {
   const M = DEFAULT_WARENGRUPPEN_MAPPING;
 
   it('Vorrang: Pfand > Artikel > Warengruppe; Artikel-Treffer sind manuell', () => {
-    const konten = { 'tg|nr:77': '4050', 'tg|name:ifco liftlock': '4701' };
+    const konten = { 'tg|nr:77': '4050', 'tg|name:servietten weiss': '4701' };
     // Artikel-Zuordnung schlägt die Warengruppen-Tabelle (Wein 4020 → 4050):
     expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Wein', mwstCode: 2, artNr: '77', bezeichnung: 'X' }, M, konten))
       .toEqual({ konto: '4050', status: 'zugeordnet', manuell: true });
@@ -157,9 +158,38 @@ describe('Artikel → Konto (in der Vorschau gelernte Zuordnungen)', () => {
     expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Wein', mwstCode: 2, artNr: '99', bezeichnung: 'Y' }, M, konten).konto).toBe('4020');
     expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '99', bezeichnung: 'Y' }, M, konten).status).toBe('offen');
     // Name-Fallback ohne Art.-Nr. (case-/whitespace-tolerant):
-    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '', bezeichnung: ' IFCO  LiftLock ' }, M, konten).konto).toBe('4701');
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '', bezeichnung: ' Servietten  weiss ' }, M, konten).konto).toBe('4701');
+    // Universal-Pfand schlägt JEDE gelernte Zuordnung (Ifco/Leergut → immer 4800):
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '', bezeichnung: 'IFCO LiftLock' }, M, { 'tg|name:ifco liftlock': '4701' }))
+      .toEqual({ konto: null, status: 'pfand' });
+    expect(kontoFuerPositionMitArtikel('FS', { warengruppe: 'Leergut', mwstCode: 1, artNr: '88', bezeichnung: 'FGG Harasse 5+24' }, M, { 'fs|nr:88': '6040' }))
+      .toEqual({ konto: null, status: 'pfand' });
     // Anderer Lieferant: Zuordnung gilt NICHT (mandanten-/lieferantengetrennt):
     expect(kontoFuerPositionMitArtikel('Prodega', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '77', bezeichnung: 'X' }, M, konten).status).toBe('offen');
+  });
+
+  it('erzwingePfandPosition normalisiert JEDEN Zwangs-Pfandfall (auch Altbestand)', () => {
+    const base: GespeichertePosition = {
+      artNr: '1', bezeichnung: 'FGG Harasse 5+24', warengruppe: 'Leergut',
+      menge: 1, einheit: '', preis: 0, positionspreis: -24.4, mwstBetrag: 0, mwstCode: 0,
+      konto: '6040', status: 'zugeordnet', manuell: true,
+    };
+    // Alte manuelle 6040-Kontierung wird überschrieben (konto null, manuell weg):
+    expect(erzwingePfandPosition(base)).toEqual({ ...((({ manuell: _m, ...r }) => r)(base)), konto: null, status: 'pfand' });
+    // Inkonsistenter Altbestand: status pfand, aber konto 6040 → normalisiert:
+    expect(erzwingePfandPosition({ ...base, status: 'pfand' }).konto).toBeNull();
+    // kontoSplitsAusPositionen zählt danach auf 4800:
+    const splits = kontoSplitsAusPositionen([erzwingePfandPosition(base)]);
+    expect(splits).toEqual([{ warenkonto: KONTO_LABEL_PFAND, amountNet: -24.4, amountGross: -24.4 }]);
+    // Normale Bier-Positionen bleiben unangetastet (Fass/Container im Namen):
+    for (const bez of ['Valaisanne Lager Container 1X20,00', 'Feldschlösschen Lager Fass 20L', 'Bügel 10X0,33 Harass']) {
+      const bier: GespeichertePosition = { ...base, bezeichnung: bez, warengruppe: 'Bier', mwstCode: 1, konto: '4030', status: 'zugeordnet', manuell: false };
+      expect(erzwingePfandPosition(bier)).toEqual(bier);
+      expect(kontoFuerPosition({ warengruppe: 'Bier', mwstCode: 1, bezeichnung: bez }, DEFAULT_WARENGRUPPEN_MAPPING).konto).toBe('4030');
+    }
+    // uebernehmeManuelleKontierung darf Pfand nicht zurück auf 6040 holen:
+    const neu: GespeichertePosition = { ...base, konto: null, status: 'pfand', manuell: undefined };
+    expect(uebernehmeManuelleKontierung([neu], [base])[0]).toMatchObject({ konto: null, status: 'pfand' });
   });
 
   it('positionenAusRechnung wendet Artikel-Zuordnungen an (manuell markiert)', () => {

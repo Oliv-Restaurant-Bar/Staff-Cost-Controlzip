@@ -206,7 +206,9 @@ export async function exportCockpitPanelPDF(
  */
 export type CockpitExportPart =
   | { kind: 'raster'; element: HTMLElement; opts: CockpitPdfOptions }
-  | { kind: 'model'; model: import('@/lib/cockpit-report-pdf').CrReportModel };
+  | { kind: 'model'; model: import('@/lib/cockpit-report-pdf').CrReportModel }
+  /** Freier Zeichner: fügt selbst Seiten ans PDF an (z.B. Waren-Block). */
+  | { kind: 'zeichner'; zeichne: (pdf: import('jspdf').jsPDF) => void };
 
 export async function exportCockpitMixedPDF(
   parts: CockpitExportPart[],
@@ -232,13 +234,15 @@ export async function exportCockpitMixedPDF(
     if (p.kind === 'raster') captured.set(i, await capturePanel(html2canvas!, p.element, p.opts));
   }
 
-  const firstLandscape = parts[0].kind === 'model' ? true : captured.get(0)!.landscape;
+  const firstLandscape = parts[0].kind === 'raster' ? captured.get(0)!.landscape : true;
   const pdf = new jsPDF({
     orientation: firstLandscape ? 'landscape' : 'portrait',
     unit: 'mm', format: 'a4',
   });
   parts.forEach((p, i) => {
-    if (p.kind === 'model') {
+    if (p.kind === 'zeichner') {
+      p.zeichne(pdf); // fügt selbst Seiten an (addPage im Zeichner)
+    } else if (p.kind === 'model') {
       reportMod.zeichneCockpitReport(pdf, p.model, branding, logo, heute, i === 0);
     } else {
       const c = captured.get(i)!;
