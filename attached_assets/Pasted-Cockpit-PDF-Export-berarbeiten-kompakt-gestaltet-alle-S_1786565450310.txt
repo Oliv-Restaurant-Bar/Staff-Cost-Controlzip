@@ -1,0 +1,38 @@
+Cockpit-PDF-Export überarbeiten: kompakt + gestaltet, alle Seiten. Zahlen exakt lassen
+(Kontrollwerte unten). Mandantengetrennt.
+
+=== 1) KOMPAKT — KEIN LEERRAUM ===
+- Inhalt soll die Seite füllen, nicht nur das obere Drittel. Kleine Waren-Tabellen NICHT
+  je auf eine fast leere Seite setzen — sinnvoll kombinieren bzw. mit Visualisierung
+  auffüllen (siehe Punkt 3).
+- Einheitliche Ausrichtung und Ränder über ALLE Seiten (ein Format wählen — empfohlen
+  Hochformat für den ganzen Report, Cockpit-Tabelle darauf einpassen).
+
+=== 2) EINHEITLICHES DESIGN-SYSTEM (alle Seiten) ===
+- Marken-Akzentfarbe = Oliv-Grün (aus der App). Abschnitts-Kopfbänder in der Akzentfarbe.
+- Zebra-Zeilen, klare Spaltenlinien, mehr Zeilenhöhe/Weissraum INNERHALB der Tabelle
+  (lesbar, nicht gequetscht).
+- Farbige Status-Chips: „final" grün, „provisorisch" amber.
+- WKQ als Ampel-Punkt: ≤ 30 % grün, 30–40 % amber, > 40 % rot.
+- Rote/grüne Δ-Werte und +/− wie bisher, aber typografisch sauber.
+- Einheitlicher Kopf (Titel · Mandant · Zeitraum · Stand) und Fuss (Oliv Gastro AG ·
+  Seite x/y) auf jeder Seite.
+
+=== 3) LEICHTE VISUALISIERUNGEN IM WAREN-BLOCK (füllen die Seite sinnvoll) ===
+- Lieferanten-Übersicht: zusätzlich zur Tabelle ein horizontales Balkendiagramm des
+  Netto-Anteils je Lieferant (grösster oben).
+- Kumulierte Warenkosten/Umsatz: ein Linien-/Flächendiagramm über die Tage (Kum. Waren
+  und Kum. Umsatz), darunter die Tabelle.
+- Anomalie-Analyse pro Woche: Wochen-WKQ als kleine Balken (mit Ziel-30%-Linie), darunter
+  die Wochen-/Lieferanten-Tabelle.
+- Auf den Waren-Seiten oben eine kompakte KPI-Zeile: Direkter Warenaufwand · WKQ ·
+  Netto-Umsatz · Ziel.
+
+=== KONTROLLWERTE (August Oliv, dürfen sich nicht ändern) ===
+- Direkter Warenaufwand 15'076.99 · WKQ 16.1 % · Netto-Umsatz 93'576.37 · Ziel 30 %.
+- Lieferanten-Total 15'076.99 · 17 Rechnungen.
+- Wochen: KW31 2'755.10 + KW32 10'616.04 + KW33 1'705.85 = 15'076.99.
+- Waren-Block-Frage vor Export bleibt (Ja/Nein).
+
+=== ABSCHLUSS ===
+Neues PDF (August Oliv, mit Waren-Block) zeigen: kompakt, gestaltet, Zahlen unverändert.

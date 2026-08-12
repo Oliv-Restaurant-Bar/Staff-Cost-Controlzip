@@ -942,9 +942,11 @@ export default function MonatsreportPage() {
   // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
   //    Wochen (quer, Ist|Budget|Δ), optional Wochenverlauf als weitere Seite.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  /** Frage vor JEDEM Export: Waren-Block mitexportieren? */
+  /** Frage vor JEDEM Export: Waren-/Personal-Block mitexportieren? */
   const [warenFrageOffen, setWarenFrageOffen] = useState(false);
   const [warenFrageModus, setWarenFrageModus] = useState<'einzel' | 'auswahl'>('einzel');
+  const [expWarenBlock, setExpWarenBlock] = useState(false);
+  const [expPersonalBlock, setExpPersonalBlock] = useState(false);
   const [expAktuell, setExpAktuell] = useState(true);
   const [expVierWochen, setExpVierWochen] = useState(false);
   const [expVerlauf, setExpVerlauf] = useState(false);
@@ -1315,14 +1317,40 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     const mod = await import('@/lib/cockpit-waren-block');
     const heuteIso = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-${String(heute.getDate()).padStart(2, '0')}`;
     const wd = await mod.ladeWarenBlockDaten(tenantId, year, month, heuteIso);
-    return { kind: 'zeichner', zeichne: pdf => mod.zeichneWarenBlock(pdf, wd) };
+    const branding = getBranding(tenantId);
+    return { kind: 'zeichner', zeichne: pdf => mod.zeichneWarenBlock(pdf, wd, branding, heute) };
   }, [tenantId, year, month, heute]);
+
+  /** Lädt die Personal-Daten des gewählten Monats und liefert den PDF-Zeichner. */
+  const ladePersonalTeil = useCallback(async (): Promise<CockpitExportPart> => {
+    const mod = await import('@/lib/cockpit-personal-block');
+    const heuteIso = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-${String(heute.getDate()).padStart(2, '0')}`;
+    const pd = await mod.ladePersonalBlockDaten(tenantId, tenantKey, year, month, heuteIso);
+    const branding = getBranding(tenantId);
+    return { kind: 'zeichner', zeichne: pdf => mod.zeichnePersonalBlock(pdf, pd, branding, heute) };
+  }, [tenantId, tenantKey, year, month, heute]);
 
   // PDF-Export der aktiven Ansicht — 1:1 wie angezeigt (DOM-Raster), optional
   // mit Waren-Block (Frage vorab im Dialog).
-  const handlePdfExport = useCallback(async (mitWaren: boolean) => {
+  /**
+   * Monatsübersicht als gestaltete Vektor-Seite (Design wie Waren-/Personal-
+   * Block): KPI-Karten + 4 Abschnitte. Reines Layout — Zahlen 1:1 die
+   * bereits geladenen Monats-Zeilen. MUSS erster Export-Part sein
+   * (beginnt auf Seite 1; Folgeseiten nur bei echtem Überlauf).
+   */
+  const ladeMonatSeiteTeil = useCallback(async (): Promise<CockpitExportPart | null> => {
+    if (!daten) return null;
+    const mod = await import('@/lib/cockpit-monat-seite');
     const branding = getBranding(tenantId);
-    const teil = aktuelleAnsichtRaster();
+    const input = { year, month, standBis: daten.standBis, rows: daten.rows };
+    return { kind: 'zeichner', zeichne: pdf => mod.zeichneMonatsUebersicht(pdf, input, branding, heute) };
+  }, [daten, tenantId, year, month, heute]);
+
+  const handlePdfExport = useCallback(async (mitWaren: boolean, mitPersonal: boolean) => {
+    const branding = getBranding(tenantId);
+    const teil = activeTab === 'monat'
+      ? await ladeMonatSeiteTeil()
+      : aktuelleAnsichtRaster();
     if (!teil) {
       toast({ title: 'PDF-Export nicht möglich', description: 'Ansicht ist noch nicht geladen.', variant: 'destructive' });
       return;
@@ -1337,6 +1365,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     try {
       const parts: CockpitExportPart[] = [teil];
       if (mitWaren) parts.push(await ladeWarenTeil());
+      if (mitPersonal) parts.push(await ladePersonalTeil());
       await naechsterFrame();
       await exportCockpitMixedPDF(parts, branding, fileName, heute);
     } catch (e) {
@@ -1349,7 +1378,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       setPdfLaeuft(false);
     }
   }, [activeTab, month, year, verlaufMeta, jahrMeta, heute, toast,
-    tenantId, aktuelleAnsichtRaster, ladeWarenTeil]);
+    tenantId, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil]);
 
   /** Pollt, bis cond wahr ist (Export-Hilfe: off-screen-Inhalte fertig gerendert). */
   const warteAuf = async (cond: () => boolean, timeoutMs = 20000): Promise<void> => {
@@ -1365,7 +1394,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
    * angehakten Teilen — aktuelle Ansicht, letzte 4 Wochen (Querformat,
    * Ist|Budget|Δ je Woche) und/oder Wochenverlauf.
    */
-  const handleAuswahlExport = useCallback(async (mitWaren: boolean) => {
+  const handleAuswahlExport = useCallback(async (mitWaren: boolean, mitPersonal: boolean) => {
     if (!expAktuell && !expVierWochen && !expVerlauf) {
       toast({ title: 'Nichts ausgewählt', description: 'Bitte mindestens einen Bestandteil anhaken.' });
       return;
@@ -1379,7 +1408,9 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       // 1) Aktuelle Ansicht: Wochenübersicht = strukturierter Vektor-Report,
       //    Monatsübersicht = weiterhin Raster «wie angezeigt».
       if (expAktuell) {
-        const teil = aktuelleAnsichtRaster();
+        const teil = activeTab === 'monat'
+          ? await ladeMonatSeiteTeil()
+          : aktuelleAnsichtRaster();
         if (!teil) throw new Error('Ansicht ist noch nicht geladen.');
         pages.push(teil);
       }
@@ -1450,6 +1481,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       }
 
       if (mitWaren) pages.push(await ladeWarenTeil());
+      if (mitPersonal) pages.push(await ladePersonalTeil());
 
       await naechsterFrame();
       // Nur «aktuelle Ansicht» angehakt → reportspezifischer Dateiname
@@ -1471,7 +1503,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       setPdfLaeuft(false);
     }
   }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
-    heute, budgetModus, year, month, aktuelleAnsichtRaster, ladeWarenTeil, verlaufMeta, toast]);
+    heute, budgetModus, year, month, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil, verlaufMeta, toast]);
 
   return (
     <PageShell>
@@ -1870,36 +1902,56 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
           </TabsContent>
         </Tabs>
 
-        {/* ── Frage vor dem Export: Waren-Block mitexportieren? ── */}
+        {/* ── Frage vor dem Export: Zusatz-Blöcke mitexportieren? ── */}
         <Dialog open={warenFrageOffen} onOpenChange={setWarenFrageOffen}>
           <DialogContent className="max-w-md" data-testid="dialog-waren-frage">
             <DialogHeader>
-              <DialogTitle>Waren-Block mitexportieren?</DialogTitle>
+              <DialogTitle>Zusätzlich mitexportieren?</DialogTitle>
               <DialogDescription>
-                Lieferanten-Übersicht · kumulierte Warenkosten/Umsatz · Anomalie-Analyse
-                — für {MONATE[month - 1]} {year}, als zusätzliche Seiten im PDF.
+                Zusätzliche Seiten für {MONATE[month - 1]} {year} — die Cockpit-Seiten
+                sind immer enthalten.
               </DialogDescription>
             </DialogHeader>
+            <div className="space-y-3 py-1">
+              <label className="flex items-start gap-2 cursor-pointer" data-testid="checkbox-waren-block">
+                <Checkbox
+                  checked={expWarenBlock}
+                  onCheckedChange={v => setExpWarenBlock(v === true)}
+                  className="mt-0.5"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Waren-Block</span>
+                  <span className="block text-muted-foreground text-xs">
+                    Lieferanten-Übersicht · kumulierte Warenkosten/Umsatz · Anomalie-Analyse
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer" data-testid="checkbox-personal-block">
+                <Checkbox
+                  checked={expPersonalBlock}
+                  onCheckedChange={v => setExpPersonalBlock(v === true)}
+                  className="mt-0.5"
+                />
+                <span className="text-sm">
+                  <span className="font-medium">Personal-Block</span>
+                  <span className="block text-muted-foreground text-xs">
+                    Überstunden Wochen-Ansicht · Flex Kosten pro Mitarbeiter · Flex Plan vs. Ist
+                  </span>
+                </span>
+              </label>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button
-                variant="outline" size="sm"
-                onClick={() => {
-                  setWarenFrageOffen(false);
-                  void (warenFrageModus === 'auswahl' ? handleAuswahlExport(false) : handlePdfExport(false));
-                }}
-                data-testid="button-waren-nein"
-              >
-                Nein, ohne Waren-Block
-              </Button>
               <Button
                 size="sm"
                 onClick={() => {
                   setWarenFrageOffen(false);
-                  void (warenFrageModus === 'auswahl' ? handleAuswahlExport(true) : handlePdfExport(true));
+                  void (warenFrageModus === 'auswahl'
+                    ? handleAuswahlExport(expWarenBlock, expPersonalBlock)
+                    : handlePdfExport(expWarenBlock, expPersonalBlock));
                 }}
-                data-testid="button-waren-ja"
+                data-testid="button-export-starten"
               >
-                Ja, mitexportieren
+                PDF exportieren
               </Button>
             </div>
           </DialogContent>

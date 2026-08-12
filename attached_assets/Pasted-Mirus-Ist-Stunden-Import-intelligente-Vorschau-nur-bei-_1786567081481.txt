@@ -1,0 +1,37 @@
+Mirus-Ist-Stunden-Import: intelligente Vorschau nur bei kritischen Änderungen
+(Mandanten Oliv + Beaulieu). Ziel: unkritische Lücken automatisch füllen, jede
+Überschreibung/Löschung eines bestehenden Ist-Eintrags zur Bestätigung zeigen.
+
+GRUNDREGEL: Vergleich je Mitarbeiter × Tag zwischen aktuellem Ist und Mirus-Datei.
+
+=== AUTOMATISCH (NICHT in der Vorschau, keine Bestätigung) ===
+- Ist LEER (frei/nichts) und Mirus hat Stunden → direkt übernehmen (Lücke füllen).
+- Ist == Mirus (gleicher Wert) → nichts tun.
+Beispiel: Arber 10.08. Ist leer, Mirus-Datei hat Stunden → still überschreiben.
+
+=== IN DER VORSCHAU ZEIGEN + EINZELN BESTÄTIGEN ===
+Immer wenn ein NICHT-leerer Ist-Eintrag verändert oder gelöscht würde:
+- (a) Ist hat einen Eintrag (Stunden, Zeit/Schicht ODER Absenz-Code K/U/Ferien) und
+      Mirus ist LEER → würde löschen. Default: „behalten" (bestehenden Ist NICHT leeren).
+      Beispiel: Arber 10.08. Ist = K/Ferien/8.0 h, Mirus leer → zeigen, ich entscheide.
+- (b) Ist ist ein ABSENZ-CODE (K/U/Ferien/…) und Mirus hat Stunden → Default „behalten"
+      (Absenz nicht blind mit Stunden überschreiben).
+- (c) Ist hat Stunden und Mirus hat ANDERE Stunden → Default „Mirus übernehmen"
+      (Mirus ist die Ist-Wahrheit), aber sichtbar zum Gegenprüfen.
+
+=== VORSCHAU-DARSTELLUNG ===
+- Tabelle je Konflikt: Mitarbeiter · Datum · Aktuell (Ist) · Neu (Mirus) · Aktion-Umschalter
+  [Überschreiben | Behalten] mit dem oben genannten Default je Fall.
+- Sammelaktionen: „alle überschreiben" / „alle behalten" (einzelne bleiben übersteuerbar).
+- Kopf-Zusammenfassung: „X Tage automatisch gefüllt · Y Konflikte zur Prüfung".
+- Absenz-Codes farblich hervorheben, damit sie nicht versehentlich verschwinden.
+
+=== NACH BESTÄTIGUNG ===
+- Nur bestätigte Zeilen werden geschrieben; automatische Fills sind bereits übernommen.
+- Undo verfügbar, mandantengetrennt. Ergebnis-Meldung: wie viele gefüllt / überschrieben /
+  behalten.
+- Die übernommenen Ist-Stunden speisen wie gehabt Überstunden und Flex-Auswertung.
+
+=== ABSCHLUSS ===
+Kontrolltest: Arber 10.08. — Fall „Ist leer + Mirus Stunden" läuft ohne Vorschau durch;
+Fall „Ist = Ferien + Mirus leer" erscheint als Konflikt mit Default „behalten".

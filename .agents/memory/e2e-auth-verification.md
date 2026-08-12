@@ -23,3 +23,5 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 - Lange `runTest`-Pläne (~15+ Schritte inkl. Login/Dialogen) sprengen das 600-s-Sandbox-Timeout; das Notebook wird danach NEU gestartet und verliert alle Variablen (Credentials!). Pläne in kurze fokussierte Läufe (≤ ~10 Schritte) splitten und Zugangsdaten re-ableitbar halten.
 
 **Anwendung:** Vor visuellen UX-Checks hinter dem Login kein Credentials-Raten; Test-Admin-Konto anlegen, testen, Rolle herabstufen, User über das Konto informieren.
+
+- sb_secret_*-Service-Key bekommt 42501 (nicht nutzbar); Headless-Harness = anon-Key + signUp/signInWithPassword + localStorage-Banner als echte In-Memory-Map (sonst Session weg → anon).

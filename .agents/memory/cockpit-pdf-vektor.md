@@ -15,3 +15,11 @@ description: Aktuelle Regel für den Cockpit-PDF-Export — 1:1-DOM-Raster der a
 - EINE Periodenbasis für ALLE Aggregationen (nur Tage ≤ heute) — sonst weichen Lieferantensumme und Total ab; «leer statt 0» bei 0-Direktanteil.
 - `CockpitExportPart` kennt `kind:'zeichner'` (freier jsPDF-Zeichner, fügt selbst Seiten an).
 - html2canvas ist jetzt als Dependency deklariert.
+
+**Design-System (08/2026):** Im Mixed-Export sind Raster- und Waren-Seiten einheitlich HOCHFORMAT mit Marken-Kopfband (branding.headerBg + Akzentlinie, Titel·Mandant·Zeitraum·Stand) und 13-mm-Rand; Fusszeile (Firma · Seite x/y) zentral via `zeichneFusszeilen` auf allen Seiten. Waren-Seiten tragen je eine KPI-Zeile (Warenaufwand · WKQ-Ampel ≤30 grün/≤40 amber/>40 rot · Netto-Umsatz · Ziel max. 30 %) plus Vektor-Charts (Lieferanten-Balken, Kumulations-Linien, Wochen-WKQ mit Ziellinie); Status-Chips final grün / provisorisch amber. Die breiten Vektor-Matrizen «Letzte 4 Wochen»/«Wochenverlauf» bleiben bewusst quer (Renderer fest 297 mm). Achtung: «≤» ist in jsPDF-Helvetica (WinAnsi) nicht darstellbar — «max.» o.ä. verwenden.
+
+## Personal-Block & gemeinsames Stil-Modul (08/2026)
+- Gemeinsames Design-System für Cockpit-PDF-Blöcke lebt in `cockpit-block-stil.ts`; Waren- und Personal-Block teilen Kopfband/KPI-Boxen/Chips — neue Blöcke NIE eigene Stile duplizieren.
+- Personal-Block-Regeln: Stichtag IMMER auf min(heute, Monatsende) klemmen (Vergangenheits-Export sonst mit späteren Ist-Daten verfälscht); Überstunden-«Laufend» über ALLE Konto-Jahre seit UEBERSTUNDEN_START summieren, Totale aus den Lib-Ergebnissen (nie gerundete Zeilen summieren).
+- Zusatzkosten-Zeilen (Fix-MA) brauchen dieselbe Quellen-Auflösung wie ladePersonalkostenDaten (Supabase kanonisch, localStorage-Fallback/Overrides), sonst weicht der Export von PersonalFix ab.
+- «ohne AG»-Flags (pfix_ag_soz_off_<tenant>) liegen NUR im Browser-localStorage — headless-Harness sieht sie nicht; CHF-Kontrollwerte nur im echten Browser prüfbar.

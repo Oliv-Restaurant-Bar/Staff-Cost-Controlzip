@@ -29,5 +29,19 @@ title = "Review-Paket für Claude (3.6 MB)"
 id = "-VWM-OxkdnAXmfEL4_zXm"
 uri = "file://screenshots/cockpit-monatsuebersicht-2026-08.pdf"
 type = "pdf"
-title = "Cockpit-PDF August 2026 (Oliv) mit Waren-Block"
-description = "Seite 1: Monatsübersicht 1:1 wie angezeigt · Seiten 2–4: Lieferanten-Übersicht, kumulierte Warenkosten/Umsatz, Anomalie-Analyse pro KW."
+title = "Cockpit-Report August 2026 (Oliv, mit Waren-Block)"
+description = "Neuer PDF-Export: einheitliches Hochformat, Marken-Kopf/Fuss, KPI-Zeile, Charts, Ampeln und Chips."
+
+[[outputs]]
+id = "nCUfexkBBhRLT_4ft5zUN"
+uri = "file://screenshots/cockpit-personal-block-2026-08.pdf"
+type = "pdf"
+title = "Cockpit-Report August 2026 (Oliv) mit Waren- & Personal-Block"
+description = "Echter Export aus der App: Cockpit-Seiten plus Waren-Block und der neue 3-seitige Personal-Block (Überstunden · Flex Kosten pro MA · Flex Plan vs. Ist je KW)."
+
+[[outputs]]
+id = "96WbFAoSIUX2HXkkVVfv6"
+uri = "file://screenshots/cockpit-monat-seite.pdf"
+type = "pdf"
+title = "Cockpit — Monatsübersicht (neue Seite 1)"
+description = "Vektor-Design August 2026 Oliv: KPI-Karten, 4 Abschnitte, Ampeln — Zahlen unverändert."

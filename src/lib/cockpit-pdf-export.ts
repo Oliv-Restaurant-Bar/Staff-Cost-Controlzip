@@ -129,37 +129,62 @@ async function capturePanel(
   return { canvas, landscape };
 }
 
-/** Zeichnet eine gerasterte Seite (Kopfzeile, Bild, Fussnote) ins PDF. */
+/** Zeichnet eine gerasterte Seite (Kopfzeile, Bild, Fussnote) ins PDF.
+ *  Mit `branding` (Report-Verbund): Marken-Kopfband + Akzentlinie und
+ *  einheitliche 13-mm-Ränder wie die Vektor-/Waren-Seiten. */
 function zeichneSeite(
   pdf: import('jspdf').jsPDF,
   canvas: HTMLCanvasElement,
   landscape: boolean,
   opts: CockpitPdfOptions,
   heute: Date,
+  branding?: import('@/lib/pl-branding').RestaurantBranding,
 ): void {
   const pageW = landscape ? MM_PER_PAGE.a4w : MM_PER_PAGE.a4h;
   const pageH = landscape ? MM_PER_PAGE.a4h : MM_PER_PAGE.a4w;
+  const rand = branding ? 13 : MARGIN_MM;
 
   // Kopfzeile.
   const datum = heute.toLocaleDateString('de-CH');
-  pdf.setFontSize(12);
-  pdf.setTextColor(20, 20, 20);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text(opts.title, MARGIN_MM, MARGIN_MM + 3);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  pdf.setTextColor(90, 90, 90);
-  pdf.text(`${opts.subtitle}  ·  Export: ${datum}`, MARGIN_MM, MARGIN_MM + 8);
+  let kopfH: number;
+  if (branding) {
+    // Einheitliches Marken-Kopfband (Titel · Mandant · Zeitraum · Stand).
+    const bandH = 16;
+    pdf.setFillColor(...branding.headerBg);
+    pdf.rect(0, 0, pageW, bandH, 'F');
+    pdf.setTextColor(...branding.textPrimary);
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(12);
+    pdf.text(opts.title, rand, bandH / 2 - 0.6);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5);
+    pdf.setTextColor(...branding.textSecondary);
+    pdf.text(`${branding.displayName}  ·  ${opts.subtitle}  ·  Stand ${datum}`, rand, bandH / 2 + 4);
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5);
+    pdf.setTextColor(...branding.textPrimary);
+    pdf.text('Cockpit-Report', pageW - rand, bandH / 2 + 1.4, { align: 'right' });
+    pdf.setFillColor(...branding.accentColor);
+    pdf.rect(0, bandH, pageW, 1.2, 'F');
+    kopfH = bandH + 1.2 + 4 - rand; // relativ zum Rand (siehe offsetY unten)
+  } else {
+    pdf.setFontSize(12);
+    pdf.setTextColor(20, 20, 20);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(opts.title, rand, rand + 3);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(90, 90, 90);
+    pdf.text(`${opts.subtitle}  ·  Export: ${datum}`, rand, rand + 8);
+    kopfH = HEADER_MM;
+  }
 
   // Platz für eine optionale Fussnote am Seitenende reservieren.
-  const availW = pageW - 2 * MARGIN_MM;
+  const availW = pageW - 2 * rand;
   const footLines = opts.footnote
     ? pdf.setFontSize(7).splitTextToSize(opts.footnote, availW) as string[]
     : [];
   const footBlockH = footLines.length > 0 ? footLines.length * 2.8 + 3 : 0;
 
   // Nutzbarer Bereich für das Bild (unter Kopfzeile, über Fussnote).
-  const availH = pageH - 2 * MARGIN_MM - HEADER_MM - footBlockH;
+  const availH = pageH - 2 * rand - kopfH - footBlockH;
 
   // Contain: proportional so skalieren, dass es vollständig in avail passt.
   const imgRatio = canvas.width / canvas.height;
@@ -169,8 +194,8 @@ function zeichneSeite(
     drawH = availH;
     drawW = drawH * imgRatio;
   }
-  const offsetX = MARGIN_MM + (availW - drawW) / 2;
-  const offsetY = MARGIN_MM + HEADER_MM;
+  const offsetX = rand + (availW - drawW) / 2;
+  const offsetY = rand + kopfH;
 
   pdf.addImage(canvas.toDataURL('image/png'), 'PNG', offsetX, offsetY, drawW, drawH);
 
@@ -178,8 +203,8 @@ function zeichneSeite(
   if (footLines.length > 0) {
     pdf.setFontSize(7);
     pdf.setTextColor(120, 120, 120);
-    const footY = pageH - MARGIN_MM - footBlockH + 3;
-    pdf.text(footLines, MARGIN_MM, footY);
+    const footY = pageH - rand - footBlockH + 3;
+    pdf.text(footLines, rand, footY);
   }
 }
 
@@ -234,9 +259,11 @@ export async function exportCockpitMixedPDF(
     if (p.kind === 'raster') captured.set(i, await capturePanel(html2canvas!, p.element, p.opts));
   }
 
-  const firstLandscape = parts[0].kind === 'raster' ? captured.get(0)!.landscape : true;
+  // Einheitliches Format: Raster- und Waren-Seiten immer HOCHFORMAT (das
+  // Capture wird proportional eingepasst). Nur die breiten Vektor-Matrizen
+  // («Letzte 4 Wochen»/«Wochenverlauf») bleiben konstruktiv Querformat.
   const pdf = new jsPDF({
-    orientation: firstLandscape ? 'landscape' : 'portrait',
+    orientation: parts[0].kind === 'model' ? 'landscape' : 'portrait',
     unit: 'mm', format: 'a4',
   });
   parts.forEach((p, i) => {
@@ -246,8 +273,8 @@ export async function exportCockpitMixedPDF(
       reportMod.zeichneCockpitReport(pdf, p.model, branding, logo, heute, i === 0);
     } else {
       const c = captured.get(i)!;
-      if (i > 0) pdf.addPage('a4', c.landscape ? 'landscape' : 'portrait');
-      zeichneSeite(pdf, c.canvas, c.landscape, p.opts, heute);
+      if (i > 0) pdf.addPage('a4', 'portrait');
+      zeichneSeite(pdf, c.canvas, false, p.opts, heute, branding);
     }
   });
   reportMod.zeichneFusszeilen(pdf, branding.companyLine);

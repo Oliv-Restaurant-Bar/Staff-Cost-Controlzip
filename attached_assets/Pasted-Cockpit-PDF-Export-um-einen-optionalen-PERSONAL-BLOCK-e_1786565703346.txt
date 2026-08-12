@@ -1,0 +1,37 @@
+Cockpit-PDF-Export um einen optionalen PERSONAL-BLOCK erweitern (analog Waren-Block).
+Mandantengetrennt, „leer statt 0", Zahlen exakt, gleiches Report-Design wie der neue
+Waren-Block (kompakt + gestaltet).
+
+=== 1) ABFRAGE VOR DEM EXPORT: BEIDE BLÖCKE ===
+- Der Export-Dialog fragt jetzt beide Zusatzblöcke ab (statt nur Waren):
+  „Zusätzlich mitexportieren?  [ ] Waren-Block   [ ] Personal-Block".
+- Jeder Block nur, wenn angehakt. Cockpit-Grundseiten kommen immer.
+
+=== 2) PERSONAL-BLOCK — 3 TEILE (gewählter Monat/Stichtag) ===
+(a) ÜBERSTUNDEN WOCHEN-ANSICHT — immer die LETZTEN 4 KALENDERWOCHEN bis zum Stichtag
+    (rollierend). Spalten: Mitarbeiter · Pensum · je KW der Wochen-Saldo · „Laufend".
+    - Ausgenommene Mitarbeiter (Haken „keine Zeiterfassung") wie in der App: „–" plus
+      Badge „ausgenommen · kein ÜStd-Konto", NICHT im Total. Konkret: Lokaj Mendim und
+      Ramadani Mejdi ausgenommen, Ramadani Asim normal.
+    - „Total laufend" ausweisen (Kontrolle Stand 12.08.: −47.9 h).
+
+(b) FLEX KOSTEN PRO MITARBEITER — Tabelle: Name · Abt. · Total AG/h · Plan Std · Ist Std
+    · Flex Plan · Flex Ist · Diff. Mit Hinweis „X MA · Y ohne AG-Sozialkosten gerechnet".
+    - NUR bis dorthin, wo Ist-Stunden hochgeladen sind (Wochen ohne Ist nicht mitrechnen;
+      leer statt 0). Total-Zeile ausweisen (Kontrolle: Plan 967.0 h · Ist 271.7 h ·
+      Flex Plan CHF 30'285 · Flex Ist CHF 8'254).
+
+(c) FLEX-AUSWERTUNG PLAN vs. IST — je KW: Flex Plan · Flex Ist · Diff. CHF · Diff. % ·
+    Kum. Abw. Mit Status-Punkt (grün im Plan / amber ≤5 % / rot >5 %).
+    - NUR Wochen MIT hochgeladenem Ist anzeigen; „noch offen / kein Ist"-Wochen (KW33+)
+      WEGLASSEN (nicht als 0). Kontrolle: KW31 −CHF 300, KW32 −CHF 500 (Kum −800).
+
+=== 3) DESIGN ===
+- Gleiches gestaltetes Report-Layout wie der überarbeitete Waren-Block: Oliv-Grün-Akzent,
+  Abschnitts-Kopfbänder, Zebra-Zeilen, farbige Status-Chips/Ampel, einheitlicher Kopf/Fuss
+  (Titel · Mandant · Zeitraum · Stand · Seite x/y). Kompakt, kein grosser Leerraum.
+
+=== ABSCHLUSS ===
+Neues PDF (August Oliv) zeigen: Cockpit + Waren-Block + Personal-Block. Kontrolle:
+Überstunden Total laufend −47.9 h · Flex Ist 271.7 h / CHF 8'254 · Flex-Auswertung nur
+KW31/KW32 (offene Wochen fehlen korrekt).
