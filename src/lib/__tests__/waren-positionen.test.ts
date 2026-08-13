@@ -539,3 +539,66 @@ describe('Gebühren/Konditionen → IMMER 4701 (universelle Zwangs-Regel)', () =
     expect(res[0]).toMatchObject({ konto: KONTO_GEBUEHR, status: 'zugeordnet' });
   });
 });
+
+import {
+  istReinigungsText, istZwingendReinigung, erzwingeReinigungPosition, KONTO_REINIGUNG,
+} from '@/lib/waren-positionen';
+
+describe('Reinigungsmittel → IMMER 6040 (universelle Zwangs-Regel)', () => {
+  it('istReinigungsText: Reinigungs-/Waschmittel-Kennungen matchen', () => {
+    for (const s of ['Reiniger', 'Reinigungsmittel', 'Badreiniger', 'WC-Reiniger',
+      'Allzweckreiniger Zitrone', 'Spülmittel Konzentrat', 'Waschmittel Color',
+      'Weichspüler April frisch', 'Gewebeveredler', 'Entkalker flüssig',
+      'Geschirrspülmittel', 'Maschinenspülmittel', 'Vollwaschmittel', 'Colorwaschmittel',
+      'Desinfektionsmittel Flächen', 'Cif Crème Citrus', 'Persil Gel Universal',
+      'Lenor Aprilfrisch 1.4L']) {
+      expect(istReinigungsText(s), s).toBe(true);
+    }
+  });
+  it('istReinigungsText: Betriebsmaterial matcht NICHT (bleibt 4701)', () => {
+    for (const s of ['Papierhandtücher 2-lagig', 'Handtuch Rolle', 'Servietten weiss 33cm',
+      'Alubox 1500ml m/Deckel', 'Alufolie 45cm', 'Verpackungsbox Karton',
+      'Müllsäcke 110L', 'Coca-Cola Harass', '', undefined]) {
+      expect(istReinigungsText(s as string | undefined), String(s)).toBe(false);
+    }
+  });
+  it('Vorrang-Ordnung: Pfand und Gebühren gewinnen vor Reinigung', () => {
+    expect(istZwingendReinigung({ mwstCode: 0, bezeichnung: 'Reiniger Pfandflasche' })).toBe(false);
+    expect(istZwingendReinigung({ mwstCode: 1, bezeichnung: 'Reinigungsgebühr' })).toBe(false); // Gebühr → 4701
+    expect(istZwingendReinigung({ mwstCode: 1, bezeichnung: 'Persil Gel' })).toBe(true);
+  });
+  it('Regel schlägt Warengruppen-Tabelle UND gelernte Artikel-Zuordnung', () => {
+    // Warengruppe würde ein Warenkonto liefern — Reinigungs-Bezeichnung erzwingt 6040:
+    expect(kontoFuerPosition({ warengruppe: 'Non Food', mwstCode: 1, bezeichnung: 'Cif Crème' }, [{ gruppe: 'Non Food', konto: '4701' }]))
+      .toEqual({ konto: KONTO_REINIGUNG, status: 'zugeordnet' });
+    // Gelernte Artikel-Zuordnung auf 4701 wird überstimmt:
+    const p = { artNr: '99887', bezeichnung: 'Persil Universal Gel 50WG', warengruppe: 'Non Food', mwstCode: 1 as const };
+    const konten = { [artikelKey('Transgourmet', p)]: '4701' };
+    expect(kontoFuerPositionMitArtikel('Transgourmet', p, DEFAULT_WARENGRUPPEN_MAPPING, konten))
+      .toEqual({ konto: KONTO_REINIGUNG, status: 'zugeordnet' });
+    // Betriebsmaterial mit gelernter Zuordnung bleibt unberührt:
+    const n = { artNr: '55443', bezeichnung: 'Alubox 1500ml', warengruppe: 'Non Food', mwstCode: 1 as const };
+    const konten2 = { [artikelKey('Transgourmet', n)]: '4701' };
+    expect(kontoFuerPositionMitArtikel('Transgourmet', n, DEFAULT_WARENGRUPPEN_MAPPING, konten2).konto).toBe('4701');
+  });
+  it('erzwingeReinigungPosition: korrigiert gespeicherte 4701-/Warenkonto-Zuordnung + manuell-Flag', () => {
+    const g: GespeichertePosition = { artNr: '', bezeichnung: 'Lenor Weichspüler', warengruppe: 'Non Food', menge: 2, einheit: 'Stk', preis: 26.05, mwstBetrag: 4.22, mwstCode: 1, positionspreis: 52.10, konto: '4701', status: 'zugeordnet', manuell: true };
+    expect(erzwingeRegelPosition(g)).toMatchObject({ konto: KONTO_REINIGUNG, status: 'zugeordnet' });
+    expect('manuell' in erzwingeReinigungPosition(g)).toBe(false);
+  });
+  it('Kontrollwerte Rechnung 64131705 (Oliv): 6040=252.86 · 4701=175.52', () => {
+    const mk = (bez: string, chf: number): GespeichertePosition => ({
+      artNr: '', bezeichnung: bez, warengruppe: 'Non Food', menge: 1, einheit: '',
+      preis: chf, mwstBetrag: Math.round(chf * 8.1) / 100, mwstCode: 1, positionspreis: chf,
+      konto: '4701', status: 'zugeordnet',
+    });
+    const pos = [
+      mk('Lenor Weichspüler Aprilfrisch', 52.10), mk('Cif Crème Citrus', 41.10),
+      mk('Persil Gel Universal', 53.22), mk('Persil Pulver Universal', 106.44),
+      mk('Alubox 1500ml m/Deckel', 115.30), mk('Papierhandtuch Rolle', 60.22),
+    ].map(erzwingeRegelPosition);
+    const sum = (k: string) => Math.round(pos.filter(p2 => p2.konto === k).reduce((a, p2) => a + p2.positionspreis, 0) * 100) / 100;
+    expect(sum(KONTO_REINIGUNG)).toBeCloseTo(252.86, 2);
+    expect(sum('4701')).toBeCloseTo(175.52, 2);
+  });
+});

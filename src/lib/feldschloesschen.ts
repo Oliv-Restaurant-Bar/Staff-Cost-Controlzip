@@ -23,7 +23,7 @@ import type { GnPdfLine } from './gn-pdf-lines';
 import type {
   WarenPosition, ParsedCsvRechnung, WarengruppenMapping,
 } from './waren-positionen';
-import { KONTO_LABEL_PFAND, KONTO_GEBUEHR, istGebuehrenText, istZwingendGebuehr } from './waren-positionen';
+import { KONTO_LABEL_PFAND, KONTO_GEBUEHR, KONTO_REINIGUNG, istGebuehrenText, istZwingendGebuehr, istZwingendReinigung } from './waren-positionen';
 
 // ── Zahlen/Datum ──────────────────────────────────────────────────────────────
 
@@ -942,15 +942,22 @@ export function kontoSplitsAusFsKategorien(
   const effektiv = mitFsDefaults(mapping);
   const proKonto = new Map<string, { net: number; gross: number }>();
   const offen: string[] = [];
-  // Gebühren-Positionen je ZSF-Kategorie (warengruppe) und Satz sammeln.
-  const gebProKat = new Map<string, { n81: number; n26: number }>();
+  // Zwangs-Positionen (Gebühren→4701, Reinigung→6040) je ZSF-Kategorie
+  // (warengruppe), ZIEL-Konto und Satz sammeln — beide werden identisch aus
+  // den Warenkonto-Buckets herausgerechnet.
+  const gebProKat = new Map<string, Map<string, { n81: number; n26: number }>>();
   for (const p of positionen ?? []) {
-    if (!istZwingendGebuehr(p)) continue; // schliesst Pfand/Depot aus
+    let ziel: string;
+    if (istZwingendGebuehr(p)) ziel = KONTO_GEBUEHR;            // schliesst Pfand/Depot aus
+    else if (istZwingendReinigung(p)) ziel = KONTO_REINIGUNG;
+    else continue;
     const key = p.warengruppe.trim().toLowerCase();
-    const cur = gebProKat.get(key) ?? { n81: 0, n26: 0 };
+    const proZiel = gebProKat.get(key) ?? new Map<string, { n81: number; n26: number }>();
+    const cur = proZiel.get(ziel) ?? { n81: 0, n26: 0 };
     if (p.mwstCode === 2) cur.n26 += p.positionspreis;
     else if (p.mwstCode === 1) cur.n81 += p.positionspreis;
-    gebProKat.set(key, cur);
+    proZiel.set(ziel, cur);
+    gebProKat.set(key, proZiel);
   }
   const verrechnet = new Set<string>();
   let gebuehrenRest = 0;
@@ -989,31 +996,33 @@ export function kontoSplitsAusFsKategorien(
     // nie Gebühren-Positionen).
     let n81 = kat.netto81, n26 = kat.netto26, netTotal = kat.nettoTotal;
     const katKey = kat.name.trim().toLowerCase();
-    const geb = gebProKat.get(katKey);
-    if (geb) {
-      if (konto === KONTO_GEBUEHR || konto === KONTO_LABEL_PFAND) {
-        // Kategorie läuft selbst auf 4701/Pfand — nichts umzuhängen, aber die
-        // Gebühren gelten als verrechnet (keine Doppelzählung, kein Rest).
-        verrechnet.add(katKey);
-      } else {
+    const proZiel = gebProKat.get(katKey);
+    if (proZiel) {
+      for (const [ziel, geb] of proZiel) {
+        if (konto === ziel || konto === KONTO_LABEL_PFAND) {
+          // Kategorie läuft selbst auf das Ziel-Konto/Pfand — nichts umzuhängen,
+          // aber die Positionen gelten als verrechnet (keine Doppelzählung).
+          continue;
+        }
         // NIE über den Satz-Bucket hinaus subtrahieren (kein negativer Rest-
         // Warenbucket); was nicht passt, wird als Rest gemeldet (Toleranz ½ Rp).
         const take81 = Math.min(Math.max(geb.n81, 0), Math.max(n81, 0));
         const take26 = Math.min(Math.max(geb.n26, 0), Math.max(n26, 0));
         gebuehrenRest += (geb.n81 - take81) + (geb.n26 - take26);
-        verrechnet.add(katKey);
         if (take81 + take26 > 0) {
           n81 -= take81; n26 -= take26;
           netTotal -= take81 + take26;
-          addKonto(KONTO_GEBUEHR, take81 + take26, take81 * 1.081 + take26 * 1.026);
+          addKonto(ziel, take81 + take26, take81 * 1.081 + take26 * 1.026);
         }
       }
+      verrechnet.add(katKey);
     }
     addKonto(konto, netTotal, n81 * 1.081 + n26 * 1.026 + kat.netto00);
   }
-  // Gebühren OHNE passende ZSF-Kategorie (abweichender Name) → Rest melden.
-  for (const [key, geb] of gebProKat) {
-    if (!verrechnet.has(key)) gebuehrenRest += geb.n81 + geb.n26;
+  // Zwangs-Positionen OHNE passende ZSF-Kategorie (abweichender Name) → Rest melden.
+  for (const [key, proZiel] of gebProKat) {
+    if (verrechnet.has(key)) continue;
+    for (const geb of proZiel.values()) gebuehrenRest += geb.n81 + geb.n26;
   }
   gebuehrenRest = Math.abs(gebuehrenRest) < 0.005 ? 0 : Math.round(gebuehrenRest * 100) / 100;
   const splits = [...proKonto.entries()].map(([warenkonto, v]) => ({

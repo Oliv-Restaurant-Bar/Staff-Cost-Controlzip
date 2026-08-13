@@ -318,6 +318,51 @@ export function istZwingendGebuehr(
 }
 
 /**
+ * Reinigungs-/Waschmittel → Konto 6040 «Reinigung und Entsorgung»:
+ * getrennt vom übrigen Betriebsmaterial (4701), nie auf ein Warenkonto/WKQ
+ * (6040 liegt ausserhalb der Warenkonto-Klasse — zählt nie in den direkten
+ * Warenaufwand). Universal für alle Lieferanten und Importwege.
+ */
+export const KONTO_REINIGUNG = '6040';
+
+/**
+ * Token-genaue Reinigungsmittel-Erkennung auf Bezeichnung ODER Warengruppe.
+ * MATCHT: Reiniger/…reiniger (Bad-, WC-, Allzweckreiniger), Reinigungsmittel,
+ * Spül-/Waschmittel, Weichspüler, Gewebeveredler, Entkalker, Desinfektion(s-),
+ * gängige Marken (Cif, Persil, Lenor).
+ * MATCHT NICHT (bleibt 4701 Betriebsmaterial): Papierhandtücher/Handtuch,
+ * Servietten, Alu/Verpackung, Aluboxen, Müllsäcke — keines der Muster greift.
+ */
+export function istReinigungsText(s: string | undefined): boolean {
+  if (!s) return false;
+  for (const tok of tokens(s)) {
+    if (/reiniger(s)?$/.test(tok)) return true;                 // Reiniger, Badreiniger, Allzweckreiniger, «WC-Reiniger» (Token «reiniger»)
+    if (/^reinigung(s[a-zäöü]*)?$/.test(tok)) return true;      // Reinigung, Reinigungsmittel, Reinigungstabs
+    if (/sp(ü|ue)lmittel(s)?$/.test(tok)) return true;          // Spülmittel, Geschirr-/Maschinenspülmittel
+    if (/waschmittel(s)?$/.test(tok)) return true;              // Waschmittel, Voll-/Color-/Feinwaschmittel
+    if (/^weichsp(ü|ue)ler(s)?$/.test(tok)) return true;
+    if (/^gewebeveredler(s)?$/.test(tok)) return true;
+    if (/^entkalker(s)?$/.test(tok) || /^entkalkung(s[a-zäöü]*)?$/.test(tok)) return true;
+    if (/^desinfektion(s[a-zäöü]*)?$/.test(tok) || /^desinfiz/.test(tok)) return true;
+    if (tok === 'cif' || tok === 'persil' || tok === 'lenor') return true; // Marken
+  }
+  return false;
+}
+
+/**
+ * Universelle Zwangs-Reinigungs-Regel → 6040: läuft VOR gelernter Artikel-
+ * Zuordnung und Warengruppen-Tabelle (überschreibt gespeicherte 4701-/Waren-
+ * konto-Zuordnungen), aber NACH Pfand→4800 und Gebühren→4701 — die Regeln
+ * kollidieren damit nie.
+ */
+export function istZwingendReinigung(
+  p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
+): boolean {
+  if (istZwingendPfand(p) || istZwingendGebuehr(p)) return false;
+  return istReinigungsText(p.bezeichnung) || istReinigungsText(p.warengruppe);
+}
+
+/**
  * SCHWACHE Kennwörter (Gebinde/Harasse): können auch in normalen Artikel-
  * namen vorkommen (z.B. Bier «10×33 Harass» mit 8.1 % MwSt) — sie schlagen
  * NUR im Zweifel durch, d.h. wenn die Warengruppe keinem Konto zuordenbar
@@ -356,6 +401,11 @@ export function kontoFuerPosition(
   if (istGebuehrenText(p.bezeichnung) || istGebuehrenText(p.warengruppe)) {
     return { konto: KONTO_GEBUEHR, status: 'zugeordnet' };
   }
+  // Reinigungs-/Waschmittel → 6040, VOR der Warengruppen-Tabelle (eine
+  // gespeicherte 4701-/Warenkonto-Zuordnung darf Reinigung nie überstimmen).
+  if (istReinigungsText(p.bezeichnung) || istReinigungsText(p.warengruppe)) {
+    return { konto: KONTO_REINIGUNG, status: 'zugeordnet' };
+  }
   const g = normGruppe(p.warengruppe);
   if (g) {
     const regel = mapping.find(r => normGruppe(r.gruppe) === g);
@@ -386,6 +436,10 @@ export function kontoFuerPositionMitArtikel(
   // ebenfalls VOR der gelernten Artikel-Zuordnung — eine gespeicherte
   // 4050-/Warenkonto-Zuordnung wird überschrieben (immer 4701).
   if (istZwingendGebuehr(p)) return { konto: KONTO_GEBUEHR, status: 'zugeordnet' };
+  // Universelle Reinigungs-Regel (Reiniger/Wasch-/Spülmittel/…) → 6040:
+  // läuft ebenfalls VOR der gelernten Artikel-Zuordnung — eine gespeicherte
+  // 4701-/Warenkonto-Zuordnung wird überschrieben.
+  if (istZwingendReinigung(p)) return { konto: KONTO_REINIGUNG, status: 'zugeordnet' };
   const key = artikelKey(lieferant, p);
   const artikel = key ? artikelKonten?.[key] : undefined;
   if (artikel) return { konto: artikel, status: 'zugeordnet', manuell: true };
@@ -523,9 +577,23 @@ export function erzwingeGebuehrPosition(p: GespeichertePosition): GespeichertePo
   return { ...rest, konto: KONTO_GEBUEHR, status: 'zugeordnet' };
 }
 
-/** Beide Zwangs-Regeln (Pfand→4800, Gebühr→4701) als EIN Post-Pass. */
+/**
+ * Zwangs-Reinigung auf GESPEICHERTEN Positionen (analog erzwingePfandPosition):
+ * Reinigungs-/Waschmittel stehen IMMER auf 6040 — auch beim Re-Import und beim
+ * manuellen Speichern; gespeicherte 4701-/Warenkonto-Zuordnungen werden
+ * bereinigt. Läuft NACH Pfand- und Gebühren-Regel.
+ */
+export function erzwingeReinigungPosition(p: GespeichertePosition): GespeichertePosition {
+  if (!istZwingendReinigung(p)) return p;
+  if (p.konto === KONTO_REINIGUNG && p.status === 'zugeordnet' && !p.manuell) return p;
+  const { manuell: _m, ...rest } = p;
+  void _m;
+  return { ...rest, konto: KONTO_REINIGUNG, status: 'zugeordnet' };
+}
+
+/** Alle Zwangs-Regeln (Pfand→4800, Gebühr→4701, Reinigung→6040) als EIN Post-Pass. */
 export function erzwingeRegelPosition(p: GespeichertePosition): GespeichertePosition {
-  return erzwingeGebuehrPosition(erzwingePfandPosition(p));
+  return erzwingeReinigungPosition(erzwingeGebuehrPosition(erzwingePfandPosition(p)));
 }
 
 /** kontoSplits aus GESPEICHERTEN Positionen (nach manuellen Overrides) neu ableiten. */

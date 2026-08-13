@@ -397,6 +397,22 @@ describe('kontoSplitsAusFsKategorien', () => {
     expect(m['4030']).toBe(100);            // Waren-Bucket unangetastet
     expect(r.gebuehrenRest).toBeCloseTo(4.96, 2); // → Aufrufer nimmt Positions-Pfad
   });
+  it('Reinigungs-Positionen werden aus ZSF-Warenkonto-Buckets herausgerechnet → 6040', () => {
+    // Reinigungsmittel in einer Waren-Kategorie (z.B. Non-Food-Zeile in der ZSF):
+    const r = kontoSplitsAusFsKategorien(
+      [kat('Bier', 100), kat('Mineralwasser', 0, 60)], [],
+      [{ bezeichnung: 'Persil Universal Gel', warengruppe: 'Mineralwasser', mwstCode: 2, positionspreis: 53.22 }],
+    );
+    const m = Object.fromEntries(r.splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['6040']).toBeCloseTo(53.22, 2);
+    expect(m['4050']).toBeCloseTo(6.78, 2); // 60 − 53.22
+    expect(m['4030']).toBe(100);
+    expect(r.gebuehrenRest).toBe(0);
+    // Ohne passende Kategorie → Rest gemeldet (Aufrufer weicht auf Positions-Pfad aus):
+    const rest = kontoSplitsAusFsKategorien([kat('Bier', 100)], [],
+      [{ bezeichnung: 'Cif Crème', warengruppe: 'Unbekannt', mwstCode: 1, positionspreis: 41.10 }]);
+    expect(rest.gebuehrenRest).toBeCloseTo(41.10, 2);
+  });
   it('gebuehrenRest: abweichender Kategoriename / Betrag > Bucket → Rest gemeldet, nie negativ', () => {
     // Gebühren-Position mit Warengruppe, die KEINE ZSF-Kategorie hat:
     const nichtMatch = kontoSplitsAusFsKategorien([kat('Bier', 100)], [],
