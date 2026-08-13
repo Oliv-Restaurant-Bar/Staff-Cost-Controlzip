@@ -205,13 +205,18 @@ function fsWarengruppe(bezeichnung: string, satz: number): string {
 }
 
 /**
- * VEG-Einweg-Glasgebühren zählt FGG in der «Zusammenfassung MwSt.» zur
+ * VEG-Einweg-Glasgebühren UND Recycling-Gebühren (Recycl.-Geb. PET,
+ * Recycling-Geb., …) zählt FGG in der «Zusammenfassung MwSt.» zur
  * WARENkategorie (nicht zu Zu-/Abschlägen): 2.6% ⇒ alkoholfreie Getränke,
  * 8.1% ⇒ Spirituosen/Wein-EW-Flaschen (heuristisch Spirituosen).
+ * Nur mit dieser Warengruppe rechnet kontoSplitsAusFsKategorien die Gebühr
+ * aus dem richtigen Satz-Bucket heraus (→ 4701) — sonst bleibt sie im
+ * Warenkonto stecken (Vorfall Beleg 87791818: 4.96 im 4050-Bucket).
  * Logistikpauschalen etc. bleiben «Zu-/Abschläge».
  */
 function gebuehrWarengruppe(bezeichnung: string, satz: number): string {
-  if (/^veg\b/i.test(bezeichnung.trim())) {
+  const b = bezeichnung.trim();
+  if (/^veg\b/i.test(b) || /recycl/i.test(b)) {
     return satz === 2.6 ? 'Andere alk. freie Getränke' : 'Spirituosen';
   }
   return 'Zu-/Abschläge';

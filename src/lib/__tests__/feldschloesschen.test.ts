@@ -354,15 +354,18 @@ describe('kontoSplitsAusFsKategorien', () => {
   it('Gebühren-Positionen werden aus den ZSF-Warenkonto-Buckets herausgerechnet (87791818)', () => {
     const kats = [
       kat('Bier', 420), kat('Spirituosen', 539.39),
-      kat('Andere alk. freie Getränke', 0, 728.52), kat('Mineralwasser', 0, 99.84),
-      kat('Zu-/Abschläge', 15, 4.96), kat('Leergut', 0, 0, -233),
+      // Wie auf der echten Rechnung: Recycl.-Geb. PET (4.96, 2.6%) steckt in der
+      // ZSF INNERHALB von «Andere alk. freie Getränke» (nicht in Zu-/Abschläge).
+      kat('Andere alk. freie Getränke', 0, 733.48), kat('Mineralwasser', 0, 99.84),
+      kat('Zu-/Abschläge', 15), kat('Leergut', 0, 0, -233),
     ];
     const pos = [
       { bezeichnung: 'VEG EW Glas ab 33 cl bis 60 cl', warengruppe: 'Spirituosen', mwstCode: 1, positionspreis: 0.04 },
       { bezeichnung: 'VEG EW Glas ab 60cl', warengruppe: 'Spirituosen', mwstCode: 1, positionspreis: 0.60 },
       { bezeichnung: 'VEG EW Glas 9 bis 33 cl', warengruppe: 'Andere alk. freie Getränke', mwstCode: 2, positionspreis: 1.44 },
       { bezeichnung: 'Logistikpauschale', warengruppe: 'Zu-/Abschläge', mwstCode: 1, positionspreis: 15 },
-      { bezeichnung: 'Recycl.-Geb. PET ab 50cl', warengruppe: 'Zu-/Abschläge', mwstCode: 2, positionspreis: 4.96 },
+      // Warengruppe wie sie gebuehrWarengruppe seit dem Recycl-Fix liefert:
+      { bezeichnung: 'Recycl.-Geb. PET ab 50cl', warengruppe: 'Andere alk. freie Getränke', mwstCode: 2, positionspreis: 4.96 },
       { bezeichnung: 'Pfand Fass', warengruppe: 'Leergut', mwstCode: 0, positionspreis: -233 },
       { bezeichnung: 'Lager hell Fass', warengruppe: 'Bier', mwstCode: 1, positionspreis: 420 },
     ];
@@ -376,10 +379,23 @@ describe('kontoSplitsAusFsKategorien', () => {
     expect(m['4800']).toBe(-233);
     // Zahlenneutral: Σ netto unverändert
     expect(splits.reduce((a, s2) => a + s2.amountNet, 0)).toBeCloseTo(1574.71, 2);
-    // OHNE Positionen (alter Pfad) blieben die VEG-Anteile in den Warenkonten:
+    // OHNE Positionen (alter Pfad) blieben VEG- UND Recycl-Anteile in den Warenkonten:
     const alt = Object.fromEntries(kontoSplitsAusFsKategorien(kats, []).splits.map(s2 => [s2.warenkonto, s2.amountNet]));
-    expect(alt['4050']).toBeCloseTo(828.36, 2);
-    expect(alt['4701']).toBeCloseTo(19.96, 2);
+    expect(alt['4050']).toBeCloseTo(833.32, 2);
+    expect(alt['4701']).toBeCloseTo(15, 2);
+  });
+  it('ZSF mit eigener «Recyclinggebühren»-Kategorie: keine Doppelzählung, Rest gemeldet (fail-safe)', () => {
+    // Kategorie selbst → 4701; die Recycl-Position trägt (seit dem Fix) eine
+    // Waren-Warengruppe ohne passenden ZSF-Bucket → gebuehrenRest > 0, Aufrufer
+    // weicht sichtbar auf die Positions-Kontierung aus (4701 genau einmal).
+    const r = kontoSplitsAusFsKategorien(
+      [kat('Bier', 100), kat('Recyclinggebühren', 0, 4.96)], [],
+      [{ bezeichnung: 'Recycl.-Geb. PET ab 50cl', warengruppe: 'Andere alk. freie Getränke', mwstCode: 2, positionspreis: 4.96 }],
+    );
+    const m = Object.fromEntries(r.splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['4701']).toBeCloseTo(4.96, 2); // nur via Kategorie, nicht doppelt
+    expect(m['4030']).toBe(100);            // Waren-Bucket unangetastet
+    expect(r.gebuehrenRest).toBeCloseTo(4.96, 2); // → Aufrufer nimmt Positions-Pfad
   });
   it('gebuehrenRest: abweichender Kategoriename / Betrag > Bucket → Rest gemeldet, nie negativ', () => {
     // Gebühren-Position mit Warengruppe, die KEINE ZSF-Kategorie hat:

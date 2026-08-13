@@ -1337,9 +1337,11 @@ interface AbwRow {
   diff:      number;
   diffPct:   number | null;
   dates:     string[];
-  /** true = Zeitraum liegt (ganz) nach dem letzten Ist-Tag — «noch offen / kein Ist»:
+  /** true = Zeitraum liegt (ganz) nach dem Ist-Stichtag — «noch offen / kein Ist»:
    *  nicht als Abweichung werten, nicht in Total/Kumulation zählen. */
   offen?:    boolean;
+  /** true = Woche läuft über den Ist-Stichtag hinaus — Plan+Ist nur bis Stichtag gezählt. */
+  teilweise?: boolean;
 }
 
 type AbwMode = 'day' | 'week' | 'month' | 'year';
@@ -1351,6 +1353,40 @@ interface FlexPeriodTarget {
   istTotal:  number;
   year:      number;
   month:     number;
+}
+
+/**
+ * Ist-Stichtag = letzter Tag mit importierten Mirus-Ist-Stunden (pro Mandant via keyFn).
+ * plan_sync-Einträge (automatischer Plan→Ist-Spiegel) zählen NICHT — sonst rutscht der
+ * Stichtag in die Zukunft und Teilwochen vergleichen Plan ganze Woche vs. Ist 2 Tage.
+ * Legacy-Einträge ohne source (alte Mirus-Importe) und 'manual'/'import' zählen.
+ */
+function loadMirusIstStichtag(
+  year: number, month: number,
+  keyFn: (k: string) => string = k => k,
+): string {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return '';
+    const data: Record<string, any> = JSON.parse(raw);
+    let max = '';
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      const source = typeof val === 'object' ? val?.source : undefined;
+      if (source === 'plan_sync') continue;
+      const h = typeof val === 'number' ? val : (val?.hours ?? 0);
+      if (h > 0 && date > max) max = date;
+    }
+    return max;
+  } catch { return ''; }
+}
+
+/** '2026-08-11' → '11.08.' (für das Teilwochen-Badge) */
+function fmtStichtagKurz(iso: string): string {
+  return iso.length === 10 ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : iso;
 }
 
 function isoWeekLabel(iso: string): string {
@@ -4211,38 +4247,49 @@ export default function PersonalFixPage() {
         };
       });
 
-    // Letzter Tag mit tatsächlichem Ist (>0): Zeiträume danach sind «noch offen»
-    // — Zukunftswochen ohne Ist dürfen NICHT als «100 % unter Plan» erscheinen.
-    const lastIstDate = days.reduce((max, d) => (d.istTotal > 0 && d.date > max ? d.date : max), '');
+    // Ist-Stichtag = letzter Tag mit importierten Mirus-Ist-Stunden (je Mandant).
+    // plan_sync-Spiegel zählen NICHT — sonst rutscht der Stichtag in die Zukunft
+    // und Teilwochen vergleichen fast eine ganze Plan-Woche gegen 2 Ist-Tage.
+    const lastIstDate = loadMirusIstStichtag(selectedYear, selectedMonth, tenantKey);
 
-    // pBis = Plan NUR über Tage ≤ Stichtag (letzter Ist-Tag): die Woche, die den
-    // Stichtag enthält, wird pro rata gekappt — Plan und Ist vergleichen dann
-    // denselben Zeitraum (Befehl 08/2026). Volle Vergangenheitswochen bleiben
-    // unverändert (alle Tage ≤ Stichtag), Zukunftswochen bleiben «offen».
-    const weekMap = new Map<string, { p: number; pBis: number; i: number; dates: string[] }>();
+    // Plan UND Ist je Woche NUR über Tage ≤ Ist-Stichtag vergleichen:
+    //  • Woche komplett ≤ Stichtag  → normale abgeschlossene Woche.
+    //  • Woche über den Stichtag hinaus → beide Seiten auf Tage ≤ Stichtag gekappt,
+    //    gekennzeichnet als «(teilweise, bis DD.MM.)».
+    //  • Woche komplett nach Stichtag → «noch offen · kein Ist» (voller Wochenplan).
+    const weekMap = new Map<string, { p: number; pBis: number; i: number; iBis: number; dates: string[] }>();
     for (const d of days) {
       const wk = isoWeekLabel(d.date);
-      const e  = weekMap.get(wk) ?? { p: 0, pBis: 0, i: 0, dates: [] };
+      const e  = weekMap.get(wk) ?? { p: 0, pBis: 0, i: 0, iBis: 0, dates: [] };
       e.p += d.planTotal;
-      if (lastIstDate !== '' && d.date <= lastIstDate) e.pBis += d.planTotal;
-      e.i += d.istTotal; e.dates.push(d.date);
+      e.i += d.istTotal;
+      // Bewusste Hybrid-Regel: innerhalb ≤ Stichtag zählt das Ist ALLER Quellen
+      // (auch plan_sync-Absenzen K/U) — identisch zu allen anderen Ist-Ansichten.
+      // plan_sync ist nur für die STICHTAG-Bestimmung ausgeschlossen.
+      if (lastIstDate !== '' && d.date <= lastIstDate) { e.pBis += d.planTotal; e.iBis += d.istTotal; }
+      e.dates.push(d.date);
       weekMap.set(wk, e);
     }
     const weeks: AbwRow[] = Array.from(weekMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([period, v]) => {
-        const offen = v.i <= 0 && (lastIstDate === '' || v.dates.every(dt => dt > lastIstDate));
+        const offen     = lastIstDate === '' || v.dates.every(dt => dt > lastIstDate);
+        const teilweise = !offen && v.dates.some(dt => dt > lastIstDate);
         // Offene Zukunftswochen zeigen weiterhin den vollen Wochenplan;
-        // Wochen mit Ist werden auf den Zeitraum bis Stichtag gekappt.
+        // alle anderen Wochen werden auf Plan+Ist der Tage ≤ Stichtag gekappt.
         const plan = offen ? v.p : v.pBis;
+        const ist  = offen ? v.i : v.iBis;
         return {
-          period,
+          period:    teilweise ? `${period} (teilweise, bis ${fmtStichtagKurz(lastIstDate)})` : period,
           planTotal: plan,
-          istTotal:  v.i,
-          diff:      v.i - plan,
-          diffPct:   plan > 0 ? ((v.i - plan) / plan) * 100 : null,
-          dates:     v.dates,
+          istTotal:  ist,
+          diff:      ist - plan,
+          diffPct:   plan > 0 ? ((ist - plan) / plan) * 100 : null,
+          // Nur die gezählten Tage weitergeben → MA-Popup zeigt denselben Zeitraum,
+          // MA ohne Plan in diesen Tagen fallen raus (kein Plan-ohne-Ist-Effekt).
+          dates:     offen ? v.dates : v.dates.filter(dt => dt <= lastIstDate),
           offen,
+          teilweise,
         };
       });
 
@@ -4250,8 +4297,8 @@ export default function PersonalFixPage() {
     const monthIst  = days.reduce((s, d) => s + d.istTotal,  0);
     const monthDiff = monthIst - monthPlan;
 
-    // Nur-bis-Ist-Sicht: Plan/Ist/Diff ausschliesslich über Tage bis zum letzten
-    // Ist-Tag (Total/Kumulation der Flex-Auswertung; Zukunft zählt nicht).
+    // Nur-bis-Ist-Sicht: Plan/Ist/Diff ausschliesslich über Tage bis zum
+    // Ist-Stichtag (Total/Kumulation der Flex-Auswertung; Zukunft zählt nicht).
     const bisIstDays = lastIstDate ? days.filter(d => d.date <= lastIstDate) : [];
     const bisIstPlan = bisIstDays.reduce((s, d) => s + d.planTotal, 0);
     const bisIstIst  = bisIstDays.reduce((s, d) => s + d.istTotal,  0);
@@ -4266,7 +4313,7 @@ export default function PersonalFixPage() {
     console.log(`[FLEX] diff: ${monthDiff.toFixed(2)}`);
     console.log(`[FLEX] daily rows: ${days.length}, week rows: ${weeks.length}`);
     for (const w of weeks) {
-      console.log(`[FLEX] ${w.period}: planVoll=${(weekMap.get(w.period)?.p ?? 0).toFixed(0)} planKappe=${w.planTotal.toFixed(0)} ist=${w.istTotal.toFixed(0)} diffPct=${w.diffPct == null ? '-' : w.diffPct.toFixed(1)} offen=${w.offen}`);
+      console.log(`[FLEX] ${w.period}: planKappe=${w.planTotal.toFixed(0)} ist=${w.istTotal.toFixed(0)} diffPct=${w.diffPct == null ? '-' : w.diffPct.toFixed(1)} offen=${w.offen} teilweise=${!!w.teilweise} stichtag=${lastIstDate || '-'}`);
     }
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
@@ -4612,7 +4659,8 @@ export default function PersonalFixPage() {
         }))
       : abwMode === 'week'
       ? pfixAbw.weeks.map(w => ({
-          period:    w.period,
+          // Offene Zukunftswochen im Export kennzeichnen (UI zeigt «noch offen»)
+          period:    w.offen ? `${w.period} (noch offen · kein Ist)` : w.period,
           planTotal: w.planTotal,
           istTotal:  w.istTotal,
           diff:      w.diff,
@@ -4645,9 +4693,11 @@ export default function PersonalFixPage() {
       abwMode,
       periodRows,
       empRows,
-      monthPlan:     pfixAbw.monthPlan,
-      monthIst:      pfixAbw.monthIst,
-      monthDiff:     pfixAbw.monthDiff,
+      // Wochenmodus: Kopf/KPI/Total wie die Seite «bis Ist-Stichtag» (Teilwochen
+      // gekappt, Zukunft zählt nicht) — sonst widersprechen sich Zeilen und Total.
+      monthPlan:     abwMode === 'week' ? pfixAbw.bisIst.plan : pfixAbw.monthPlan,
+      monthIst:      abwMode === 'week' ? pfixAbw.bisIst.ist  : pfixAbw.monthIst,
+      monthDiff:     abwMode === 'week' ? pfixAbw.bisIst.diff : pfixAbw.monthDiff,
       proRataDay,
       proRataFactor,
       daysInMonth:   daysInSelectedMonth,
@@ -5259,7 +5309,7 @@ export default function PersonalFixPage() {
                       <tfoot>
                         <tr className={cn('border-t-2 border-border', mA.bg || 'bg-muted/20')}>
                           <td className="px-3 py-2.5 text-center"><span className={cn('inline-block w-2.5 h-2.5 rounded-full', mA.dot)} /></td>
-                          <td className="px-4 py-2.5 font-bold text-xs">Total{abwMode === 'week' && weeks.some(w => w.offen) ? ' (bis Ist)' : ''}</td>
+                          <td className="px-4 py-2.5 font-bold text-xs">Total{abwMode === 'week' && weeks.some(w => w.offen || w.teilweise) ? ' (bis Ist)' : ''}</td>
                           <td className="px-4 py-2.5 text-right font-mono font-bold text-blue-700 dark:text-blue-400">{fmtCHF(totalPlan)}</td>
                           <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(totalIst)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(totalDiff)}</td>
