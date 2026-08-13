@@ -627,3 +627,44 @@ describe('Reinigungsmittel → IMMER 6040 (universelle Zwangs-Regel)', () => {
     expect(sum('4701')).toBeCloseTo(175.52, 2);
   });
 });
+
+import {
+  istTapServeText, istZwingendUre, erzwingeUrePosition, KONTO_URE,
+  istZwingendGebuehr as istZwingendGebuehr2,
+} from '@/lib/waren-positionen';
+
+describe('TapServe → IMMER 6100 URE (universelle Zwangs-Regel)', () => {
+  it('istTapServeText: TapServe-Kennungen matchen (auch Bindestrich/getrennt)', () => {
+    for (const s of ['TapServe', 'TapServe Servicepauschale', 'tapserve Wartung',
+      'Tap-Serve Vertrag', 'Tap Serve Jahresservice', 'TapServe-Abo Schankanlage']) {
+      expect(istTapServeText(s), s).toBe(true);
+    }
+  });
+  it('istTapServeText: normale Artikel matchen NICHT', () => {
+    for (const s of ['Feldschlösschen Lager 20L', 'Servicegebühr', 'Tapas Teller',
+      'Serviette', 'Tap Wasser', '', undefined]) {
+      expect(istTapServeText(s as string | undefined), String(s)).toBe(false);
+    }
+  });
+  it('TapServe schlägt Gebühren-Regel, Warengruppen-Tabelle und Artikel-Zuordnung', () => {
+    expect(istZwingendGebuehr2({ mwstCode: 1, bezeichnung: 'TapServe Servicegebühr' })).toBe(false);
+    expect(istZwingendUre({ mwstCode: 1, bezeichnung: 'TapServe Servicegebühr' })).toBe(true);
+    expect(kontoFuerPosition({ warengruppe: 'Bier', mwstCode: 1, bezeichnung: 'TapServe Wartung' }, [{ gruppe: 'Bier', konto: '4030' }]))
+      .toEqual({ konto: KONTO_URE, status: 'zugeordnet' });
+    const p = { artNr: 'TS1', bezeichnung: 'TapServe Servicepauschale', warengruppe: 'Diverses', mwstCode: 2 as const };
+    expect(kontoFuerPositionMitArtikel('Feldschlösschen', p, [], { [artikelKey('Feldschlösschen', p)]: '4701' }))
+      .toEqual({ konto: KONTO_URE, status: 'zugeordnet' });
+  });
+  it('Pfand gewinnt vor TapServe; erzwingeUrePosition bereinigt 4701-Altbestände', () => {
+    expect(istZwingendUre({ mwstCode: 0, bezeichnung: 'TapServe Leergut' })).toBe(false);
+    const alt: GespeichertePosition = { artNr: 'TS1', bezeichnung: 'TapServe Wartung Schankanlage', warengruppe: '', menge: 1, einheit: 'Stk', preis: 548.70, positionspreis: 548.70, mwstBetrag: 44.44, mwstCode: 1, konto: '4701', status: 'zugeordnet', manuell: true };
+    expect(erzwingeUrePosition(alt)).toMatchObject({ konto: KONTO_URE, status: 'zugeordnet' });
+    expect(erzwingeRegelPosition(alt)).toMatchObject({ konto: KONTO_URE, status: 'zugeordnet' });
+  });
+  it('TapServe + Reinigungs-Kennwort: bleibt 6100 auch nach dem Regel-Post-Pass', () => {
+    const p: GespeichertePosition = { artNr: 'TS2', bezeichnung: 'TapServe Reinigung Schankanlage', warengruppe: '', menge: 1, einheit: 'Stk', preis: 120, positionspreis: 120, mwstBetrag: 9.72, mwstCode: 1, konto: '6040', status: 'zugeordnet', manuell: true };
+    expect(erzwingeRegelPosition(p)).toMatchObject({ konto: KONTO_URE, status: 'zugeordnet' });
+    const alt4701: GespeichertePosition = { ...p, konto: '4701' };
+    expect(erzwingeRegelPosition(alt4701)).toMatchObject({ konto: KONTO_URE, status: 'zugeordnet' });
+  });
+});

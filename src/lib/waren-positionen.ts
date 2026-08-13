@@ -314,7 +314,40 @@ export function istZwingendGebuehr(
   p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
 ): boolean {
   if (istZwingendPfand(p)) return false;
+  // TapServe hat Vorrang: eine TapServe-«Servicegebühr» bleibt 6100, nie 4701.
+  if (istZwingendUre(p)) return false;
   return istGebuehrenText(p.bezeichnung) || istGebuehrenText(p.warengruppe);
+}
+
+/**
+ * TapServe (Feldschlösschen Schankanlagen-Service) → Konto 6100
+ * «URE Maschinen und Apparate»: Service-/Unterhaltsleistung, nie Warenkonto,
+ * nie 4701, nie WKQ. Universal für alle Lieferanten und Importwege.
+ */
+export const KONTO_URE = '6100';
+
+/** Token-genaue TapServe-Erkennung auf Bezeichnung ODER Warengruppe. */
+export function istTapServeText(s: string | undefined): boolean {
+  if (!s) return false;
+  const toks = tokens(s);
+  for (let i = 0; i < toks.length; i++) {
+    if (/^tapserve[a-zäöü]*$/.test(toks[i])) return true;
+    // «Tap-Serve» / «Tap Serve» zerfällt in zwei Tokens.
+    if (toks[i] === 'tap' && toks[i + 1] === 'serve') return true;
+  }
+  return false;
+}
+
+/**
+ * Universelle Zwangs-TapServe-Regel → 6100: läuft VOR gelernter Artikel-
+ * Zuordnung, Warengruppen-Tabelle UND der Gebühren-Regel (eine TapServe-
+ * «Servicegebühr» bleibt 6100, nicht 4701). NACH der Pfand-Regel.
+ */
+export function istZwingendUre(
+  p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
+): boolean {
+  if (istZwingendPfand(p)) return false;
+  return istTapServeText(p.bezeichnung) || istTapServeText(p.warengruppe);
 }
 
 /**
@@ -381,7 +414,9 @@ export function istReinigungsText(s: string | undefined): boolean {
 export function istZwingendReinigung(
   p: Pick<WarenPosition, 'mwstCode'> & Partial<Pick<WarenPosition, 'bezeichnung' | 'warengruppe'>>,
 ): boolean {
-  if (istZwingendPfand(p) || istZwingendGebuehr(p)) return false;
+  // TapServe hat Vorrang (Pfand > TapServe > Gebühr > Reinigung): eine
+  // TapServe-Position mit Reinigungs-Kennwort bleibt 6100, nie 6040.
+  if (istZwingendPfand(p) || istZwingendUre(p) || istZwingendGebuehr(p)) return false;
   return istReinigungsText(p.bezeichnung) || istReinigungsText(p.warengruppe);
 }
 
@@ -419,6 +454,10 @@ export function kontoFuerPosition(
   // Pfand-Warengruppe (z.B. «Leergut») schlägt die konfigurierte Tabelle —
   // ein gespeichertes Mapping darf Pfand nie auf 6040/ein Warenkonto routen.
   if (istPfandWarengruppe(p.warengruppe)) return { konto: null, status: 'pfand' };
+  // TapServe → 6100, VOR der Gebühren-Regel und der Warengruppen-Tabelle.
+  if (istTapServeText(p.bezeichnung) || istTapServeText(p.warengruppe)) {
+    return { konto: KONTO_URE, status: 'zugeordnet' };
+  }
   // Gebühren/Konditionen → 4701, VOR der Warengruppen-Tabelle (eine
   // gespeicherte 4050-/Warenkonto-Zuordnung darf Gebühren nie überstimmen).
   if (istGebuehrenText(p.bezeichnung) || istGebuehrenText(p.warengruppe)) {
@@ -455,6 +494,8 @@ export function kontoFuerPositionMitArtikel(
   // läuft VOR der gelernten Artikel-Zuordnung: Pfand ist IMMER 4800 —
   // eine gespeicherte 6040-/Warenkonto-Zuordnung wird überschrieben.
   if (istZwingendPfand(p)) return { konto: null, status: 'pfand' };
+  // Universelle TapServe-Regel → 6100: VOR Gebühren- und Artikel-Regeln.
+  if (istZwingendUre(p)) return { konto: KONTO_URE, status: 'zugeordnet' };
   // Universelle Gebühren-Regel (VEG/Recycling/Logistikpauschale/…): läuft
   // ebenfalls VOR der gelernten Artikel-Zuordnung — eine gespeicherte
   // 4050-/Warenkonto-Zuordnung wird überschrieben (immer 4701).
@@ -614,9 +655,23 @@ export function erzwingeReinigungPosition(p: GespeichertePosition): Gespeicherte
   return { ...rest, konto: KONTO_REINIGUNG, status: 'zugeordnet' };
 }
 
-/** Alle Zwangs-Regeln (Pfand→4800, Gebühr→4701, Reinigung→6040) als EIN Post-Pass. */
+/**
+ * Zwangs-TapServe auf GESPEICHERTEN PositionEN (analog erzwingePfandPosition):
+ * TapServe-Service steht IMMER auf 6100 — auch beim Re-Import und beim
+ * manuellen Speichern; gespeicherte 4701-/Warenkonto-Zuordnungen werden
+ * bereinigt. Läuft NACH der Pfand-, VOR der Gebühren-Regel.
+ */
+export function erzwingeUrePosition(p: GespeichertePosition): GespeichertePosition {
+  if (!istZwingendUre(p)) return p;
+  if (p.konto === KONTO_URE && p.status === 'zugeordnet' && !p.manuell) return p;
+  const { manuell: _m, ...rest } = p;
+  void _m;
+  return { ...rest, konto: KONTO_URE, status: 'zugeordnet' };
+}
+
+/** Alle Zwangs-Regeln (Pfand→4800, TapServe→6100, Gebühr→4701, Reinigung→6040) als EIN Post-Pass. */
 export function erzwingeRegelPosition(p: GespeichertePosition): GespeichertePosition {
-  return erzwingeReinigungPosition(erzwingeGebuehrPosition(erzwingePfandPosition(p)));
+  return erzwingeReinigungPosition(erzwingeGebuehrPosition(erzwingeUrePosition(erzwingePfandPosition(p))));
 }
 
 /** kontoSplits aus GESPEICHERTEN Positionen (nach manuellen Overrides) neu ableiten. */
