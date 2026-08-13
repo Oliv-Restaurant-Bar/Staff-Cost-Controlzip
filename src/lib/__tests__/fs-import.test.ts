@@ -43,6 +43,30 @@ const rechnung = (nr: string, datum: string, preis = 30): ParsedCsvRechnung => {
 beforeEach(() => kv.clear());
 
 describe('kernImportiereFsRechnungen', () => {
+  it('Monatsrechnung: DIESELBE Lieferung doppelt im Batch bleibt EIN Eintrag (exakter Referenz-Upsert auch gegen frisch Erstelltes)', async () => {
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('D-1', '2026-07-10', 5) },
+      { r: rechnung('D-1', '2026-07-10', 5) },
+    ], { quelle: 'monatsrechnung', erlaubteNeu: ['D-1|2026-07-10'] });
+    expect(res.neu + res.ersetzt + res.ueberschrieben).toBeGreaterThan(0);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].reference).toBe('D-1');
+    expect(monat[0].final).toBe(true);
+  });
+
+  it('Monatsrechnung: zwei Lieferungen am selben Tag mit gleichem Betrag werden BEIDE gebucht (kein «bereits final»-Selbstmatch im selben Lauf)', async () => {
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('D-1', '2026-07-10', 5) },
+      { r: rechnung('D-2', '2026-07-10', 5) },
+    ], { quelle: 'monatsrechnung', erlaubteNeu: ['D-1|2026-07-10', 'D-2|2026-07-10'] });
+    expect(res.neu).toBe(2);
+    expect(res.bereitsFinal).toBe(0);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat.map(e => e.reference).sort()).toEqual(['D-1', 'D-2']);
+    expect(monat.every(e => e.final === true)).toBe(true);
+  });
+
   it('receiptPath: Import-Beleg wird verknüpft, Re-Import ersetzt ihn, manueller Beleg gewinnt', async () => {
     // 1) Erst-Import mit Import-Beleg
     await kernImportiereFsRechnungen(TENANT, LIEFERANT, [

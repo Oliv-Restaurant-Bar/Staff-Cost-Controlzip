@@ -121,6 +121,12 @@ export async function kernImportiereFsRechnungen(
   const hinweise: string[] = [];
   // Jede bestehende Buchung deckt höchstens EINE Lieferung dieses Laufs.
   const vergeben = new Set<string>();
+  // Im SELBEN Lauf frisch geschriebene Buchungen: für mehrdeutige
+  // Datum+Betrag-Fallback-Matches TABU (sonst «frisst» eine gleichentags-
+  // gleichbetragliche Lieferung die soeben gebuchte und wird als «bereits
+  // final» übersprungen) — für EXAKTE Referenz-Treffer aber erlaubt
+  // (idempotenter Upsert, z.B. dieselbe Monatsrechnung doppelt im Batch).
+  const neuErstellt = new Set<string>();
   const alleAenderungen: PreisAenderung[] = [];
   // Per-Monat-Caches: einmal lesen, am Ende einmal schreiben.
   const bestandCache = new Map<string, InvoiceEntry[]>();
@@ -195,7 +201,7 @@ export async function kernImportiereFsRechnungen(
               && e.supplierName.trim().toLowerCase() === lief
               && (pass === 'ref'
                 ? refMatch(e)
-                : (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+                : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
             if (m) { vorhanden = m; vorhandenMonat = nm; break aussen; }
           }
         }
@@ -276,7 +282,7 @@ export async function kernImportiereFsRechnungen(
               && e.supplierName.trim().toLowerCase() === lief
               && (pass === 'ref'
                 ? r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-                : (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+                : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
             if (kandidat) { vorhanden = kandidat; vorhandenMonat = nm; provisorischErsetzt++; break aussen2; }
           }
         }
@@ -398,6 +404,7 @@ export async function kernImportiereFsRechnungen(
       delete hinweisCache.get(vorhandenMonat)![vorhanden.id];
     }
     bestandCache.get(month)!.push(entry);
+    neuErstellt.add(entry.id);
     posCache.get(month)![id] = positionen;
     const hin = hinweisCache.get(month)!;
     if (aenderungen.length > 0) hin[id] = aenderungen; else delete hin[id];

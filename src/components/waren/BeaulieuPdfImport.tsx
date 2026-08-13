@@ -234,9 +234,25 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
               dublette = false;
             }
           }
+          // REINER ERSTIMPORT (keine provisorischen Lieferscheine, nichts
+          // Erfasstes, nichts Manuelles): Default «Alle übernehmen» VORSCHLAGEN —
+          // die Monatsrechnung ist massgeblich. Nur Vorbelegung: jede Zeile
+          // bleibt einzeln umstellbar, und der Import selbst braucht weiterhin
+          // den Klick auf «… importieren». Stale-Recheck im Import-Pfad setzt
+          // die Entscheide unverändert fail-closed zurück.
+          const erstimport = !!abgleich && abgleich.ueberschrieben === 0
+            && abgleich.unveraendert === 0 && abgleich.manuell === 0
+            && abgleich.nichtInMr.length === 0;
+          const neuEntscheidDefault = erstimport
+            ? Object.fromEntries(abgleich!.eintraege
+                .filter(e => e.status === 'neu')
+                .map(e => [`${e.lieferung.rechnungsNr}|${e.lieferung.datum}`, 'uebernehmen' as const]))
+            : undefined;
           neu.push({
             dublette,
             modus, abgleich, mandantFremd,
+            ...(neuEntscheidDefault && Object.keys(neuEntscheidDefault).length > 0
+              ? { neuEntscheid: neuEntscheidDefault } : {}),
             fileName: f.name, datei: f, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
@@ -887,6 +903,31 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                         </div>
                       ) : null;
                     })()}
+                    {(() => {
+                      // SAMMEL-AKTION je Monatsrechnung: setzt nur die noch
+                      // OFFENEN «neu»-Zeilen — bestehende Einzelentscheide
+                      // bleiben unangetastet (Einzelklick übersteuert jederzeit).
+                      const neuAlle = row.abgleich!.eintraege.filter(e => e.status === 'neu');
+                      const offeneNeu = neuAlle.filter(e => !row.neuEntscheid?.[neuKey(e)]);
+                      if (neuAlle.length < 2) return null;
+                      const setzeAlle = (wahl: 'uebernehmen' | 'ignorieren') =>
+                        patch(i, { neuEntscheid: { ...row.neuEntscheid, ...Object.fromEntries(offeneNeu.map(e => [neuKey(e), wahl])) } });
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-muted-foreground">{neuAlle.length} Lieferungen aus der Monatsrechnung{offeneNeu.length > 0 ? ` · ${offeneNeu.length} offen` : ' · alle entschieden'}:</span>
+                          <Button size="sm" variant="outline" className="h-5 px-2 text-[10px]" disabled={offeneNeu.length === 0}
+                            data-testid={`beaulieu-pdf-alle-uebernehmen-${i}`}
+                            onClick={() => setzeAlle('uebernehmen')}>
+                            Alle übernehmen
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-5 px-2 text-[10px]" disabled={offeneNeu.length === 0}
+                            data-testid={`beaulieu-pdf-alle-ignorieren-${i}`}
+                            onClick={() => setzeAlle('ignorieren')}>
+                            Alle ignorieren
+                          </Button>
+                        </div>
+                      );
+                    })()}
                     {row.abgleich.eintraege.filter(e => e.status === 'neu').map((e, j) => {
                       const k = neuKey(e);
                       const wahl = row.neuEntscheid?.[k];
@@ -963,6 +1004,35 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             );
           })}
 
+          {(() => {
+            // GLOBALE SAMMEL-AKTION über alle Monatsrechnungen der Vorschau:
+            // setzt nur noch OFFENE «neu»-Zeilen (Einzelentscheide bleiben).
+            const offenProZeile = zeilen.map(z => z.modus === 'monatsrechnung' && z.abgleich
+              ? z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]).length : 0);
+            const offenTotal = offenProZeile.reduce((a, b) => a + b, 0);
+            if (offenTotal < 2) return null;
+            const setzeAlleGlobal = (wahl: 'uebernehmen' | 'ignorieren') => setZeilen(zs => zs.map(z => {
+              if (z.modus !== 'monatsrechnung' || !z.abgleich) return z;
+              const offene = z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]);
+              if (offene.length === 0) return z;
+              return { ...z, neuEntscheid: { ...z.neuEntscheid, ...Object.fromEntries(offene.map(e => [neuKey(e), wahl])) } };
+            }));
+            return (
+              <div className="flex flex-wrap items-center gap-2 text-xs border-t border-border/40 pt-2">
+                <span className="text-amber-600 font-medium">{offenTotal} offene Differenz-Zeilen über den ganzen Import:</span>
+                <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                  data-testid="beaulieu-pdf-global-alle-uebernehmen"
+                  onClick={() => setzeAlleGlobal('uebernehmen')}>
+                  Alle übernehmen
+                </Button>
+                <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                  data-testid="beaulieu-pdf-global-alle-ignorieren"
+                  onClick={() => setzeAlleGlobal('ignorieren')}>
+                  Alle ignorieren
+                </Button>
+              </div>
+            );
+          })()}
           <div className="flex items-center gap-3">
             <Button size="sm" disabled={busy || bereit.length === 0} onClick={() => void handleImport()}
               data-testid="beaulieu-pdf-import-button">

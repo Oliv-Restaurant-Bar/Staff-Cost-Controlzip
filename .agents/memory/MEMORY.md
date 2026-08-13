@@ -21,6 +21,7 @@
 - [Guest duplicate merge safety](guest-merge.md) — no DB tx: move reservations FIRST, recompute aggregates from records, never touch match_key, tenant-filter every op.
 - [Import-Historie logging](import-history-logging.md) — audit log (import_runs) is best-effort/never-throws, additive (don't touch core import write), no guest PII, DB-default timestamp.
 - [Role-based employee visibility](role-employee-visibility.md) — one chokepoint getVisibleEmployeesForRole for dept-scoping; restricted role wins; render scoping isn't a hard guarantee.
+- [fs-import Same-Run-Matching](fs-import-same-run-matching.md) — frisch gebuchte IDs nur im Datum+Betrag-Fallback tabu (neuErstellt-Set), exakte Ref-Treffer bleiben idempotent; nie in `vergeben` werfen.
 - [Bulk upsert dedupe](bulk-upsert-dedupe.md) — dedupe rows by the onConflict key before .upsert(), else Postgres "ON CONFLICT DO UPDATE command cannot affect row a second time"; recompute import stats from deduped list.
 - [vite build OOM (silent kill)](vite-build-oom.md) — build/full-vitest/tsc all die silently (exit -1) on OOM; raise heap for build, LSP diagnostics as type gate, tests batched serially.
 - [Bare tsc --noEmit is vacuous](tsc-vacuous-check.md) — root tsconfig is solution-style (files:[]), plain tsc checks nothing; gate with `-p tsconfig.app.json` and filter for touched files (legacy errors exist).
