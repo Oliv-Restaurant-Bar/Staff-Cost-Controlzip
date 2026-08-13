@@ -282,7 +282,13 @@ export function autoMatchVorschlaege(input: AutoMatchInput): FibuMatchGruppe[] {
     ...input.state.gesperrt.buchungKeys,
   ]);
   // Offene Positionen (Reihenfolge beibehalten für Determinismus).
-  const inv = input.invoices.map((e, i) => ({ e, i })).filter(x => !belegtInv.has(x.e.id));
+  // Rechnungen OHNE Vergleichsanteil (fibuVergleichsNetto 0 — z.B. reine
+  // 4000-/4090-Rechnung, Durchlauf/Übrige) sind NICHT matchbar: sonst könnte
+  // Phase 0 (Referenz-Match ohne Betragsprüfung) eine gültige Buchung an eine
+  // ausgeschlossene Rechnung binden.
+  const inv = input.invoices
+    .map((e, i) => ({ e, i }))
+    .filter(x => !belegtInv.has(x.e.id) && fibuVergleichsNetto(x.e, grenze) !== 0);
   const buch = input.buchungen.map((b, i) => ({ b, key: input.keys[i] })).filter(x => !belegtKey.has(x.key));
 
   const neu: FibuMatchGruppe[] = [];

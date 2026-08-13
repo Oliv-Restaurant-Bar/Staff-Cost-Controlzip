@@ -11,7 +11,8 @@
  */
 
 import { kontoKategorie, type WarenKategorie } from './warenkosten-quote';
-import { kontoKlasse, istPfandKonto, DEFAULT_WARENKOSTEN_GRENZE } from './waren-klassen';
+import { kontoKlasse, istPfandKonto, istFibuVergleichsKonto, DEFAULT_WARENKOSTEN_GRENZE } from './waren-klassen';
+import { normalizeWarenKonto } from './warenaufwand-gruppierung';
 import type { InvoiceEntry, Warenkonto } from './waren-db';
 import type { TenantId } from './cockpit-budget';
 
@@ -146,18 +147,39 @@ export function sumInvoicesNet(invoices: InvoiceEntry[]): number {
 }
 
 /**
- * FIBU-Vergleichs-Netto einer Rechnung: NUR der direkte Warenaufwand
- * (Konten 4000–Grenze) — ohne Depot/Pfand UND ohne Betriebskosten-Splits
- * (4701 Non-Food/Betriebsmaterial, >Grenze, <4000). Das ist derselbe
- * Konto-Scope, mit dem das FIBU-Lieferanten-Journal gefiltert wird —
- * Vergleich Waren gegen Waren. Rechnungen OHNE Splits behalten ihr volles
- * amountNet (kein Raten); «offen»/kontolos zählt wie bisher als Warenkosten.
+ * FIBU-Vergleichs-Netto einer Rechnung: NUR die FIBU-Vergleichskonten
+ * 4020–4070 (istFibuVergleichsKonto) — ohne Depot/Pfand, ohne Betriebskosten-
+ * Splits (4701 Non-Food, >Grenze, <4000) UND ohne 4000/4071/4090 (4000 ist
+ * bei Beaulieu das Prodega-LSV-Durchlaufkonto, reines Clearing). Das ist
+ * derselbe Konto-Scope, mit dem das FIBU-Lieferanten-Journal gefiltert wird —
+ * Vergleich Waren gegen Waren. Rechnungen OHNE Splits: kontolos/«offen»
+ * behält das volle amountNet (Legacy, kein Raten); ein gesetztes numerisches
+ * Warenkosten-Konto ausserhalb des Vergleichsscopes (4000/4090) zählt 0.
  */
 export function fibuVergleichsNetto(e: InvoiceEntry, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): number {
   const splits = e.kontoSplits ?? [];
-  if (splits.length === 0) return Number.isFinite(e.amountNet) ? e.amountNet : 0;
+  if (splits.length === 0) {
+    const k = e.warenkonto;
+    const n = k ? normalizeWarenKonto(k) : null;
+    // Vergleichskonto 4020–4070 zählt IMMER voll — unabhängig von der
+    // konfigurierbaren WKQ-Grenze (sonst würde z.B. Grenze 4050 die
+    // Erfasst-Seite für 4060/4070 leeren, während das Journal sie behält).
+    if (n !== null && istFibuVergleichsKonto(k)) return Number.isFinite(e.amountNet) ? e.amountNet : 0;
+    // Numerisches Warenkosten-Konto AUSSERHALB des Vergleichsscopes
+    // (4000 Durchlauf, 4090 Übrige) → 0. Kontolos/«offen» bleibt Legacy-voll,
+    // Betriebskosten-Singles (4701 etc.) bleiben unverändert (Bestand).
+    if (n !== null && kontoKlasse(k, grenze) === 'warenkosten') return 0;
+    return Number.isFinite(e.amountNet) ? e.amountNet : 0;
+  }
   const sum = splits.reduce((s, sp) => {
     if (istDepotSplitKonto(sp.warenkonto ?? '')) return s;
+    const n = normalizeWarenKonto(sp.warenkonto ?? '');
+    // Numerische Konten: NUR die Vergleichskonten 4020–4070 zählen —
+    // grenzen-unabhängig (4000 Durchlauf, 4090 Übrige, 4701 usw. raus).
+    if (n !== null) {
+      return istFibuVergleichsKonto(sp.warenkonto) ? s + (Number.isFinite(sp.amountNet) ? sp.amountNet : 0) : s;
+    }
+    // Nicht-numerisch («offen»/kontolos): Warenkosten-Legacy — zählt weiter.
     if (kontoKlasse(sp.warenkonto, grenze) !== 'warenkosten') return s;
     return s + (Number.isFinite(sp.amountNet) ? sp.amountNet : 0);
   }, 0);

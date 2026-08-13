@@ -23,6 +23,8 @@ const abgleichMit = (zeilenBuchungen: SageJournalEntry[], nichtZugeordnet: SageJ
   ],
   erfasstTotal: 100, gebuchtTotal: 350.5, diffTotal: 250.5,
   nichtZugeordnet, nichtZugeordnetSumme: nichtZugeordnet.reduce((s, b) => s + (b.soll - b.haben), 0),
+  interneUmbuchungen: [], interneUmbuchungenSumme: 0,
+  abgrenzungen: [], abgrenzungenSumme: 0,
   effektiveAliasGruppen: [],
 });
 

@@ -17,7 +17,7 @@ function inv(id: string, amountNet: number): InvoiceEntry {
   return { id, date: '2026-06-03', supplierName: 'Prodega', amountNet, amountGross: amountNet } as unknown as InvoiceEntry;
 }
 function jrn(text: string, soll: number): SageJournalEntry {
-  return { accountNumber: '4000', date: '15.06.2026', text, soll, haben: 0 } as unknown as SageJournalEntry;
+  return { accountNumber: '4060', date: '15.06.2026', text, soll, haben: 0 } as unknown as SageJournalEntry;
 }
 
 describe('fmtDatumCH', () => {
@@ -286,7 +286,7 @@ describe('zerlegeLieferantDifferenz', () => {
     // Rechnung 500 = 480 Waren + 20 Depot; FIBU bucht nur die 480 (Pfand auf
     // separates Depot-Konto) → Vergleich 480 vs. 480 = KEIN Posten (Spec 08/2026).
     const e = { ...inv('a', 500), kontoSplits: [
-      { warenkonto: '4000', amountNet: 480, amountGross: 517 },
+      { warenkonto: '4060', amountNet: 480, amountGross: 517 },
       { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
     ] } as InvoiceEntry;
     const buchungen = [jrn('x', 480)];
@@ -300,7 +300,7 @@ describe('zerlegeLieferantDifferenz', () => {
     // 480 Waren + 20 Depot erfasst, FIBU bucht 450 → Rest = 450 − 480 = −30
     // (das Depot steckt NICHT in der Differenz, wird aber ausgewiesen).
     const e = { ...inv('a', 500), kontoSplits: [
-      { warenkonto: '4000', amountNet: 480, amountGross: 517 },
+      { warenkonto: '4060', amountNet: 480, amountGross: 517 },
       { warenkonto: 'Depot', amountNet: 20, amountGross: 21.6 },
     ] } as InvoiceEntry;
     const buchungen = [jrn('x', 450)];
@@ -441,7 +441,7 @@ describe('zerlegeLieferantDifferenz: 4701 im gleichen Scope wie das FIBU-Journal
     // Rechnung 10'000 = 6'000 Waren + 3'856.64 auf 4701 + 143.36 Depot;
     // FIBU bucht nur die 6'000 Warenaufwand → Rest 0.
     const e = { ...inv('a', 10000), kontoSplits: [
-      { warenkonto: '4000', amountNet: 6000, amountGross: 6486 },
+      { warenkonto: '4060', amountNet: 6000, amountGross: 6486 },
       { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
       { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
     ] } as InvoiceEntry;

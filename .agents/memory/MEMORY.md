@@ -116,4 +116,6 @@
 - [Import-Belege (Quelldokument-Ablage)](import-belege.md) — Bucket-MIME-Whitelist serverseitig; Key = Slug+Hash über Originale, FS-Typ-Präfixe, CSV-Identität = Inhalt; manueller Beleg gewinnt immer.
 - [Warenrechnungen Wochen-Granularität](waren-wochen-granularitaet.md) — Sicht-Memos (viewEntries) statt entries-Umbau; FIBU-Mutationen in Wochenansicht sperren; Nachbarmonats-Cache tenant-keyen.
 - [Flex-Auswertung Ist-Stichtag](flex-ist-stichtag.md) — Stichtag = letzter echter Mirus-Ist-Tag (source ≠ plan_sync); Teilwochen Plan+Ist beidseitig ≤ Stichtag kappen, Export-Total = «bis Ist».
+- [FIBU-Vergleichsscope 4020–4070](fibu-vergleichsscope.md) — Lieferanten-Abgleich beidseitig NUR 4020–4070; 4000 = Prodega-LSV-Durchlauf, 0-Anteil-Rechnungen nie zeigen/matchen.
 - [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.
+- [FIBU-Abgrenzungen & Jahres-Übernahme](fibu-abgrenzungen-jahresuebernahme.md) — TP/RB nie Kandidaten (auch degradiert aus Total); Jahres-Übernahme monats-gekeyt routen, nie Jahres-Keyspace.

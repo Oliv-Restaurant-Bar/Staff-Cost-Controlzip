@@ -92,7 +92,7 @@ import {
   normalizeSupplierKey, type ErkannteRechnung,
 } from '@/lib/waren-pdf-erkennung';
 import { loadLieferantenProfile, findeProfilImText } from '@/lib/lieferanten-profile';
-import { buildWarenAbgleich, buchungsBetrag, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
+import { buildWarenAbgleich, buchungsBetrag, findeDublette, journalVerfuegbarFuerTenant, paareAbgrenzungen, type WarenAbgleich } from '@/lib/waren-abgleich';
 import { buildDiffAufschluesselung, type DiffAufschluesselung } from '@/lib/waren-diff';
 import { exportTagesverlaufPdf } from '@/lib/waren-tagesverlauf-export';
 import { weiseKontoZu, type UnkontiertePosition } from '@/lib/waren-unkontiert';
@@ -576,26 +576,40 @@ export default function WarenrechnungenPage() {
   // ─── FIBU-Abgleich pro Lieferant ──────────────────────────────────────────
   const [journal,        setJournal]        = useState<SageJournalEntry[] | null>(null);
   const [abgleichOffen,  setAbgleichOffen]  = useState<string | null>(null); // Drilldown
+  /** Jahresansicht: Journal PRO MONAT (Index 0 = Januar) + Match-States aller
+   *  12 Monate — die Übernahme-Kandidaten werden im Jahr PRO MONAT gebaut
+   *  (Schlüsselraum `buchungKeysMitIndex` ist monats-gekeyt!) und Übernahmen
+   *  in den Monats-Match-State des jeweiligen Buchungs-Monats geroutet. */
+  const [jahrJournalMonate, setJahrJournalMonate] = useState<SageJournalEntry[][] | null>(null);
+  const [jahrFibuStates, setJahrFibuStates] = useState<FibuMatchState[] | null>(null);
+  const [jahrFibuNonce, setJahrFibuNonce] = useState(0);
   useEffect(() => {
     if (tab !== 'abgleich') return;
     let alive = true;
     setJournal(null);
+    setJahrJournalMonate(null);
+    setJahrFibuStates(null);
     // MANDANTEN-SCHUTZ: Journal-Keys sind mandantenfähig (Oliv historisch ohne
     // Präfix, Beaulieu mit `beaulieu:`-Präfix) — für unbekannte Mandanten
     // NIE laden (sonst fremde Buchungen), dort degradierter Modus.
     if (!journalVerfuegbarFuerTenant(tenantId)) { setJournal([]); return; }
     if (granular === 'jahr') {
-      // Jahresansicht: Journal aller 12 Monate aggregieren (reine Anzeige).
+      // Jahresansicht: Journal aller 12 Monate aggregieren (Anzeige) UND pro
+      // Monat behalten (Kandidatenbau); zusätzlich alle Monats-Match-States.
       Promise.all(Array.from({ length: 12 }, (_, i) =>
         loadJournalEntriesFromDB(year, i + 1, tenantId).catch(() => [] as SageJournalEntry[])))
-        .then(a => { if (alive) setJournal(a.flat()); });
+        .then(a => { if (alive) { setJournal(a.flat()); setJahrJournalMonate(a); } });
+      Promise.all(Array.from({ length: 12 }, (_, i) =>
+        loadFibuMatchState(tenantId, `${year}-${String(i + 1).padStart(2, '0')}`)
+          .catch(() => LEERER_MATCH_STATE)))
+        .then(st => { if (alive) setJahrFibuStates(st); });
     } else {
       loadJournalEntriesFromDB(year, month, tenantId)
         .then(e => { if (alive) setJournal(e); })
         .catch(() => { if (alive) setJournal([]); });
     }
     return () => { alive = false; };
-  }, [tab, year, month, tenantId, granular]);
+  }, [tab, year, month, tenantId, granular, jahrFibuNonce]);
 
   /** Abgleich-Modell (degradiert automatisch, wenn keine Buchungszeilen da sind). */
   const abgleich: WarenAbgleich | null = useMemo(() => {
@@ -795,12 +809,53 @@ export default function WarenrechnungenPage() {
   // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
   // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
   // gematchte Buchungen. Erst nach dem Match-Load rechnen (sonst Flackern).
-  // NUR Monatsansicht: Kandidaten aus einem Wochen-Abgleich wären inkonsistent
-  // (Abgleich = Woche, Rechnungen = Monat) und würden Monats-Mutationen aus
-  // einer reinen Anzeige-Navigation ermöglichen.
+  // Monats- UND Jahresansicht; KEINE Wochenansicht (Kandidaten aus einem
+  // Wochen-Abgleich wären inkonsistent: Abgleich = Woche, Rechnungen = Monat).
+  //
+  // JAHRESANSICHT: Kandidaten werden PRO MONAT gebaut (Monats-Journal +
+  // Monats-Rechnungen + Monats-Match-State) und aggregiert — der Schlüsselraum
+  // buchungKeysMitIndex ist monats-gekeyt und muss exakt dem der Monatsansicht
+  // entsprechen, sonst sehen sich Matches beider Ansichten nicht.
+  const jahrKandidaten = useMemo(() => {
+    if (tab !== 'abgleich' || granular !== 'jahr' || !jahrJournalMonate || !jahrFibuStates) return null;
+    const kandidaten: UebernahmeKandidat[] = [];
+    const monatVonKey = new Map<string, string>(); // Kandidat-Key → 'YYYY-MM'
+    for (let m = 1; m <= 12; m++) {
+      const mk = `${year}-${String(m).padStart(2, '0')}`;
+      const jr = jahrJournalMonate[m - 1] ?? [];
+      if (jr.length === 0) continue;
+      const inv = jahrEntries.filter(e => e.date.startsWith(mk));
+      const ab = buildWarenAbgleich({
+        invoices: inv,
+        journal: jr,
+        warenkontoNummern: warenkonten.map(k => k.value),
+        supplierNames: suppliers.map(s => s.name),
+        aliases,
+        buchhaltungTotal: null,
+        aliasGruppen,
+        warenkostenGrenze: warenGrenze,
+      });
+      for (const k of buildUebernahmeKandidaten(ab, jahrFibuStates[m - 1], inv)) {
+        kandidaten.push(k);
+        monatVonKey.set(k.key, mk);
+      }
+    }
+    kandidaten.sort((a, b) => (a.datumIso ?? '9999').localeCompare(b.datumIso ?? '9999'));
+    return { kandidaten, monatVonKey };
+  }, [tab, granular, jahrJournalMonate, jahrFibuStates, jahrEntries, warenkonten, suppliers, aliases, aliasGruppen, warenGrenze, year]);
   const uebernahmeKandidatenAlle = useMemo(
-    () => (fibuGeladen && granular === 'monat' ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : []),
-    [abgleich, fibuState, fibuGeladen, entries, granular],
+    () => granular === 'monat'
+      ? (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : [])
+      : granular === 'jahr'
+        ? (jahrKandidaten?.kandidaten ?? [])
+        : [],
+    [abgleich, fibuState, fibuGeladen, entries, granular, jahrKandidaten],
+  );
+  /** Abgrenzungen (TP/RB) — nie Kandidaten, nur informativ: gepaarte (TP↔RB,
+   *  netto 0) werden ausgeblendet, offene als «Abgrenzung» gezeigt. */
+  const abgrenzungenAnzeige = useMemo(
+    () => paareAbgrenzungen(abgleich?.abgrenzungen ?? []),
+    [abgleich],
   );
   // Ignorier-Liste anwenden: ignorierte Buchhaltungszeilen verschwinden aus der
   // Differenz (zählen NICHT mehr), bleiben aber über «Ignorierte anzeigen» erreichbar.
@@ -1027,7 +1082,7 @@ export default function WarenrechnungenPage() {
       }
     })();
     return () => { aktiv = false; };
-  }, [granular, year, tenantId, ignoreListe]);
+  }, [granular, year, tenantId, ignoreListe, jahrFibuNonce]);
 
   /** Sicht-Periode der Seite: ganzer Monat (wie bisher), gewählte Woche oder Jahr. */
   const viewEntries = useMemo(() => {
@@ -1047,9 +1102,8 @@ export default function WarenrechnungenPage() {
   }, [granular, revenueByDate, jahrRevenue, wocheExtra, wochenStart, wochenEnde, tenantId]);
 
   const openUebernahme = useCallback((keys: string[]) => {
-    // Jahresansicht = reine Anzeige: Übernahmen bleiben pro Monat (die
-    // Dubletten-Wache prüft gegen den GELADENEN Monat und wäre hier blind).
-    if (granular === 'jahr') { toast.error('Übernahmen nur in der Monatsansicht möglich.'); return; }
+    // Monats- und Jahresansicht (Jahres-Kandidaten sind monats-gekeyt gebaut,
+    // Dubletten-Wache prüft gegen die Jahres-Rechnungen). Woche hat nie Kandidaten.
     const drafts = uebernahmeKandidaten
       .filter(k => keys.includes(k.key))
       .map(kandidatToDraft);
@@ -1065,7 +1119,7 @@ export default function WarenrechnungenPage() {
     for (const d of uebernahmeDrafts) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) fehler.push(`${d.supplierName || d.kandidat.text}: ungültiges Datum`);
       if (!d.supplierName.trim()) fehler.push(`${d.kandidat.text}: Lieferant fehlt`);
-      if (findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, entries)) {
+      if (findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries)) {
         fehler.push(`${d.supplierName}: Dublette (gleicher Lieferant/Datum/Betrag bereits erfasst)`);
       }
     }
@@ -1102,8 +1156,54 @@ export default function WarenrechnungenPage() {
           ],
         };
       };
-      let ok = await persistFibuState(mutate);
-      if (!ok) ok = await persistFibuState(mutate); // ein Retry (Idempotent dank vorhanden-Check)
+      let ok: boolean;
+      if (granular === 'jahr') {
+        // JAHRESANSICHT: Match-States sind MONATS-gekeyt — jede Verknüpfung in
+        // den State des Buchungs-Monats routen (frisch laden → mutieren →
+        // speichern, idempotent dank vorhanden-Check mit #0-Normalisierung wie
+        // im Kandidatenbau). Der Monats-persistFibuState wäre hier falsch (er
+        // schreibt in den aktuell gewählten Monat). SERIALISIERUNG: über die
+        // gleiche fibuSaveChain wie die Monats-Saves — konkurrierende Saves
+        // derselben Seite können sich so nicht gegenseitig überschreiben
+        // (Cross-Client bleibt die bekannte No-CAS-Grenze des KV).
+        const lauf = fibuSaveChain.current.then(async (): Promise<boolean> => {
+          let alleOk = true;
+          const proMonat = new Map<string, typeof angelegt>();
+          for (const a of angelegt) {
+            const mk = jahrKandidaten?.monatVonKey.get(a.buchungKey);
+            if (!mk) { alleOk = false; continue; }
+            proMonat.set(mk, [...(proMonat.get(mk) ?? []), a]);
+          }
+          for (const [mk, liste] of proMonat) {
+            try {
+              const cur = await loadFibuMatchState(tenantId, mk);
+              const vorhanden = new Set(cur.gruppen.flatMap(g => g.buchungKeys)
+                .map(k => k.includes('#') ? k : `${k}#0`)); // bare Alt-Keys = #0
+              const neue = liste.filter(a => !vorhanden.has(a.buchungKey));
+              if (neue.length === 0) continue;
+              await saveFibuMatchState(tenantId, mk, {
+                ...cur,
+                gruppen: [
+                  ...cur.gruppen,
+                  ...neue.map(a => ({
+                    id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                    invoiceIds: [a.id],
+                    buchungKeys: [a.buchungKey],
+                    herkunft: 'manuell' as const,
+                  })),
+                ],
+              });
+            } catch { alleOk = false; }
+          }
+          return alleOk;
+        });
+        fibuSaveChain.current = lauf.catch(() => undefined);
+        ok = await lauf;
+        setJahrFibuNonce(n => n + 1); // Reload: Journal/Match-States + Jahres-Rechnungen
+      } else {
+        ok = await persistFibuState(mutate);
+        if (!ok) ok = await persistFibuState(mutate); // ein Retry (Idempotent dank vorhanden-Check)
+      }
       await loadData(); // Abgleich/WKQ rechnen über entries automatisch neu
       setUebernahmeDrafts(null);
       if (ok) {
@@ -1120,7 +1220,7 @@ export default function WarenrechnungenPage() {
     } finally {
       setUebernahmeSaving(false);
     }
-  }, [uebernahmeDrafts, uebernahmeSaving, canCreate, entries, tenantId, persistFibuState, loadData]);
+  }, [uebernahmeDrafts, uebernahmeSaving, canCreate, fibuEntries, granular, jahrKandidaten, tenantId, persistFibuState, loadData]);
 
   // ── Preisänderungs-Hinweise des Monats (Icon + Tooltip an der Rechnung) ──
   const [preisHinweise, setPreisHinweise] = useState<Record<string, PreisAenderung[]>>({});
@@ -5960,8 +6060,9 @@ export default function WarenrechnungenPage() {
                   )}
                 </section>
 
-                {/* ── FIBU-Übernahme: gebucht, aber nicht erfasst ─────────────── */}
-                {abgleich !== null && abgleich.mode === 'lieferanten' && fibuGeladen && (
+                {/* ── FIBU-Übernahme: gebucht, aber nicht erfasst (Monat + Jahr) ── */}
+                {abgleich !== null && abgleich.mode === 'lieferanten' && fibuGeladen && granular !== 'woche'
+                  && (granular !== 'jahr' || jahrKandidaten !== null) && (
                   <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="fibu-uebernahme">
                     <div className="px-5 py-3 border-b border-border bg-muted/20 flex flex-wrap items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -6008,7 +6109,7 @@ export default function WarenrechnungenPage() {
                           <tbody>
                             {uebernahmeKandidaten.map(k => {
                               const dublette = findeFibuDublette(
-                                { date: k.datumIso ?? '', supplierName: k.lieferant ?? k.text, betrag: k.betrag, reference: k.belegNr ?? '' }, entries);
+                                { date: k.datumIso ?? '', supplierName: k.lieferant ?? k.text, betrag: k.betrag, reference: k.belegNr ?? '' }, fibuEntries);
                               return (
                                 <tr key={k.key} className="border-b border-border/30 hover:bg-muted/20">
                                   <td className="px-4 py-2 tabular-nums whitespace-nowrap">{k.datum}</td>
@@ -6088,6 +6189,34 @@ export default function WarenrechnungenPage() {
                                   </tr>
                                 );
                               })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
+                    {(abgrenzungenAnzeige.offen.length > 0 || abgrenzungenAnzeige.gepaart.length > 0) && (
+                      <div className="border-t border-border bg-muted/10 px-5 py-3 space-y-2" data-testid="fibu-abgrenzungen">
+                        <p className="text-xs text-muted-foreground">
+                          <b>Abgrenzungen (TP/RB)</b> — transitorische Monats-Abgrenzungen der Buchhaltung, keine echten
+                          Rechnungen: automatisch ignoriert, nie übernehmbar.
+                          {abgrenzungenAnzeige.gepaart.length > 0 && (
+                            <> {abgrenzungenAnzeige.gepaart.length / 2} TP↔RB-Paar{abgrenzungenAnzeige.gepaart.length === 2 ? '' : 'e'} (netto 0) ausgeblendet.</>
+                          )}
+                        </p>
+                        {abgrenzungenAnzeige.offen.length > 0 && (
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {abgrenzungenAnzeige.offen.map((e, i) => (
+                                <tr key={`${e.date}|${e.text}|${i}`} className="border-b border-border/30 text-muted-foreground">
+                                  <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{e.date}</td>
+                                  <td className="py-1.5 pr-3">{e.text}</td>
+                                  <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{e.belegNr ?? '–'}</td>
+                                  <td className="py-1.5 pr-3 text-right tabular-nums">{fmtChf(buchungsBetrag(e))}</td>
+                                  <td className="py-1.5 text-right">
+                                    <Badge variant="outline" className="text-[10px] border-sky-400/50 text-sky-700">Abgrenzung</Badge>
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         )}
@@ -7050,6 +7179,7 @@ function ErklaertMarkierung({ lieferant, info, aktuelleDiff, onSave, onRemove }:
 const DIFF_GRUPPEN_META: Record<string, { titel: string; hinweis?: string }> = {
   luecke: { titel: 'Echte Rechnungs-Lücken (nicht gebuchte / periodenfremde Rechnungen)' },
   umbuchung: { titel: 'Interne Umbuchungen / Konto-Korrekturen (KEINE Rechnung)', hinweis: 'nicht Teil der Differenz — rein informativ' },
+  abgrenzung: { titel: 'Abgrenzungen TP/RB (transitorische Posten — KEINE Rechnung)', hinweis: 'nicht Teil der Differenz — rein informativ; TP und RB heben sich über die Monate auf' },
   pfand_rest: { titel: 'Pfand/Leergut & Betrags-Reste (separat, nicht im Warenaufwand-Vergleich)' },
 };
 
@@ -7078,6 +7208,7 @@ function DiffAufschluesselungPanel({ data, testid }: { data: DiffAufschluesselun
           {[
             data.gruppen.some(g => g.kategorie === 'luecke') ? `davon echte Lücken CHF ${fmtChf(data.lueckenSumme)}` : '',
             data.gruppen.some(g => g.kategorie === 'umbuchung') ? `interne Umbuchungen CHF ${fmtChf(data.umbuchungenSumme)} (separat)` : '',
+            data.gruppen.some(g => g.kategorie === 'abgrenzung') ? `Abgrenzungen TP/RB CHF ${fmtChf(data.abgrenzungenSumme)} (separat)` : '',
             data.gruppen.some(g => g.kategorie === 'pfand_rest') ? `Pfand/Rest CHF ${fmtChf(data.pfandRestSumme)}` : '',
           ].filter(Boolean).join(' · ')}
         </p>
@@ -7109,7 +7240,7 @@ function DiffAufschluesselungPanel({ data, testid }: { data: DiffAufschluesselun
                   <td className="pr-2 tabular-nums">{z.beleg ?? '—'}</td>
                   <td className="pr-2">{z.label}</td>
                   <td className={cn('text-right tabular-nums whitespace-nowrap',
-                    g.kategorie === 'umbuchung' ? 'text-muted-foreground' : z.betrag < 0 ? 'text-amber-600' : 'text-red-600 dark:text-red-400')}>
+                    g.kategorie === 'umbuchung' || g.kategorie === 'abgrenzung' ? 'text-muted-foreground' : z.betrag < 0 ? 'text-amber-600' : 'text-red-600 dark:text-red-400')}>
                     {z.betrag > 0 ? '+' : ''}{fmtChf(z.betrag)}
                   </td>
                 </tr>

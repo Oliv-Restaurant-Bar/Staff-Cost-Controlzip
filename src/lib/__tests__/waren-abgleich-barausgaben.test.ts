@@ -228,7 +228,7 @@ describe('buildUebernahmeKandidaten — Buchungs-Ebene bei gemischten Barausgabe
     const r = buildWarenAbgleich({
       ...BASE,
       invoices: [erfasst],
-      journal: [buch('ER Prodega', 990, '4000', '05.07.2026'), buch('ER Prodega', 15, '4000', '20.07.2026')],
+      journal: [buch('ER Prodega', 990, '4060', '05.07.2026'), buch('ER Prodega', 15, '4060', '20.07.2026')],
     });
     expect(r.zeilen.find(z => z.lieferant === 'Prodega')!.status).toBe('ok');
     expect(buildUebernahmeKandidaten(r, matchLeer, [erfasst])).toHaveLength(0);

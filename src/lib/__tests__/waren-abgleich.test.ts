@@ -18,13 +18,13 @@ const inv = (p: Partial<InvoiceEntry> & { supplierName: string; amountNet: numbe
   ...p,
 });
 
-const buch = (text: string, soll: number, konto = '4000'): SageJournalEntry => ({
+const buch = (text: string, soll: number, konto = '4060'): SageJournalEntry => ({
   date: '10.07.2026', text, accountNumber: konto, accountName: 'Warenaufwand',
   soll, haben: 0, amount: soll,
 });
 
 const BASE = {
-  warenkontoNummern: ['4000', '4020'],
+  warenkontoNummern: ['4060', '4020'],
   supplierNames: ['Prodega', 'Transgourmet', 'Blaser Café'],
   aliases: {},
   buchhaltungTotal: null as number | null,
@@ -148,13 +148,13 @@ import type { InvoiceEntry as IE3 } from '@/lib/waren-db';
 describe('buildWarenAbgleich: 4701/Depot aus der Erfasst-Seite ausgeklammert', () => {
   const invMitSplits = { id: 'a', date: '2026-07-05', supplierName: 'Transgourmet', amountNet: 10000, amountGross: 10810,
     kontoSplits: [
-      { warenkonto: '4000', amountNet: 6000, amountGross: 6486 },
+      { warenkonto: '4060', amountNet: 6000, amountGross: 6486 },
       { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
       { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
     ] } as unknown as IE3;
   it('erfasstTotal = nur direkter Warenaufwand (auch im degradierten Modus)', () => {
     const a = bwa2({
-      invoices: [invMitSplits], journal: null, warenkontoNummern: ['4000', '4020', '4050'],
+      invoices: [invMitSplits], journal: null, warenkontoNummern: ['4060', '4020', '4050'],
       supplierNames: ['Transgourmet'], aliases: {}, buchhaltungTotal: 6000,
     });
     expect(a.mode).toBe('nur-total');
@@ -242,5 +242,21 @@ describe('buildKontoAbgleich — interne Umbuchungen ausgeklammert', () => {
     expect(fs.gebucht).toBe(1000);
     expect(fs.diff).toBe(0);
     expect(zeilen.find(z => z.konto === '4030')).toBeUndefined();
+  });
+});
+
+// ── Regression 08/2026: 4000/4090 komplett ausserhalb des Vergleichs ────────
+describe('Rechnungen ohne Vergleichsanteil (nur 4000/4090)', () => {
+  it('erzeugen KEINE falsche nur-erfasst-Zeile bei vorhandenem 4060-Journal', () => {
+    const nur4000 = { id: 'x1', date: '2026-07-03', supplierName: 'Prodega LSV', amountNet: 500, amountGross: 540,
+      kontoSplits: [{ warenkonto: '4000', amountNet: 500, amountGross: 540 }] } as unknown as IE3;
+    const a = bwa2({
+      invoices: [nur4000], journal: [
+        { id: 'j1', date: '2026-07-05', text: 'Anderer Lieferant', accountNumber: '4060', soll: 100, haben: 0 } as never,
+      ], warenkontoNummern: ['4000', '4060'], supplierNames: ['Prodega LSV'], aliases: {}, buchhaltungTotal: null,
+    });
+    expect(a.mode).toBe('lieferanten');
+    expect(a.zeilen.find(z => z.lieferant === 'Prodega LSV')).toBeUndefined();
+    expect(a.erfasstTotal).toBe(0);
   });
 });

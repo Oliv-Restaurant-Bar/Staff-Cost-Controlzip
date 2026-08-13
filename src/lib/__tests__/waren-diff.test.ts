@@ -13,20 +13,20 @@ import type { SageJournalEntry } from '@/types/reporting';
 
 const inv = (p: Partial<InvoiceEntry> & { supplierName: string; amountNet: number }): InvoiceEntry => ({
   id: `inv-${Math.random().toString(36).slice(2, 8)}`,
-  date: '2026-07-10', reference: p.reference ?? 'R-1', warenkonto: p.warenkonto ?? '4000',
+  date: '2026-07-10', reference: p.reference ?? 'R-1', warenkonto: p.warenkonto ?? '4060',
   amountGross: p.amountGross ?? p.amountNet,
   vatIncluded: true, vatRate: 2.6,
   createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z',
   ...p,
 } as InvoiceEntry);
 
-const buch = (text: string, soll: number, konto = '4000', belegNr?: string): SageJournalEntry => ({
+const buch = (text: string, soll: number, konto = '4060', belegNr?: string): SageJournalEntry => ({
   date: '10.07.2026', text, accountNumber: konto, accountName: 'Warenaufwand',
   soll, haben: 0, amount: soll, ...(belegNr ? { belegNr } : {}),
 });
 
 const BASE = {
-  warenkontoNummern: ['4000', '4020'],
+  warenkontoNummern: ['4060', '4020'],
   aliases: {},
   buchhaltungTotal: null as number | null,
 };
@@ -42,9 +42,9 @@ describe('buildDiffAufschluesselung', () => {
       inv({ supplierName: 'Prodega', amountNet: 1000, reference: 'P-1' }),
     ];
     const journal = [
-      buch('Prodega Juli', 1184, '4000', 'B-77'),
+      buch('Prodega Juli', 1184, '4060', 'B-77'),
       buch('Umb. gemäss Webapp', -1830, '4020'),
-      buch('Umb. Kontierung Feldschlösschen', -1110, '4000'),
+      buch('Umb. Kontierung Feldschlösschen', -1110, '4060'),
       buch('Diverses Kleinzeug', 50, '4020', 'B-99'), // ohne Zuordnung → Lücke
     ];
     const abgleich = buildWarenAbgleich({
@@ -64,18 +64,18 @@ describe('buildDiffAufschluesselung', () => {
     expect(luecken.zeilen.some(z => z.label.startsWith('Ohne Zuordnung'))).toBe(true);
     // Zeilen tragen Konto/Beleg/Betrag.
     const tg1 = luecken.zeilen.find(z => z.beleg === 'TG-1')!;
-    expect(tg1.konto).toBe('4000');
+    expect(tg1.konto).toBe('4060');
     expect(tg1.betrag).toBe(-200.68);
     const umb = d.gruppen.find(g => g.kategorie === 'umbuchung')!;
-    expect(umb.zeilen.map(z => z.konto).sort()).toEqual(['4000', '4020']);
+    expect(umb.zeilen.map(z => z.konto).sort()).toEqual(['4020', '4060']);
   });
 
   it('gematchte Betragsabweichung landet als Pfand-/Betrags-Rest', () => {
     const invoices = [inv({ supplierName: 'Prodega', amountNet: 1000, reference: 'P-1', id: 'p1' } as never)];
-    const journal = [buch('Prodega Juli', 1184, '4000', 'B-77')];
+    const journal = [buch('Prodega Juli', 1184, '4060', 'B-77')];
     const abgleich = buildWarenAbgleich({ ...BASE, supplierNames: ['Prodega'], invoices, journal });
     const resolve = buildAliasResolver(abgleich.effektiveAliasGruppen);
-    const keys = ['B-77|10.07.2026|4000|1184|0']; // echter Key kommt aus buchungKeysMitIndex —
+    const keys = ['B-77|10.07.2026|4060|1184|0']; // echter Key kommt aus buchungKeysMitIndex —
     // hier über die Match-Gruppe mit exakt diesen Keys aus dem Abgleich:
     const d = buildDiffAufschluesselung({
       abgleich, invoices, resolve,

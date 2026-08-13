@@ -17,11 +17,11 @@ const GRUPPEN: AliasGruppe[] = DEFAULT_ALIAS_GRUPPEN_BEAULIEU;
 function inv(supplierName: string, amountNet: number): InvoiceEntry {
   return {
     id: `inv-${supplierName}-${amountNet}`, date: '2026-06-10', supplierName,
-    amountGross: amountNet * 1.081, amountNet, mwstRate: 8.1, warenkonto: '4000',
+    amountGross: amountNet * 1.081, amountNet, mwstRate: 8.1, warenkonto: '4060',
   } as unknown as InvoiceEntry;
 }
 function jrn(text: string, soll: number): SageJournalEntry {
-  return { accountNumber: '4000', date: '2026-06-15', text, soll, haben: 0 } as unknown as SageJournalEntry;
+  return { accountNumber: '4060', date: '2026-06-15', text, soll, haben: 0 } as unknown as SageJournalEntry;
 }
 
 describe('buildAliasResolver', () => {
@@ -60,7 +60,7 @@ describe('normalizeAliasGruppen', () => {
 
 describe('buildWarenAbgleich mit aliasGruppen', () => {
   const base = {
-    warenkontoNummern: ['4000'],
+    warenkontoNummern: ['4060'],
     supplierNames: ['Prodega', 'Gourmador'],
     aliases: {},
     buchhaltungTotal: null,

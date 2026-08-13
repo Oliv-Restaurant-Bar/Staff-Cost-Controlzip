@@ -70,6 +70,23 @@ export function kontoKlasse(konto: string | undefined, grenze: number = DEFAULT_
   return n >= 4000 && n <= grenze ? 'warenkosten' : 'betriebskosten';
 }
 
+/**
+ * FIBU-Lieferanten-Vergleichskonto? Der Warenaufwand-Abgleich «erfasst vs.
+ * Buchhaltung» läuft NUR über die echten WKQ-Konten 4020–4070 (Wein, Bier,
+ * Spirituosen, Mineral, Küche, Kaffee/Tee). Bewusst AUSSEN VOR:
+ *  - 4000 (Beaulieu: Prodega-LSV-DURCHLAUFKONTO — jede TG-Lieferung wird
+ *    2× gebucht (+Rechnung/−Lastschrift), der Saldo ist reines Clearing und
+ *    KEIN fehlender Aufwand; würde Phantom-Differenzen erzeugen),
+ *  - 4071 Eigenverbrauch und 4090 Übrige/Nonfood (keine Rechnungs-Vergleichsbasis).
+ * Gilt für BEIDE Seiten des Vergleichs (erfasst UND Journal). Oliv ist
+ * unverändert (Kontenliste war schon 4020–4070). Der Konto-Abgleich
+ * (Kontoblatt-Kontrollsicht) bleibt bewusst ungefiltert.
+ */
+export function istFibuVergleichsKonto(konto: string | undefined): boolean {
+  const n = normalizeWarenKonto(konto ?? '');
+  return n !== null && n >= 4020 && n <= 4070;
+}
+
 export function kontoKlasseLabel(k: KontoKlasse): string {
   return k === 'warenkosten' ? 'Warenkosten' : k === 'neutral' ? 'Neutral (Depot)' : 'Betriebskosten';
 }

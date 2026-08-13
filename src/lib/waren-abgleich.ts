@@ -14,7 +14,7 @@
  */
 
 import type { InvoiceEntry } from '@/lib/waren-db';
-import { istPfandKonto } from './waren-klassen';
+import { istPfandKonto, istFibuVergleichsKonto } from './waren-klassen';
 import type { SageJournalEntry } from '@/types/reporting';
 import { findSupplierInText, type SupplierAliasMap } from '@/lib/waren-pdf-erkennung';
 import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
@@ -65,6 +65,13 @@ export interface WarenAbgleich {
   interneUmbuchungen: SageJournalEntry[];
   interneUmbuchungenSumme: number;
   /**
+   * Abgrenzungen («TP RE …» / «RB TP RE …» — transitorische Posten): aus dem
+   * Rechnungs-Vergleich AUSGENOMMEN (keine echten Rechnungen, nie übernehmbar),
+   * nur informativ als «Abgrenzung» ausgewiesen. Leer = keine.
+   */
+  abgrenzungen: SageJournalEntry[];
+  abgrenzungenSumme: number;
+  /**
    * Tatsächlich verwendete Alias-Gruppen: abgeleitete Barausgaben-Standard-
    * Aliasse + Nutzer-Gruppen (Nutzer gewinnt). Die UI MUSS für Drilldown-/
    * Rechnungs-Filter einen Resolver aus DIESEN Gruppen bauen, sonst sehen
@@ -104,6 +111,55 @@ export function journalVerfuegbarFuerTenant(tenantId: string): boolean {
  */
 export function istInterneUmbuchung(text: string | null | undefined): boolean {
   return /^umb(\.|uchung)/i.test((text ?? '').trim());
+}
+
+// ─── Abgrenzungen (transitorische Posten TP/RB — KEINE Rechnungen) ──────────
+
+/**
+ * Buchungen, deren Text mit «TP RE …» (transitorischer Posten) oder
+ * «RB TP RE …» (Rückbuchung des TP) beginnt, sind MONATS-ABGRENZUNGEN der
+ * Buchhaltung — keine echten Rechnungen. Sie werden wie interne Umbuchungen
+ * VOR der Lieferanten-Zuordnung ausgeklammert (weder Lieferanten-Zeile noch
+ * Übernahme-Kandidat, nie in «Alle übernehmen») und separat informativ als
+ * «Abgrenzung» ausgewiesen. TP und seine RB-Gegenbuchung heben sich über die
+ * Monate auf (netto ≈ 0) — siehe paareAbgrenzungen.
+ */
+export function istAbgrenzungsBuchung(text: string | null | undefined): boolean {
+  return /^(rb\s+)?tp\s+re\b/i.test((text ?? '').trim());
+}
+
+/**
+ * TP↔RB-Paarung für die Anzeige: gleicher Text-Rest (nach dem TP-/RB-Präfix,
+ * normalisiert) und Beträge, die sich zu ≈0 aufheben (±5 Rp.), werden
+ * gepaart und können zusammen ausgeblendet werden (netto = 0). Unpaarige
+ * Abgrenzungen (RB im Folgemonat noch nicht importiert) bleiben sichtbar.
+ * Rein präsentational — keine Buchung wird verändert.
+ */
+export function paareAbgrenzungen(abgrenzungen: SageJournalEntry[]): {
+  gepaart: SageJournalEntry[];
+  offen: SageJournalEntry[];
+} {
+  const rest = (t: string | null | undefined) => (t ?? '').trim()
+    .replace(/^(rb\s+)?tp\s+re\b[\s:,\-–]*/i, '')
+    .toLowerCase().replace(/\s+/g, ' ');
+  const istRb = (t: string | null | undefined) => /^rb\s+tp\s+re\b/i.test((t ?? '').trim());
+  const tp = abgrenzungen.filter(e => !istRb(e.text));
+  const rb = abgrenzungen.filter(e => istRb(e.text));
+  const gepaart: SageJournalEntry[] = [];
+  const rbFrei = [...rb];
+  const tpOffen: SageJournalEntry[] = [];
+  for (const e of tp) {
+    const idx = rbFrei.findIndex(r =>
+      rest(r.text) === rest(e.text)
+      && Math.abs(buchungsBetrag(r) + buchungsBetrag(e)) <= 0.05);
+    if (idx >= 0) {
+      gepaart.push(e, rbFrei[idx]);
+      rbFrei.splice(idx, 1);
+    } else {
+      tpOffen.push(e);
+    }
+  }
+  return { gepaart, offen: [...tpOffen, ...rbFrei] };
 }
 
 // ─── Barausgaben (Bar-/Kasseneinkäufe auf Warenkonten) ──────────────────────
@@ -174,14 +230,22 @@ export interface AbgleichInput {
 
 export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const schwelle = input.schwelleChf ?? 50;
-  // ── Journal auf Warenkonten filtern (früh — Barausgaben-Aliasse hängen dran) ──
-  const kontoSet = new Set(input.warenkontoNummern);
+  // ── Journal auf die FIBU-VERGLEICHSKONTEN filtern (früh — Barausgaben-
+  // Aliasse hängen dran): nur 4020–4070 (istFibuVergleichsKonto). 4000 (bei
+  // Beaulieu Prodega-LSV-Durchlaufkonto: jede Lieferung 2× gebucht, Saldo =
+  // reines Clearing) und 4090 (Übrige/Nonfood) fliessen weder in erfasst noch
+  // Buchhaltung noch Differenz ein — gleicher Scope wie fibuVergleichsNetto. ──
+  const kontoSet = new Set(input.warenkontoNummern.filter(nr => istFibuVergleichsKonto(nr)));
   const alleWarenBuchungen = (input.journal ?? []).filter(e =>
     kontoSet.has(String(e.accountNumber).replace(/^0+/, '')) || kontoSet.has(String(e.accountNumber)));
-  // Interne Umbuchungen VOR jeder Zuordnung aussortieren (siehe istInterneUmbuchung).
+  // Interne Umbuchungen + Abgrenzungen (TP/RB) VOR jeder Zuordnung aussortieren
+  // (siehe istInterneUmbuchung / istAbgrenzungsBuchung) — beide sind KEINE
+  // Rechnungen und dürfen weder Lieferanten-Zeilen noch Kandidaten erzeugen.
   const interneUmbuchungen = alleWarenBuchungen.filter(e => istInterneUmbuchung(e.text));
-  const warenBuchungen = alleWarenBuchungen.filter(e => !istInterneUmbuchung(e.text));
+  const abgrenzungen = alleWarenBuchungen.filter(e => !istInterneUmbuchung(e.text) && istAbgrenzungsBuchung(e.text));
+  const warenBuchungen = alleWarenBuchungen.filter(e => !istInterneUmbuchung(e.text) && !istAbgrenzungsBuchung(e.text));
   const interneUmbuchungenSumme = interneUmbuchungen.reduce((a, e) => a + buchungsBetrag(e), 0);
+  const abgrenzungenSumme = abgrenzungen.reduce((a, e) => a + buchungsBetrag(e), 0);
 
   // Alias-Gruppen: Namen beider Quellen auf den kanonischen Gruppennamen
   // abbilden; Original-Namen je Zeile für die Transparenz mitführen.
@@ -209,6 +273,11 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     // Warenaufwand (4000–Grenze) — ohne Depot/Pfand UND ohne Betriebskosten-
     // Splits (4701 Non-Food etc.), sonst bleiben Apfel-Birnen-Differenzen stehen.
     const invNet = fibuVergleichsNetto(inv, input.warenkostenGrenze);
+    // Rechnungen OHNE Vergleichsanteil (z.B. reine 4000-/4090-/4701-Rechnung)
+    // gehören auf KEINE Seite des Vergleichs: sonst entsteht eine falsche
+    // «nur-erfasst»-Zeile («keine Buchung gefunden»), obwohl beide Seiten den
+    // Betrag ausschliessen. amountNet 0 hat ohnehin nichts zu vergleichen.
+    if (invNet === 0) continue;
     cur.sum += invNet;
     cur.count += 1;
     erfasstMap.set(canon, cur);
@@ -220,11 +289,12 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   if (warenBuchungen.length === 0) {
     // Defensive Wache: fehlender/kaputter Buchhaltungswert (null/NaN/Infinity)
     // ⇒ null — Anzeige «—», nie 0 und nie «CHF NaN» rechnen.
-    // Interne Umbuchungen stecken auch im ER-/Kontoblatt-Total der Warenkonten —
-    // für den Rechnungs-Vergleich herausrechnen, sonst bleibt die Phantom-
-    // Differenz im degradierten Modus stehen.
+    // Interne Umbuchungen UND Abgrenzungen (TP/RB) stecken auch im ER-/
+    // Kontoblatt-Total der Warenkonten — für den Rechnungs-Vergleich
+    // herausrechnen, sonst bleibt die Phantom-Differenz im degradierten
+    // Modus stehen (beide sind KEINE Rechnungen).
     const gebuchtTotal = Number.isFinite(input.buchhaltungTotal)
-      ? Math.round(((input.buchhaltungTotal as number) - interneUmbuchungenSumme) * 100) / 100
+      ? Math.round(((input.buchhaltungTotal as number) - interneUmbuchungenSumme - abgrenzungenSumme) * 100) / 100
       : null;
     const zeilen: AbgleichZeile[] = [...erfasstMap.entries()]
       .map(([lieferant, v]) => ({
@@ -239,6 +309,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
       diffTotal: gebuchtTotal !== null ? gebuchtTotal - erfasstTotal : null,
       nichtZugeordnet: [], nichtZugeordnetSumme: 0,
       interneUmbuchungen, interneUmbuchungenSumme,
+      abgrenzungen, abgrenzungenSumme,
       effektiveAliasGruppen: effektiveGruppen,
     };
   }
@@ -282,7 +353,11 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     let diff: number | null = null;
     if (erf && geb) {
       diff = geb.sum - erf.sum;
-      status = Math.abs(diff) > schwelle ? 'abweichung' : 'ok';
+      // Toleranz: fixe Schwelle (Default 50) ODER 0.1 % des grösseren Betrags —
+      // bei grossen Lieferanten (z.B. Transgourmet ~90k) sind kleine Pfand-/
+      // Rundungsreste (≈85) kein echter Abgleichsfehler und bleiben grün.
+      const toleranz = Math.max(schwelle, 0.001 * Math.max(Math.abs(erf.sum), Math.abs(geb.sum)));
+      status = Math.abs(diff) > toleranz ? 'abweichung' : 'ok';
     } else if (erf) {
       status = 'nur-erfasst';
     } else {
@@ -320,6 +395,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     diffTotal: gebuchtTotal - erfasstTotal,
     nichtZugeordnet, nichtZugeordnetSumme,
     interneUmbuchungen, interneUmbuchungenSumme,
+    abgrenzungen, abgrenzungenSumme,
     effektiveAliasGruppen: effektiveGruppen,
   };
 }

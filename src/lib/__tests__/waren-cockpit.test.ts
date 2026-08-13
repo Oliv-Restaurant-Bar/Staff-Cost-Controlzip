@@ -168,16 +168,16 @@ describe('Kategorie-Summen klammern Depot ebenfalls aus (gleiche Regel wie Total
 // ── FIBU-Vergleichs-Netto: gleicher Konto-Scope wie das Journal (08/2026) ────
 import { fibuVergleichsNetto, betriebsAnteilNet } from '@/lib/waren-cockpit';
 
-describe('fibuVergleichsNetto: nur direkter Warenaufwand (4000–Grenze)', () => {
+describe('fibuVergleichsNetto: nur FIBU-Vergleichskonten 4020–4070', () => {
   it('klammert Depot UND 4701 Non-Food aus (TG-Muster)', () => {
     const e = { id: 'a', date: '2026-07-01', supplierName: 'Transgourmet', amountNet: 10000, amountGross: 10810,
       kontoSplits: [
-        { warenkonto: '4000', amountNet: 5000, amountGross: 5405 },
+        { warenkonto: '4000', amountNet: 5000, amountGross: 5405 }, // Durchlaufkonto — NICHT vergleichsrelevant
         { warenkonto: '4050', amountNet: 1000, amountGross: 1026 },
         { warenkonto: '4701', amountNet: 3856.64, amountGross: 4169.03 },
         { warenkonto: 'Depot', amountNet: 143.36, amountGross: 143.36 },
       ] } as unknown as IE2;
-    expect(fibuVergleichsNetto(e)).toBe(6000);
+    expect(fibuVergleichsNetto(e)).toBe(1000); // nur 4050; 4000/4701/Depot raus
     expect(betriebsAnteilNet(e)).toBeCloseTo(3856.64, 2);
   });
   it('Rechnung ohne Splits behält volles Netto (kein Raten); «offen» zählt als Waren', () => {
@@ -186,13 +186,31 @@ describe('fibuVergleichsNetto: nur direkter Warenaufwand (4000–Grenze)', () =>
     const offen = { ...ohne, id: 'c', kontoSplits: [{ warenkonto: 'offen', amountNet: 100, amountGross: 108 }] } as unknown as IE2;
     expect(fibuVergleichsNetto(offen)).toBe(100);
   });
-  it('respektiert die Mandanten-Grenze (4090 über Grenze 4070 = Betriebskosten)', () => {
+  it('4090 ist NIE vergleichsrelevant (unabhängig von der Mandanten-Grenze)', () => {
     const e = { id: 'd', date: '2026-07-03', supplierName: 'Y', amountNet: 300, amountGross: 324,
       kontoSplits: [
         { warenkonto: '4070', amountNet: 200, amountGross: 216 },
         { warenkonto: '4090', amountNet: 100, amountGross: 108 },
       ] } as unknown as IE2;
     expect(fibuVergleichsNetto(e, 4070)).toBe(200);
-    expect(fibuVergleichsNetto(e)).toBe(300); // Default-Grenze 4090 inkludiert 4090
+    expect(fibuVergleichsNetto(e)).toBe(200); // auch mit Default-Grenze 4090: 4090 raus
+  });
+});
+
+// ── Regression 08/2026: Vergleichsscope 4020–4070 ist grenzen-unabhängig ────
+describe('fibuVergleichsNetto: unabhängig von der WKQ-Grenze', () => {
+  it('zählt 4060/4070 auch bei Grenze 4050 (Journal-Scope bleibt identisch)', () => {
+    const e = { id: 'g1', date: '2026-07-01', supplierName: 'Z', amountNet: 300, amountGross: 324,
+      kontoSplits: [
+        { warenkonto: '4060', amountNet: 200, amountGross: 216 },
+        { warenkonto: '4070', amountNet: 100, amountGross: 108 },
+      ] } as unknown as IE2;
+    expect(fibuVergleichsNetto(e, 4050)).toBe(300);
+  });
+  it('splitlose Rechnung mit Vergleichskonto zählt voll, mit 4000 zählt 0', () => {
+    const v = { id: 'g2', date: '2026-07-02', supplierName: 'Z', amountNet: 150, amountGross: 162, warenkonto: '4060' } as unknown as IE2;
+    expect(fibuVergleichsNetto(v, 4050)).toBe(150);
+    const d = { ...v, id: 'g3', warenkonto: '4000' } as unknown as IE2;
+    expect(fibuVergleichsNetto(d)).toBe(0);
   });
 });

@@ -27,7 +27,7 @@ import {
   type FibuMatchGruppe,
 } from '@/lib/waren-fibu-matches';
 
-export type DiffKategorie = 'luecke' | 'umbuchung' | 'pfand_rest';
+export type DiffKategorie = 'luecke' | 'umbuchung' | 'abgrenzung' | 'pfand_rest';
 
 export interface DiffAufZeile {
   kategorie: DiffKategorie;
@@ -52,6 +52,8 @@ export interface DiffAufschluesselung {
   lueckenSumme: number;
   /** Σ interne Umbuchungen (NICHT Teil der Differenz — informativ). */
   umbuchungenSumme: number;
+  /** Σ Abgrenzungen TP/RB (NICHT Teil der Differenz — informativ). */
+  abgrenzungenSumme: number;
   /** Σ Betrags-/Pfand-Reste (Teil der Differenz). */
   pfandRestSumme: number;
   /** Gruppen in fester Reihenfolge: luecke, umbuchung, pfand_rest — leere Gruppen fehlen. */
@@ -84,6 +86,20 @@ export function buildDiffAufschluesselung(input: {
       beleg: b.belegNr ?? null,
       datum: b.date ?? null,
       label: buchungAnzeigeText(b) || 'Umbuchung',
+      betrag: rp(buchungsBetrag(b)),
+    });
+  }
+
+  // ── Abgrenzungen TP/RB (beide Modi bekannt) — wie Umbuchungen NICHT Teil
+  // der Differenz, rein informativ (transitorische Posten, keine Rechnungen). ──
+  for (const b of abgleich.abgrenzungen) {
+    zeilen.push({
+      kategorie: 'abgrenzung',
+      konto: b.accountNumber ? String(b.accountNumber) : null,
+      lieferant: null,
+      beleg: b.belegNr ?? null,
+      datum: b.date ?? null,
+      label: buchungAnzeigeText(b) || 'Abgrenzung',
       betrag: rp(buchungsBetrag(b)),
     });
   }
@@ -122,7 +138,7 @@ export function buildDiffAufschluesselung(input: {
   }
 
   const sumOf = (k: DiffKategorie) => rp(zeilen.filter(z => z.kategorie === k).reduce((a, z) => a + z.betrag, 0));
-  const gruppen: DiffGruppe[] = (['luecke', 'umbuchung', 'pfand_rest'] as const)
+  const gruppen: DiffGruppe[] = (['luecke', 'umbuchung', 'abgrenzung', 'pfand_rest'] as const)
     .map(k => ({
       kategorie: k,
       zeilen: zeilen.filter(z => z.kategorie === k)
@@ -135,6 +151,7 @@ export function buildDiffAufschluesselung(input: {
     diffTotal: abgleich.diffTotal,
     lueckenSumme: sumOf('luecke'),
     umbuchungenSumme: sumOf('umbuchung'),
+    abgrenzungenSumme: sumOf('abgrenzung'),
     pfandRestSumme: sumOf('pfand_rest'),
     gruppen,
     vollstaendig: abgleich.mode === 'lieferanten',
