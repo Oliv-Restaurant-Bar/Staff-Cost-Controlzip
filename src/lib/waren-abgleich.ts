@@ -452,15 +452,24 @@ export function buildKontoAbgleich(input: {
     // Pseudo-Splits («Depot») bleiben aussen vor (neutral, nie FIBU-relevant).
     const lz = lieferantZeile(inv.supplierName ?? '');
     if (lz) {
+      // Nur der WARENAUFWAND-Anteil (4020–4070) gehört in die Sammelzeile —
+      // Service-/Unterhaltskonten (z.B. 6100 TapServe) bleiben als normale
+      // Konto-Zeile stehen, sonst verzerrt eine Nicht-Waren-Rechnung den
+      // Waren-Vergleich des Lieferanten (Journal-Seite spiegelbildlich unten).
+      const inSammelzeile = (konto: string | undefined) =>
+        !konto || istFibuVergleichsKonto(konto);
       if (inv.kontoSplits && inv.kontoSplits.length > 0) {
         for (const s of inv.kontoSplits) {
           if (istPfandKonto(s.warenkonto)) add('Depot', s.amountNet); // «Depot» + 4800
-          else add(`~${lz}`, s.amountNet);
+          else if (inSammelzeile(s.warenkonto)) add(`~${lz}`, s.amountNet);
+          else add(s.warenkonto, s.amountNet);
         }
       } else if (istPfandKonto(inv.warenkonto)) {
         add('Depot', inv.amountNet); // reine Depot-/Leergut-Rechnung (auch 4800) bleibt neutral
-      } else {
+      } else if (inSammelzeile(inv.warenkonto)) {
         add(`~${lz}`, inv.amountNet);
+      } else {
+        add(inv.warenkonto, inv.amountNet);
       }
       continue;
     }
@@ -482,7 +491,10 @@ export function buildKontoAbgleich(input: {
     // via lieferantZeilen-Regex z.B. der FS-Sammelzeile zugeschlagen) — raus.
     if (istInterneUmbuchung(e.text)) continue;
     const lz = lieferantZeile(e.text ?? '');
-    if (lz) {
+    // Spiegelbildlich zur Erfasst-Seite: nur Warenaufwand-Buchungen (4020–4070)
+    // des Lieferanten in die Sammelzeile — z.B. FS-TapServe auf 6100 bleibt
+    // eine normale Konto-Zeile.
+    if (lz && istFibuVergleichsKonto(k)) {
       gebuchtLieferant.set(lz, (gebuchtLieferant.get(lz) ?? 0) + buchungsBetrag(e));
       continue;
     }
