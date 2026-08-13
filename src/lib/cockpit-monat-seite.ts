@@ -141,7 +141,7 @@ function berechneZeile(row: MrRow): ZeileBerechnet | null {
 // ─── Abschnitts-Zuordnung ────────────────────────────────────────────────────
 
 const PERSONAL_IDS = new Set([
-  'produktivitaet', 'avg_verkauf_gast', 'personalkosten', 'personalquote',
+  'produktivitaet', 'personalkosten', 'personalquote',
 ]);
 
 type SektionKey = 'umsatz' | 'personal' | 'waren' | 'bewertungen';
@@ -234,6 +234,19 @@ export function zeichneMonatsUebersicht(
     const z = berechneZeile(row);
     if (z) sektionen[sektionFuer(row)].push({ row, z });
   }
+  // «Ø-Verkauf pro Gast» gehört inhaltlich zu «Umsatz & Gäste»: direkt NACH
+  // «Gruppen ab 20 Pax» und VOR «Gäste Take Away» einordnen (User-Vorgabe).
+  {
+    const u = sektionen.umsatz;
+    const von = u.findIndex(e => e.row.id === 'avg_verkauf_gast');
+    if (von >= 0) {
+      const [avg] = u.splice(von, 1);
+      const nachGruppen = u.findIndex(e => e.row.id === 'gruppen_ab_20');
+      const vorTa = u.findIndex(e => e.row.id === 'gaeste_take_away');
+      const ziel = nachGruppen >= 0 ? nachGruppen + 1 : vorTa >= 0 ? vorTa : u.length;
+      u.splice(ziel, 0, avg);
+    }
+  }
 
   const standHinweis = input.standBis
     ? `Ist bis ${input.standBis.slice(8, 10)}.${input.standBis.slice(5, 7)}.` : 'Ist (Monat)';
@@ -281,7 +294,11 @@ export function zeichneMonatsUebersicht(
         const z = zeilen[data.row.index]?.z;
         if (!z) return;
         if (z.bold) data.cell.styles.fontStyle = 'bold';
-        if (data.column.index === 1 && z.deltaInk) data.cell.styles.textColor = z.deltaInk;
+        if (data.column.index === 1) {
+          // Abw.-Werte bewusst NICHT fett (Lesbarkeit) — Farbe bleibt.
+          data.cell.styles.fontStyle = 'normal';
+          if (z.deltaInk) data.cell.styles.textColor = z.deltaInk;
+        }
         if (data.column.index === 2) {
           if (z.istInk) data.cell.styles.textColor = z.istInk;
           if (z.ampel) data.cell.styles.cellPadding = { top: 0.7, bottom: 0.7, left: 6.5, right: 2.2 };

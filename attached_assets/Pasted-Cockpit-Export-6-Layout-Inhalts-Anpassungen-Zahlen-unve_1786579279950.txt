@@ -1,0 +1,36 @@
+Cockpit-Export: 6 Layout-/Inhalts-Anpassungen. Zahlen unverändert. Mandantengetrennt.
+
+=== 1) ABW.-WERTE WENIGER FETT ===
+- Die Werte in der Spalte «Abw.» (absolute Zahl + %-Unterzeile) sind zu fett und dadurch
+  schlecht lesbar. Schriftstärke reduzieren: normale/mittlere Stärke statt Bold, farbig
+  (grün/rot) bleibt. Ggf. Schriftgrad der %-Unterzeile leicht kleiner. Gilt auf allen
+  Seiten mit Abw.-Spalte (Cockpit + Wochenverlauf).
+
+=== 2) «Ø-VERKAUF PRO GAST» VERSCHIEBEN ===
+- Zeile «Ø-Verkauf pro Gast» aus dem Abschnitt «Personal» entfernen und in «Umsatz & Gäste»
+  einordnen: direkt NACH «Gruppen ab 20 Pax» und VOR «Gäste Take Away».
+
+=== 3) WAREN: KUMULATIONS-DIAGRAMM ENTFERNEN ===
+- Auf der Seite «Kumulierte Warenkosten / Umsatz» das Liniendiagramm «Kumulierter Verlauf
+  über die Tage» ganz entfernen. Die Tabelle «Tageswerte im Detail» darunter BLEIBT
+  (Datum · Waren · Umsatz · Tages-% · Kum. Waren · Kum. Umsatz · Kum.-%).
+
+=== 4) PERSONAL/ÜBERSTUNDEN: PENSUM-SPALTE WEG ===
+- Die Spalte «Pensum» in der Überstunden-Tabelle entfernen.
+
+=== 5) NUR ABGESCHLOSSENE WOCHEN + LAUFENDE KW KENNZEICHNEN ===
+- In der Überstunden-Tabelle nur abgeschlossene Kalenderwochen anzeigen; die laufende Woche
+  (aktuell KW 33) mit «(laufend)» kennzeichnen (gleicher Stil wie im Wochenverlauf-Header,
+  wo «KW 33 (laufend)» schon steht) und optisch dezent abheben.
+
+=== 6) TOTAL PRO KW (SPALTENSUMME JE WOCHE) ===
+- Unten in der Überstunden-Tabelle eine Total-Zeile ergänzen, die PRO KW-Spalte die Summe
+  aller (nicht ausgenommenen) Mitarbeiter zeigt — plus die bestehende «Laufend»-Summe.
+  (Wie in der App-Überstundenansicht: je Woche eine Spaltensumme, ganz rechts «Laufend».)
+  Ausgenommene Mitarbeiter (Lokaj Mendim, Ramadani Mejdi) zählen weiterhin nicht mit.
+
+=== ABSCHLUSS ===
+Neues PDF (August Oliv) zeigen: Abw. lesbar (nicht fett), Ø-Verkauf pro Gast unter
+Umsatz & Gäste, kein Waren-Kumulations-Chart (Tabelle bleibt), Überstunden ohne Pensum,
+nur abgeschlossene Wochen + KW 33 «(laufend)», Total-Zeile mit Wochensummen. Farblogik
+Überstunden (+ rot / − grün) unverändert.

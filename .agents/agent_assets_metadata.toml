@@ -52,3 +52,10 @@ uri = "file://screenshots/cockpit-personal-block.pdf"
 type = "pdf"
 title = "Cockpit — mit Personal-Block (August, Oliv)"
 description = "Cockpit-Seite + Waren-Block + neuer 2-seitiger Personal-Block (Überstunden & Flex je Woche/Mitarbeiter)."
+
+[[outputs]]
+id = "APLtJHHbcFtsP4Phd6WNr"
+uri = "file://exports/Cockpit-August-2026-Oliv.pdf"
+type = "pdf"
+title = "Cockpit-Export August 2026 (Oliv)"
+description = "Neues PDF mit den 6 Layout-/Inhalts-Anpassungen — Zahlen unverändert."

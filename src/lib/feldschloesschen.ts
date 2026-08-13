@@ -23,7 +23,7 @@ import type { GnPdfLine } from './gn-pdf-lines';
 import type {
   WarenPosition, ParsedCsvRechnung, WarengruppenMapping,
 } from './waren-positionen';
-import { KONTO_LABEL_PFAND, KONTO_GEBUEHR, istGebuehrenText } from './waren-positionen';
+import { KONTO_LABEL_PFAND, KONTO_GEBUEHR, istGebuehrenText, istZwingendGebuehr } from './waren-positionen';
 
 // ── Zahlen/Datum ──────────────────────────────────────────────────────────────
 
@@ -912,10 +912,48 @@ export function fsAnhangAlsRechnung(ls: FsAnhangLieferschein): ParsedCsvRechnung
 export function kontoSplitsAusFsKategorien(
   kategorien: FsKategorieSumme[],
   mapping: WarengruppenMapping,
-): { splits: Array<{ warenkonto: string; amountNet: number; amountGross: number }>; offen: string[] } {
+  /**
+   * Optionale Einzelpositionen der Rechnung: Gebühren-Zeilen (VEG/VRG,
+   * Recycl.-Geb., Logistikpauschale, «…gebühr») stecken in der Zusammenfassung
+   * MwSt. INNERHALB der Warenkategorien (FGG zählt VEG z.B. zu «Andere alk.
+   * freie Getränke»). Werden Positionen übergeben, wird ihr Betrag je Kategorie
+   * und MwSt-Satz aus dem Warenkonto-Bucket HERAUSGERECHNET und auf 4701 gelegt
+   * — BEVOR der Rest nach Kategorie verteilt wird. Pfand (MwSt 0/Depot) bleibt
+   * unberührt (istZwingendGebuehr schliesst Pfand aus).
+   */
+  positionen?: Array<{ bezeichnung: string; warengruppe: string; mwstCode: number; positionspreis: number }>,
+): {
+  splits: Array<{ warenkonto: string; amountNet: number; amountGross: number }>;
+  offen: string[];
+  /**
+   * Netto-Summe der Zwangs-Gebühren, die NICHT sauber aus einem Warenkonto-
+   * Bucket herausgerechnet werden konnten (keine passende ZSF-Kategorie, oder
+   * Betrag übersteigt den Satz-Bucket). > 0 heisst: der ZSF-Split würde
+   * Gebühren auf einem Warenkonto belassen — Aufrufer muss sichtbar auf die
+   * Positions-Kontierung ausweichen (die 4701 erzwingt), nie still übernehmen.
+   */
+  gebuehrenRest: number;
+} {
   const effektiv = mitFsDefaults(mapping);
   const proKonto = new Map<string, { net: number; gross: number }>();
   const offen: string[] = [];
+  // Gebühren-Positionen je ZSF-Kategorie (warengruppe) und Satz sammeln.
+  const gebProKat = new Map<string, { n81: number; n26: number }>();
+  for (const p of positionen ?? []) {
+    if (!istZwingendGebuehr(p)) continue; // schliesst Pfand/Depot aus
+    const key = p.warengruppe.trim().toLowerCase();
+    const cur = gebProKat.get(key) ?? { n81: 0, n26: 0 };
+    if (p.mwstCode === 2) cur.n26 += p.positionspreis;
+    else if (p.mwstCode === 1) cur.n81 += p.positionspreis;
+    gebProKat.set(key, cur);
+  }
+  const verrechnet = new Set<string>();
+  let gebuehrenRest = 0;
+  const addKonto = (konto: string, net: number, gross: number) => {
+    const cur = proKonto.get(konto) ?? { net: 0, gross: 0 };
+    cur.net += net; cur.gross += gross;
+    proKonto.set(konto, cur);
+  };
   for (const kat of kategorien) {
     const leer = Math.abs(kat.nettoTotal) < 0.005
       && Math.abs(kat.netto81) < 0.005 && Math.abs(kat.netto26) < 0.005 && Math.abs(kat.netto00) < 0.005;
@@ -940,17 +978,45 @@ export function kontoSplitsAusFsKategorien(
       else if (nurNull) konto = KONTO_LABEL_PFAND; // reine 0%-Kategorie = Pfand-artig → 4800
       else { konto = 'offen'; offen.push(name); } // nie raten
     }
-    const gross = kat.netto81 * 1.081 + kat.netto26 * 1.026 + kat.netto00;
-    const cur = proKonto.get(konto) ?? { net: 0, gross: 0 };
-    cur.net += kat.nettoTotal; cur.gross += gross;
-    proKonto.set(konto, cur);
+    // Gebühren-Anteil dieser Kategorie ZUERST herausrechnen und auf 4701 legen —
+    // nur wenn die Kategorie selbst auf ein anderes Konto läuft (sonst wäre der
+    // Betrag doppelt gezählt; Pfand-Kategorien enthalten via istZwingendGebuehr
+    // nie Gebühren-Positionen).
+    let n81 = kat.netto81, n26 = kat.netto26, netTotal = kat.nettoTotal;
+    const katKey = kat.name.trim().toLowerCase();
+    const geb = gebProKat.get(katKey);
+    if (geb) {
+      if (konto === KONTO_GEBUEHR || konto === KONTO_LABEL_PFAND) {
+        // Kategorie läuft selbst auf 4701/Pfand — nichts umzuhängen, aber die
+        // Gebühren gelten als verrechnet (keine Doppelzählung, kein Rest).
+        verrechnet.add(katKey);
+      } else {
+        // NIE über den Satz-Bucket hinaus subtrahieren (kein negativer Rest-
+        // Warenbucket); was nicht passt, wird als Rest gemeldet (Toleranz ½ Rp).
+        const take81 = Math.min(Math.max(geb.n81, 0), Math.max(n81, 0));
+        const take26 = Math.min(Math.max(geb.n26, 0), Math.max(n26, 0));
+        gebuehrenRest += (geb.n81 - take81) + (geb.n26 - take26);
+        verrechnet.add(katKey);
+        if (take81 + take26 > 0) {
+          n81 -= take81; n26 -= take26;
+          netTotal -= take81 + take26;
+          addKonto(KONTO_GEBUEHR, take81 + take26, take81 * 1.081 + take26 * 1.026);
+        }
+      }
+    }
+    addKonto(konto, netTotal, n81 * 1.081 + n26 * 1.026 + kat.netto00);
   }
+  // Gebühren OHNE passende ZSF-Kategorie (abweichender Name) → Rest melden.
+  for (const [key, geb] of gebProKat) {
+    if (!verrechnet.has(key)) gebuehrenRest += geb.n81 + geb.n26;
+  }
+  gebuehrenRest = Math.abs(gebuehrenRest) < 0.005 ? 0 : Math.round(gebuehrenRest * 100) / 100;
   const splits = [...proKonto.entries()].map(([warenkonto, v]) => ({
     warenkonto,
     amountNet: Math.round(v.net * 100) / 100,
     amountGross: Math.round(v.gross * 100) / 100,
   }));
-  return { splits, offen };
+  return { splits, offen, gebuehrenRest };
 }
 
 // ── Kategorien-Gegenprobe (Zusammenfassung MwSt vs. erfasste Konto-Summen) ───

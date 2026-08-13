@@ -642,7 +642,8 @@ function zeichneZeile(pdf: jsPDF, row: CrRow, sp: Spalten, y: number, h: number,
         pdf.setFontSize(min);
         return { text: einzeilig(pdf, text, maxTextW), size: min };
       };
-      pdf.setFont('helvetica', 'bold');
+      // Abw.-Werte bewusst NICHT fett (Lesbarkeit) — Farbchip bleibt.
+      pdf.setFont('helvetica', 'normal');
       const haupt = fitText(z.delta.haupt, 7.2, 5.4);
       pdf.setFontSize(haupt.size);
       const wHaupt = pdf.getTextWidth(haupt.text);
@@ -661,7 +662,7 @@ function zeichneZeile(pdf: jsPDF, row: CrRow, sp: Spalten, y: number, h: number,
       pdf.setFillColor(...CHIP_BG[z.delta.ton]);
       pdf.roundedRect(cx, cy, chipW, chipH, 1, 1, 'F');
       pdf.setTextColor(...CHIP_INK[z.delta.ton]);
-      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(haupt.size);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(haupt.size);
       pdf.text(haupt.text, deltaRechts - padX, cy + (sub ? 3.3 : chipH / 2 + 1.4), { align: 'right' });
       if (sub) {
         pdf.setFont('helvetica', 'normal'); pdf.setFontSize(sub.size);

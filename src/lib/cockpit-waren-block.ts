@@ -483,10 +483,8 @@ export function zeichneWarenBlock(
   pdf.addPage('a4', 'portrait');
   y = kopfband(pdf, branding, 'Waren · Kumulierte Warenkosten / Umsatz', d.monatLabel, heute);
   y = kpiZeile(pdf, y, d);
-  y = abschnitt(pdf, y, accent, 'Kumulierter Verlauf über die Tage',
-    'fehlende Werte bleiben leer');
-  y = chartKumulation(pdf, y, d);
-  y = abschnitt(pdf, y + 1, accent, 'Tageswerte im Detail');
+  // Kumulations-Liniendiagramm auf User-Wunsch entfernt — Tabelle bleibt.
+  y = abschnitt(pdf, y + 1, accent, 'Tageswerte im Detail', 'fehlende Werte bleiben leer');
   autoTable(pdf, {
     ...stil,
     styles: { ...stil.styles, fontSize: 7.8, cellPadding: { top: 1.5, bottom: 1.5, left: 2.4, right: 2.4 } },

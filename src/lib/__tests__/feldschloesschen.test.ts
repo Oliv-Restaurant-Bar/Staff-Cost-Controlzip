@@ -348,6 +348,58 @@ describe('kontoSplitsAusFsKategorien', () => {
     expect(splits.find(s2 => s2.warenkonto === 'offen')?.amountNet).toBe(50);
     expect(splits.some(s2 => s2.warenkonto === '4020')).toBe(false);
   });
+  // Kontrollwerte Rechnung 87791818 (08/2026, Oliv): Gebühren-Positionen (VEG/
+  // Recycl./Logistik) stecken in der ZSF INNERHALB der Warenkategorien — mit
+  // übergebenen Positionen werden sie je Kategorie/Satz herausgerechnet → 4701.
+  it('Gebühren-Positionen werden aus den ZSF-Warenkonto-Buckets herausgerechnet (87791818)', () => {
+    const kats = [
+      kat('Bier', 420), kat('Spirituosen', 539.39),
+      kat('Andere alk. freie Getränke', 0, 728.52), kat('Mineralwasser', 0, 99.84),
+      kat('Zu-/Abschläge', 15, 4.96), kat('Leergut', 0, 0, -233),
+    ];
+    const pos = [
+      { bezeichnung: 'VEG EW Glas ab 33 cl bis 60 cl', warengruppe: 'Spirituosen', mwstCode: 1, positionspreis: 0.04 },
+      { bezeichnung: 'VEG EW Glas ab 60cl', warengruppe: 'Spirituosen', mwstCode: 1, positionspreis: 0.60 },
+      { bezeichnung: 'VEG EW Glas 9 bis 33 cl', warengruppe: 'Andere alk. freie Getränke', mwstCode: 2, positionspreis: 1.44 },
+      { bezeichnung: 'Logistikpauschale', warengruppe: 'Zu-/Abschläge', mwstCode: 1, positionspreis: 15 },
+      { bezeichnung: 'Recycl.-Geb. PET ab 50cl', warengruppe: 'Zu-/Abschläge', mwstCode: 2, positionspreis: 4.96 },
+      { bezeichnung: 'Pfand Fass', warengruppe: 'Leergut', mwstCode: 0, positionspreis: -233 },
+      { bezeichnung: 'Lager hell Fass', warengruppe: 'Bier', mwstCode: 1, positionspreis: 420 },
+    ];
+    const { splits, offen } = kontoSplitsAusFsKategorien(kats, [], pos);
+    expect(offen).toEqual([]);
+    const m = Object.fromEntries(splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(m['4030']).toBe(420);
+    expect(m['4040']).toBeCloseTo(538.75, 2);  // 539.39 − 0.64 VEG
+    expect(m['4050']).toBeCloseTo(826.92, 2);  // 728.52 − 1.44 VEG + 99.84
+    expect(m['4701']).toBeCloseTo(22.04, 2);   // 15.00 + 4.96 + 2.08 VEG
+    expect(m['4800']).toBe(-233);
+    // Zahlenneutral: Σ netto unverändert
+    expect(splits.reduce((a, s2) => a + s2.amountNet, 0)).toBeCloseTo(1574.71, 2);
+    // OHNE Positionen (alter Pfad) blieben die VEG-Anteile in den Warenkonten:
+    const alt = Object.fromEntries(kontoSplitsAusFsKategorien(kats, []).splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(alt['4050']).toBeCloseTo(828.36, 2);
+    expect(alt['4701']).toBeCloseTo(19.96, 2);
+  });
+  it('gebuehrenRest: abweichender Kategoriename / Betrag > Bucket → Rest gemeldet, nie negativ', () => {
+    // Gebühren-Position mit Warengruppe, die KEINE ZSF-Kategorie hat:
+    const nichtMatch = kontoSplitsAusFsKategorien([kat('Bier', 100)], [],
+      [{ bezeichnung: 'Recycl.-Geb. PET', warengruppe: 'Unbekannte Gruppe', mwstCode: 2, positionspreis: 4.96 }]);
+    expect(nichtMatch.gebuehrenRest).toBeCloseTo(4.96, 2);
+    expect(Object.fromEntries(nichtMatch.splits.map(s2 => [s2.warenkonto, s2.amountNet]))['4030']).toBe(100);
+    // Gebührenbetrag übersteigt den Satz-Bucket → nur bis Bucket subtrahieren, Rest melden:
+    const zuGross = kontoSplitsAusFsKategorien([kat('Spirituosen', 2)], [],
+      [{ bezeichnung: 'VEG EW Glas ab 60cl', warengruppe: 'Spirituosen', mwstCode: 1, positionspreis: 5 }]);
+    expect(zuGross.gebuehrenRest).toBeCloseTo(3, 2);
+    const mz = Object.fromEntries(zuGross.splits.map(s2 => [s2.warenkonto, s2.amountNet]));
+    expect(mz['4040']).toBe(0);          // nie negativ
+    expect(mz['4701']).toBeCloseTo(2, 2);
+    // Kategorie läuft selbst auf 4701 → verrechnet, kein Rest, keine Doppelzählung:
+    const selbst = kontoSplitsAusFsKategorien([kat('Zu-/Abschläge', 15)], [],
+      [{ bezeichnung: 'Logistikpauschale', warengruppe: 'Zu-/Abschläge', mwstCode: 1, positionspreis: 15 }]);
+    expect(selbst.gebuehrenRest).toBe(0);
+    expect(Object.fromEntries(selbst.splits.map(s2 => [s2.warenkonto, s2.amountNet]))['4701']).toBe(15);
+  });
   it('eigenes Mapping übersteuert die Defaults', () => {
     const { splits } = kontoSplitsAusFsKategorien([kat('Bier', 100)], [{ gruppe: 'Bier', konto: '4099' }]);
     expect(splits[0].warenkonto).toBe('4099');

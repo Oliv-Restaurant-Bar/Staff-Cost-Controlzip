@@ -87,6 +87,7 @@
 - [Feldschlösschen PDF-Import](feldschloesschen-import.md) — MWST-Satz als hartes Kategorie-Signal, Sammelrechnung nur Kontrolle, Duplikat-Wache bei Anhang-Übernahme, Jahr-Lock frisch im Save-Pfad.
 - [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang MwSt-0-Pfand>Artikel>Text-Pfand>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
+- [Gebühren → immer 4701](waren-gebuehren-4701.md) — Zwangs-Regel in JEDEM Kontierungspfad, auch ZSF-Summenpfad (Bucket-Herausrechnung); Pfand hat Vorrang, «gebühr» nur am Wortende.
 - [Pfand/Depot = Konto 4800](pfand-konto-4800.md) — Pfand/Leergut/Gebinde universal auf echtes 4800 (neutral, nie WKQ/Betriebskosten) via istPfandKonto; Legacy-«Depot»-Splits gleichwertig, nie migrieren.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
 - [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE; Gast, Stundenbestätigung, Onboarding- UND Personaleintritt-per-Link entfernt; 0 öffentliche Routen (auch App.tsx-Early-Returns geprüft).

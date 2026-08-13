@@ -834,7 +834,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
           <div className="max-h-56 overflow-y-auto space-y-1">
             {einzelFakturen.map(s => {
               const kats = s.fakturaKategorien[s.nr] ?? [];
-              const { splits, offen } = kontoSplitsAusFsKategorien(kats, fsMappingMitKatOverrides);
+              // Positionen mitgeben: Gebühren-Zeilen (VEG/Recycl./Logistik) erscheinen
+              // in der Vorschau bereits auf 4701 — identisch zum Import-Kern.
+              const { splits, offen, gebuehrenRest } = kontoSplitsAusFsKategorien(kats, fsMappingMitKatOverrides,
+                s.anhangLieferscheine.filter(a => a.fakturaNr === s.nr).flatMap(a => a.positionen));
               return (
                 <div key={s.nr} className="rounded border border-border/50 px-2 py-1.5 tabular-nums" data-testid={`fs-faktura-${s.nr}`}>
                   <div className="flex flex-wrap items-center gap-2">
@@ -852,6 +855,11 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                     {offen.length > 0 && (
                       <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
                         <AlertTriangle className="h-3 w-3" /> offen: {offen.join(', ')}
+                      </span>
+                    )}
+                    {gebuehrenRest > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> Gebühren (CHF {fmt(gebuehrenRest)}) nicht mit der Zusammenfassung abstimmbar — beim Buchen wird aus den Positionen kontiert (Gebühren auf 4701)
                       </span>
                     )}
                   </div>

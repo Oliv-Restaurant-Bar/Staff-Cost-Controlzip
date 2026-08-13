@@ -128,9 +128,11 @@ export async function ladePersonalBlockDaten(
   // ── A) Überstunden: letzte 4 KWs bis zum Stichtag (rollierend) ────────────
   const stichMonday = mondayOf(heuteIso);
   const mondays = [-3, -2, -1, 0].map(i => addTage(stichMonday, i * 7));
+  // Laufende (nicht abgeschlossene) Woche kennzeichnen — gleicher Stil wie im
+  // Wochenverlauf-Header («KW 33 (laufend)»); Fenster = 3 abgeschlossene + laufende.
   const kwLabels = mondays.map(mo => {
     const { kw } = isoWeekOf(mo);
-    return `KW ${kw}`;
+    return mo === stichMonday ? `KW ${kw} (laufend)` : `KW ${kw}`;
   });
 
   // Jahres-Ergebnisse laden (Fenster kann über den Jahreswechsel reichen).
@@ -351,22 +353,33 @@ export function zeichnePersonalBlock(
   y = abschnitt(pdf, y, accent, `Letzte 4 Kalenderwochen (${d.kwLabels.join(' · ')})`,
     'Wochen-Saldo = Ist − anteiliges Soll · leer statt 0');
   const ausgenommenChip = 'ausgenommen · kein ÜStd-Konto';
+  // Total-Zeile: Spaltensumme je KW über alle NICHT ausgenommenen MA
+  // (Summe der angezeigten Wochen-Saldi; keine Werte = leer, nie 0).
+  const kwTotals = d.kwLabels.map((_, i) => {
+    const werte = d.ueZeilen
+      .filter(z => !z.ausgenommen)
+      .map(z => z.saldi[i])
+      .filter((v): v is number => v !== null);
+    return werte.length > 0 ? r1(werte.reduce((s, v) => s + v, 0)) : null;
+  });
+  const totalStil = { fontStyle: 'bold' as const, ...rechts };
   const ueBody = [
     ...d.ueZeilen.map(z => [
       z.name,
-      `${z.pensumPct} %`,
       ...(z.ausgenommen ? d.kwLabels.map(() => '–') : z.saldi.map(fmtSaldo)),
       z.ausgenommen ? ausgenommenChip : fmtSaldo(z.laufend),
     ]),
-    [{ content: 'Total laufend', styles: { fontStyle: 'bold' as const } },
-      '', ...d.kwLabels.map(() => ''),
-      { content: d.totalLaufend === null ? '–' : `${fmtSaldo(d.totalLaufend)} h`, styles: { fontStyle: 'bold' as const, ...rechts } }],
+    [{ content: 'Total', styles: { fontStyle: 'bold' as const } },
+      ...kwTotals.map(t => ({ content: fmtSaldo(t), styles: totalStil })),
+      { content: d.totalLaufend === null ? '–' : `${fmtSaldo(d.totalLaufend)} h`, styles: totalStil }],
   ];
-  const laufendCol = 2 + d.kwLabels.length;
+  const laufendCol = 1 + d.kwLabels.length;
+  // Laufende KW-Spalte optisch dezent abheben (heller Grundton).
+  const laufendKwCol = d.kwLabels.findIndex(l => l.includes('(laufend)'));
   autoTable(pdf, {
     ...stil,
     startY: y,
-    head: [['Mitarbeiter', 'Pensum', ...d.kwLabels, 'Laufend']],
+    head: [['Mitarbeiter', ...d.kwLabels, 'Laufend']],
     body: ueBody as Parameters<typeof autoTable>[1]['body'],
     columnStyles: Object.fromEntries(
       Array.from({ length: laufendCol }, (_, i) => [i + 1, rechts]),
@@ -382,9 +395,16 @@ export function zeichnePersonalBlock(
         data.cell.text = [''];
       }
       // Kosten-Farblogik: Überstunden (+) rot, Minusstunden (−) grün.
-      if (data.section === 'body' && data.column.index >= 2 && typeof data.cell.raw === 'string') {
-        if (data.cell.raw.startsWith('+')) data.cell.styles.textColor = ROT_INK;
-        else if (data.cell.raw.startsWith('-') || data.cell.raw.startsWith('−')) data.cell.styles.textColor = GRUEN_INK;
+      if (data.section === 'body' && data.column.index >= 1) {
+        const t = typeof data.cell.raw === 'string' ? data.cell.raw
+          : typeof (data.cell.raw as { content?: unknown })?.content === 'string'
+            ? (data.cell.raw as { content: string }).content : '';
+        if (t.startsWith('+')) data.cell.styles.textColor = ROT_INK;
+        else if (t.startsWith('-') || t.startsWith('−')) data.cell.styles.textColor = GRUEN_INK;
+      }
+      // Laufende KW dezent abheben (heller Grundton, Farblogik unverändert).
+      if (data.section === 'body' && laufendKwCol >= 0 && data.column.index === 1 + laufendKwCol) {
+        data.cell.styles.fillColor = [246, 246, 248];
       }
     },
     didDrawCell: data => {

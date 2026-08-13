@@ -296,10 +296,17 @@ export async function kernImportiereFsRechnungen(
     // vom Buchungs-Netto ab (>0.10), fällt der Import SICHTBAR auf Positionen zurück.
     let splits = kontoSplitsAusPositionen(positionen);
     if (fsKategorien && fsKategorien.length > 0) {
-      const ausZsf = kontoSplitsAusFsKategorien(fsKategorien, mapping);
+      // Positionen mitgeben: Gebühren-Zeilen (VEG/Recycl./Logistik) werden aus
+      // den Warenkonto-Buckets der Zusammenfassung herausgerechnet → 4701.
+      const ausZsf = kontoSplitsAusFsKategorien(fsKategorien, mapping, r.positionen);
       const zielNetto = nettoOffiziell ?? r.nettoTotal;
       const zsfNetto = ausZsf.splits.reduce((a, s) => a + s.amountNet, 0);
-      if (Math.abs(zsfNetto - zielNetto) <= 0.10) {
+      if (ausZsf.gebuehrenRest > 0) {
+        // Zwangs-Gebühren liessen sich nicht sauber aus den ZSF-Buckets heraus-
+        // rechnen (abweichende Kategorie o. Betrag > Bucket) — NIE still den
+        // ZSF-Split übernehmen: Positions-Kontierung (erzwingt 4701) bleibt.
+        hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Gebühren (CHF ${ausZsf.gebuehrenRest.toFixed(2)}) nicht mit der Zusammenfassung MwSt. abstimmbar — Kontierung aus Positionen übernommen (Gebühren auf 4701).`);
+      } else if (Math.abs(zsfNetto - zielNetto) <= 0.10) {
         splits = ausZsf.splits;
         // Warnsignal (ohne die massgebliche ZSF-Kontierung zu ändern): weicht
         // das aus den POSITIONEN gelesene Netto von der Zusammenfassung ab,
