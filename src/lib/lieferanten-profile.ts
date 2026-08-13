@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser';
 
 /**
  * Belegtyp des Lieferanten:
@@ -82,8 +82,9 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // matcht NICHT «Schenk Family Wine».
   { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, monatsrechnung: false,
     erkennungTokens: ['schenk suisse'] },
-  // Rutishauser-DiVino bewusst entfernt (Altlast, kein Lieferant mehr, 08/2026)
-  // — siehe ALTLASTEN_ENTFERNT (filtert auch frühere KV-Profile).
+  // Rutishauser-DiVino: 08/2026 zunächst als Altlast entfernt, auf User-Wunsch
+  // wieder aktiv (Wein-Einzelrechnungen, bucht sofort final wie Schenk).
+  { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, monatsrechnung: false },
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
@@ -100,7 +101,9 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // provisorisch während des Monats, die Monatsrechnung ersetzt sie (wie
   // Terravigna). Alle Positionen Küche → Konto 4060.
   { id: 'ambro',        name: 'Ambro Food',             mwstNr: '102097525', kategorie: 'Food',             konto: '4060', mwstSatz: 2.6, parser: 'ambro', belegtyp: 'dual', monatsrechnung: true },
-  { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
+  // Gasser Gourmet: SAMMELRECHNUNG mit Lieferschein-Blöcken je Tag (wie
+  // Fideco, eigenes Layout «LS-Nr  LS-Datum … Betrag») → Stufe-2-Parser.
+  { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, parser: 'gasser', belegtyp: 'dual' },
   { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6, monatsrechnung: false },
   // Caporaso: LIEFERSCHEIN-RECHNUNG (Einzelbeleg, bucht sofort final);
   // Konto-Split via MwSt-Basis (2.6 % → 4060 Küche, 8.1 % → 4701 Betriebs-
@@ -115,9 +118,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
  *  gespeicherte KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
 const BOHNENBLUST_AUSGESCHLOSSEN = { ids: ['bohnenblust'], mwstNrn: ['472136586'] };
 
-/** Altlasten-Lieferanten (kein Lieferant mehr, 08/2026): früher gespeicherte
- *  KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
-const ALTLASTEN_ENTFERNT = { ids: ['rutishauser'], mwstNrn: ['116319519'] };
+/** Altlasten-Lieferanten (kein Lieferant mehr): früher gespeicherte
+ *  KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert.
+ *  Rutishauser wurde 08/2026 wieder aktiviert (kein Filter mehr). */
+const ALTLASTEN_ENTFERNT = { ids: [] as string[], mwstNrn: [] as string[] };
 
 function profileKey(tenantId: TenantId): string {
   return tenantKey(tenantId, 'waren_lieferanten_profile_v1');

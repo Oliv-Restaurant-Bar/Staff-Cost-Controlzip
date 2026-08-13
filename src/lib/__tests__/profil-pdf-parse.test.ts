@@ -244,9 +244,10 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.hinweise.join(' ')).toContain('42880');
     expect(r.hinweise.join(' ')).toContain('Konto prüfen');
   });
-  it('Rutishauser ist entfernt (Altlast): 91091909 wird keinem Profil zugeordnet', () => {
+  it('Rutishauser ist wieder aktiv (08/2026): 91091909 → Profil rutishauser/4020', () => {
     const r = parse('rutishauser-91091909.txt');
-    expect(r.profil).toBeNull();
+    expect(r.profil?.id).toBe('rutishauser');
+    expect(r.profil?.konto).toBe('4020');
   });
   it('Bohnenblust ist ausgeschlossen: 49415 wird keinem Profil zugeordnet', () => {
     const r = parse('bohnenblust-49415.txt');
@@ -303,6 +304,51 @@ describe('Stufe 2 (Positionen & Lieferdatum je Lieferung)', () => {
     expect(erste.preis).toBeCloseTo(147.9 / 12, 2);
     const summe = Math.round(r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100;
     expect(Math.abs(summe - 2339.69)).toBeLessThanOrEqual(0.05);
+  });
+});
+
+describe('Gasser Stufe 2 (Sammelrechnung, LS-Blöcke je Tag)', () => {
+  it('F0122084: 6 Lieferungen, Σ Positionen = Belegbetrag 1419.90', () => {
+    const r = parse('gasser-f0122084.txt');
+    expect(r.profil?.id).toBe('gasser');
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen).toHaveLength(6);
+    expect(r.lieferungen[0].rechnungsNr).toBe('2184897');
+    expect(r.lieferungen[0].datum).toBe('2026-06-01');
+    expect(r.lieferungen[0].nettoTotal).toBe(119.7);
+    const summe = Math.round(r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100;
+    expect(Math.abs(summe - 1419.9)).toBeLessThanOrEqual(0.05);
+  });
+  it('F0122536: 8 Lieferungen über 2 Seiten (Übertrag), Σ = 1635.00; letzter LS 30.07. = 239.90', () => {
+    const r = parse('gasser-f0122536.txt');
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen).toHaveLength(8);
+    const letzte = r.lieferungen[r.lieferungen.length - 1];
+    expect(letzte.rechnungsNr).toBe('2187766');
+    expect(letzte.datum).toBe('2026-07-30');
+    expect(letzte.nettoTotal).toBe(239.9);
+    const summe = Math.round(r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100;
+    expect(Math.abs(summe - 1635.0)).toBeLessThanOrEqual(0.05);
+  });
+});
+
+describe('Neue/reaktivierte Profile (08/2026)', () => {
+  it('Rutishauser-DiVino wieder aktiv: MWST 116319519 → Wein/4020/8.1', () => {
+    const p = P.find(x => x.id === 'rutishauser');
+    expect(p?.mwstNr).toBe('116319519');
+    expect(p?.konto).toBe('4020');
+    expect(p?.mwstSatz).toBe(8.1);
+  });
+  it('Schenk Suisse via MWST 219630115 → 4020 (Profil obrist)', () => {
+    const p = P.find(x => x.mwstNr === '219630115');
+    expect(p?.id).toBe('obrist');
+    expect(p?.konto).toBe('4020');
+  });
+  it('Gasser: Sammelrechnungs-Parser + dual', () => {
+    const p = P.find(x => x.id === 'gasser');
+    expect(p?.parser).toBe('gasser');
+    expect(p?.belegtyp).toBe('dual');
+    expect(p?.konto).toBe('4060');
   });
 });
 

@@ -265,6 +265,32 @@ function parseFidecoLieferungen(lines: string[], profil: LieferantenProfil, mwst
   return out;
 }
 
+/**
+ * Gasser Gourmet SAMMELRECHNUNG: Lieferschein-Blöcke je Tag (wie Fideco,
+ * eigenes Layout). Blockkopf «2184897  01.06.26  [Mo/Zeichen] …  119.70»,
+ * Positionszeile «2210  Frischrösti … 2x2kg  5 Crt  [10.00]  5.99  23.94  119.70»
+ * (optionale %-Spalte; letzte Zahl = Positionsbetrag, davor der Preis).
+ * «Übertrag»-/Kopfzeilen der Folgeseiten matchen nicht und stören nicht.
+ */
+function parseGasserLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  // Blockkopf: LS-Nr (6-8 Ziffern) + LS-Datum; Positions-ArtNrn sind kürzer.
+  const { bloecke } = teileInBloecke(lines, /^\s*(\d{6,8})\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\b/);
+  const zeileRe = /^\s*(\d{3,6})\s+(.+?)\s+(-?\d+)\s+(Crt|Stk|Kg|Krt|Ei|Pkt?|St)\b\.?\s+(?:([\d’'.,]+)\s+)?([\d’'.,]+)\s+([\d’'.,]+)\s+(-?[\d’'.,]+)\s*$/i;
+  return bloecke.map(b => {
+    const positionen: WarenPosition[] = [];
+    for (const z of b.zeilen) {
+      if (/Übertrag/i.test(z)) continue;
+      const m = zeileRe.exec(z);
+      if (!m) continue;
+      positionen.push(position(profil.kategorie, mwstSatz, {
+        artNr: m[1], bezeichnung: m[2].trim(), menge: parseBetrag(m[3]) ?? 0,
+        einheit: m[4], preis: parseBetrag(m[7]) ?? 0, positionspreis: parseBetrag(m[8]) ?? 0,
+      }));
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
 /** Terravigna: «1  21111-24-075  12 75 cl  14.50  15  147.90» (Folgezeile = Weinname). */
 function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const { bloecke } = teileInBloecke(lines, /Lieferungsnr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
@@ -766,6 +792,7 @@ const KOPF_PARSER: Record<string, KopfParser> = {
 const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, satz: number) => ParsedCsvRechnung[]> = {
   spahni: parseSpahniLieferungen,
   fideco: parseFidecoLieferungen,
+  gasser: parseGasserLieferungen,
   terravigna: parseTerravignaLieferungen,
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
