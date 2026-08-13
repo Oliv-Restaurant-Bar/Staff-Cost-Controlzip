@@ -14,6 +14,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import {
   Activity, ChevronDown, ChevronUp, Plus, Trash2,
   Package, Wine, Info, Archive, TrendingUp, ShoppingCart, Clock, ArrowLeftRight,
@@ -70,6 +71,7 @@ interface PurchaseDialogProps {
 }
 
 function PurchaseDialog({ open, artikel, year, month, onSave, onClose }: PurchaseDialogProps) {
+  const { tenantId } = useTenant();
   const defaultDate = `${year}-${String(month).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
 
   const [form, setForm] = useState({
@@ -103,7 +105,7 @@ function PurchaseDialog({ open, artikel, year, month, onSave, onClose }: Purchas
     if (isNaN(price) || price < 0){ setErr('Preis muss eine Zahl ≥ 0 sein');     return; }
     if (!form.supplier.trim())    { setErr('Lieferant ist erforderlich');          return; }
 
-    addPurchase({
+    addPurchase(tenantId, {
       articleId:    artikel.id,
       articleName:  artikel.name,
       date:         form.date,
@@ -222,11 +224,12 @@ function ArtikelCard({
   artikel, year, month, rezepturen, products,
   onAddPurchase, onDeletePurchase,
 }: ArtikelCardProps) {
+  const { tenantId } = useTenant();
   const [expanded, setExpanded] = useState(false);
 
   const stats = useMemo(
-    () => getArtikelMonthStats(artikel.id, year, month, rezepturen, products),
-    [artikel.id, year, month, rezepturen, products],
+    () => getArtikelMonthStats(tenantId, artikel.id, year, month, rezepturen, products),
+    [tenantId, artikel.id, year, month, rezepturen, products],
   );
 
   const isFood = artikel.inventoryType === 'food';
@@ -398,15 +401,16 @@ function StatCell({ label, value, sub, icon, active, muted, highlight }: StatCel
 
 export default function ArtikelTrackingPage() {
   const { isAdmin } = usePermissions();
+  const { tenantId } = useTenant();
 
   const [year,  setYear]  = useState(CURRENT_YEAR);
   const [month, setMonth] = useState(CURRENT_MONTH);
 
   const years = useMemo(() => {
-    const base = availablePurchaseYears();
+    const base = availablePurchaseYears(tenantId);
     if (!base.includes(CURRENT_YEAR)) base.push(CURRENT_YEAR);
     return base.sort((a, b) => b - a);
-  }, []);
+  }, [tenantId]);
 
   // Daten laden (async)
   const [articles,   setArticles]   = useState<Artikel[]>([]);
@@ -445,14 +449,14 @@ export default function ArtikelTrackingPage() {
 
   // Monatliche Zusammenfassung (alle getrackten Artikel)
   const monthlySummary = useMemo(() => {
-    const purchases = loadPurchasesForMonth(year, month);
+    const purchases = loadPurchasesForMonth(tenantId, year, month);
     const totalCHF  = purchases.reduce((s, p) => s + p.totalCost, 0);
     const totalOrders = purchases.length;
     const uniqueArticles = new Set(purchases.map(p => p.articleId)).size;
     return { totalCHF, totalOrders, uniqueArticles };
   // rev is used to force recalculation after CRUD
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, rev]);
+  }, [tenantId, year, month, rev]);
 
   // Purchase Dialog
   const [showAdd, setShowAdd]       = useState(false);
@@ -461,7 +465,7 @@ export default function ArtikelTrackingPage() {
   function openAdd(a: Artikel) { setAddTarget(a); setShowAdd(true); }
   function handlePurchaseSaved()  { refresh(); }
   function handleDeletePurchase(id: string) {
-    deletePurchase(id);
+    deletePurchase(tenantId, id);
     toast.success('Einkauf gelöscht');
     refresh();
   }

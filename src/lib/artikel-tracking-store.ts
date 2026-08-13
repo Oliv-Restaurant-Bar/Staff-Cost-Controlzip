@@ -2,7 +2,9 @@
  * Artikel-Tracking Store – Einkaufs- und Verbrauchsanalyse
  * ==========================================================
  *
- * Speicherung: localStorage (Schlüssel: 'artikel_purchases_v1')
+ * Speicherung: localStorage, MANDANTEN-GETRENNT via tenantKey():
+ *   Oliv     → 'artikel_purchases_v1' (Legacy-Key, bestehende Daten bleiben Oliv)
+ *   Beaulieu → 'beaulieu:artikel_purchases_v1'
  *
  * Zweck:
  *   Manuelle Erfassung von Einkäufen (Menge + Preis) für Artikel
@@ -21,6 +23,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ProductRecipe } from './rezeptur-store';
 import type { ProductEntry } from './produkte-store';
+import { tenantKey } from './tenant-utils';
+import type { TenantId } from '@/contexts/TenantContext';
 
 const PURCHASE_KEY = 'artikel_purchases_v1';
 
@@ -80,20 +84,20 @@ export interface ArtikelMonthStats {
 
 type PurchaseStore = Record<string, ArtikelPurchase>;
 
-function loadAll(): PurchaseStore {
+function loadAll(tenantId: TenantId): PurchaseStore {
   try {
-    const raw = localStorage.getItem(PURCHASE_KEY);
+    const raw = localStorage.getItem(tenantKey(tenantId, PURCHASE_KEY));
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 }
 
-function saveAll(store: PurchaseStore): void {
-  localStorage.setItem(PURCHASE_KEY, JSON.stringify(store));
+function saveAll(tenantId: TenantId, store: PurchaseStore): void {
+  localStorage.setItem(tenantKey(tenantId, PURCHASE_KEY), JSON.stringify(store));
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
-export function addPurchase(input: {
+export function addPurchase(tenantId: TenantId, input: {
   articleId: string;
   articleName: string;
   date: string;
@@ -102,7 +106,7 @@ export function addPurchase(input: {
   supplier: string;
   note?: string;
 }): ArtikelPurchase {
-  const all = loadAll();
+  const all = loadAll(tenantId);
   const now = new Date().toISOString();
   const d   = new Date(input.date);
   const p: ArtikelPurchase = {
@@ -121,35 +125,35 @@ export function addPurchase(input: {
     updatedAt:    now,
   };
   all[p.id] = p;
-  saveAll(all);
+  saveAll(tenantId, all);
   return p;
 }
 
-export function deletePurchase(id: string): void {
-  const all = loadAll();
+export function deletePurchase(tenantId: TenantId, id: string): void {
+  const all = loadAll(tenantId);
   delete all[id];
-  saveAll(all);
+  saveAll(tenantId, all);
 }
 
-export function loadAllPurchases(): ArtikelPurchase[] {
-  return Object.values(loadAll()).sort((a, b) => b.date.localeCompare(a.date));
+export function loadAllPurchases(tenantId: TenantId): ArtikelPurchase[] {
+  return Object.values(loadAll(tenantId)).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export function loadPurchasesForArticle(articleId: string): ArtikelPurchase[] {
-  return Object.values(loadAll())
+export function loadPurchasesForArticle(tenantId: TenantId, articleId: string): ArtikelPurchase[] {
+  return Object.values(loadAll(tenantId))
     .filter(p => p.articleId === articleId)
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export function loadPurchasesForMonth(year: number, month: number): ArtikelPurchase[] {
-  return Object.values(loadAll())
+export function loadPurchasesForMonth(tenantId: TenantId, year: number, month: number): ArtikelPurchase[] {
+  return Object.values(loadAll(tenantId))
     .filter(p => p.year === year && p.month === month)
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
 /** Alle Jahre mit Einkaufsbelegen (+ aktuelles Jahr). */
-export function availablePurchaseYears(): number[] {
-  const all = Object.values(loadAll());
+export function availablePurchaseYears(tenantId: TenantId): number[] {
+  const all = Object.values(loadAll(tenantId));
   const years = new Set(all.map(p => p.year));
   years.add(new Date().getFullYear());
   return [...years].sort((a, b) => b - a);
@@ -165,13 +169,14 @@ export function availablePurchaseYears(): number[] {
  *   für alle Rezepturen, die diesen Artikel als Zutat enthalten.
  */
 export function getArtikelMonthStats(
+  tenantId: TenantId,
   articleId: string,
   year: number,
   month: number,
   rezepturen: ProductRecipe[],
   products: ProductEntry[],
 ): ArtikelMonthStats {
-  const purchases = Object.values(loadAll()).filter(
+  const purchases = Object.values(loadAll(tenantId)).filter(
     p => p.articleId === articleId && p.year === year && p.month === month,
   );
 

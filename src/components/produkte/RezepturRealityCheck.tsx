@@ -18,6 +18,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, TrendingUp, TrendingDown, Info, ChevronRight, ChevronDown, CheckCircle } from 'lucide-react';
 import { loadAllPurchases } from '@/lib/artikel-tracking-store';
+import { useTenant } from '@/contexts/TenantContext';
 import type { ProductRecipe, RezepturenMap } from '@/lib/rezeptur-store';
 import type { ProductEntry } from '@/lib/produkte-store';
 
@@ -97,10 +98,11 @@ function computeTheoreticalForArticle(
 }
 
 export default function RezepturRealityCheck({ recipes, products }: Props) {
+  const { tenantId } = useTenant();
   const [open, setOpen] = useState(false);
 
   const checks = useMemo((): ArticleCheck[] => {
-    const allPurchases = loadAllPurchases();
+    const allPurchases = loadAllPurchases(tenantId);
     const recentMonths = getRecentMonths(MONTHS_TO_CHECK);
     const allRecipes   = Object.values(recipes);
 
@@ -184,7 +186,7 @@ export default function RezepturRealityCheck({ recipes, products }: Props) {
       const order = { high: 0, low: 1, insufficient: 2, ok: 3 };
       return order[a.severity] - order[b.severity];
     });
-  }, [recipes, products]);
+  }, [tenantId, recipes, products]);
 
   const warnings  = checks.filter(c => c.severity === 'high' || c.severity === 'low');
   const ok        = checks.filter(c => c.severity === 'ok');
