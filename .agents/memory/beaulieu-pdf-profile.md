@@ -75,3 +75,6 @@ Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschl�
 - Faktura mit «Beleg-Nr. <LS-Nr> vom <Datum>»-Blöcken je Lieferung; Parser `gourmador` in LIEFERUNG_PARSER.
 - Eine Gourmador-FAKTURA ist IMMER die massgebliche Monatsrechnung — dokumenttyp-Override in parseProfilPdf (wie Spahni), auch bei nur EINER Lieferung; explizite «Lieferschein»-Dokumente bleiben provisorisch.
 - Generischer Fallback für Dual-Lieferanten OHNE Positions-Parser: `kopfAlsLieferung()` (monatsrechnung-abgleich.ts) bucht den Kopf als EINE Gesamt-Lieferung «Monatsrechnung gesamt» — greift nur bei explizitem Sammel-/Monatsrechnung-Kopf; UI (`mrLieferungen`-Helper in BeaulieuPdfImport) nutzt Stufe 2, sonst Kopf.
+- Positionszeilen-Regex: Art-Nr ab 3 Ziffern (echte frigemo-Nrn «834», «131»), Preis/Betrag dürfen negativ sein (IFCO-Gebinde-Retourzeilen «-1 ST -3.20 …») — sonst verliert der Parser ganze Belege (Block ohne matchende Positionen wird gefiltert) bzw. die Zeilensumme reconcilet nicht auf «Gesamtbetrag exkl. MwSt.» (= Warenwert + Gebindewert). QR-Schutz bleibt: Zeile muss auf MwSt-%-Token enden, Beträge mit Rappen.
+- IFCO-Positionen laufen automatisch via istZwingendPfand (Bezeichnungs-Token «ifco») auf 4800 — nie eigene Konto-Logik im Parser bauen.
+

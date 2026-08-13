@@ -301,7 +301,11 @@ function parseGourmadorLieferungen(lines: string[], profil: LieferantenProfil, m
   const { bloecke } = teileInBloecke(lines, /^\s*Beleg-Nr\.\s+(\d{6,10})\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\b/i);
   // Menge + PE + Preis + Betrag + Satz % am Zeilenende; HK/Merkmal stecken im
   // Beschreibungs-Rest (nicht benötigt). Betrag/Preis MIT Rappen (QR-Schutz).
-  const zeileRe = /^\s*(\d{4,7})\s+(.+?)\s+(-?[\d.,]+)\s+([A-Z]{2,4})\s+([\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s+([\d.,]+)\s*%\s*(?:[A-Z])?\s*$/;
+  // Art-Nr ab 3 Ziffern («834 Peperoni», «131 Salat» sind echte frigemo-Nrn);
+  // Preis/Betrag dürfen NEGATIV sein (IFCO-Gebinde-Retourzeilen «-1 ST -3.20
+  // -3.20 0.00 %») — sonst fehlen ganze Belege bzw. die Zeilensumme stimmt
+  // nicht mit «Gesamtbetrag exkl. MwSt.» (Warenwert + Gebindewert) überein.
+  const zeileRe = /^\s*(\d{3,7})\s+(.+?)\s+(-?[\d.,]+)\s+([A-Z]{2,4})\s+(-?[\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s+([\d.,]+)\s*%\s*(?:[A-Z])?\s*$/;
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
     for (const z of b.zeilen) {

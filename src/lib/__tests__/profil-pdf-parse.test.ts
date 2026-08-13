@@ -15,6 +15,7 @@ vi.mock('@/lib/supabase-kv', () => ({
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProfilPdf, parseBetrag, parseDatumCH, erkenneDokumenttyp, erkenneBelegart } from '@/lib/profil-pdf-parse';
+import { positionenAusRechnung, kontoSplitsAusPositionen } from '@/lib/waren-positionen';
 import { DEFAULT_PROFILE_BEAULIEU, findeProfilImText } from '@/lib/lieferanten-profile';
 
 const fx = (name: string) =>
@@ -203,6 +204,39 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     // Letzte Lieferung 30.06. = 40.95 (einzelne Position nach Seitenkopf)
     expect(r.lieferungen[11].datum).toBe('2026-06-30');
     expect(r.lieferungen[11].nettoTotal).toBe(40.95);
+  });
+  it('Gourmador 91886189: ALLE 15 Belege inkl. Tagesdopplungen, 3-stellige Art-Nrn und IFCO-Retouren — Summe = «Gesamtbetrag exkl. MwSt.»', () => {
+    const r = parse('gourmador-91886189.txt');
+    expect(r.profil?.id).toBe('gourmador');
+    expect(r.netto).toBe(1461.75); // Total Warenwert 1'458.55 + Total Gebindewert 3.20
+    expect(r.lieferungen).toHaveLength(15);
+    // Zeilensumme MUSS auf das exkl.-MwSt-Total reconcilen → kein Prüf-Hinweis.
+    const summe = r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0);
+    expect(Math.round(summe * 100) / 100).toBe(1461.75);
+    expect(r.hinweise.some(h => /Positionssumme/.test(h))).toBe(false);
+    // Tagesdopplung 13.01.: DREI eigenständige Belege (kein Zusammenfassen).
+    const jan13 = r.lieferungen.filter(l => l.datum === '2026-01-13');
+    expect(jan13.map(l => l.rechnungsNr).sort()).toEqual(['53532089', '53532090', '53532091']);
+    // 3-stellige Art-Nrn («131 Salat», «834 Peperoni») werden erfasst:
+    expect(jan13.find(l => l.rechnungsNr === '53532089')!.nettoTotal).toBe(104.32);
+    expect(jan13.find(l => l.rechnungsNr === '53532091')!.nettoTotal).toBe(20.10);
+    // Tagesdopplung 21.01.: ZWEI Belege.
+    expect(r.lieferungen.filter(l => l.datum === '2026-01-21')).toHaveLength(2);
+    // IFCO-Retourzeilen (negativ) neutralisieren die Lieferzeile im Beleg;
+    // der offene Gebinde-Saldo (24.01., +3.20) bleibt stehen.
+    const l24 = r.lieferungen.find(l => l.datum === '2026-01-24')!;
+    expect(l24.nettoTotal).toBe(38.84); // 35.64 Ware + 3.20 IFCO-Saldo
+  });
+  it('IFCO-Gebinde-Position → Pfand-Regel (Konto 4800), Ware bleibt auf dem Warenkonto', () => {
+    const r = parse('gourmador-91886189.txt');
+    const l24 = r.lieferungen.find(l => l.datum === '2026-01-24')!;
+    const gespeichert = positionenAusRechnung(l24, []);
+    const ifco = gespeichert.find(p => /IFCO/i.test(p.bezeichnung))!;
+    expect(ifco.status).toBe('pfand');
+    const splits = kontoSplitsAusPositionen(gespeichert.map(p => ({
+      ...p, konto: p.status === 'zugeordnet' ? p.konto : null,
+    })));
+    expect(splits.find(s => s.warenkonto === '4800')?.amountNet).toBe(3.20);
   });
   it('Gourmador-Faktura ist IMMER Monatsrechnung — auch mit nur EINER Beleg-Nr-Lieferung', () => {
     const voll = fx('gourmador-92051534.txt');
