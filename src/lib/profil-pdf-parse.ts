@@ -322,6 +322,38 @@ function parseGourmadorLieferungen(lines: string[], profil: LieferantenProfil, m
   }).filter(l => l.positionen.length > 0);
 }
 
+/**
+ * Bäckerei Bohnenblust (Monatsrechnung): Blöcke «Lieferschein Nr. NNNNNN vom
+ * DD.MM.YYYY  Total XX.XX» ODER «Nachlieferung Nr. …» — beide eigenständige
+ * Lieferungen (Identität = Beleg-Nr, KEIN Zusammenfassen bei gleichem Tag).
+ * Das «Total» auf der Kopfzeile ist die Beleg-Summe, keine Position (steht auf
+ * der Header-Zeile und landet nie in den Blockzeilen).
+ * Positionszeile: «Menge  Bezeichnung  Artikel-Nr(BW.08.06/KB.24.04)  Nettopreis
+ * Nettobetrag» — umgebrochene Bezeichnungs-Folgezeilen («Sesam») und wiederholte
+ * Seitenköpfe matchen nicht und werden ignoriert.
+ */
+function parseBohnenblustLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const { bloecke } = teileInBloecke(lines,
+    /^\s*(?:Lieferschein|Nachlieferung)\s+Nr\.\s+(\d{4,10})\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\b/i);
+  // Artikel-Nr «XX.NN.NN» als hartes Struktur-Signal; Preis/Betrag MIT Rappen
+  // (QR-/Summenzeilen-Schutz), Menge darf negativ sein (Gutschrift-Zeilen).
+  // Nur \s+ als Spaltentrenner: die produktive Zeilenrekonstruktion liefert
+  // EINZEL-Leerzeichen zwischen den Spalten (pdftotext-Layouts breite Lücken).
+  const zeileRe = /^\s*(-?\d{1,5})\s+(.+?)\s+([A-Z]{1,4}(?:\.\d{2}){2})\s+(-?[\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  return bloecke.map(b => {
+    const positionen: WarenPosition[] = [];
+    for (const z of b.zeilen) {
+      const m = zeileRe.exec(z);
+      if (!m) continue;
+      positionen.push(position(profil.kategorie, mwstSatz, {
+        artNr: m[3], bezeichnung: m[2].trim(), menge: parseBetrag(m[1]) ?? 0,
+        einheit: 'STK', preis: parseBetrag(m[4]) ?? 0, positionspreis: parseBetrag(m[5]) ?? 0,
+      }));
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
 /** Terravigna: «1  21111-24-075  12 75 cl  14.50  15  147.90» (Folgezeile = Weinname). */
 function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const { bloecke } = teileInBloecke(lines, /Lieferungsnr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
@@ -678,6 +710,22 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       mwstSatz: 8.1,
     };
   },
+  // Bäckerei Bohnenblust: «Rechnungsnummer: 49415   31.07.2026», Netto aus
+  // «Zwischentotal … CHF 823.37», MwSt aus «2.6% MwSt. aus Betrag von CHF … CHF 21.41»,
+  // Brutto = «Total inkl. MwSt.». Kein Pfand/Gebinde.
+  bohnenblust: (text) => {
+    const g = generischerKopf(text);
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/Rechnungsnummer\s*:?\s*(\d{3,10})/i]) ?? g.rechnungsNr,
+      rechnungsdatum:
+        parseDatumCH(suche(text, [/Rechnungsnummer\s*:?\s*\d{3,10}\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '')
+        ?? g.rechnungsdatum,
+      netto: sucheBetrag(text, [new RegExp(`Zwischentotal\\s+CHF\\s*(${BETRAG_RE.source})`, 'i')]),
+      mwst: sucheBetrag(text, [new RegExp(`MwSt\\.\\s*aus\\s*Betrag\\s*von\\s*CHF\\s*[\\d’'.,]+\\s+CHF\\s*(${BETRAG_RE.source})`, 'i')]),
+      mwstSatz: 2.6,
+    };
+  },
   spahni: (text) => {
     const g = generischerKopf(text);
     // Einzel-Lieferschein: «Liefersch./Kd.-Nr. : 5210840 / XBEA» + «Lieferdatum».
@@ -879,6 +927,7 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   fideco: parseFidecoLieferungen,
   gasser: parseGasserLieferungen,
   gourmador: parseGourmadorLieferungen,
+  bohnenblust: parseBohnenblustLieferungen,
   terravigna: parseTerravignaLieferungen,
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
@@ -1032,6 +1081,15 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
       // (explizite «Lieferschein»-Überschrift) bleiben provisorisch (dt gesetzt).
       if (dt === null && profil?.id === 'gourmador' && belegart === 'rechnung'
         && /Beleg-Nr\.\s+\d{6,10}\s+vom\s+\d{1,2}\./i.test(text)) return 'monatsrechnung';
+      // Bohnenblust: die Rechnung («Rechnungsnummer: …») ist IMMER die massgeb-
+      // liche Monatsrechnung — auch mit nur EINEM Lieferschein-/Nachlieferungs-
+      // Block. Die vielen «Lieferschein Nr. …»-Blocküberschriften lassen die
+      // generische Erkennung fälschlich auf 'lieferschein' kippen («Rechnungs-
+      // nummer» matcht \bRechnung\b nicht) — deshalb auch dt==='lieferschein'
+      // übersteuern, sobald der Rechnungskopf vorhanden ist.
+      if ((dt === null || dt === 'lieferschein') && profil?.id === 'bohnenblust' && belegart === 'rechnung'
+        && /Rechnungsnummer\s*:?\s*\d{3,10}/i.test(text)
+        && /(?:Lieferschein|Nachlieferung)\s+Nr\.\s+\d{4,10}\s+vom\s+\d{1,2}\./i.test(text)) return 'monatsrechnung';
       return dt;
     })(),
     hinweise,

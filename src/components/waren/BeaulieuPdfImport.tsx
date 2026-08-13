@@ -623,7 +623,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         </label>
         )}
         <span className="text-[11px] text-muted-foreground">
-          Kopf-Erkennung für alle Profile · Positionen je Lieferung für Terravigna, Spahni, Fideco, Ambro, Transgourmet · Bohnenblust nur manuell
+          Kopf-Erkennung für alle Profile · Positionen je Lieferung für Terravigna, Spahni, Fideco, Ambro, Transgourmet, Gourmador, Bohnenblust
         </span>
       </div>
 

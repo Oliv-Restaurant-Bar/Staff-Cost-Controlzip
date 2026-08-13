@@ -238,6 +238,64 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     })));
     expect(splits.find(s => s.warenkonto === '4800')?.amountNet).toBe(3.20);
   });
+  it('Bohnenblust 49415: 29 Belege (inkl. 2 Nachlieferungen), Summe = Zwischentotal 823.37, MwSt 2.6%', () => {
+    const r = parse('bohnenblust-49415.txt');
+    expect(r.profil?.id).toBe('bohnenblust');
+    expect(r.rechnungsNr).toBe('49415');
+    expect(r.rechnungsdatum).toBe('2026-07-31');
+    expect(r.netto).toBe(823.37);
+    expect(r.mwst).toBe(21.41);
+    expect(r.dokumenttyp).toBe('monatsrechnung');
+    expect(r.lieferungen).toHaveLength(29);
+    const summe = r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0);
+    expect(Math.round(summe * 100) / 100).toBe(823.37);
+    expect(r.hinweise).toHaveLength(0);
+    // Nachlieferungen sind EIGENSTÄNDIGE Belege (Identität = Beleg-Nr) — auch
+    // am selben Tag wie ein Lieferschein (08.07.: 497327 + Nachlieferung 497337).
+    const nach = r.lieferungen.find(l => l.rechnungsNr === '497337')!;
+    expect(nach.datum).toBe('2026-07-08');
+    expect(nach.nettoTotal).toBe(77.00); // 50× Brioches — umgebrochene Zeile («Sesam») ist KEINE Position
+    expect(nach.positionen).toHaveLength(1);
+    expect(r.lieferungen.filter(l => l.datum === '2026-07-08')).toHaveLength(2);
+    expect(r.lieferungen.find(l => l.rechnungsNr === '498125')!.nettoTotal).toBe(61.60);
+    // Beleg-Kopf-«Total 84.59» ist die Beleg-Summe, keine Position:
+    const erste = r.lieferungen.find(l => l.rechnungsNr === '496561')!;
+    expect(erste.nettoTotal).toBe(84.59);
+    expect(erste.positionen).toHaveLength(4);
+  });
+  it('Bohnenblust 49300 (produktive Zeilenrekonstruktion, Einzel-Leerzeichen): 2 Belege, 277.20', () => {
+    const r = parse('bohnenblust-49300.txt');
+    expect(r.profil?.id).toBe('bohnenblust');
+    expect(r.netto).toBe(277.20);
+    expect(r.dokumenttyp).toBe('monatsrechnung');
+    expect(r.lieferungen).toHaveLength(2);
+    const summe = r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0);
+    expect(Math.round(summe * 100) / 100).toBe(277.20);
+    expect(r.hinweise).toHaveLength(0);
+  });
+  it('Bohnenblust Einzel-Lieferschein (ohne «Rechnungsnummer:») bleibt lieferschein — Override greift nicht', () => {
+    const text = [
+      'Abs: Bäckerei Bohnenblust AG, Moserstrasse 50, 3014 Bern',
+      'CHE-472.136.586 MWST',
+      'Lieferschein Nr. 499999 vom 05.08.2026  Total 18.33',
+      '1  Baslerbrot 1000g Teiggewicht  BW.08.06  6.42  6.42',
+      '1  Halbweissbrot lang 500g  BW.02.10  2.59  2.59',
+      '2  Halbweissbrot 1000g  BW.02.05  4.66  9.32',
+    ].join('\n');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('bohnenblust');
+    expect(r.dokumenttyp).not.toBe('monatsrechnung');
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].nettoTotal).toBe(18.33);
+  });
+  it('Profil Bohnenblust: dual + monatsrechnung + parser, Konto 4060, MWST-Nr 472136586', () => {
+    const bb = P.find(p => p.id === 'bohnenblust')!;
+    expect(bb.mwstNr).toBe('472136586');
+    expect(bb.konto).toBe('4060');
+    expect(bb.parser).toBe('bohnenblust');
+    expect(bb.belegtyp).toBe('dual');
+    expect(bb.monatsrechnung).toBe(true);
+  });
   it('Gourmador-Faktura ist IMMER Monatsrechnung — auch mit nur EINER Beleg-Nr-Lieferung', () => {
     const voll = fx('gourmador-92051534.txt');
     // Kunstfall: nur der erste Beleg-Block bleibt übrig (eine Lieferung).
@@ -325,9 +383,10 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.profil?.id).toBe('rutishauser');
     expect(r.profil?.konto).toBe('4020');
   });
-  it('Bohnenblust ist ausgeschlossen: 49415 wird keinem Profil zugeordnet', () => {
+  it('Bohnenblust wird via MWST-Nr 472136586 erkannt (seit 08/2026 PDF-Import statt nur manuell)', () => {
     const r = parse('bohnenblust-49415.txt');
-    expect(r.profil).toBeNull();
+    expect(r.profil?.id).toBe('bohnenblust');
+    expect(r.profil?.konto).toBe('4060');
   });
   it('Hof am Stutz 1063 (ohne MWST-Nr, via Name): netto 148.50 (0%)', () => {
     const r = parse('hofamstutz-1063.txt');

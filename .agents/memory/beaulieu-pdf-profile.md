@@ -78,3 +78,9 @@ Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschl�
 - Positionszeilen-Regex: Art-Nr ab 3 Ziffern (echte frigemo-Nrn «834», «131»), Preis/Betrag dürfen negativ sein (IFCO-Gebinde-Retourzeilen «-1 ST -3.20 …») — sonst verliert der Parser ganze Belege (Block ohne matchende Positionen wird gefiltert) bzw. die Zeilensumme reconcilet nicht auf «Gesamtbetrag exkl. MwSt.» (= Warenwert + Gebindewert). QR-Schutz bleibt: Zeile muss auf MwSt-%-Token enden, Beträge mit Rappen.
 - IFCO-Positionen laufen automatisch via istZwingendPfand (Bezeichnungs-Token «ifco») auf 4800 — nie eigene Konto-Logik im Parser bauen.
 
+
+## Bohnenblust (seit 08/2026 PDF-Import, vorher nur manuell)
+- Profil trägt `nurMandant: 'beaulieu'` — loadLieferantenProfile filtert es bei Oliv (dort weiterhin manuelle Erfassung). Ausschluss-Konstante BOHNENBLUST_AUSGESCHLOSSEN wurde entfernt.
+- Beleg-Adresse ist IMMER Beaulieu (auch für Oliv-Lieferungen) — Mandant via Kunden-Nr: 9865.2 = Beaulieu, andere (Oliv 1422004) ⇒ null in erkenneMandantImText.
+- Blöcke «Lieferschein Nr.» UND «Nachlieferung Nr.» = eigenständige Belege; Kopf-«Total» ist Beleg-Summe, keine Position; Positionszeilen via Artikel-Nr-Muster XX.NN.NN mit \s+-Trennern (produktive Rekonstruktion liefert EINZEL-Leerzeichen!).
+- Dokumenttyp-Override muss auch dt==='lieferschein' übersteuern («Rechnungsnummer» matcht \bRechnung\b nicht → generische Erkennung kippt auf lieferschein).

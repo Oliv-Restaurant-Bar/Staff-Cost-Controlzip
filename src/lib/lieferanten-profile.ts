@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser' | 'gourmador' | 'espro';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser' | 'gourmador' | 'espro' | 'bohnenblust';
 
 /**
  * Belegtyp des Lieferanten:
@@ -60,6 +60,9 @@ export interface LieferantenProfil {
    *  Ohne expliziten Wert wird aus dem Belegtyp abgeleitet (dual/monats-
    *  rechnung ⇒ ja, einzelrechnung ⇒ nein) — siehe hatMonatsrechnung(). */
   monatsrechnung?: boolean;
+  /** Profil gilt NUR in diesem Mandanten (loadLieferantenProfile filtert):
+   *  z.B. Bohnenblust — PDF-Import nur Beaulieu, bei Oliv weiterhin manuell. */
+  nurMandant?: TenantId;
 }
 
 /** Effektives «Monatsrechnung ja/nein» eines Profils (explizit > Belegtyp). */
@@ -97,8 +100,12 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // rechnungseigenen «Zusammenfassung Kontierung» (Codes 420xx = alle Küche
   // → 4060); fremde Codes werden in der Vorschau gemeldet, nie geraten.
   { id: 'asia',        name: 'The Asia Company',        mwstNr: '115846638', kategorie: 'Küche',            konto: '4060', mwstSatz: 2.6, monatsrechnung: false },
-  // Bäckerei Bohnenblust bewusst KEIN Profil: wird ausschliesslich MANUELL
-  // erfasst (freie Mandantenwahl) — siehe BOHNENBLUST_AUSGESCHLOSSEN.
+  // Bäckerei Bohnenblust: seit 08/2026 PDF-Import (vorher nur manuell) —
+  // Monatsrechnung mit «Lieferschein/Nachlieferung Nr. … vom …»-Blöcken je
+  // Lieferung (Muster Spahni/Gourmador). Alles Brot/Backwaren → Küche 4060,
+  // kein Pfand/Gebühren/Splits.
+  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Brot/Backwaren',   konto: '4060', mwstSatz: 2.6, parser: 'bohnenblust', belegtyp: 'dual', monatsrechnung: true,
+    erkennungTokens: ['bäckerei bohnenblust'], nurMandant: 'beaulieu' },
   // Oliv-Lieferanten (Profile gelten mandantenweit; Erkennung via MWST-Nr).
   { id: 'transgourmet', name: 'Transgourmet',           mwstNr: '116311185', kategorie: 'Food',             konto: '4000', mwstSatz: 2.6, parser: 'transgourmet', monatsrechnung: false },
   // Ambro: DUAL — Lieferscheine (eigener Beleg mit Belegnummer) laufen
@@ -122,10 +129,6 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'hofamstutz',  name: 'Hof am Stutz',            mwstNr: '',          kategorie: 'Eier',             konto: '4060', mwstSatz: 0,
     erkennungTokens: ['hof am stutz'], iban: 'CH3830129016376058001' },
 ];
-
-/** Vom Automatik-Import AUSGESCHLOSSEN (nur manuelle Erfassung): früher
- *  gespeicherte KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert. */
-const BOHNENBLUST_AUSGESCHLOSSEN = { ids: ['bohnenblust'], mwstNrn: ['472136586'] };
 
 /** Altlasten-Lieferanten (kein Lieferant mehr): früher gespeicherte
  *  KV-Profile dieser IDs/MWST-Nrn werden beim Laden gefiltert.
@@ -170,8 +173,7 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
     });
   }
   return [...proId.values()].filter(p =>
-    !BOHNENBLUST_AUSGESCHLOSSEN.ids.includes(p.id)
-    && !BOHNENBLUST_AUSGESCHLOSSEN.mwstNrn.includes(normalisiereMwstNr(p.mwstNr))
+    (!p.nurMandant || p.nurMandant === tenantId)
     && !ALTLASTEN_ENTFERNT.ids.includes(p.id)
     && !ALTLASTEN_ENTFERNT.mwstNrn.includes(normalisiereMwstNr(p.mwstNr)));
 }
@@ -234,12 +236,15 @@ export async function lerneProfil(
  * Beide oder keines gefunden → null (nie raten). Dient als Gegenprobe beim
  * Import: eine Rechnung des FALSCHEN Mandanten wird blockiert, nie umgebucht.
  *
- * AUSNAHME Bohnenblust: wird ausschliesslich MANUELL erfasst — die Beleg-
- * Adresse ist dort immer Beaulieu (auch für Oliv-Lieferungen), deshalb greift
- * hier KEINE adressbasierte Sperre (→ null).
+ * AUSNAHME Bohnenblust: die Beleg-Adresse ist dort IMMER Beaulieu (auch für
+ * Oliv-Lieferungen) — massgeblich ist die Kunden-Nr: 9865.2 = Beaulieu (seit
+ * 08/2026 PDF-Import). Andere/fehlende Kunden-Nr ⇒ null (keine adressbasierte
+ * Sperre; bei Oliv bleibt Bohnenblust ohnehin ohne Profil → manuelle Erfassung).
  */
 export function erkenneMandantImText(text: string): 'oliv' | 'beaulieu' | null {
-  if (/Bohnenblust/i.test(text)) return null;
+  if (/Bohnenblust/i.test(text)) {
+    return /Kunden-?Nr\.?\s*:?\s*9865\.2\b/i.test(text) ? 'beaulieu' : null;
+  }
   const oliv = /Oliv\s+Gastro\s+AG|Restaurant\s*&?\s*Bar\s+Oliv|Oliv\s+Restaurant\s*&\s*Bar/i.test(text);
   const beaulieu = /Restaurant\s+Beaulieu(?:\s+AG)?/i.test(text);
   if (oliv && !beaulieu) return 'oliv';

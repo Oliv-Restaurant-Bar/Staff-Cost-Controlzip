@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
  * Kontrollwerte aus den Beispiel-PDFs (Mandant OLIV) — Transgourmet, Ambro,
- * Spahni, Blaser (Bohnenblust: nur manuell — keine Sperre, kein Profil).
+ * Spahni, Blaser (Bohnenblust: PDF-Import nur Beaulieu via nurMandant-Scope;
+ * bei Oliv weiterhin manuell — Kunden-Nr 9865.2 = Beaulieu).
  * Fixtures = produktive Zeilenrekonstruktion (reconstructGnPdfLines).
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -31,8 +32,11 @@ describe('Mandanten-Erkennung nach Beleg-Adresse', () => {
     expect(erkenneMandantImText(fx('transgourmet-64104237.txt'))).toBe('oliv');
     expect(erkenneMandantImText(fx('ambro-26210060.txt'))).toBe('oliv');
   });
-  it('Bohnenblust: KEINE adressbasierte Sperre (wird nur manuell erfasst)', () => {
+  it('Bohnenblust: Kunden-Nr entscheidet — 9865.2 = Beaulieu, andere (Oliv 1422004) ohne Sperre', () => {
+    // Oliv-Beleg (Kunden-Nr 1422004): Adresse ist trotzdem Beaulieu → keine
+    // adressbasierte Sperre; ohne Profil bleibt es bei manueller Erfassung.
     expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBeNull();
+    expect(erkenneMandantImText('Bäckerei Bohnenblust AG\nKunden-Nr. 9865.2')).toBe('beaulieu');
   });
 });
 
@@ -67,10 +71,15 @@ describe('Terravigna Retouren + gemischte MwSt (synthetische Kontrolle)', () => 
   });
 });
 
-describe('Bohnenblust ist vom Automatik-Import ausgeschlossen', () => {
-  it('49300 wird keinem Profil zugeordnet (nur manuelle Erfassung)', () => {
+describe('Bohnenblust: PDF-Import NUR Beaulieu (nurMandant-Scope)', () => {
+  it('Default-Profil trägt nurMandant beaulieu (loadLieferantenProfile filtert es bei Oliv)', () => {
+    const bb = DEFAULT_PROFILE_BEAULIEU.find(p => p.id === 'bohnenblust')!;
+    expect(bb.nurMandant).toBe('beaulieu');
+  });
+  it('Oliv-Beleg 49300 (Kunden-Nr 1422004) parst zwar, aber der Mandanten-Check blockt nicht via Adresse', () => {
     const e = parse('bohnenblust-49300.txt');
-    expect(e.profil).toBeNull();
+    expect(e.profil?.id).toBe('bohnenblust');
+    expect(erkenneMandantImText(fx('bohnenblust-49300.txt'))).toBeNull();
   });
 });
 
