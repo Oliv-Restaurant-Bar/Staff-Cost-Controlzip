@@ -2372,7 +2372,10 @@ export default function WarenrechnungenPage() {
       if (granular === 'jahr') { toast.error('Imports nur in der Monats-/Wochenansicht möglich.'); return; }
       setSpezialOpen(true); setImportRouted(true); setNeuOpen(true);
     }
-  }, []);
+    // WICHTIG: granular in den Deps — mit [] war der Wert des ERSTEN Renders
+    // eingefroren (wer je in der Jahresansicht war, blieb für den Guard «im
+    // Jahr» und der Import blockierte fälschlich auch in der Monatsansicht).
+  }, [granular]);
 
   /** Direkt-Upload aus der Lieferanten-Übersicht: NUR für diesen Lieferanten.
    *  Fail-closed: Dateien, die laut Klassifikation NICHT zu ihm gehören,
