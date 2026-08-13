@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser' | 'gourmador';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser' | 'gourmador' | 'espro';
 
 /**
  * Belegtyp des Lieferanten:
@@ -108,6 +108,11 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // Gasser Gourmet: SAMMELRECHNUNG mit Lieferschein-Blöcken je Tag (wie
   // Fideco, eigenes Layout «LS-Nr  LS-Datum … Betrag») → Stufe-2-Parser.
   { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, parser: 'gasser', belegtyp: 'dual' },
+  // Espro/Amarx: Deko (Sprossen/Kräuter als Dekoration) → 4701 Betriebsmaterial,
+  // bewusst KEIN Warenkonto (nie WKQ). Monats-Sammelrechnung mit Tageslieferungen
+  // («Total <LS-Nr>.1 vom <Datum>»), Kundennr 2981.
+  { id: 'espro',       name: 'Espro / Amarx GmbH',      mwstNr: '145988183', kategorie: 'Deko',             konto: '4701', mwstSatz: 2.6, parser: 'espro', belegtyp: 'monatsrechnung', monatsrechnung: true,
+    erkennungTokens: ['espro'] },
   { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6, monatsrechnung: false },
   // Caporaso: LIEFERSCHEIN-RECHNUNG (Einzelbeleg, bucht sofort final);
   // Konto-Split via MwSt-Basis (2.6 % → 4060 Küche, 8.1 % → 4701 Betriebs-

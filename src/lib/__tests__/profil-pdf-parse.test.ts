@@ -449,3 +449,36 @@ describe('erkenneDokumenttyp: Kombiform «Sammel-/Monatsrechnung»', () => {
     expect(erkenneDokumenttyp('Fideco\nSammel-/Monatsrechnung Juni\n...', 'rechnung')).toBe('monatsrechnung');
   });
 });
+
+describe('Espro/Amarx (Deko → 4701): Monats-Sammelrechnung mit Tageslieferungen', () => {
+  it('125854 (Jan): Profil erkannt via MWST-Nr, Kopf netto 400.00 / MwSt 10.40', () => {
+    const r = parse('espro-125854.txt');
+    expect(r.profil?.id).toBe('espro');
+    expect(r.profil?.konto).toBe('4701');
+    expect(r.rechnungsNr).toBe('125854');
+    expect(r.rechnungsdatum).toBe('2026-01-31');
+    expect(r.netto).toBe(400.00);
+    expect(r.mwst).toBe(10.40);
+    expect(r.mwstSatz).toBe(2.6);
+  });
+  it('125854: 8 Tageslieferungen, Σ = Rechnungsnetto, mehrseitensicher', () => {
+    const r = parse('espro-125854.txt');
+    expect(r.lieferungen).toHaveLength(8);
+    const summe = Math.round(r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100;
+    expect(summe).toBe(400.00);
+    // Block über Seitenumbruch (177361.1 vom 19.01.): vollständig mit 50.00.
+    const l19 = r.lieferungen.find(l => l.rechnungsNr === '177361.1')!;
+    expect(l19.datum).toBe('2026-01-19');
+    expect(l19.nettoTotal).toBe(50.00);
+    // Alle Positionen in der Deko-Warengruppe (→ 4701 via Profil-Mapping).
+    for (const l of r.lieferungen) for (const p of l.positionen) expect(p.warengruppe).toBe('Deko');
+  });
+  it('126580 (April): netto 232.65, Σ Lieferungen = Rechnungsnetto', () => {
+    const r = parse('espro-126580.txt');
+    expect(r.profil?.id).toBe('espro');
+    expect(r.rechnungsNr).toBe('126580');
+    const summe = Math.round(r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0) * 100) / 100;
+    expect(summe).toBe(r.netto);
+    expect(Math.round(((r.netto ?? 0) + (r.mwst ?? 0)) * 100) / 100).toBe(238.70);
+  });
+});

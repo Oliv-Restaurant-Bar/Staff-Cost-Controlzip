@@ -804,6 +804,21 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       mwstSatz: null,
     };
   },
+  espro: (text) => {
+    const g = generischerKopf(text);
+    // Summenblock: «N26  Exkl. 2.6% MWSt  10.40  400.00» (MwSt, Umsatz netto),
+    // «MWSt:  10.40», «Total:  410.40» (brutto).
+    const summe = new RegExp(`Exkl\\.\\s*([\\d.,]+)\\s*%\\s*MWSt\\s+(${BETRAG_RE.source})\\s+(${BETRAG_RE.source})`, 'i').exec(text);
+    return {
+      ...g,
+      rechnungsNr: suche(text, [/Rechnung\s+Nr\.\s*(\d{4,10})/i]) ?? g.rechnungsNr,
+      rechnungsdatum: parseDatumCH(suche(text, [/Datum:\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '') ?? g.rechnungsdatum,
+      netto: summe ? parseBetrag(summe[3]) : g.netto,
+      mwst: summe ? parseBetrag(summe[2])
+        : sucheBetrag(text, [new RegExp(`MWSt:\\s+(${BETRAG_RE.source})`, 'i')]),
+      mwstSatz: summe ? parseBetrag(summe[1]) : 2.6,
+    };
+  },
   hofamstutz: (text) => {
     const g = generischerKopf(text);
     const total = sucheBetrag(text, [new RegExp(`Rechnungstotal\\s*\\n?\\s*(${BETRAG_RE.source})`, 'i')]);
@@ -816,6 +831,45 @@ const KOPF_PARSER: Record<string, KopfParser> = {
   },
 };
 
+/**
+ * Espro/Amarx: Monats-Sammelrechnung mit Tageslieferungen. Blockkopf
+ * «176802.1 vom 05.01.2026», Positionszeile «Piso 4/4  1  04 S  25.00  25.00»
+ * (Bezeichnung  Menge  ArtNr  Preis  Betrag; Folgezeilen = Beschreibungs-
+ * Fortsetzung, ignoriert). Blockende «Total 176802.1 vom 05.01.2026  50.00» —
+ * die Total-Zeile ist KONTROLLE: weichen Σ Positionen ab (oder wurden keine
+ * Positionen erkannt), gilt der Total-Betrag als eine Sammelposition, damit
+ * Σ Tageslieferungen immer dem Rechnungstotal entspricht. Mehrseitensicher
+ * (Seitenkopf/-fuss unterbricht Blöcke nicht).
+ */
+function parseEsproLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const { bloecke } = teileInBloecke(lines, /^\s*(\d{4,10}\.\d)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\s*$/);
+  // Preis + Betrag MIT Rappen (QR-/Summenzeilen-Schutz); ArtNr-Spalte frei («04 S»).
+  const zeileRe = /^\s*(.+?)\s{2,}(-?\d+)\s{2,}(\S(?:.*\S)?)\s{2,}([\d’',]*\d[.,]\d{2})\s{2,}(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  return bloecke.map(b => {
+    const positionen: WarenPosition[] = [];
+    let kontrollTotal: number | null = null;
+    for (const z of b.zeilen) {
+      const total = new RegExp(`^\\s*Total\\s+${b.nr.replace('.', '\\.')}\\s+vom\\s+\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}\\s+(${BETRAG_RE.source})\\s*$`, 'i').exec(z);
+      if (total) { kontrollTotal = parseBetrag(total[1]); continue; }
+      if (/^\s*Total\b/i.test(z) || /Beschreibung\s+Menge/i.test(z)) continue;
+      const m = zeileRe.exec(z);
+      if (!m) continue;
+      positionen.push(position(profil.kategorie, mwstSatz, {
+        artNr: m[3].trim(), bezeichnung: m[1].trim(), menge: parseBetrag(m[2]) ?? 0,
+        einheit: '', preis: parseBetrag(m[4]) ?? 0, positionspreis: parseBetrag(m[5]) ?? 0,
+      }));
+    }
+    const posSumme = rundung2(positionen.reduce((s, p) => s + p.positionspreis, 0));
+    if (kontrollTotal !== null && (positionen.length === 0 || Math.abs(posSumme - kontrollTotal) > 0.02)) {
+      // Kontroll-Total führend: Sammelposition statt (unvollständiger) Positionen.
+      return baueLieferung(profil.name, b.nr, b.datum, [position(profil.kategorie, mwstSatz, {
+        artNr: '', bezeichnung: `Lieferung ${b.nr}`, menge: 1, einheit: '', preis: kontrollTotal, positionspreis: kontrollTotal,
+      })], mwstSatz);
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
 const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, satz: number) => ParsedCsvRechnung[]> = {
   spahni: parseSpahniLieferungen,
   fideco: parseFidecoLieferungen,
@@ -825,6 +879,7 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
   caporaso: parseCaporasoLieferungen,
+  espro: parseEsproLieferungen,
 };
 
 // ─── Caporaso (LIEFERSCHEIN-RECHNUNG) ────────────────────────────────────────
