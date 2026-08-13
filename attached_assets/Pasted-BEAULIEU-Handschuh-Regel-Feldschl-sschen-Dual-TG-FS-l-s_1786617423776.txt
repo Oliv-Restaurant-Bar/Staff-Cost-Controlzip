@@ -1,0 +1,33 @@
+BEAULIEU: Handschuh-Regel + Feldschlösschen-Dual + TG/FS löschen und neu einfügen.
+Mandant Beaulieu (Handschuh-Regel gilt universal, beide Mandanten). Mit Undo/Sicherung.
+
+=== 1) 6040-REGEL ERWEITERN: EINWEGHANDSCHUHE ===
+- Einweg-/Einmalhandschuhe (Nitril/Latex/Vinyl) → Konto 6040 (wie Kontera).
+- NICHT betroffen: Ofen-/Arbeits-/Grillhandschuhe (bleiben 4701). Token-genau matchen.
+- Reihenfolge unverändert: Pfand→4800 > Gebühren→4701 > Reinigung/Handschuhe→6040.
+
+=== 2) FELDSCHLÖSSCHEN BEAULIEU → DUAL-MODELL ===
+- Umstellen auf: Lieferscheine laufen WÄHREND des Monats provisorisch herein, am Monatsende
+  kommt die MONATSRECHNUNG (Sammelrechnung) und gleicht gegen die Lieferschein-Summe ab,
+  ersetzt sie. Differenz einzeln bestätigen [Übernehmen]/[Ignorieren], leer wenn 0.
+- Pfand/Leergut → 4800, Gebühren/Recycl. → 4701 (ZSF-Pfad wie gefixt).
+
+=== 3) LÖSCHEN (nur Beaulieu, nur Transgourmet + Feldschlösschen) ===
+- Alle erfassten Beaulieu-Einträge/Rechnungen der Lieferanten Transgourmet/Prodega UND
+  Feldschlösschen löschen. NICHT andere Lieferanten, NICHT Oliv.
+- Vorher Sicherung; Undo verfügbar; Anzahl gelöschter Belege melden.
+
+=== 4) NEU EINFÜGEN (am Stück) ===
+- Transgourmet-CSV: 74 Rechnungen, 07.01.–12.08.2026. Alle Prodega/Bern-Belege GESCHÄFTLICH
+  (keine Ignorier-Liste). Jede Rechnung landet per Datum in ihrem Monat. Reinigung→6040,
+  Handschuhe→6040, Non-Food→4701, Pfand→4800, Food→4060.
+- Feldschlösschen: 8 Monatsrechnungen (ZIP, u.a. 87786557 Juli) als Monats-Buchungen +
+  1 Lieferschein 12.08. als provisorischen August-Beleg.
+
+=== KONTROLLE ===
+- Transgourmet netto: BGH 99'673.75 + Prodega 2'870.26 = 74 Rechnungen.
+- Verifizierte Einzelrechnung 64131386: 4060 1'345.03 · 6040 28.92 (Handschuhe) ·
+  4701 85.78 (Backpapier+Folie) · 4800 3.20 · 6940 0.01 — muss 1:1 zur Kontera stimmen.
+- Feldschlösschen Juli 87786557 Endbetrag 9'779.50; Lieferschein 12.08. netto 1'243.34
+  (Leergut −252.10 auf 4800), provisorisch.
+- Nach dem Einfügen: Monatssummen je Monat plausibel, keine Dubletten.

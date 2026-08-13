@@ -13,10 +13,38 @@
  * 1. exakt über die LS-/Lieferungsnr (reference, case-insensitiv),
  * 2. sonst Datum (±fensterTage, Default 0 = exakt) + Betrag (brutto ±0.10).
  * Jede bestehende Buchung deckt höchstens EINE Lieferung.
+ *
+ * STUFE-1-MONATSRECHNUNG (Lieferanten OHNE Positions-Parser, z.B. Gourmador):
+ * die Rechnung wird via kopfAlsLieferung() als EINE Gesamt-Lieferung
+ * abgeglichen — sie ersetzt die provisorischen Lieferscheine des Monats
+ * (nichtInMr → Einzelentscheid behalten/entfernen), nie zusätzlich buchen.
  */
 import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
 import type { ParsedCsvRechnung } from '@/lib/waren-positionen';
 import type { TenantId } from '@/contexts/TenantContext';
+
+/**
+ * Stufe-1-Monatsrechnung als EINE Gesamt-Lieferung für den Abgleich/Import
+ * (Dual-Lieferanten ohne Stufe-2-Parser, z.B. Gourmador). null, wenn der
+ * Kopf unvollständig ist (Nr/Datum/Netto fehlen) — dann KEIN MR-Modus.
+ */
+export function kopfAlsLieferung(
+  kopf: { rechnungsNr: string | null; rechnungsdatum: string | null; netto: number | null; mwst: number | null },
+  profil: { name: string; kategorie: string },
+): ParsedCsvRechnung | null {
+  if (!kopf.rechnungsNr || !kopf.rechnungsdatum || kopf.netto === null) return null;
+  const netto = kopf.netto;
+  const mwst = kopf.mwst ?? 0;
+  return {
+    docKey: `${kopf.rechnungsNr}|${kopf.rechnungsdatum}|${profil.name}`,
+    rechnungsNr: kopf.rechnungsNr, datum: kopf.rechnungsdatum, markt: profil.name,
+    positionen: [{
+      artNr: '', bezeichnung: 'Monatsrechnung gesamt', warengruppe: profil.kategorie,
+      menge: 0, einheit: '', preis: 0, positionspreis: netto, mwstBetrag: mwst, mwstCode: 1,
+    }],
+    nettoTotal: netto, mwstTotal: mwst, bruttoTotal: R2(netto + mwst),
+  };
+}
 
 export interface AbgleichEintrag {
   /** Lieferung aus der Monatsrechnung (LS-Nr = rechnungsNr). */
@@ -46,6 +74,16 @@ export interface MonatsrechnungAbgleich {
   manuell: number;
   /** Netto-Summe aller Lieferungen laut Monatsrechnung. */
   summeMonatsrechnung: number;
+  /**
+   * GEGENRICHTUNG: provisorische Buchungen des Lieferanten in den MONATEN der
+   * Monatsrechnungs-Lieferungen (exakte Monate, nicht ±1), die von KEINER
+   * Lieferung gematcht wurden — «erfasst, aber nicht in der Monatsrechnung».
+   * Müssen einzeln bestätigt werden (behalten/entfernen), nie still behandelt.
+   */
+  nichtInMr: InvoiceEntry[];
+  /** Netto-Summe der erfassten provisorischen Buchungen in den MR-Monaten
+   *  (Basis für die sichtbare Differenz zur Monatsrechnung). */
+  summeErfasst: number;
 }
 
 const R2 = (n: number) => Math.round(n * 100) / 100;
@@ -105,6 +143,11 @@ export async function abgleicheMonatsrechnung(
       ...(!gleichesDatum ? { diffDatum: { alt: match.date, neu: l.datum } } : {}),
     });
   }
+  // GEGENRICHTUNG: provisorische (!final) Buchungen des Lieferanten in den
+  // EXAKTEN Monaten der MR-Lieferungen, die kein Match erhalten haben.
+  const mrMonate = new Set(lieferungen.map(l => l.datum.slice(0, 7)));
+  const imMrMonat = kandidaten.filter(e => mrMonate.has(e.date.slice(0, 7)) && !e.final);
+  const nichtInMr = imMrMonat.filter(e => !vergeben.has(e.id));
   return {
     eintraege,
     ueberschrieben: eintraege.filter(e => e.status === 'ueberschreiben').length,
@@ -112,5 +155,7 @@ export async function abgleicheMonatsrechnung(
     neu: eintraege.filter(e => e.status === 'neu').length,
     manuell: eintraege.filter(e => e.manuell).length,
     summeMonatsrechnung: R2(lieferungen.reduce((s, l) => s + l.nettoTotal, 0)),
+    nichtInMr,
+    summeErfasst: R2(imMrMonat.reduce((s, e) => s + e.amountNet, 0)),
   };
 }

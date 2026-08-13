@@ -128,6 +128,48 @@ describe('abgleicheMonatsrechnung (massgeblich — Fideco-Kontrollszenario)', ()
     expect(a.eintraege[14].diffDatum).toEqual({ alt: '2026-08-01', neu: ls[14].datum });
   });
 
+  it('nichtInMr: provisorische Buchungen im MR-Monat ohne Match werden gelistet (finale/gematchte nicht)', async () => {
+    const ls = fidecoLieferungen();
+    bestand.set('2026-07', [
+      // gematcht → NICHT in nichtInMr
+      eintrag({ id: 'lpdf-a1', ref: ls[0].rechnungsNr, date: ls[0].datum, net: ls[0].nettoTotal }),
+      // provisorisch, kein Match → nichtInMr
+      eintrag({ id: 'lpdf-orphan', ref: '999999', date: '2026-07-14', net: 123.45 }),
+      // FINAL, kein Match → NICHT in nichtInMr (nur provisorische zählen)
+      { ...eintrag({ id: 'lpdf-final', ref: '888888', date: '2026-07-15', net: 50 }), final: true } as InvoiceEntry,
+    ]);
+    // Nachbarmonat: ausserhalb der MR-Monate → NIE in nichtInMr
+    bestand.set('2026-06', [eintrag({ id: 'lpdf-juni', ref: '777777', date: '2026-06-20', net: 80 })]);
+    const a = await abgleicheMonatsrechnung('beaulieu', 'Fideco', ls);
+    expect(a.nichtInMr.map(e => e.id)).toEqual(['lpdf-orphan']);
+    // summeErfasst = provisorische Buchungen im MR-Monat (gematcht + orphan)
+    expect(a.summeErfasst).toBe(R2(ls[0].nettoTotal + 123.45));
+  });
+
+  it('Stufe-1-Kopf (Gourmador): MR als Gesamt-Lieferung — LS des Monats landen in nichtInMr, Differenz sichtbar', async () => {
+    const { kopfAlsLieferung } = await import('@/lib/monatsrechnung-abgleich');
+    const kopf = kopfAlsLieferung(
+      { rechnungsNr: '778899', rechnungsdatum: '2026-07-31', netto: 4000, mwst: 104 },
+      { name: 'Gourmador (frigemo)', kategorie: 'TK/Gemüse' });
+    expect(kopf).not.toBeNull();
+    expect(kopf!.nettoTotal).toBe(4000);
+    expect(kopf!.positionen[0].bezeichnung).toBe('Monatsrechnung gesamt');
+    // Unvollständiger Kopf ⇒ null (kein MR-Modus)
+    expect(kopfAlsLieferung({ rechnungsNr: null, rechnungsdatum: '2026-07-31', netto: 4000, mwst: 0 },
+      { name: 'X', kategorie: 'Y' })).toBeNull();
+    bestand.set('2026-07', [
+      { ...eintrag({ id: 'lpdf-ls1', ref: 'LS-1', date: '2026-07-05', net: 1500 }), supplierName: 'Gourmador (frigemo)' },
+      { ...eintrag({ id: 'lpdf-ls2', ref: 'LS-2', date: '2026-07-19', net: 2450 }), supplierName: 'Gourmador (frigemo)' },
+    ]);
+    const a = await abgleicheMonatsrechnung('beaulieu', 'Gourmador (frigemo)', [kopf!]);
+    // MR-Gesamtbuchung matcht keinen LS → 'neu' (Einzelbestätigung nötig);
+    // beide LS unmatcht → nichtInMr; Differenz = 4000 − 3950 = 50.
+    expect(a.neu).toBe(1);
+    expect(a.nichtInMr.map(e => e.id).sort()).toEqual(['lpdf-ls1', 'lpdf-ls2']);
+    expect(a.summeMonatsrechnung).toBe(4000);
+    expect(a.summeErfasst).toBe(3950);
+  });
+
   it('manuell erfasste Treffer (fremdes id-Präfix) werden als manuell markiert', async () => {
     const ls = fidecoLieferungen().slice(0, 2);
     bestand.set('2026-07', [

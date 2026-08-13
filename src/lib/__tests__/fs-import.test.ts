@@ -80,6 +80,28 @@ describe('kernImportiereFsRechnungen', () => {
     expect(monat[0].date).toBe('2026-07-30');
   });
 
+  it('erlaubteNeu (fail-closed): unbestätigte Frisch-Buchung wird übersprungen, bestätigte gebucht', async () => {
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('N-1', '2026-07-10') },
+      { r: rechnung('N-2', '2026-07-11') },
+    ], { quelle: 'monatsrechnung', erlaubteNeu: ['n-1'] });
+    expect(res.neu).toBe(1);
+    expect(res.neuUebersprungen).toBe(1);
+    expect(res.hinweise.some(h => h.includes('N-2') && h.includes('NICHT gebucht'))).toBe(true);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat.map(e => e.reference)).toEqual(['N-1']);
+  });
+
+  it('erlaubteNeu blockiert nur Frisch-Buchungen — Bestands-Treffer werden weiterhin ersetzt', async () => {
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('M-1', '2026-07-05') }]);
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT,
+      [{ r: rechnung('M-1', '2026-07-05') }], { quelle: 'monatsrechnung', erlaubteNeu: [] });
+    expect(res.neuUebersprungen).toBe(0);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].final).toBe(true);
+  });
+
   it('fsKategorien (Zusammenfassung MwSt.) übersteuern die Positions-Kontierung', async () => {
     const r = rechnung('L-Z1', '2026-07-10');
     // Netto der Rechnung: 300 — ZSF splittet auf Bier + Spirituosen

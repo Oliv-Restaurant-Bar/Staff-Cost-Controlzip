@@ -17,7 +17,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const EIGENE_MWST_NRN = ['336566594'];
 
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
-export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser';
+export type ProfilParser = 'spahni' | 'fideco' | 'terravigna' | 'ambro' | 'transgourmet' | 'caporaso' | 'gasser' | 'gourmador';
 
 /**
  * Belegtyp des Lieferanten:
@@ -88,7 +88,11 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
-  { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
+  // Gourmador: DUAL — Lieferscheine laufen provisorisch (importiert ODER
+  // manuell erfasst); die Faktura (Monatsrechnung) gleicht gegen die
+  // Lieferschein-Summe ab und ERSETZT sie (Differenz einzeln bestätigen).
+  // Stufe-2-Parser: «Beleg-Nr. … vom …»-Blöcke je Lieferung.
+  { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6, parser: 'gourmador', belegtyp: 'dual', monatsrechnung: true },
   // The Asia Company: Einzelrechnung, bucht sofort final. Split aus der
   // rechnungseigenen «Zusammenfassung Kontierung» (Codes 420xx = alle Küche
   // → 4060); fremde Codes werden in der Vorschau gemeldet, nie geraten.

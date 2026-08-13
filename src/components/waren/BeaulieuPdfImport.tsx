@@ -25,12 +25,14 @@ import {
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
 import {
-  abgleicheMonatsrechnung, type MonatsrechnungAbgleich,
+  abgleicheMonatsrechnung, kopfAlsLieferung, type MonatsrechnungAbgleich, type AbgleichEintrag,
 } from '@/lib/monatsrechnung-abgleich';
 import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
-  loadMonthInvoices, type InvoiceEntry,
+  loadMonthInvoices, saveMonthInvoices,
+  loadRechnungsPositionen, saveRechnungsPositionen,
+  loadPreisHinweise, savePreisHinweise, bereinigeFibuMatchesFuerMonat, type InvoiceEntry,
   uploadImportBeleg, importBelegKey,
 } from '@/lib/waren-db';
 import { WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
@@ -68,6 +70,14 @@ interface VorschauZeile {
   abgleich?: MonatsrechnungAbgleich;
   /** Bestätigung nötig, weil manuell erfasste Buchungen überschrieben würden. */
   bestaetigt?: boolean;
+  /** Einzel-Entscheid je «neu aus Rechnung»-Lieferung (Key = LS-Nr|Datum):
+   *  'uebernehmen' = frisch (final) buchen, 'ignorieren' = nicht buchen.
+   *  Import erst möglich, wenn JEDE neue Lieferung entschieden ist. */
+  neuEntscheid?: Record<string, 'uebernehmen' | 'ignorieren'>;
+  /** Einzel-Entscheid je «erfasst, aber nicht in der Monatsrechnung»-Buchung
+   *  (Key = Buchungs-id): 'behalten' = bleibt provisorisch bestehen,
+   *  'ignorieren' = wird beim Import ENTFERNT (nicht verrechnet). */
+  lsEntscheid?: Record<string, 'behalten' | 'ignorieren'>;
   /** BELEG-Adresse gehört zum ANDEREN Mandanten → Zeile gesperrt (nie umbuchen). */
   mandantFremd?: 'oliv' | 'beaulieu';
   /** Dublette lt. Bestand (Mandant+Lieferant+Referenz): Re-Import ERSETZT. */
@@ -159,6 +169,13 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           const istDual = erg.profil?.belegtyp === 'dual';
           // Belegtyp 'monatsrechnung' (z.B. Ambro): die Rechnung ist IMMER die
           // massgebliche Quelle — jede Rechnung mit erkannten Lieferungen final.
+          // STUFE-1-MONATSRECHNUNG (Dual OHNE Positions-Parser, z.B. Gourmador):
+          // eindeutiger «Sammel-/Monatsrechnung»-Kopf + vollständige Kopf-Daten
+          // ⇒ die Rechnung wird als EINE Gesamt-Lieferung abgeglichen und
+          // ersetzt die provisorischen Lieferscheine (Einzelbestätigung).
+          const kopfMr = istDual && !erg.positionenErkannt && erg.belegart === 'rechnung'
+            && erg.dokumenttyp === 'monatsrechnung' && erg.profil
+            ? kopfAlsLieferung(erg, erg.profil) : null;
           const modus: VorschauZeile['modus'] =
             erg.profil?.belegtyp === 'monatsrechnung' && erg.positionenErkannt && erg.belegart === 'rechnung'
               ? 'monatsrechnung'
@@ -166,6 +183,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
               ? (erg.dokumenttyp === 'monatsrechnung' ? 'monatsrechnung'
                 : erg.dokumenttyp === 'lieferschein' ? 'lieferschein'
                 : (erg.belegart === 'rechnung' && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein'))
+              : kopfMr
+              ? 'monatsrechnung'
               : 'lieferschein';
           // MANDANTEN-GEGENPROBE nach Beleg-Adresse: falscher Mandant ⇒ Sperre.
           const belegMandant = erkenneMandantImText(text);
@@ -174,7 +193,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             erg.hinweise.unshift(`Beleg gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
           }
           const abgleich = modus === 'monatsrechnung' && erg.profil
-            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
+            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name,
+                erg.lieferungen.length > 0 ? erg.lieferungen : (kopfMr ? [kopfMr] : []),
                 erg.profil.abAlsLieferschein ? 3 : 0)
             : undefined;
           // Dubletten-Check für die Sammelvorschau (Mandant+Lieferant+Referenz,
@@ -298,19 +318,37 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
   const istBuchbar = (z: VorschauZeile) => !z.mandantFremd
     && (z.ergebnis.belegart === 'rechnung'
       || (z.ergebnis.belegart === 'auftragsbestaetigung' && profilById.get(z.lieferant)?.abAlsLieferschein === true));
+  // Differenz-Einzelbestätigung (Dual-Modell): JEDE «neu aus Rechnung»-
+  // Lieferung und JEDE «erfasst, aber nicht in der MR»-Buchung braucht einen
+  // Entscheid ([Übernehmen]/[Ignorieren]) — nichts wird still übernommen.
+  const neuKey = (e: AbgleichEintrag) => `${e.lieferung.rechnungsNr}|${e.lieferung.datum}`;
+  /** MR-Lieferungen einer Zeile: Stufe 2 (Parser) oder Stufe-1-Kopf als EINE
+   *  Gesamt-Lieferung (Dual ohne Positions-Parser, z.B. Gourmador). */
+  const mrLieferungen = (z: VorschauZeile): ParsedCsvRechnung[] => {
+    if (z.ergebnis.lieferungen.length > 0) return z.ergebnis.lieferungen;
+    const kopf = z.ergebnis.profil ? kopfAlsLieferung(z.ergebnis, z.ergebnis.profil) : null;
+    return kopf ? [kopf] : [];
+  };
+  const alleEntschieden = (z: VorschauZeile) => {
+    if (!z.abgleich) return true;
+    const neuOffen = z.abgleich.eintraege.some(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]);
+    const lsOffen = z.abgleich.nichtInMr.some(e => !z.lsEntscheid?.[e.id]);
+    return !neuOffen && !lsOffen;
+  };
   const bereit = zeilen.filter(z => z.lieferant !== ''
     && istBuchbar(z)
     && (z.modus === 'monatsrechnung'
       // Monatsrechnung (MASSGEBLICH): importierbar, sobald Lieferungen erkannt
       // sind; würden MANUELL erfasste Buchungen überschrieben, erst nach
-      // ausdrücklicher Bestätigung.
-      ? (z.ergebnis.lieferungen.length > 0
-        && ((z.abgleich?.manuell ?? 0) === 0 || z.bestaetigt === true))
+      // ausdrücklicher Bestätigung — und JEDE Differenz-Zeile ist entschieden.
+      ? (mrLieferungen(z).length > 0
+        && ((z.abgleich?.manuell ?? 0) === 0 || z.bestaetigt === true)
+        && alleEntschieden(z))
       : (z.datum !== '' && num(z.netto) !== null)));
   const offen = zeilen.filter(z => istBuchbar(z)
     && (z.lieferant === ''
       || (z.modus === 'monatsrechnung'
-        ? ((z.abgleich?.manuell ?? 0) > 0 && z.bestaetigt !== true)
+        ? (((z.abgleich?.manuell ?? 0) > 0 && z.bestaetigt !== true) || !alleEntschieden(z))
         : (z.datum === '' || num(z.netto) === null)))).length;
   const gesperrt = zeilen.filter(z => !istBuchbar(z)).length;
 
@@ -324,7 +362,11 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       const proProfil = new Map<string, {
         profil: LieferantenProfil; rechnungen: FsImportRechnung[];
         quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+        /** Bestätigte «neu aus Rechnung»-LS-Nrn (fail-closed-Wache im Kern). */
+        erlaubteNeu?: string[];
       }>();
+      // Zum Entfernen bestätigte «erfasst, aber nicht in MR»-Buchungen.
+      const zuEntfernen: Array<{ id: string; month: string; date: string; amountGross: number }> = [];
       for (const row of bereit) {
         const profil = profilById.get(row.lieferant);
         if (!profil) continue;
@@ -359,7 +401,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           // gebucht. Manuell-Schutz UNMITTELBAR vor dem Schreiben frisch
           // prüfen (Vorschau kann veraltet sein).
           const fenster = profil.abAlsLieferschein ? 3 : 0;
-          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, row.ergebnis.lieferungen, fenster);
+          const mrLief = mrLieferungen(row);
+          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, mrLief, fenster);
           // Bestätigung ist an den EXAKTEN Manuell-Fingerprint gebunden
           // (IDs + alte Werte der manuell erfassten Treffer) — jede Abweichung
           // (auch bei gleicher Anzahl) macht sie ungültig.
@@ -372,7 +415,40 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             toast.warning(`${row.fileName}: Die manuell erfassten Treffer haben sich seit der Vorschau geändert — bitte neu prüfen und bestätigen. Nichts importiert.`);
             return;
           }
-          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
+          // STALE-WACHE Differenz-Entscheide: haben sich die «neu»- oder
+          // «nicht in MR»-Mengen seit der Vorschau geändert, sind die Einzel-
+          // Entscheide ungültig — Abbruch, neu prüfen (fail-closed).
+          const neuFp = (a?: MonatsrechnungAbgleich) => (a?.eintraege ?? [])
+            .filter(e => e.status === 'neu').map(neuKey).sort().join(';');
+          const lsFp = (a?: MonatsrechnungAbgleich) => (a?.nichtInMr ?? [])
+            .map(e => `${e.id}|${e.date}|${e.amountGross}`).sort().join(';');
+          if (neuFp(frisch) !== neuFp(row.abgleich) || lsFp(frisch) !== lsFp(row.abgleich)) {
+            patch(zeilen.indexOf(row), { abgleich: frisch, neuEntscheid: {}, lsEntscheid: {} });
+            toast.warning(`${row.fileName}: Die Differenz zur Monatsrechnung hat sich seit der Vorschau geändert — bitte neu prüfen und einzeln bestätigen. Nichts importiert.`);
+            return;
+          }
+          // Ignorierte «neu»-Lieferungen werden NICHT gebucht; die übrigen
+          // laufen mit erlaubteNeu-Wache (nur bestätigte Frisch-Buchungen).
+          const ignorierteNeu = new Set(frisch.eintraege
+            .filter(e => e.status === 'neu' && row.neuEntscheid?.[neuKey(e)] === 'ignorieren')
+            .map(e => e.lieferung.rechnungsNr.trim().toLowerCase()));
+          // VEREINIGEN statt zuweisen: mehrere Monatsrechnungen desselben
+          // Profils im Batch teilen sich EINEN Kern-Aufruf — sonst verlöre
+          // die letzte Datei die Freigaben der vorherigen.
+          eintrag.erlaubteNeu = [...(eintrag.erlaubteNeu ?? []), ...frisch.eintraege
+            .filter(e => e.status === 'neu' && row.neuEntscheid?.[neuKey(e)] === 'uebernehmen')
+            .map(e => e.lieferung.rechnungsNr)];
+          for (const l of mrLief) {
+            if (ignorierteNeu.has(l.rechnungsNr.trim().toLowerCase())) continue;
+            eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
+          }
+          // Zum ENTFERNEN bestätigte «erfasst, aber nicht in MR»-Buchungen —
+          // Identität (id+Datum+Brutto) wird beim Löschen erneut geprüft.
+          for (const e of frisch.nichtInMr) {
+            if (row.lsEntscheid?.[e.id] === 'ignorieren') {
+              zuEntfernen.push({ id: e.id, month: e.date.slice(0, 7), date: e.date, amountGross: e.amountGross });
+            }
+          }
           proProfil.set(key, eintrag);
           continue;
         }
@@ -426,11 +502,12 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           }
         }
       }
+      for (const e of zuEntfernen) monate.add(e.month);
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
 
       let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0, ueberschrieben = 0, bereitsFinal = 0, kredFinal = 0;
       const lieferanten: string[] = [];
-      for (const { profil, rechnungen, quelle } of proProfil.values()) {
+      for (const { profil, rechnungen, quelle, erlaubteNeu } of proProfil.values()) {
         if (rechnungen.length === 0) continue;
         const erg = await kernImportiereFsRechnungen(tenantId, profil.name, rechnungen, {
           noteLabel: 'Lieferanten-PDF', idPrefix: 'lpdf',
@@ -445,6 +522,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           ...(!quelle && !hatMonatsrechnung(profil) ? { finalDirekt: true } : {}),
           // AB↔Rechnungs-Match ohne Referenz-Treffer: enges ±3-Tage-Fenster.
           ...(profil.abAlsLieferschein ? { ersatzFensterTage: 3 } : {}),
+          // Differenz-Wache: Frisch-Buchungen nur mit Einzelbestätigung.
+          ...(quelle === 'monatsrechnung' && erlaubteNeu ? { erlaubteNeu } : {}),
         });
         neu += erg.neu; ersetzt += erg.ersetzt; aenderungen += erg.preisAenderungen;
         provErsetzt += erg.provisorischErsetzt;
@@ -453,6 +532,44 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         for (const h of erg.hinweise) toast.warning(h, { duration: 12000 });
         if (!lieferanten.includes(profil.name)) lieferanten.push(profil.name);
       }
+      // Zum ENTFERNEN bestätigte «erfasst, aber nicht in MR»-Buchungen löschen —
+      // NACH dem Kern-Lauf (frischer Bestand), Identität streng geprüft:
+      // id + Datum + Brutto unverändert UND weiterhin provisorisch (!final);
+      // jede Abweichung lässt die Buchung stehen (fail-closed, Hinweis).
+      let entfernt = 0;
+      for (const [month, eintraege] of Object.entries(
+        zuEntfernen.reduce<Record<string, typeof zuEntfernen>>((acc, e) => {
+          (acc[e.month] ??= []).push(e); return acc;
+        }, {}))) {
+        const bestand = await loadMonthInvoices(tenantId, month);
+        const loeschen = new Set<string>();
+        for (const e of eintraege) {
+          const b = bestand.find(x => x.id === e.id);
+          if (b && !b.final && b.date === e.date && Math.abs(b.amountGross - e.amountGross) <= 0.005) {
+            loeschen.add(e.id);
+          } else {
+            toast.warning(`Lieferschein ${e.id} hat sich seit der Vorschau geändert — NICHT entfernt.`, { duration: 12000 });
+          }
+        }
+        if (loeschen.size > 0) {
+          const verbleibend = bestand.filter(x => !loeschen.has(x.id));
+          await saveMonthInvoices(tenantId, month, verbleibend);
+          // Verwaiste Nebenbestände mitbereinigen: Positionen, Preis-Hinweise
+          // (beide im Undo-Snapshot) und FIBU-Match-Zuordnungen (best-effort,
+          // rein visuell — sonst zeigt der Abgleich «gematcht» für Gelöschte).
+          const pos = await loadRechnungsPositionen(tenantId, month);
+          let posGeaendert = false;
+          for (const id of loeschen) { if (pos[id]) { delete pos[id]; posGeaendert = true; } }
+          if (posGeaendert) await saveRechnungsPositionen(tenantId, month, pos);
+          const hin = await loadPreisHinweise(tenantId, month);
+          let hinGeaendert = false;
+          for (const id of loeschen) { if (hin[id]) { delete hin[id]; hinGeaendert = true; } }
+          if (hinGeaendert) await savePreisHinweise(tenantId, month, hin);
+          await bereinigeFibuMatchesFuerMonat(tenantId, month, new Set(verbleibend.map(x => x.id)));
+          entfernt += loeschen.size;
+        }
+      }
+
       await syncSuppliers([...proProfil.values()].map(x => x.profil));
 
       const nachher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
@@ -465,7 +582,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       });
       setUndoRefresh(k => k + 1);
       setZeilen(z => z.filter(row => !bereit.includes(row)));
-      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final überschrieben)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${kredFinal > 0 ? ` · ${kredFinal} Kreditoren-Übernahme${kredFinal === 1 ? '' : 'n'} finalisiert` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}.`);
+      toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final überschrieben)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${kredFinal > 0 ? ` · ${kredFinal} Kreditoren-Übernahme${kredFinal === 1 ? '' : 'n'} finalisiert` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}${entfernt > 0 ? ` · ${entfernt} nicht verrechnete${entfernt === 1 ? 'r' : ''} Lieferschein${entfernt === 1 ? '' : 'e'} entfernt` : ''}.`);
       onImported();
     } catch (e) {
       console.error('[BEAULIEU-PDF] Import fehlgeschlagen:', e);
@@ -607,7 +724,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                         {istAb
                           ? 'Auftragsbestätigung → provisorische Lieferung (Monatsrechnung überschreibt sie final)'
                           : row.modus === 'monatsrechnung'
-                          ? `Monatsrechnung (massgeblich — überschreibt provisorische Buchungen) · ${erg.lieferungen.length} Lieferungen`
+                          ? `Monatsrechnung (massgeblich — überschreibt provisorische Buchungen) · ${erg.lieferungen.length > 0
+                              ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'}`
+                              : 'Gesamtbuchung (ohne Positions-Parser)'}`
                           : erg.positionenErkannt
                           ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen${erg.profil && !hatMonatsrechnung(erg.profil) ? ' · bucht sofort final' : ''}`
                           : `Kopf-Buchung (ohne Positionen)${erg.profil && !hatMonatsrechnung(erg.profil) ? ' · bucht sofort final' : ''}`}
@@ -749,18 +868,78 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                     </div>
                     {row.abgleich.eintraege.filter(e => e.status === 'ueberschreiben').map((e, j) => (
                       <div key={j} className="text-muted-foreground">
-                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} wird final
+                        · {e.lieferung.positionen[0]?.bezeichnung === 'Monatsrechnung gesamt' ? 'Monatsrechnung' : 'Lieferung'} {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} wird final
                         {e.diffBetrag ? ` · Betrag CHF ${e.diffBetrag.alt.toFixed(2)} → ${e.diffBetrag.neu.toFixed(2)}` : ''}
                         {e.diffDatum ? ` · Datum ${e.diffDatum.alt.split('-').reverse().join('.')} → ${e.diffDatum.neu.split('-').reverse().join('.')}` : ''}
                         {e.manuell ? ' · manuell erfasst!' : ''}
                       </div>
                     ))}
-                    {row.abgleich.eintraege.filter(e => e.status === 'neu').map((e, j) => (
-                      <div key={j} className="text-amber-600">
-                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} fehlte
-                        — wird frisch (final) gebucht
-                      </div>
-                    ))}
+                    {(() => {
+                      // Sichtbare Differenz Monatsrechnung ↔ erfasste Lieferscheine
+                      // (leer wenn 0).
+                      const diff = R2(row.abgleich.summeMonatsrechnung - row.abgleich.summeErfasst);
+                      return Math.abs(diff) > 0.005 ? (
+                        <div className="text-amber-600 font-medium" data-testid={`beaulieu-pdf-differenz-${i}`}>
+                          Differenz Monatsrechnung ↔ erfasste Lieferscheine: CHF {diff.toFixed(2)}
+                          {' '}(MR {row.abgleich.summeMonatsrechnung.toFixed(2)} · erfasst {row.abgleich.summeErfasst.toFixed(2)})
+                        </div>
+                      ) : null;
+                    })()}
+                    {row.abgleich.eintraege.filter(e => e.status === 'neu').map((e, j) => {
+                      const k = neuKey(e);
+                      const wahl = row.neuEntscheid?.[k];
+                      const istKopfMr = e.lieferung.positionen[0]?.bezeichnung === 'Monatsrechnung gesamt';
+                      return (
+                        <div key={j} className="flex flex-wrap items-center gap-1.5 text-amber-600"
+                          data-testid={`beaulieu-pdf-neu-${i}-${j}`}>
+                          <span>
+                            {istKopfMr
+                              ? <>· Monatsrechnung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')}
+                                {' '}(CHF {e.lieferung.nettoTotal.toFixed(2)}) wird als Gesamtbuchung final gebucht und ersetzt
+                                die Lieferscheine — bitte bestätigen:</>
+                              : <>· Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')}
+                                {' '}(CHF {e.lieferung.nettoTotal.toFixed(2)}) steht in der Monatsrechnung, ist aber NICHT als
+                                Lieferschein erfasst — bitte entscheiden:</>}
+                          </span>
+                          <Button size="sm" variant={wahl === 'uebernehmen' ? 'default' : 'outline'} className="h-5 px-2 text-[10px]"
+                            data-testid={`beaulieu-pdf-neu-uebernehmen-${i}-${j}`}
+                            onClick={() => patch(i, { neuEntscheid: { ...row.neuEntscheid, [k]: 'uebernehmen' } })}>
+                            Übernehmen
+                          </Button>
+                          <Button size="sm" variant={wahl === 'ignorieren' ? 'default' : 'outline'} className="h-5 px-2 text-[10px]"
+                            data-testid={`beaulieu-pdf-neu-ignorieren-${i}-${j}`}
+                            onClick={() => patch(i, { neuEntscheid: { ...row.neuEntscheid, [k]: 'ignorieren' } })}>
+                            Ignorieren
+                          </Button>
+                          {wahl === 'uebernehmen' && <span className="text-emerald-600">wird final gebucht</span>}
+                          {wahl === 'ignorieren' && <span className="text-muted-foreground">wird nicht gebucht</span>}
+                        </div>
+                      );
+                    })}
+                    {row.abgleich.nichtInMr.map((e, j) => {
+                      const wahl = row.lsEntscheid?.[e.id];
+                      return (
+                        <div key={e.id} className="flex flex-wrap items-center gap-1.5 text-amber-600"
+                          data-testid={`beaulieu-pdf-nichtinmr-${i}-${j}`}>
+                          <span>
+                            · Lieferschein {e.reference || '—'} vom {e.date.split('-').reverse().join('.')}
+                            {' '}(CHF {e.amountNet.toFixed(2)}) ist erfasst, fehlt aber in der Monatsrechnung — bitte entscheiden:
+                          </span>
+                          <Button size="sm" variant={wahl === 'behalten' ? 'default' : 'outline'} className="h-5 px-2 text-[10px]"
+                            data-testid={`beaulieu-pdf-nichtinmr-behalten-${i}-${j}`}
+                            onClick={() => patch(i, { lsEntscheid: { ...row.lsEntscheid, [e.id]: 'behalten' } })}>
+                            Behalten
+                          </Button>
+                          <Button size="sm" variant={wahl === 'ignorieren' ? 'default' : 'outline'} className="h-5 px-2 text-[10px]"
+                            data-testid={`beaulieu-pdf-nichtinmr-ignorieren-${i}-${j}`}
+                            onClick={() => patch(i, { lsEntscheid: { ...row.lsEntscheid, [e.id]: 'ignorieren' } })}>
+                            Ignorieren (entfernen)
+                          </Button>
+                          {wahl === 'behalten' && <span className="text-muted-foreground">bleibt provisorisch bestehen</span>}
+                          {wahl === 'ignorieren' && <span className="text-destructive">wird beim Import entfernt</span>}
+                        </div>
+                      );
+                    })}
                     {row.abgleich.manuell > 0 && (
                       <label className="flex items-center gap-2 text-amber-600 font-medium cursor-pointer"
                         data-testid={`beaulieu-pdf-manuell-bestaetigen-${i}`}>

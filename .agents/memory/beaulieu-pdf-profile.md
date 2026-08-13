@@ -70,3 +70,8 @@ Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschl�
 - LS-Kopftabelle «Belegnummer Datum Lieferdatum Seite» — Empfängerzeile davor («Oliv Gastro AG 26116806 …»), darum KOPF_PARSER mit Prefix-Toleranz; 3. Spalte ist nur beim LS das Lieferdatum (bei Rechnung = Fälligkeit — Gate über «Lieferschein»-Überschrift in Kopfzone).
 - Massgebliches Buchungsdatum = LIEFERDATUM (2. Datum), NIE das «Basierend auf Auftrag … vom»-Datum.
 - Positions-Zeilenparser (8/9 Zellen, Bezeichnung ggf. auf Vorzeile) ist für Monatsrechnung und LS identisch.
+
+## Gourmador (frigemo) — Dual + Stufe-2-Parser (08/2026)
+- Faktura mit «Beleg-Nr. <LS-Nr> vom <Datum>»-Blöcken je Lieferung; Parser `gourmador` in LIEFERUNG_PARSER.
+- Eine Gourmador-FAKTURA ist IMMER die massgebliche Monatsrechnung — dokumenttyp-Override in parseProfilPdf (wie Spahni), auch bei nur EINER Lieferung; explizite «Lieferschein»-Dokumente bleiben provisorisch.
+- Generischer Fallback für Dual-Lieferanten OHNE Positions-Parser: `kopfAlsLieferung()` (monatsrechnung-abgleich.ts) bucht den Kopf als EINE Gesamt-Lieferung «Monatsrechnung gesamt» — greift nur bei explizitem Sammel-/Monatsrechnung-Kopf; UI (`mrLieferungen`-Helper in BeaulieuPdfImport) nutzt Stufe 2, sonst Kopf.

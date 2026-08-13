@@ -66,6 +66,9 @@ export interface FsImportErgebnis {
   /** Nutzer-Hinweise (Betragsabweichung > Toleranz, mehrdeutige Fallbacks) —
    *  Aufrufer MUSS sie anzeigen, nie still verschlucken. */
   hinweise: string[];
+  /** Nur quelle='monatsrechnung' mit opts.erlaubteNeu: Lieferungen ohne
+   *  Bestands-Treffer, die mangels Einzelbestätigung NICHT gebucht wurden. */
+  neuUebersprungen: number;
 }
 
 export async function kernImportiereFsRechnungen(
@@ -95,6 +98,11 @@ export async function kernImportiereFsRechnungen(
      *  FINAL (keine provisorische Stufe). Re-Import derselben Referenz bleibt
      *  idempotent (Upsert statt «bereits final»-Skip). */
     finalDirekt?: boolean;
+    /** NUR quelle='monatsrechnung': Fail-closed-Wache für Frisch-Buchungen.
+     *  Wenn gesetzt, wird eine Lieferung OHNE Bestands-Treffer nur gebucht,
+     *  wenn ihre LS-Nr (lowercase) hier bestätigt ist — sonst übersprungen
+     *  (Zähler neuUebersprungen + Hinweis). Nichts wird still übernommen. */
+    erlaubteNeu?: string[];
   },
 ): Promise<FsImportErgebnis> {
   const [mappingRoh, historie, schwelle, artikelKonten, matchToleranz] = await Promise.all([
@@ -107,7 +115,7 @@ export async function kernImportiereFsRechnungen(
   const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
   const mapping = [...extraRegeln, ...mitFsDefaults(mappingRoh)];
   let hist = historie;
-  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, bereitsFinal = 0, ueberschrieben = 0;
+  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, bereitsFinal = 0, ueberschrieben = 0, neuUebersprungen = 0;
   let kreditorenFinalisiert = 0;
   const hinweise: string[] = [];
   // Jede bestehende Buchung deckt höchstens EINE Lieferung dieses Laufs.
@@ -221,6 +229,18 @@ export async function kernImportiereFsRechnungen(
         continue;
       }
       if (vorhanden && istProv(vorhanden)) ueberschrieben++;
+      // FAIL-CLOSED-WACHE für Frisch-Buchungen: mit opts.erlaubteNeu bucht
+      // eine Lieferung OHNE Bestands-Treffer nur, wenn sie EINZELN bestätigt
+      // wurde (LS-Nr). Der Bestand kann sich seit der Vorschau geändert haben —
+      // eine unbestätigte «neu»-Lieferung wird übersprungen, nie still gebucht.
+      if (!vorhanden && opts?.erlaubteNeu) {
+        const bestaetigt = opts.erlaubteNeu.some(n => n.trim().toLowerCase() === r.rechnungsNr.trim().toLowerCase());
+        if (!bestaetigt) {
+          neuUebersprungen++;
+          hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Lieferung fehlt im Bestand und wurde nicht einzeln bestätigt — NICHT gebucht (bitte Vorschau neu prüfen).`);
+          continue;
+        }
+      }
     } else {
       // Lieferschein/AB: eine FINALE Buchung wird NIE verschlechtert —
       // Upload derselben Lieferung wird übersprungen («bereits final»).
@@ -389,5 +409,5 @@ export async function kernImportiereFsRechnungen(
     await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set(bestandCache.get(m)!.map(e => e.id)));
   }
   await savePreisHistorie(tenantId, hist);
-  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben, kreditorenFinalisiert, hinweise };
+  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben, kreditorenFinalisiert, hinweise, neuUebersprungen };
 }

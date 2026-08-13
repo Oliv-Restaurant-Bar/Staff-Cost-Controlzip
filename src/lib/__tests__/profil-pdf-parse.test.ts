@@ -187,6 +187,48 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.netto).toBe(2822.15);
     expect(r.mwst).toBe(73.38);
   });
+  it('Gourmador Stufe 2: 12 «Beleg-Nr.»-Lieferungen, Summe = Rechnungs-Netto (mehrseitensicher)', () => {
+    const r = parse('gourmador-92051534.txt');
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen).toHaveLength(12);
+    expect(r.lieferungen[0].rechnungsNr).toBe('53878917');
+    expect(r.lieferungen[0].datum).toBe('2026-06-01');
+    expect(r.lieferungen[0].nettoTotal).toBe(266.00);
+    // Block über Seitenumbruch (13.06.: 4 Positionen)
+    const l13 = r.lieferungen.find(l => l.datum === '2026-06-13')!;
+    expect(l13.positionen).toHaveLength(4);
+    expect(l13.nettoTotal).toBe(311.60);
+    const summe = r.lieferungen.reduce((s, l) => s + l.nettoTotal, 0);
+    expect(Math.round(summe * 100) / 100).toBe(2822.15);
+    // Letzte Lieferung 30.06. = 40.95 (einzelne Position nach Seitenkopf)
+    expect(r.lieferungen[11].datum).toBe('2026-06-30');
+    expect(r.lieferungen[11].nettoTotal).toBe(40.95);
+  });
+  it('Gourmador-Faktura ist IMMER Monatsrechnung — auch mit nur EINER Beleg-Nr-Lieferung', () => {
+    const voll = fx('gourmador-92051534.txt');
+    // Kunstfall: nur der erste Beleg-Block bleibt übrig (eine Lieferung).
+    const einzel = voll.slice(0, voll.indexOf('Beleg-Nr.         53881846'))
+      + voll.slice(voll.indexOf('Total aller Warengruppen'));
+    const r = parseProfilPdf(einzel, P);
+    expect(r.profil?.id).toBe('gourmador');
+    expect(r.belegart).toBe('rechnung');
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.dokumenttyp).toBe('monatsrechnung');
+  });
+  it('Profil Gourmador: dual + monatsrechnung + parser (4060), Terravigna 4020 ohne Split', () => {
+    const gourmador = P.find(p => p.id === 'gourmador')!;
+    expect(gourmador.belegtyp).toBe('dual');
+    expect(gourmador.monatsrechnung).toBe(true);
+    expect(gourmador.parser).toBe('gourmador');
+    expect(gourmador.konto).toBe('4060');
+    const terravigna = P.find(p => p.id === 'terravigna')!;
+    expect(terravigna.belegtyp).toBe('dual');
+    expect(terravigna.konto).toBe('4020');
+    const spahni = P.find(p => p.id === 'spahni')!;
+    expect(spahni.belegtyp).toBe('dual');
+    expect(spahni.monatsrechnung).toBe(true);
+    expect(spahni.konto).toBe('4060');
+  });
   it('Terravigna 211343: netto 2339.69 / MwSt 189.51 (8.1%)', () => {
     const r = parse('terravigna-211343.txt');
     expect(r.profil?.id).toBe('terravigna');

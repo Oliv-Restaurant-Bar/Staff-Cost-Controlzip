@@ -291,6 +291,33 @@ function parseGasserLieferungen(lines: string[], profil: LieferantenProfil, mwst
   }).filter(l => l.positionen.length > 0);
 }
 
+/**
+ * Gourmador (frigemo): Faktura mit «Beleg-Nr. <LS-Nr> vom <Datum>»-Blöcken je
+ * Lieferung; Positionszeile «204316  FGO TK … SGA 4x2.5kg  CH  1,2  40  KG
+ * 6.65  266.00  2.60 %  [N]» (HK/Merkmal optional, PA-Buchstabe optional).
+ * Mehrseitensicher (Seitenkopf/-fuss unterbricht Blöcke nicht).
+ */
+function parseGourmadorLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
+  const { bloecke } = teileInBloecke(lines, /^\s*Beleg-Nr\.\s+(\d{6,10})\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\b/i);
+  // Menge + PE + Preis + Betrag + Satz % am Zeilenende; HK/Merkmal stecken im
+  // Beschreibungs-Rest (nicht benötigt). Betrag/Preis MIT Rappen (QR-Schutz).
+  const zeileRe = /^\s*(\d{4,7})\s+(.+?)\s+(-?[\d.,]+)\s+([A-Z]{2,4})\s+([\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s+([\d.,]+)\s*%\s*(?:[A-Z])?\s*$/;
+  return bloecke.map(b => {
+    const positionen: WarenPosition[] = [];
+    for (const z of b.zeilen) {
+      const m = zeileRe.exec(z);
+      if (!m) continue;
+      // Beschreibung ohne HK/Merkmal-Schwanz (« CH  1,2» / « FR  2,3» …).
+      const bezeichnung = m[2].replace(/\s+[A-Z]{2}(?:\s+[\d,]+)?\s*$/, '').trim();
+      positionen.push(position(profil.kategorie, parseBetrag(m[7]) ?? mwstSatz, {
+        artNr: m[1], bezeichnung, menge: parseBetrag(m[3]) ?? 0,
+        einheit: m[4], preis: parseBetrag(m[5]) ?? 0, positionspreis: parseBetrag(m[6]) ?? 0,
+      }));
+    }
+    return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
+  }).filter(l => l.positionen.length > 0);
+}
+
 /** Terravigna: «1  21111-24-075  12 75 cl  14.50  15  147.90» (Folgezeile = Weinname). */
 function parseTerravignaLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const { bloecke } = teileInBloecke(lines, /Lieferungsnr\.\s*(\d+)\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
@@ -793,6 +820,7 @@ const LIEFERUNG_PARSER: Record<string, (lines: string[], p: LieferantenProfil, s
   spahni: parseSpahniLieferungen,
   fideco: parseFidecoLieferungen,
   gasser: parseGasserLieferungen,
+  gourmador: parseGourmadorLieferungen,
   terravigna: parseTerravignaLieferungen,
   ambro: parseAmbroLieferungen,
   transgourmet: parseTransgourmetLieferungen,
@@ -940,6 +968,11 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
       // «Liefersch./Kd.-Nr.») bleiben provisorisch (dt bleibt null/lieferschein).
       if (dt === null && profil?.id === 'spahni' && belegart === 'rechnung'
         && /RECHNUNG\s*:\s*\d{4,10}/.test(kopfzone(text))) return 'monatsrechnung';
+      // Gourmador: die FAKTURA ist IMMER die massgebliche Monatsrechnung —
+      // auch mit nur EINER «Beleg-Nr. … vom …»-Lieferung. Einzel-Lieferscheine
+      // (explizite «Lieferschein»-Überschrift) bleiben provisorisch (dt gesetzt).
+      if (dt === null && profil?.id === 'gourmador' && belegart === 'rechnung'
+        && /Beleg-Nr\.\s+\d{6,10}\s+vom\s+\d{1,2}\./i.test(text)) return 'monatsrechnung';
       return dt;
     })(),
     hinweise,
