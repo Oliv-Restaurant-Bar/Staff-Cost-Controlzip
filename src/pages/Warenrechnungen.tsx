@@ -1114,23 +1114,38 @@ export default function WarenrechnungenPage() {
   const handleUebernahmeSpeichern = useCallback(async () => {
     if (!uebernahmeDrafts || uebernahmeSaving) return;
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
-    // Validierung + Dubletten-Sperre (gegen die AKTUELL erfassten Rechnungen)
-    const fehler: string[] = [];
-    for (const d of uebernahmeDrafts) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) fehler.push(`${d.supplierName || d.kandidat.text}: ungültiges Datum`);
-      if (!d.supplierName.trim()) fehler.push(`${d.kandidat.text}: Lieferant fehlt`);
-      if (findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries)) {
-        fehler.push(`${d.supplierName}: Dublette (gleicher Lieferant/Datum/Betrag bereits erfasst)`);
-      }
+    // Validierung + Dubletten-Wache (gegen die AKTUELL erfassten Rechnungen):
+    // Dubletten und ungültige Zeilen werden ÜBERSPRUNGEN, nicht die ganze
+    // Charge blockiert — Teilerfolg ist gewollt («Alle übernehmen» im Jahr).
+    const uebersprungen: string[] = [];
+    let dublettenAnz = 0;
+    const speicherbar = uebernahmeDrafts.filter(d => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) { uebersprungen.push(`${d.supplierName || d.kandidat.text}: ungültiges Datum`); return false; }
+      if (!d.supplierName.trim()) { uebersprungen.push(`${d.kandidat.text}: Lieferant fehlt`); return false; }
+      if (findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries)) { dublettenAnz++; return false; }
+      return true;
+    });
+    if (speicherbar.length === 0) {
+      toast.info(dublettenAnz > 0 && uebersprungen.length === 0
+        ? `Nichts zu übernehmen — ${dublettenAnz} Dublette${dublettenAnz === 1 ? '' : 'n'} übersprungen.`
+        : ['Nichts zu übernehmen.', ...uebersprungen].join(' · '));
+      setUebernahmeDrafts(null);
+      return;
     }
-    if (fehler.length > 0) { toast.error(fehler.join(' · ')); return; }
     setUebernahmeSaving(true);
     try {
+      // Save je Zeile gekapselt: ein Fehler bricht die übrigen NICHT ab und
+      // rollt nichts zurück (jede Rechnung ist ein eigener Save-Fence-Write).
       const angelegt: { id: string; buchungKey: string; name: string }[] = [];
-      for (const d of uebernahmeDrafts) {
-        const inv = draftToInvoiceEntry(d, generateId(), new Date().toISOString());
-        await saveInvoiceEntry(tenantId, inv);
-        angelegt.push({ id: inv.id, buchungKey: d.kandidat.key, name: inv.supplierName });
+      const saveFehler: string[] = [];
+      for (const d of speicherbar) {
+        try {
+          const inv = draftToInvoiceEntry(d, generateId(), new Date().toISOString());
+          await saveInvoiceEntry(tenantId, inv);
+          angelegt.push({ id: inv.id, buchungKey: d.kandidat.key, name: inv.supplierName });
+        } catch (e) {
+          saveFehler.push(`${d.supplierName}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
       // Buchung ↔ neue Rechnung als manuellen FIBU-Match verknüpfen: die Zeile
       // wird dadurch sofort als zugeordnet geführt und verschwindet aus der
@@ -1206,13 +1221,21 @@ export default function WarenrechnungenPage() {
       }
       await loadData(); // Abgleich/WKQ rechnen über entries automatisch neu
       setUebernahmeDrafts(null);
-      if (ok) {
-        toast.success(`${angelegt.length} Rechnung${angelegt.length === 1 ? '' : 'en'} aus FIBU übernommen`);
-      } else {
+      const teile = [
+        `${angelegt.length} übernommen`,
+        ...(dublettenAnz > 0 ? [`${dublettenAnz} als Dublette übersprungen`] : []),
+        ...(uebersprungen.length > 0 ? [`${uebersprungen.length} ungültig übersprungen`] : []),
+        ...(saveFehler.length > 0 ? [`${saveFehler.length} fehlgeschlagen`] : []),
+      ].join(' · ');
+      if (saveFehler.length > 0) {
+        toast.error(`${teile} — ${saveFehler.join(' · ')}`);
+      } else if (!ok) {
         toast.error(
-          `${angelegt.length} Rechnung${angelegt.length === 1 ? '' : 'en'} angelegt, aber die Verknüpfung zur Buchung konnte nicht gespeichert werden. ` +
+          `${teile} — aber die Verknüpfung zur Buchung konnte nicht gespeichert werden. ` +
           'Die Buchung bleibt in der Liste (gegen Doppel-Übernahme gesperrt) — bitte im Lieferanten-Drilldown manuell zuordnen.',
         );
+      } else {
+        toast.success(teile);
       }
       console.log(`[WAREN] fibu-uebernahme: ${angelegt.map(a => a.name).join(', ')}`);
     } catch (e) {
@@ -6608,7 +6631,7 @@ export default function WarenrechnungenPage() {
           </p>
           <div className="space-y-4">
             {(uebernahmeDrafts ?? []).map((d, i) => {
-              const dublette = findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, entries);
+              const dublette = findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries);
               const upd = (patch: Partial<UebernahmeDraft>) =>
                 setUebernahmeDrafts(ds => ds ? ds.map((x, j) => j === i ? { ...x, ...patch } : x) : ds);
               return (
@@ -6618,8 +6641,8 @@ export default function WarenrechnungenPage() {
                     <span className="font-semibold text-foreground tabular-nums">CHF {fmtChf(d.kandidat.betrag)} netto</span>
                   </div>
                   {dublette && (
-                    <p className="text-xs text-red-600 font-medium">
-                      Dublette: {dublette.supplierName} · {dublette.date} · CHF {fmtChf(dublette.amountNet)} ist bereits erfasst — Übernahme gesperrt.
+                    <p className="text-xs text-amber-600 font-medium">
+                      Dublette: {dublette.supplierName} · {dublette.date} · CHF {fmtChf(dublette.amountNet)} ist bereits erfasst — wird übersprungen.
                     </p>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -6684,11 +6707,32 @@ export default function WarenrechnungenPage() {
               );
             })}
           </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" disabled={uebernahmeSaving} onClick={() => setUebernahmeDrafts(null)}>Abbrechen</Button>
-            <Button onClick={handleUebernahmeSpeichern} disabled={uebernahmeSaving} data-testid="uebernahme-speichern">
-              {uebernahmeSaving ? 'Übernehmen…' : `${(uebernahmeDrafts ?? []).length} Rechnung${(uebernahmeDrafts ?? []).length === 1 ? '' : 'en'} übernehmen`}
-            </Button>
+          <DialogFooter className="gap-2 sm:items-center">
+            {(() => {
+              // GLEICHE Speichbarkeits-Prüfung wie im Handler: gültiges Datum,
+              // Lieferant vorhanden, keine Dublette — der Zähler zeigt exakt,
+              // was gespeichert würde. Übersprungene blockieren nie die Charge.
+              const alle = uebernahmeDrafts ?? [];
+              const dubAnz = alle.filter(d => findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries)).length;
+              const anz = alle.filter(d =>
+                /^\d{4}-\d{2}-\d{2}$/.test(d.date) && d.supplierName.trim() &&
+                !findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, fibuEntries)).length;
+              return (
+                <>
+                  {dubAnz > 0 && (
+                    <span className="text-xs text-muted-foreground mr-auto" data-testid="uebernahme-dubletten-info">
+                      {dubAnz} Dublette{dubAnz === 1 ? '' : 'n'} wird übersprungen
+                    </span>
+                  )}
+                  <Button variant="outline" disabled={uebernahmeSaving} onClick={() => setUebernahmeDrafts(null)}>Abbrechen</Button>
+                  {/* Bewusst NICHT bei anz===0 deaktivieren: der Handler-Nullpfad
+                      zeigt den Info-Toast und schliesst den Dialog. */}
+                  <Button onClick={handleUebernahmeSpeichern} disabled={uebernahmeSaving} data-testid="uebernahme-speichern">
+                    {uebernahmeSaving ? 'Übernehmen…' : `${anz} Rechnung${anz === 1 ? '' : 'en'} übernehmen`}
+                  </Button>
+                </>
+              );
+            })()}
           </DialogFooter>
         </DialogContent>
       </Dialog>
