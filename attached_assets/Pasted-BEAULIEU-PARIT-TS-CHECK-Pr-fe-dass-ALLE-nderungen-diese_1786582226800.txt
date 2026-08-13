@@ -1,0 +1,47 @@
+BEAULIEU-PARITÄTS-CHECK: Prüfe, dass ALLE Änderungen dieser Iteration für Mandant Beaulieu
+identisch greifen wie für Oliv. Kein Fix ohne Nachweis. Liefere eine Tabelle:
+Bereich · Beaulieu-Status (PASS/FAIL/N.A.) · Nachweis · offene Punkte.
+
+=== 0) GRUNDLAGE ZUERST ===
+- Kontenplan Beaulieu: Verwendet Beaulieu dieselben Kontonummern wie Oliv
+  (4020–4070 Warenaufwand, 4701 Betriebsmaterial, 4800 Pfand/Depot, 6040 Reinigung,
+  4090 übrige)? Falls NEIN: welche Nummern? Alle Regeln müssen die Konten je Mandant
+  auflösen, NICHT Oliv-Nummern hartkodieren. Zeige, wo die Zuordnung herkommt.
+- Grep nach hartkodierten «oliv»/Oliv-IDs und festen Kontonummern in allen geänderten
+  Regeln — jede Fundstelle auflisten und ob sie mandant-parametrisiert ist.
+
+=== 1) KONTIERUNGS-REGELN (je Mandant, alle Importwege) ===
+- Pfand/Leergut/Gebinde → 4800 (bzw. Beaulieu-Äquivalent)
+- Gebühren (VEG/VRG, Recycl.-Geb., Logistikpauschale, Zu-/Abschläge) → 4701
+- Reinigungsmittel → 6040 (Cif/Persil/Lenor, Reiniger/Waschmittel/Spülmittel …)
+- Reihenfolge Pfand > Gebühren > Reinigung — auch bei Beaulieu.
+- Feldschlösschen-ZSF-Summenpfad (falls Beaulieu Feldschlösschen hat) rechnet Gebühren/
+  Reinigung ebenfalls heraus.
+Nachweis: Regressionstest mit EINER echten Beaulieu-Rechnung je Regel (Konto-Split zeigen).
+
+=== 2) IMPORT & SPEICHERUNG (tenant-getrennt) ===
+- Beleg-Ablage (📎) tenant-prefixed; Ignorier-Liste + Import-Fence pro Mandant (inkl.
+  Transgourmet↔Prodega-Familie, falls relevant); Preisüberwachung/Artikel-Historie
+  tenant-getrennt; Dublettensicherung je Mandant.
+Nachweis: zeige, dass die Storage-Keys den Mandanten enthalten; ein Beaulieu-Testfall.
+
+=== 3) FIBU-ABGLEICH ===
+- Offene vs. erklärte Differenz, Toleranz, Erklärt-Block — für Beaulieu identisch.
+  (Beaulieu hat evtl. noch kein Journal → dann «N.A.», aber Logik vorhanden.)
+
+=== 4) ANALYSE/ERFASSUNG-UI ===
+- KPI-Boxen klickbar + Konto/Lieferant-Switch, Woche/Monat-Navigation (Dropdown+Pfeile),
+  Standard-Ansicht «nur direkter Warenaufwand», Total-Zeilen-Split, ⚠-unkontierte-Liste —
+  alles auf Beaulieu geladen und funktionsfähig.
+
+=== 5) PERSONAL ===
+- Überstunden-Ausschluss-Haken (Beaulieu-Mitarbeiter), «keine Mirus-Stunden → Ist=Plan»,
+  Wochensummen, «nur abgeschlossene KW + laufende KW».
+- Flex-Auswertung pro-rata: Beaulieu-Ist-Stichtag korrekt aus ECHTEN Beaulieu-Ist-Stunden
+  (nicht plan_sync) — Report nannte Beaulieu 04.08.; bestätigen.
+- Mirus-Import und Cockpit-Export (Waren- + Personal-Block) mit Beaulieu-Daten.
+
+=== ABSCHLUSS ===
+Tabelle mit PASS/FAIL je Bereich. Für jedes FAIL: konkreter Fix-Vorschlag, NICHT still
+korrigieren. Beaulieu-Kontrollwerte (Konto-Splits der Testrechnungen) im Klartext nennen,
+damit ich sie gegenrechnen kann.
