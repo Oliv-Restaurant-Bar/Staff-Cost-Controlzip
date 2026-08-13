@@ -211,6 +211,50 @@ describe('Punkt 2: nicht-aufsteigende Kopfzeile wird HART verworfen', () => {
   });
 });
 
+describe('Erster Tag (Samstag) darf nie aus der Referenz fallen — Regression 08/2026', () => {
+  // Beaulieu «01.–12.08.2026»: Zeitraum beginnt an einem SAMSTAG (01.08.2026).
+  // Zwei reale Fallen:
+  //  a) Streuzahl «1» in einer Vorspalte der Kopfzeile stiehlt die Tag-1-Spalte
+  //     (früher: erste Fundstelle gewinnt) → Tag-1-Stunden fehlen in Datei-
+  //     Referenz + Gegenprüfung, gespeicherte Werte bleiben korrekt (Fehlalarm).
+  //  b) Kopfzelle des ersten Tags trägt ein Wochentags-Label («Sa 1»).
+  const SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+  const mkRows = (dayCell1: unknown, stray: unknown): unknown[][] => {
+    const weekdayRow: unknown[] = [stray, ''];
+    const dayRow: unknown[] = [stray, ''];
+    for (let d = 1; d <= 12; d++) {
+      weekdayRow.push(SHORT[new Date(2026, 7, d).getDay()]);
+      dayRow.push(d === 1 ? dayCell1 : d);
+    }
+    const emp: unknown[] = ['Camacho Elpidio Jose', ''];
+    for (let d = 1; d <= 12; d++) emp.push(d === 1 ? 7.25 : (d <= 8 ? 7.0 : 0));
+    return [
+      title('01.08.2026', '12.08.2026'),
+      weekdayRow,
+      dayRow,
+      ['1 Küche'],
+      emp,
+    ];
+  };
+
+  it('a) Streuzahl «1» vor den Tagesspalten: Tag 1 (Sa 01.08.) bleibt korrekt gemappt', () => {
+    const r = parseMirusRows(mkRows(1, 1), 'x.xls');
+    expect(r.failureReason).toBeNull();
+    const e1 = r.entries.find(e => e.date === '2026-08-01');
+    expect(e1?.hours).toBe(7.25);
+    const total = r.entries.reduce((s, e) => s + e.hours, 0);
+    expect(total).toBeCloseTo(7.25 + 7 * 7, 2); // volles Datei-Total inkl. Tag 1
+  });
+
+  it('b) Kopfzelle «Sa 1»: Tag 1 wird erkannt, alle 12 Tagesspalten vorhanden', () => {
+    const r = parseMirusRows(mkRows('Sa 1', ''), 'x.xls');
+    expect(r.failureReason).toBeNull();
+    expect(r.dateRange[0]).toBe('2026-08-01');
+    expect(r.dateRange).toHaveLength(12);
+    expect(r.entries.find(e => e.date === '2026-08-01')?.hours).toBe(7.25);
+  });
+});
+
 describe('Multi-Tag Voll-Monat (Spaltenoffset spielt keine Rolle)', () => {
   it('mappt jede Kopf-Tageszahl korrekt auf ihr Datum', () => {
     // Feb 2026: 1=So, 2=Mo. Tageszahlen an Spalte 2/3.

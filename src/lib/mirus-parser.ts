@@ -213,7 +213,12 @@ function cellToIntDay(cell: unknown): number | null {
   const s = String(cell ?? '').trim();
   if (!s) return null;
   const m = s.match(/^(\d{1,2})$/);
-  return m ? parseInt(m[1], 10) : null;
+  if (m) return parseInt(m[1], 10);
+  // Kopfzellen mit Wochentags-Label («Sa 1», «1 Sa», «Sa. 1.») — kommt v.a.
+  // beim ERSTEN Tag des Zeitraums vor. Ohne diese Toleranz fällt der erste
+  // Tag aus den Datumsspalten und die Gegenprüfung rechnet ohne Tag 1.
+  const wd = s.toLowerCase().match(/^(?:(?:so|mo|di|mi|do|fr|sa)\.?\s+)?(\d{1,2})\.?(?:\s+(?:so|mo|di|mi|do|fr|sa)\.?)?$/);
+  return wd ? parseInt(wd[1], 10) : null;
 }
 
 function cellToHours(cell: unknown): number | null {
@@ -611,30 +616,60 @@ function resolveDayNumberColumns(
     const row = rows[i];
     if (!row || row.length === 0) continue;
 
-    const cols: DateColumn[] = [];
-    const seenDays = new Set<number>();
+    // ALLE Kandidaten sammeln (inkl. Duplikate) — dann die beste STRENG
+    // AUFSTEIGENDE Kette wählen. Früher gewann pro Tag die ERSTE Spalte
+    // («seenDays»): eine Streuzahl VOR den echten Tagesspalten (z.B. eine
+    // «1» in einer Vorspalte) stahl damit die Spalte des ersten Tags — die
+    // Stunden des ersten Tags (typisch Samstag 01.) fielen still aus Datei-
+    // Referenz und Gegenprüfung. Jetzt: längste aufsteigende Kette; bei
+    // Gleichstand gewinnt die DICHTESTE (kleinste Spaltenspanne) — echte
+    // Mirus-Kopfzeilen liegen in benachbarten Spalten, Streuzahlen nicht.
+    const cand: Array<{ col: number; day: number }> = [];
     for (let col = 0; col < row.length; col++) {
       const day = cellToIntDay(row[col]);
       if (day === null) continue;
       if (day < 1 || day > daysInMonth) continue;
       if (!allowed.has(day)) continue;      // nur Tage aus dem Zeitraum
-      if (seenDays.has(day)) continue;      // Duplikate (z.B. Total-Spalte) ignorieren
-      seenDays.add(day);
-      const iso = format(new Date(year, month, day), 'yyyy-MM-dd');
-      cols.push({ index: col, date: iso });
+      cand.push({ col, day });
     }
-    if (cols.length === 0) continue;
+    if (cand.length === 0) continue;
 
-    // Streng aufsteigende Tagesfolge über die Spalten HART erzwingen: eine
-    // echte Mirus-Kopfzeile listet die Tage aufsteigend (…, 27, 28, …). Eine
-    // Zeile mit nicht-monotonen Zahlen ist KEINE Kopfzeile (z.B. zufällige
-    // Werte in Datenzeilen) → Kandidat komplett verwerfen, statt ihn nur
-    // schlechter zu bewerten. Lieber gar keinen Treffer (→ failureReason) als
-    // eine falsche Tag-zu-Spalte-Zuordnung.
-    cols.sort((a, b) => a.index - b.index);
-    const daysSeq = cols.map(c => Number(c.date.slice(-2)));
-    const strictlyAscending = daysSeq.every((d, k) => k === 0 || d > daysSeq[k - 1]);
-    if (!strictlyAscending) continue;
+    // DP: beste Kette (max. Länge, dann min. Spaltenspanne) mit streng
+    // aufsteigenden Tagen über aufsteigende Spalten.
+    type Chain = { len: number; startCol: number; prev: number };
+    const dp: Chain[] = cand.map(c => ({ len: 1, startCol: c.col, prev: -1 }));
+    for (let a = 0; a < cand.length; a++) {
+      for (let b = 0; b < a; b++) {
+        if (cand[b].day >= cand[a].day) continue; // streng aufsteigend
+        const len = dp[b].len + 1;
+        const span = cand[a].col - dp[b].startCol;
+        const curSpan = cand[a].col - dp[a].startCol;
+        if (len > dp[a].len || (len === dp[a].len && span < curSpan)) {
+          dp[a] = { len, startCol: dp[b].startCol, prev: b };
+        }
+      }
+    }
+    let bestEnd = -1;
+    for (let a = 0; a < cand.length; a++) {
+      if (bestEnd < 0) { bestEnd = a; continue; }
+      const cur = dp[bestEnd], alt = dp[a];
+      const curSpan = cand[bestEnd].col - cur.startCol;
+      const altSpan = cand[a].col - alt.startCol;
+      if (alt.len > cur.len || (alt.len === cur.len && altSpan < curSpan)) bestEnd = a;
+    }
+    const cols: DateColumn[] = [];
+    for (let a = bestEnd; a >= 0; a = dp[a].prev) {
+      const iso = format(new Date(year, month, cand[a].day), 'yyyy-MM-dd');
+      cols.unshift({ index: cand[a].col, date: iso });
+    }
+
+    // HARTE Wache (wie zuvor): eine echte Kopfzeile listet ihre Tage streng
+    // aufsteigend. Deckt die beste Kette nicht ALLE verschiedenen Tageszahlen
+    // der Zeile ab (z.B. «28, 27» absteigend), ist es KEINE Kopfzeile →
+    // Kandidat verwerfen statt falsch zuordnen. Reine Duplikate (Streuzahl
+    // + echter Tag) sind erlaubt — der Tag selbst ist ja in der Kette.
+    const distinctDays = new Set(cand.map(c => c.day));
+    if (cols.length < distinctDays.size) continue;
 
     const score = cols.length;
     if (!best || score > best.score) {
