@@ -82,5 +82,5 @@ Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschl�
 ## Bohnenblust (seit 08/2026 PDF-Import, vorher nur manuell)
 - Profil trägt `nurMandant: 'beaulieu'` — loadLieferantenProfile filtert es bei Oliv (dort weiterhin manuelle Erfassung). Ausschluss-Konstante BOHNENBLUST_AUSGESCHLOSSEN wurde entfernt.
 - Beleg-Adresse ist IMMER Beaulieu (auch für Oliv-Lieferungen) — Mandant via Kunden-Nr: 9865.2 = Beaulieu, andere (Oliv 1422004) ⇒ null in erkenneMandantImText.
-- Blöcke «Lieferschein Nr.» UND «Nachlieferung Nr.» = eigenständige Belege; Kopf-«Total» ist Beleg-Summe, keine Position; Positionszeilen via Artikel-Nr-Muster XX.NN.NN mit \s+-Trennern (produktive Rekonstruktion liefert EINZEL-Leerzeichen!).
+- Blöcke «Lieferschein Nr.» UND «Nachlieferung Nr.» = eigenständige Belege; Kopf-«Total» ist Beleg-Summe, keine Position; Positionszeilen via Artikel-Nr-Muster XX.NN.NN mit optionalem 4. Segment (BW.90.00.3, Rechnung 48162!) und \s+-Trennern (produktive Rekonstruktion liefert EINZEL-Leerzeichen!).
 - Dokumenttyp-Override muss auch dt==='lieferschein' übersteuern («Rechnungsnummer» matcht \bRechnung\b nicht → generische Erkennung kippt auf lieferschein).

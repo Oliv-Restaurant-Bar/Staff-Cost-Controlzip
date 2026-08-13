@@ -288,6 +288,33 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.lieferungen).toHaveLength(1);
     expect(r.lieferungen[0].nettoTotal).toBe(18.33);
   });
+  it('Bohnenblust 4-teilige Artikelnummer (BW.90.00.3, Rechnung 48162/LS 489707): Position wird erkannt', () => {
+    const text = [
+      'Abs: Bäckerei Bohnenblust AG, Moserstrasse 50, 3014 Bern',
+      'Restaurant Beaulieu AG',
+      'CHE-472.136.586 MWST',
+      'Rechnungsnummer: 48162  30.04.2026',
+      'Kunden-Nr. 9865.2',
+      'Lieferschein Nr. 489707 vom 24.04.2026  Total 96.35',
+      '1  Baslerbrot 1000g Teiggewicht  BW.08.06  6.42  6.42',
+      '40  Brioches Hamburger 14cm mit  BW.90.00.3  1.79  71.60',
+      'Sesam',
+      '2  Zopf 500g  BW.30.05  9.17  18.33',
+      'Zwischentotal CHF  96.35',
+      '2.6% MwSt. aus Betrag von CHF 96.35  CHF 2.51',
+    ].join('\n');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('bohnenblust');
+    expect(r.dokumenttyp).toBe('monatsrechnung');
+    expect(r.lieferungen).toHaveLength(1);
+    const ls = r.lieferungen[0];
+    expect(ls.rechnungsNr).toBe('489707');
+    expect(ls.positionen).toHaveLength(3);
+    const brioches = ls.positionen.find(p => p.artNr === 'BW.90.00.3')!;
+    expect(brioches.positionspreis).toBe(71.60);
+    expect(ls.nettoTotal).toBe(96.35);
+    expect(r.hinweise).toHaveLength(0);
+  });
   it('Profil Bohnenblust: dual + monatsrechnung + parser, Konto 4060, MWST-Nr 472136586', () => {
     const bb = P.find(p => p.id === 'bohnenblust')!;
     expect(bb.mwstNr).toBe('472136586');

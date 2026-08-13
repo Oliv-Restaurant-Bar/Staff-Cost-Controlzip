@@ -328,18 +328,19 @@ function parseGourmadorLieferungen(lines: string[], profil: LieferantenProfil, m
  * Lieferungen (Identität = Beleg-Nr, KEIN Zusammenfassen bei gleichem Tag).
  * Das «Total» auf der Kopfzeile ist die Beleg-Summe, keine Position (steht auf
  * der Header-Zeile und landet nie in den Blockzeilen).
- * Positionszeile: «Menge  Bezeichnung  Artikel-Nr(BW.08.06/KB.24.04)  Nettopreis
+ * Positionszeile: «Menge  Bezeichnung  Artikel-Nr(BW.08.06/KB.24.04, optional 4. Segment: BW.90.00.3)  Nettopreis
  * Nettobetrag» — umgebrochene Bezeichnungs-Folgezeilen («Sesam») und wiederholte
  * Seitenköpfe matchen nicht und werden ignoriert.
  */
 function parseBohnenblustLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
   const { bloecke } = teileInBloecke(lines,
     /^\s*(?:Lieferschein|Nachlieferung)\s+Nr\.\s+(\d{4,10})\s+vom\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\b/i);
-  // Artikel-Nr «XX.NN.NN» als hartes Struktur-Signal; Preis/Betrag MIT Rappen
+  // Artikel-Nr «XX.NN.NN» (optional «.N»-4.-Segment, z.B. BW.90.00.3 auf
+  // Rechnung 48162) als hartes Struktur-Signal; Preis/Betrag MIT Rappen
   // (QR-/Summenzeilen-Schutz), Menge darf negativ sein (Gutschrift-Zeilen).
   // Nur \s+ als Spaltentrenner: die produktive Zeilenrekonstruktion liefert
   // EINZEL-Leerzeichen zwischen den Spalten (pdftotext-Layouts breite Lücken).
-  const zeileRe = /^\s*(-?\d{1,5})\s+(.+?)\s+([A-Z]{1,4}(?:\.\d{2}){2})\s+(-?[\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s*$/;
+  const zeileRe = /^\s*(-?\d{1,5})\s+(.+?)\s+([A-Z]{1,4}(?:\.\d{2}){2}(?:\.\d+)?)\s+(-?[\d’'.,]*\d[.,]\d{2})\s+(-?[\d’',]*\d[.,]\d{2})\s*$/;
   return bloecke.map(b => {
     const positionen: WarenPosition[] = [];
     for (const z of b.zeilen) {
