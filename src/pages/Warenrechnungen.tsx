@@ -402,8 +402,8 @@ export default function WarenrechnungenPage() {
   const [month, setMonth] = useState(today.getMonth() + 1);
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
 
-  // ─── Perioden-Granularität: wirkt auf die GANZE Seite (Monat ↔ Woche) ────
-  const [granular, setGranular] = useState<'monat' | 'woche'>('monat');
+  // ─── Perioden-Granularität: wirkt auf die GANZE Seite (Monat ↔ Woche ↔ Jahr) ─
+  const [granular, setGranular] = useState<'monat' | 'woche' | 'jahr'>('monat');
   const [wochenStart, setWochenStart] = useState<string>(() => {
     const w = getIsoWeek(ymdLocal(new Date()));
     return isoWeekRange(w.isoYear, w.week).from;
@@ -545,17 +545,29 @@ export default function WarenrechnungenPage() {
       fibuSaveChain.current = run.catch(() => undefined);
       return run;
     }, [tenantId, fibuMonthKey]);
-  /** Wochenansicht = reine Anzeige: persistente FIBU-Mutationen (Match,
+  // ── Jahresansicht-Datenbestand (Laden weiter unten beim wocheExtra-Muster) ──
+  const [jahrExtra, setJahrExtra] = useState<{ key: string; entries: InvoiceEntry[]; revenue: Record<string, number>; laedt: boolean } | null>(null);
+  const jahrEntries = useMemo(
+    () => jahrExtra?.key === `${tenantId}|${year}` ? jahrExtra.entries : [],
+    [jahrExtra, tenantId, year],
+  );
+  const jahrRevenue = useMemo(
+    () => jahrExtra?.key === `${tenantId}|${year}` ? jahrExtra.revenue : {},
+    [jahrExtra, tenantId, year],
+  );
+
+  /** Wochen-/Jahresansicht = reine Anzeige: persistente FIBU-Mutationen (Match,
    *  Erklärt, Übernahme) sind gesperrt — Markierungen gelten pro MONAT. */
   const persistFibuStateView = useCallback(
     (mutate: (cur: FibuMatchState) => FibuMatchState): Promise<boolean> => {
-      if (granular === 'woche') {
+      if (granular !== 'monat') {
         toast.error('Matches/Markierungen nur in der Monatsansicht möglich.');
         return Promise.resolve(false);
       }
       return persistFibuState(mutate);
     }, [granular, persistFibuState]);
   const speichereToleranz = useCallback(async (tol: number) => {
+    if (granular === 'jahr') { toast.error('Toleranz nur in der Monatsansicht änderbar.'); return; }
     setFibuToleranz(tol);
     try { await saveFibuMatchToleranz(tenantId, tol); }
     catch (e) { toast.error(`Toleranz speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
@@ -572,11 +584,18 @@ export default function WarenrechnungenPage() {
     // Präfix, Beaulieu mit `beaulieu:`-Präfix) — für unbekannte Mandanten
     // NIE laden (sonst fremde Buchungen), dort degradierter Modus.
     if (!journalVerfuegbarFuerTenant(tenantId)) { setJournal([]); return; }
-    loadJournalEntriesFromDB(year, month, tenantId)
-      .then(e => { if (alive) setJournal(e); })
-      .catch(() => { if (alive) setJournal([]); });
+    if (granular === 'jahr') {
+      // Jahresansicht: Journal aller 12 Monate aggregieren (reine Anzeige).
+      Promise.all(Array.from({ length: 12 }, (_, i) =>
+        loadJournalEntriesFromDB(year, i + 1, tenantId).catch(() => [] as SageJournalEntry[])))
+        .then(a => { if (alive) setJournal(a.flat()); });
+    } else {
+      loadJournalEntriesFromDB(year, month, tenantId)
+        .then(e => { if (alive) setJournal(e); })
+        .catch(() => { if (alive) setJournal([]); });
+    }
     return () => { alive = false; };
-  }, [tab, year, month, tenantId]);
+  }, [tab, year, month, tenantId, granular]);
 
   /** Abgleich-Modell (degradiert automatisch, wenn keine Buchungszeilen da sind). */
   const abgleich: WarenAbgleich | null = useMemo(() => {
@@ -598,23 +617,28 @@ export default function WarenrechnungenPage() {
     } catch { buchhaltungTotal = null; }
     // Wochenansicht: beide Seiten auf die Woche (∩ geladener Monat) filtern;
     // das ER-Monats-Total ist dann keine gültige Vergleichsbasis (→ null).
+    // Jahresansicht: Rechnungen + Journal übers ganze Jahr (reine Anzeige) —
+    // das ER-MONATS-Total ist ebenfalls keine Vergleichsbasis (→ null).
     const istWoche = granular === 'woche';
+    const istJahr = granular === 'jahr';
     return buildWarenAbgleich({
-      invoices: istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      invoices: istJahr ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
       journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
       warenkontoNummern: warenkonten.map(k => k.value),
       supplierNames: suppliers.map(s => s.name),
       aliases,
-      buchhaltungTotal: istWoche ? null : buchhaltungTotal,
+      buchhaltungTotal: istWoche || istJahr ? null : buchhaltungTotal,
       aliasGruppen,
       warenkostenGrenze: warenGrenze,
     });
-  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey, warenGrenze, granular, wochenStart, wochenEnde]);
+  }, [tab, journal, entries, jahrEntries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey, warenGrenze, granular, wochenStart, wochenEnde]);
 
-  /** FIBU-/Drilldown-Basis: in der Wochenansicht nur der Wochen-Anteil. */
+  /** FIBU-/Drilldown-Basis: Wochenansicht nur Wochen-Anteil, Jahresansicht das Jahr. */
   const fibuEntries = useMemo(
-    () => granular === 'woche' ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
-    [granular, entries, wochenStart, wochenEnde],
+    () => granular === 'jahr' ? jahrEntries
+      : granular === 'woche' ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde)
+      : entries,
+    [granular, entries, jahrEntries, wochenStart, wochenEnde],
   );
 
   /**
@@ -672,6 +696,9 @@ export default function WarenrechnungenPage() {
   journalCtxRef.current = { tenantId, year, month };
 
   const bereinigeJournalDubletten = async () => {
+    // Jahresansicht: `journal` ist ein 12-Monats-Aggregat — ein Monats-Save
+    // würde das Journal des gewählten Monats mit Jahres-Zeilen überschreiben.
+    if (granular !== 'monat') { toast.error('Journal-Bereinigung nur in der Monatsansicht möglich.'); return; }
     if (!canDelete) { toast.error('Keine Berechtigung zum Bereinigen.'); return; }
     if (!journal || !journalDubletten || journalDubletten.entfernt === 0) return;
     // Kontext + Daten beim Start einfrieren — nie Live-Closures nach await nutzen.
@@ -709,6 +736,7 @@ export default function WarenrechnungenPage() {
   };
 
   const undoJournalDedupe = async () => {
+    if (granular !== 'monat') { toast.error('Journal-Bereinigung nur in der Monatsansicht möglich.'); return; }
     const snap = journalDedupeUndo;
     if (!snap) return;
     // Kontext einfrieren (Undo-Zeile ist ohnehin nur bei passendem Monat sichtbar).
@@ -739,11 +767,13 @@ export default function WarenrechnungenPage() {
   const [dublettenAusgewaehlt, setDublettenAusgewaehlt] = useState<Set<string>>(new Set());
   const [dublettenBusy, setDublettenBusy] = useState(false);
   const oeffneDubletten = () => {
+    if (granular === 'jahr') { toast.error('Doppel-Bereinigung nur in der Monats-/Wochenansicht möglich.'); return; }
     const gruppen = findeDublettenGruppen(entries, abgleich?.effektiveAliasGruppen ?? aliasGruppen);
     setDublettenGruppen(gruppen);
     setDublettenAusgewaehlt(new Set(gruppen.flatMap(g => g.loeschen.map(e => e.id))));
   };
   const bereinigeDubletten = async () => {
+    if (granular === 'jahr') { toast.error('Doppel-Bereinigung nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     if (!dublettenGruppen) return;
     const zuLoeschen = dublettenGruppen.flatMap(g => g.loeschen).filter(e => dublettenAusgewaehlt.has(e.id));
@@ -796,9 +826,9 @@ export default function WarenrechnungenPage() {
    */
   const erklaerteKopf = useMemo(() => {
     const leer = { summe: 0, posten: [] as Array<{ lieferant: string; grund: string; betrag: number }> };
-    // Erklärungen beziehen sich auf MONATS-Differenzen — in der Wochenansicht
-    // zählen sie nicht (reine Anzeige, keine Markierung wird verändert).
-    if (!abgleich || !fibuGeladen || granular === 'woche') return leer;
+    // Erklärungen beziehen sich auf MONATS-Differenzen — in der Wochen-/
+    // Jahresansicht zählen sie nicht (reine Anzeige, keine Markierung ändert sich).
+    if (!abgleich || !fibuGeladen || granular !== 'monat') return leer;
     const posten: Array<{ lieferant: string; grund: string; betrag: number }> = [];
     for (const z of abgleich.zeilen) {
       const e = fibuState.erklaert[z.lieferant];
@@ -840,17 +870,17 @@ export default function WarenrechnungenPage() {
   const kontoAbgleich = useMemo(() => {
     if (tab !== 'abgleich') return [];
     const kontoNamen = Object.fromEntries(warenkonten.map(k => [k.value, k.label]));
-    // Wochenansicht: gleiche Basis wie der Lieferanten-Abgleich (Woche ∩ Monat).
+    // Wochen-/Jahresansicht: gleiche Basis wie der Lieferanten-Abgleich.
     const istWoche = granular === 'woche';
     return buildKontoAbgleich({
-      invoices: istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      invoices: granular === 'jahr' ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
       journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
       kontoNamen, relevanteKonten: warenkonten.map(k => k.value),
       // Feldschlösschen: FIBU bucht pauschal (grob 4030), Erfassung splittet nach
       // Zusammenfassung MwSt. (4030/4040/4050) → PRO LIEFERANT vergleichen.
       lieferantZeilen: [{ name: 'Feldschlösschen', rx: /feldschl/i }],
     });
-  }, [tab, entries, journal, warenkonten, granular, wochenStart, wochenEnde]);
+  }, [tab, entries, jahrEntries, journal, warenkonten, granular, wochenStart, wochenEnde]);
 
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
@@ -875,6 +905,8 @@ export default function WarenrechnungenPage() {
   /** «+ Neue Rechnung»-Panel als Overlay; Inhalt bleibt IMMER gemountet
    *  (Import-Boxen mit externalFilesRef dürfen nie unmounten). */
   const [neuOpen, setNeuOpen] = useState(false);
+  // Jahresansicht = reine Anzeige: Erfassungs-Overlay dort immer geschlossen halten.
+  useEffect(() => { if (granular === 'jahr') setNeuOpen(false); }, [granular]);
   /** KPI-Detail-Popups (direkter Warenaufwand nach Konto · Umsatz-Aufbau). */
   const [kpiDialog, setKpiDialog] = useState<null | 'heute' | 'direkt' | 'wkq' | 'umsatz' | 'lieferanten'>(null);
   /** Direkter-Warenaufwand-Popup: Aufbau nach Konto ↔ nach Lieferant. */
@@ -971,22 +1003,53 @@ export default function WarenrechnungenPage() {
     return () => { aktiv = false; };
   }, [granular, wochenEnde, monthKey, tenantId, ignoreListe]);
 
-  /** Sicht-Periode der Seite: ganzer Monat (wie bisher) oder gewählte Woche. */
+  // ── Jahresansicht: alle 12 Monate + Jahres-Umsatz nachladen (tenant-gekeyt,
+  // gleiche Verwerfen-Disziplin wie wocheExtra gegen fremde Mandanten-Daten;
+  // State/Memos sind weiter oben deklariert, da FIBU-Memos sie brauchen). ──
+  useEffect(() => {
+    if (granular !== 'jahr') { setJahrExtra(null); return; }
+    setJahrExtra({ key: `${tenantId}|${year}`, entries: [], revenue: {}, laedt: true });
+    let aktiv = true;
+    void (async () => {
+      try {
+        const monate = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
+        const [invsProMonat, rev] = await Promise.all([
+          Promise.all(monate.map(m => loadMonthInvoices(tenantId, m))),
+          ladeNettoUmsatzByDate(tenantId, `${year}-01-01`, `${year}-12-31`),
+        ]);
+        if (!aktiv) return;
+        // Lese-Selbstheilung NUR als Sicht-Filter (kein Rückschreiben — das
+        // macht der Monats-Load; die Jahresansicht ist reine Anzeige).
+        const alle = filtereIgnorierteRechnungen(ignoreListe, invsProMonat.flat()).entries;
+        setJahrExtra({ key: `${tenantId}|${year}`, entries: alle, revenue: rev, laedt: false });
+      } catch {
+        if (aktiv) setJahrExtra({ key: `${tenantId}|${year}`, entries: [], revenue: {}, laedt: false });
+      }
+    })();
+    return () => { aktiv = false; };
+  }, [granular, year, tenantId, ignoreListe]);
+
+  /** Sicht-Periode der Seite: ganzer Monat (wie bisher), gewählte Woche oder Jahr. */
   const viewEntries = useMemo(() => {
     if (granular === 'monat') return entries;
+    if (granular === 'jahr') return jahrEntries;
     const extra = wocheExtra?.key === `${tenantId}|${wochenEnde.slice(0, 7)}` ? wocheExtra.entries : [];
     return [...entries, ...extra].filter(e => e.date >= wochenStart && e.date <= wochenEnde);
-  }, [granular, entries, wocheExtra, wochenStart, wochenEnde, tenantId]);
+  }, [granular, entries, jahrEntries, wocheExtra, wochenStart, wochenEnde, tenantId]);
   const viewRevenueByDate = useMemo(() => {
     if (granular === 'monat') return revenueByDate;
+    if (granular === 'jahr') return jahrRevenue;
     const extraRev = wocheExtra?.key === `${tenantId}|${wochenEnde.slice(0, 7)}` ? wocheExtra.revenue : {};
     const merged: Record<string, number> = { ...revenueByDate, ...extraRev };
     const res: Record<string, number> = {};
     for (const [d, v] of Object.entries(merged)) if (d >= wochenStart && d <= wochenEnde) res[d] = v;
     return res;
-  }, [granular, revenueByDate, wocheExtra, wochenStart, wochenEnde, tenantId]);
+  }, [granular, revenueByDate, jahrRevenue, wocheExtra, wochenStart, wochenEnde, tenantId]);
 
   const openUebernahme = useCallback((keys: string[]) => {
+    // Jahresansicht = reine Anzeige: Übernahmen bleiben pro Monat (die
+    // Dubletten-Wache prüft gegen den GELADENEN Monat und wäre hier blind).
+    if (granular === 'jahr') { toast.error('Übernahmen nur in der Monatsansicht möglich.'); return; }
     const drafts = uebernahmeKandidaten
       .filter(k => keys.includes(k.key))
       .map(kandidatToDraft);
@@ -1078,6 +1141,7 @@ export default function WarenrechnungenPage() {
 
   /** Manuelles Konto-Override einer Position speichern + Rechnungs-Splits neu ableiten. */
   const speicherePositionen = async (invoiceId: string, positionenRoh: GespeichertePosition[]) => {
+    if (granular === 'jahr') { toast.error('Kontierung nur in der Monats-/Wochenansicht änderbar.'); return; }
     const entry = entries.find(e => e.id === invoiceId);
     // Universelle Zwangs-Regeln: Pfand/Leergut IMMER 4800, Gebühren/
     // Konditionen (VEG/Recycling/Logistikpauschale) IMMER 4701 — auch eine
@@ -1197,9 +1261,12 @@ export default function WarenrechnungenPage() {
   const prevWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() - 7); geheZuWoche(ymdLocal(d)); };
   const nextWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() + 7); geheZuWoche(ymdLocal(d)); };
   const istAktuelleWoche = todayStr >= wochenStart && todayStr <= wochenEnde;
+  const prevJahr = () => setYear(y => y - 1);
+  const nextJahr = () => setYear(y => y + 1);
+  const isCurrentYear = year >= today.getFullYear();
   /** Granularität umschalten: Woche startet in der Woche von heute (aktueller
    *  Monat) bzw. des Monatsersten; Monat folgt immer dem Montag. */
-  const wechsleGranular = (g: 'monat' | 'woche') => {
+  const wechsleGranular = (g: 'monat' | 'woche' | 'jahr') => {
     setGranular(g);
     if (g === 'woche') {
       const ref = isCurrentMonth ? todayStr : `${monthKey}-01`;
@@ -1215,9 +1282,11 @@ export default function WarenrechnungenPage() {
   useEffect(() => { setUmsatzTage(null); }, [monthKey, tenantId, granular, wochenStart]);
   useEffect(() => {
     if (kpiDialog !== 'umsatz' || umsatzTage !== null) return;
-    const [von, bis] = granular === 'woche' ? [wochenStart, wochenEnde] : [`${monthKey}-01`, `${monthKey}-31`];
+    const [von, bis] = granular === 'woche' ? [wochenStart, wochenEnde]
+      : granular === 'jahr' ? [`${year}-01-01`, `${year}-12-31`]
+      : [`${monthKey}-01`, `${monthKey}-31`];
     void ladeUmsatzTage(tenantId, von, bis).then(setUmsatzTage).catch(() => setUmsatzTage(new Map()));
-  }, [kpiDialog, umsatzTage, tenantId, monthKey, granular, wochenStart, wochenEnde]);
+  }, [kpiDialog, umsatzTage, tenantId, monthKey, granular, wochenStart, wochenEnde, year]);
 
   const stats = useMemo(() => computeMonthStats(viewEntries, viewRevenueByDate), [viewEntries, viewRevenueByDate]);
   // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
@@ -1231,9 +1300,15 @@ export default function WarenrechnungenPage() {
   );
   // Quote = relevante Warenkosten (Food+Beverage) / Umsatz; Sonstiges ausgeschlossen.
   const monthPct     = warenkostenQuote(monthTotals.relevantNet, totalRevenue);
-  const todayEntries = useMemo(() => entries.filter(e => e.date === todayStr), [entries, todayStr]);
+  // «Warenkosten heute» bleibt in JEDER Granularität «heute» — in der Jahres-
+  // ansicht liefert der Jahresbestand die Basis (der geladene Monat kann dort
+  // vom heutigen Monat abweichen).
+  const todayEntries = useMemo(
+    () => (granular === 'jahr' ? jahrEntries : entries).filter(e => e.date === todayStr),
+    [granular, jahrEntries, entries, todayStr],
+  );
   const todayNet     = useMemo(() => todayEntries.reduce((s, e) => s + e.amountNet, 0), [todayEntries]);
-  const todayRevenue = revenueByDate[todayStr] ?? 0;
+  const todayRevenue = (granular === 'jahr' ? jahrRevenue : revenueByDate)[todayStr] ?? 0;
   const todayPct     = warenkostenQuote(relevantNetOf(todayEntries, warenGrenze), todayRevenue);
 
   const datesWithEntries = useMemo(() => Array.from(new Set(viewEntries.map(e => e.date))).sort(), [viewEntries]);
@@ -2168,7 +2243,12 @@ export default function WarenrechnungenPage() {
     if (routing.csv.length)    csvImportRef.current?.(routing.csv);
     if (routing.fs.length)     fsImportRef.current?.(routing.fs);
     if (routing.profil.length) profilImportRef.current?.(routing.profil);
-    if (routing.csv.length || routing.fs.length || routing.profil.length) { setSpezialOpen(true); setImportRouted(true); setNeuOpen(true); }
+    if (routing.csv.length || routing.fs.length || routing.profil.length) {
+      // Jahresansicht = reine Anzeige: Upload-Routing darf das Erfassungs-
+      // Overlay dort nicht öffnen (Imports nur in Monats-/Wochenansicht).
+      if (granular === 'jahr') { toast.error('Imports nur in der Monats-/Wochenansicht möglich.'); return; }
+      setSpezialOpen(true); setImportRouted(true); setNeuOpen(true);
+    }
   }, []);
 
   /** Direkt-Upload aus der Lieferanten-Übersicht: NUR für diesen Lieferanten.
@@ -2224,6 +2304,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleSave() {
+    if (granular === 'jahr') { toast.error('Erfassen nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
     if (!form.splitEnabled && !form.warenkonto) { toast.error('Bitte Warenkonto wählen (Pflichtfeld).'); return; }
@@ -2361,6 +2442,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleEditSave() {
+    if (granular === 'jahr') { toast.error('Bearbeiten nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten von Einträgen.'); return; }
     if (!editEntry) return;
     setSaving(true);
@@ -2386,6 +2468,7 @@ export default function WarenrechnungenPage() {
 
   /** Als privat/ignorieren: dauerhaft & import-fest (Ignore-Liste je Mandant). */
   async function handleIgnorieren(entry: InvoiceEntry) {
+    if (granular === 'jahr') { toast.error('Ignorieren nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten.'); return; }
     try {
       await markiereRechnungIgnoriert(tenantId, entry);
@@ -2409,6 +2492,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleDelete(entry: InvoiceEntry) {
+    if (granular === 'jahr') { toast.error('Löschen nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     await deleteInvoiceEntry(tenantId, entry.id, entry.date);
     console.log(`[WAREN] entry deleted: ${entry.id}`);
@@ -2579,9 +2663,10 @@ export default function WarenrechnungenPage() {
   const fmtKurzDatum = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
   const periodenLabel = granular === 'woche'
     ? `KW ${String(getIsoWeek(wochenStart).week).padStart(2, '0')} · ${fmtKurzDatum(wochenStart)}–${fmtKurzDatum(wochenEnde)}${wochenEnde.slice(0, 4)}`
+    : granular === 'jahr' ? `Jahr ${year}`
     : monthLabel;
-  const periodenWort = granular === 'woche' ? 'Woche' : 'Monat';
-  const periodenChip = granular === 'woche' ? 'WOCHE' : 'MONAT';
+  const periodenWort = granular === 'woche' ? 'Woche' : granular === 'jahr' ? 'Jahr' : 'Monat';
+  const periodenChip = granular === 'woche' ? 'WOCHE' : granular === 'jahr' ? 'JAHR' : 'MONAT';
   /** Wochenliste eines Jahres fürs Perioden-Dropdown. */
   const wochenDesJahres = (jahr: number) => {
     const max = getIsoWeek(`${jahr}-12-28`).week;
@@ -2703,7 +2788,7 @@ export default function WarenrechnungenPage() {
           ) : (
           <div className="flex items-center gap-1.5">
             <button
-              onClick={granular === 'woche' ? prevWoche : prevMonth}
+              onClick={granular === 'woche' ? prevWoche : granular === 'jahr' ? prevJahr : prevMonth}
               className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors"
               data-testid="periode-zurueck" aria-label="Vorherige Periode"
             >
@@ -2722,8 +2807,8 @@ export default function WarenrechnungenPage() {
               <PopoverContent align="center" className="w-64 p-3 space-y-2.5">
                 <div>
                   <p className="text-[11px] font-medium text-muted-foreground mb-1">Granularität</p>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(['woche', 'monat'] as const).map(g => (
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['woche', 'monat', 'jahr'] as const).map(g => (
                       <button
                         key={g}
                         onClick={() => wechsleGranular(g)}
@@ -2731,7 +2816,7 @@ export default function WarenrechnungenPage() {
                           granular === g ? 'border-foreground bg-foreground text-background' : 'border-border hover:bg-muted')}
                         data-testid={`granular-${g}`}
                       >
-                        {g === 'woche' ? 'Woche' : 'Monat'}
+                        {g === 'woche' ? 'Woche' : g === 'jahr' ? 'Jahr' : 'Monat'}
                       </button>
                     ))}
                   </div>
@@ -2755,6 +2840,15 @@ export default function WarenrechnungenPage() {
                       {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
                     </select>
                   </div>
+                ) : granular === 'jahr' ? (
+                  <select
+                    className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                    value={year}
+                    onChange={e => setYear(Number(e.target.value))}
+                    data-testid="periode-jahresansicht-select"
+                  >
+                    {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
+                  </select>
                 ) : (
                   <div className="grid grid-cols-[1fr_auto] gap-1.5">
                     <select
@@ -2782,8 +2876,8 @@ export default function WarenrechnungenPage() {
               </PopoverContent>
             </Popover>
             <button
-              onClick={granular === 'woche' ? nextWoche : nextMonth}
-              disabled={granular === 'woche' ? istAktuelleWoche || wochenStart > todayStr : isCurrentMonth}
+              onClick={granular === 'woche' ? nextWoche : granular === 'jahr' ? nextJahr : nextMonth}
+              disabled={granular === 'woche' ? istAktuelleWoche || wochenStart > todayStr : granular === 'jahr' ? isCurrentYear : isCurrentMonth}
               className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40"
               data-testid="periode-vor" aria-label="Nächste Periode"
             >
@@ -2833,7 +2927,7 @@ export default function WarenrechnungenPage() {
 
       {/* ── Inhalt ──────────────────────────────────────────────────────────── */}
       <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-5">
-        {loading ? (
+        {loading || (granular === 'jahr' && jahrExtra?.laedt) ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground text-sm gap-2">
             <span className="animate-spin rounded-full h-4 w-4 border-2 border-border border-t-foreground" />
             Wird geladen…
@@ -3607,10 +3701,10 @@ export default function WarenrechnungenPage() {
                 )} {/* end canCreate */}
 
                 {/* Letzte Einträge */}
-                {entries.length === 0 ? (
+                {viewEntries.length === 0 ? (
                   <div className="bg-card border border-dashed border-border rounded-xl p-10 text-center">
                     <ShoppingCart className="h-10 w-10 text-muted-foreground/20 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-muted-foreground">Noch keine Einträge für {monthLabel}</p>
+                    <p className="text-sm font-medium text-muted-foreground">Noch keine Einträge für {periodenLabel}</p>
                     <p className="text-xs text-muted-foreground/50 mt-1">Erfasse oben deine erste Warenrechnung.</p>
                   </div>
                 ) : (
@@ -3618,7 +3712,7 @@ export default function WarenrechnungenPage() {
                     <div className="px-5 py-3 border-b border-border bg-muted/20 space-y-2">
                       {/* Zeile 1: Titel · Total · WKQ · Ansicht-Umschalter · + Neue Rechnung */}
                       <div className="flex items-center justify-between flex-wrap gap-2">
-                        <h2 className="text-sm font-semibold">Einträge {monthLabel}</h2>
+                        <h2 className="text-sm font-semibold">Einträge {periodenLabel}</h2>
                         <div className="flex items-center gap-2.5 flex-wrap">
                           <span className="text-sm font-semibold tabular-nums" data-testid="liste-total">
                             CHF {fmtChf(listeAnsicht === 'direkt' ? filteredDirektNet : filteredTotalNet)}
@@ -3653,7 +3747,7 @@ export default function WarenrechnungenPage() {
                               Nur direkter Warenaufwand
                             </button>
                           </div>
-                          {canCreate && (
+                          {canCreate && granular !== 'jahr' && (
                             <Button size="sm" className="h-7 px-2.5 text-xs gap-1" data-testid="button-neue-rechnung"
                               onClick={() => setNeuOpen(true)}>
                               <Plus className="h-3.5 w-3.5" /> Neue Rechnung
@@ -3731,9 +3825,9 @@ export default function WarenrechnungenPage() {
                           </button>
                         )}
                         <span className="text-xs text-muted-foreground ml-auto">
-                          {anzeigeEntries.length === entries.length
-                            ? `${entries.length} Einträge`
-                            : `${anzeigeEntries.length} von ${entries.length} Einträgen`}
+                          {anzeigeEntries.length === viewEntries.length
+                            ? `${viewEntries.length} Einträge`
+                            : `${anzeigeEntries.length} von ${viewEntries.length} Einträgen`}
                         </span>
                       </div>
                     </div>
@@ -5494,6 +5588,11 @@ export default function WarenrechnungenPage() {
                         Wochenansicht: Vergleich nur mit Buchungen dieser Woche{wochenEnde.slice(0, 7) !== monthKey ? ` — Anteil im ${monthLabel}` : ''}; Abschluss-Markierungen gelten pro Monat.
                       </span>
                     )}
+                    {granular === 'jahr' && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="abgleich-jahres-hinweis">
+                        Jahresansicht: reine Anzeige übers ganze Jahr — Matches, Erklärt-Markierungen und Übernahmen bleiben pro Monat (bitte in der Monatsansicht pflegen).
+                      </span>
+                    )}
                     <InfoTip text={<span>Erfasste Warenrechnungen (netto) gegen die importierten Buchhaltungskosten. Mit Buchungszeilen («Ist Kosten Buchhaltung»-Import mit Kontoblatt/Journal) erfolgt der Abgleich <b>pro Lieferant</b> über Buchungstext ↔ Name/Alias; ohne Buchungszeilen nur Total gegen die Erfolgsrechnung. Verglichen wird das <b>Gesamt-Total pro Lieferant über ALLE Konten</b> (Warenkosten + Betriebskosten) — nur so stimmt der Vergleich mit dem Kontoblatt.</span>} />
                   </div>
 
@@ -5823,7 +5922,7 @@ export default function WarenrechnungenPage() {
                       )}
 
                       {/* Doppel-Bereinigung: doppelt erfasste Rechnungen finden */}
-                      {canDelete && (
+                      {canDelete && granular !== 'jahr' && (
                         <div className="border-t border-border/50 pt-3 flex items-center gap-2">
                           <Button size="sm" variant="outline" className="h-7 text-xs"
                             onClick={oeffneDubletten} data-testid="button-dubletten-pruefen">
@@ -5834,7 +5933,7 @@ export default function WarenrechnungenPage() {
                       )}
 
                       {/* Journal-Dubletten: FIBU-Buchungszeilen durch Mehrfach-Import vervielfacht */}
-                      {canDelete && (journalDubletten?.entfernt ?? 0) > 0 && (
+                      {canDelete && granular === 'monat' && (journalDubletten?.entfernt ?? 0) > 0 && (
                         <div className="border-t border-border/50 pt-3 flex items-center gap-2" data-testid="journal-dubletten-hinweis">
                           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                           <span className="text-xs text-amber-700 dark:text-amber-400">
@@ -5846,7 +5945,7 @@ export default function WarenrechnungenPage() {
                           </Button>
                         </div>
                       )}
-                      {journalDedupeUndo && (
+                      {journalDedupeUndo && granular === 'monat' && (
                         <div className="border-t border-border/50 pt-3 flex items-center gap-2" data-testid="journal-dedupe-undo-zeile">
                           <span className="text-xs text-muted-foreground">
                             Journal-Bereinigung vom {new Date(journalDedupeUndo.bereinigtAm).toLocaleString('de-CH')} ({journalDedupeUndo.entfernt} entfernt).

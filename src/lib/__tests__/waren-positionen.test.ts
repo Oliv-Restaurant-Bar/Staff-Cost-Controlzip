@@ -562,6 +562,31 @@ describe('Reinigungsmittel → IMMER 6040 (universelle Zwangs-Regel)', () => {
       expect(istReinigungsText(s as string | undefined), String(s)).toBe(false);
     }
   });
+  it('Einweghandschuhe (Nitril/Latex/Vinyl) → 6040, token-genau', () => {
+    for (const s of ['Quality Einweghandschuhe Nitril, Grösse L, schwarz, 100 St',
+      'Einweghandschuhe Vinyl M', 'Einmalhandschuhe puderfrei', 'Nitrilhandschuhe blau',
+      'Latexhandschuhe S', 'Vinylhandschuhe transparent', 'Handschuhe Nitril L',
+      'Handschuh Latex M', 'Handschuhe Einweg 100 Stk']) {
+      expect(istReinigungsText(s), s).toBe(true);
+    }
+  });
+  it('Ofen-/Arbeits-/Grillhandschuhe & blosses «Handschuhe» bleiben 4701', () => {
+    for (const s of ['Ofenhandschuhe Paar', 'Arbeitshandschuhe Leder Gr. 10',
+      'Grillhandschuhe hitzebeständig', 'Lederhandschuhe schwarz', 'Handschuhe Baumwolle',
+      'Handschuhe', 'Backhandschuh Silikon',
+      // Bindestrich-/Getrennt-Schreibweise mit Einweg-Qualifikator im Text:
+      // NEGATIV-Kontext gewinnt (nie 6040).
+      'Ofen-Handschuhe Nitril', 'Arbeits-Handschuhe Latex', 'Grill Handschuhe Vinyl',
+      'Leder-Handschuhe Einweg', 'Schnittschutz-Handschuhe Nitril Gr. 9']) {
+      expect(istReinigungsText(s), s).toBe(false);
+    }
+  });
+  it('Kontrollwert 64131386: Handschuhe 28.92 → 6040 trotz Warengruppe/Artikel-Zuordnung', () => {
+    const p = { artNr: '123', bezeichnung: 'Quality Einweghandschuhe Nitril, Grösse L, schwarz, 100 St', warengruppe: 'Nearfood', mwstCode: 2 as const };
+    expect(kontoFuerPositionMitArtikel('Transgourmet', p, [{ gruppe: 'Nearfood', konto: '4701' }],
+      { [artikelKey('Transgourmet', p)]: '4701' }))
+      .toEqual({ konto: KONTO_REINIGUNG, status: 'zugeordnet' });
+  });
   it('Vorrang-Ordnung: Pfand und Gebühren gewinnen vor Reinigung', () => {
     expect(istZwingendReinigung({ mwstCode: 0, bezeichnung: 'Reiniger Pfandflasche' })).toBe(false);
     expect(istZwingendReinigung({ mwstCode: 1, bezeichnung: 'Reinigungsgebühr' })).toBe(false); // Gebühr → 4701

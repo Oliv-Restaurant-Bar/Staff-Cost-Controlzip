@@ -431,15 +431,17 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           // laufen mit erlaubteNeu-Wache (nur bestätigte Frisch-Buchungen).
           const ignorierteNeu = new Set(frisch.eintraege
             .filter(e => e.status === 'neu' && row.neuEntscheid?.[neuKey(e)] === 'ignorieren')
-            .map(e => e.lieferung.rechnungsNr.trim().toLowerCase()));
+            .map(e => `${e.lieferung.rechnungsNr.trim().toLowerCase()}|${e.lieferung.datum}`));
           // VEREINIGEN statt zuweisen: mehrere Monatsrechnungen desselben
           // Profils im Batch teilen sich EINEN Kern-Aufruf — sonst verlöre
           // die letzte Datei die Freigaben der vorherigen.
+          // Voller Schlüssel «nr|datum» (wie neuKey) — blosse Nummern sind bei
+          // gleichen/leeren LS-Nrn nicht eindeutig (Kern prüft exakt dagegen).
           eintrag.erlaubteNeu = [...(eintrag.erlaubteNeu ?? []), ...frisch.eintraege
             .filter(e => e.status === 'neu' && row.neuEntscheid?.[neuKey(e)] === 'uebernehmen')
-            .map(e => e.lieferung.rechnungsNr)];
+            .map(e => `${e.lieferung.rechnungsNr}|${e.lieferung.datum}`)];
           for (const l of mrLief) {
-            if (ignorierteNeu.has(l.rechnungsNr.trim().toLowerCase())) continue;
+            if (ignorierteNeu.has(`${l.rechnungsNr.trim().toLowerCase()}|${l.datum}`)) continue;
             eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
           }
           // Zum ENTFERNEN bestätigte «erfasst, aber nicht in MR»-Buchungen —

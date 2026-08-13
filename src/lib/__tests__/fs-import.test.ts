@@ -84,12 +84,21 @@ describe('kernImportiereFsRechnungen', () => {
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
       { r: rechnung('N-1', '2026-07-10') },
       { r: rechnung('N-2', '2026-07-11') },
-    ], { quelle: 'monatsrechnung', erlaubteNeu: ['n-1'] });
+    ], { quelle: 'monatsrechnung', erlaubteNeu: ['n-1|2026-07-10'] });
     expect(res.neu).toBe(1);
     expect(res.neuUebersprungen).toBe(1);
     expect(res.hinweise.some(h => h.includes('N-2') && h.includes('NICHT gebucht'))).toBe(true);
     const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
     expect(monat.map(e => e.reference)).toEqual(['N-1']);
+  });
+
+  it('erlaubteNeu: blosse Nummer ohne Datum bestätigt NICHT, leere LS-Nr nie', async () => {
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('N-1', '2026-07-10') },   // nur Nummer bestätigt → zu wenig
+      { r: rechnung('', '2026-07-11') },      // leere Nr «bestätigt» → zählt nie
+    ], { quelle: 'monatsrechnung', erlaubteNeu: ['n-1', '|2026-07-11'] });
+    expect(res.neu).toBe(0);
+    expect(res.neuUebersprungen).toBe(2);
   });
 
   it('erlaubteNeu blockiert nur Frisch-Buchungen — Bestands-Treffer werden weiterhin ersetzt', async () => {

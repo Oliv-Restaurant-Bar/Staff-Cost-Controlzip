@@ -100,8 +100,9 @@ export async function kernImportiereFsRechnungen(
     finalDirekt?: boolean;
     /** NUR quelle='monatsrechnung': Fail-closed-Wache für Frisch-Buchungen.
      *  Wenn gesetzt, wird eine Lieferung OHNE Bestands-Treffer nur gebucht,
-     *  wenn ihre LS-Nr (lowercase) hier bestätigt ist — sonst übersprungen
-     *  (Zähler neuUebersprungen + Hinweis). Nichts wird still übernommen. */
+     *  wenn ihr voller Schlüssel «lsNr|datum» (lowercase) hier bestätigt ist —
+     *  sonst übersprungen (Zähler neuUebersprungen + Hinweis). Leere LS-Nr
+     *  zählt nie als Freigabe. Nichts wird still übernommen. */
     erlaubteNeu?: string[];
   },
 ): Promise<FsImportErgebnis> {
@@ -234,7 +235,12 @@ export async function kernImportiereFsRechnungen(
       // wurde (LS-Nr). Der Bestand kann sich seit der Vorschau geändert haben —
       // eine unbestätigte «neu»-Lieferung wird übersprungen, nie still gebucht.
       if (!vorhanden && opts?.erlaubteNeu) {
-        const bestaetigt = opts.erlaubteNeu.some(n => n.trim().toLowerCase() === r.rechnungsNr.trim().toLowerCase());
+        // Vollständiger Lieferungs-Schlüssel «nr|datum» — eine blosse Nummer
+        // ist bei gleichen/leeren LS-Nrn nicht eindeutig. Leere Nummer zählt
+        // NIE als Freigabe (fail-closed).
+        const nr = r.rechnungsNr.trim().toLowerCase();
+        const key = `${nr}|${r.datum}`;
+        const bestaetigt = nr !== '' && opts.erlaubteNeu.some(n => n.trim().toLowerCase() === key);
         if (!bestaetigt) {
           neuUebersprungen++;
           hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Lieferung fehlt im Bestand und wurde nicht einzeln bestätigt — NICHT gebucht (bitte Vorschau neu prüfen).`);

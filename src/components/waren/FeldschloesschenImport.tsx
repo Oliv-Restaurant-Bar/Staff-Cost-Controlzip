@@ -86,6 +86,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
   const [abgleich, setAbgleich] = useState<FakturaAbgleich | null>(null);
   const [monatsInvoices, setMonatsInvoices] = useState<InvoiceEntry[]>([]);
   const [uebernommen, setUebernommen] = useState<Set<string>>(new Set());
+  // Einzelbestätigung (Dual-Modell): pro fehlende Faktura BEWUSST entscheiden —
+  // [Übernehmen] bucht final, [Ignorieren] lässt sie weg (nur Sitzungs-Merker,
+  // nichts wird still übernommen oder verworfen).
+  const [ignoriert, setIgnoriert] = useState<Set<string>>(new Set());
   /** Jahres-ZIP: geparste Sammelrechnungen — bucht Warenkosten UND Historie. */
   const [zipVorschau, setZipVorschau] = useState<FsSammelrechnung[] | null>(null);
   const [histAnalyse, setHistAnalyse] = useState<{ jahr: string; eintraege: FsHistorienEintrag[]; locked: boolean } | null>(null);
@@ -261,7 +265,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
         setLieferscheine(neueLs);
         setAusgewaehlt(new Set(neueLs.map(l => l.lieferungNr)));
         setEinzelFakturen(null); setKatOverrides({});
-        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
+        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setIgnoriert(new Set()); setGegenprobeZeilen(null);
       }
       if (neueFakturen.length > 0) {
         // Mehrfach-Upload erlaubt: an bestehende Vorschau anhängen, je Faktura-Nr nur einmal
@@ -287,14 +291,14 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
           return next;
         });
         setLieferscheine(null); setAusgewaehlt(new Set());
-        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setGegenprobeZeilen(null);
+        setSammel(null); setAbgleich(null); setUebernommen(new Set()); setIgnoriert(new Set()); setGegenprobeZeilen(null);
       }
       if (neueSammel) {
         setLieferscheine(null); setAusgewaehlt(new Set());
         setEinzelFakturen(null); setKatOverrides({});
         setGegenprobeZeilen(null);
         setSammel(neueSammel);
-        setUebernommen(new Set());
+        setUebernommen(new Set()); setIgnoriert(new Set());
         // Erfasste FS-Rechnungen der betroffenen Monate laden und matchen
         const monate = [...new Set(neueSammel.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];
         const invoices = (await Promise.all(monate.map(m => loadMonthInvoices(tenantId, m)))).flat()
@@ -964,6 +968,15 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                     </span>
                   ) : uebernommen.has(m.faktura.nr) ? (
                     <span className="text-muted-foreground">übernommen — Abgleich aktualisiert…</span>
+                  ) : ignoriert.has(m.faktura.nr) ? (
+                    <>
+                      <span className="text-muted-foreground">ignoriert — nicht gebucht</span>
+                      <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" disabled={busy}
+                        onClick={() => setIgnoriert(prev => { const n = new Set(prev); n.delete(m.faktura.nr); return n; })}
+                        data-testid={`fs-ignorieren-rueckgaengig-${m.faktura.nr}`}>
+                        Rückgängig
+                      </Button>
+                    </>
                   ) : (
                     <>
                       <span>fehlt</span>
@@ -985,7 +998,12 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                       )}
                       <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[11px]" disabled={busy}
                         onClick={() => void uebernehmeFaktura(m.faktura.nr)} data-testid={`fs-uebernehmen-${m.faktura.nr}`}>
-                        Aus Monatsrechnung übernehmen
+                        Übernehmen
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy}
+                        onClick={() => setIgnoriert(prev => new Set([...prev, m.faktura.nr]))}
+                        data-testid={`fs-ignorieren-${m.faktura.nr}`}>
+                        Ignorieren
                       </Button>
                     </>
                   )}
@@ -1003,6 +1021,12 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground border-t border-border/40 pt-2">
             <span>Σ erfasst (gematcht): CHF {fmt(abgleich.summeErfasst)}</span>
             <span>Σ Monatsrechnung: CHF {fmt(abgleich.summeMonatsrechnung)}</span>
+            {/* Differenz nur zeigen, wenn sie NICHT 0 ist (leer wenn 0). */}
+            {Math.abs(abgleich.summeMonatsrechnung - abgleich.summeErfasst) > 0.005 && (
+              <span className="font-medium text-amber-600 dark:text-amber-400" data-testid="fs-sammel-differenz">
+                Differenz: CHF {fmt(abgleich.summeMonatsrechnung - abgleich.summeErfasst)} — bitte einzeln [Übernehmen]/[Ignorieren] entscheiden
+              </span>
+            )}
             <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[11px]" disabled={busy}
               onClick={() => void ladeGegenprobe()} data-testid="fs-gegenprobe">Kategorien-Gegenprobe</Button>
           </div>

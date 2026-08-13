@@ -332,10 +332,33 @@ export const KONTO_REINIGUNG = '6040';
  * gängige Marken (Cif, Persil, Lenor).
  * MATCHT NICHT (bleibt 4701 Betriebsmaterial): Papierhandtücher/Handtuch,
  * Servietten, Alu/Verpackung, Aluboxen, Müllsäcke — keines der Muster greift.
+ *
+ * EINWEGHANDSCHUHE (08/2026, wie Kontera): Einweg-/Einmalhandschuhe
+ * (Nitril/Latex/Vinyl) → 6040. Token-genau: Komposita («Einweghandschuhe»,
+ * «Nitrilhandschuhe») oder «Handschuhe» MIT Einweg-Qualifikator im Text.
+ * NICHT betroffen (bleiben 4701): Ofen-/Arbeits-/Grill-/Lederhandschuhe
+ * und blosses «Handschuhe» ohne Qualifikator.
  */
 export function istReinigungsText(s: string | undefined): boolean {
   if (!s) return false;
-  for (const tok of tokens(s)) {
+  const toks = tokens(s);
+  // Einweghandschuh-Erkennung braucht Token-KONTEXT (Qualifikator kann ein
+  // eigenes Token sein: «Quality Einweghandschuhe Nitril, Grösse L»).
+  const QUALI = /^(einweg|einmal|nitril|latex|vinyl)$/;
+  const hatQuali = toks.some(t => QUALI.test(t));
+  // NEGATIV-Kontext: Ofen-/Arbeits-/Grill-/Leder-/Schnittschutzhandschuhe —
+  // auch in Bindestrich-Schreibweise («Ofen-Handschuhe Nitril» tokenisiert zu
+  // «ofen» + «handschuhe») dürfen NIE auf 6040 laufen (bleiben 4701).
+  const NEG = /^(ofen|back|grill|arbeit|arbeits|leder|schnitt|schnittschutz|winter|garten)(handschuh(e|en)?)?$/;
+  const hatNeg = toks.some(t => NEG.test(t));
+  if (!hatNeg) {
+    for (const tok of toks) {
+      if (/^(einweg|einmal|nitril|latex|vinyl)handschuh(e|en)?$/.test(tok)) return true;
+      // «Handschuhe» allein nur mit Einweg-Qualifikator im selben Text.
+      if (/^handschuh(e|en)?$/.test(tok) && hatQuali) return true;
+    }
+  }
+  for (const tok of toks) {
     if (/reiniger(s)?$/.test(tok)) return true;                 // Reiniger, Badreiniger, Allzweckreiniger, «WC-Reiniger» (Token «reiniger»)
     if (/^reinigung(s[a-zäöü]*)?$/.test(tok)) return true;      // Reinigung, Reinigungsmittel, Reinigungstabs
     if (/sp(ü|ue)lmittel(s)?$/.test(tok)) return true;          // Spülmittel, Geschirr-/Maschinenspülmittel
