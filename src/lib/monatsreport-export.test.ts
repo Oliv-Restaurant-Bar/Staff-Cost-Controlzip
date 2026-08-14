@@ -146,27 +146,51 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     expect(ws.getRow(4).getCell(1).value).toBe('B');
   });
 
-  // ── Gruppen ab N Pax: fmt='countPax' → «Anzahl (Σ Personen)» als Text ──────
-  it('countPax schreibt «Anzahl (Personen)» als Text in Ist & Vorjahr (Monat)', () => {
+  // ── Gruppen ab N Pax: fmt='countPax' → «Personen (Anzahl Gruppen)» als Text.
+  // Seit 08/2026: Hauptwert = PERSONEN (Budget-Einheit), Gruppen in Klammern.
+  it('countPax schreibt «Personen (Gruppen)» als Text in Ist & Vorjahr (Monat)', () => {
     const gruppen = row({
       label: 'Gruppen ab 20 Pax', fmt: 'countPax',
-      month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
+      month: 70, monthPax: 3, vjMonth: 45, vjMonthPax: 2,
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
-    expect(r.getCell(3).value).toBe('2 (45 Pers.)'); // Vorjahr = vjMonth (vjMonthPax)
-    expect(r.getCell(4).value).toBe('3 (70 Pers.)'); // Ist = month (monthPax)
+    expect(r.getCell(3).value).toBe('45 Pers. (2 Gruppen)'); // Vorjahr = vjMonth (vjMonthPax)
+    expect(r.getCell(4).value).toBe('70 Pers. (3 Gruppen)'); // Ist = month (monthPax)
   });
 
-  it('countPax MIT sharePct: Anteil als Unterzeile, Δ% = Veränderung vs. VJ', () => {
+  it('countPax MIT sharePct + Budget: Anteil als Unterzeile, Δ = Ist − Budget (Personen)', () => {
     const gruppen = row({
       label: 'Gruppen ab 20 Pax', fmt: 'countPax',
-      month: 8, monthPax: 255, vjMonth: 2, vjMonthPax: 45,
+      month: 40, monthPax: 2, vjMonth: 45, vjMonthPax: 2, monthBudget: 96,
       sharePct: { month: 1.8, week: null, vj: null, vjMonth: 2.4 },
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
-    expect(r.getCell(4).value).toBe('8 (255 Pers.)\n1.8 % Anteil Gäste IN'); // Pax in Klammern, Anteil Unterzeile
-    expect(r.getCell(3).value).toBe('2 (45 Pers.)\n2.4 %');                  // VJ-Anteil als Unterzeile
-    expect(r.getCell(5).value).toBe('+6\n+300.0 %'); // Δ abs + % (vs. VJ) kombiniert
+    expect(r.getCell(4).value).toBe('40 Pers. (2 Gruppen)\n1.8 % Anteil Gäste IN');
+    expect(r.getCell(3).value).toBe('45 Pers. (2 Gruppen)\n2.4 %'); // VJ bleibt als Zusatz-Spalte
+    // Δ = Ist − Budget in Personen: 40 − 96 = −56; % = −56 ÷ 96 = −58.3 %.
+    expect(r.getCell(5).value).toBe('−56\n-58.3 %');
+  });
+
+  it('countPax OHNE Budget: Δ weiterhin vs. VJ (nie ÷0, leer statt 0-Basis)', () => {
+    const gruppen = row({
+      label: 'Gruppen ab 20 Pax', fmt: 'countPax',
+      month: 40, monthPax: 2, vjMonth: 45, vjMonthPax: 2,
+      sharePct: { month: 1.8, week: null, vj: null, vjMonth: 2.4 },
+    });
+    const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
+    expect(r.getCell(5).value).toBe('−5\n-11.1 %'); // Ist − VJ (kein Budget)
+  });
+
+  it('countPax mit Budget 0/leer: kein Δ% (nie ÷0)', () => {
+    const gruppen = row({
+      label: 'Gruppen ab 20 Pax', fmt: 'countPax',
+      month: 40, monthPax: 2, vjMonth: null, vjMonthPax: null, monthBudget: 0,
+      sharePct: { month: null, week: null, vj: null, vjMonth: null },
+    });
+    const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
+    // Budget 0 ist gesetzt (nicht null) → Basis Budget, aber ÷0 verboten:
+    // Δ abs = 40 − 0 = +40, Δ% bleibt leer.
+    expect(r.getCell(5).value).toBe('+40');
   });
 
   it('count MIT sharePct: Anteil als Unterzeile (Ist mit Hinweis, VJ nur %); Δ% = vs. VJ', () => {
@@ -197,11 +221,11 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
   it('countPax zieht in der Wochensicht week/weekPax (Vorjahr-Woche leer)', () => {
     const gruppen = row({
       label: 'Gruppen ab 20 Pax', fmt: 'countPax',
-      week: 1, weekPax: 22, vj: null,
-      month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
+      week: 22, weekPax: 1, vj: null,
+      month: 70, monthPax: 3, vjMonth: 45, vjMonthPax: 2,
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'woche').worksheets[0].getRow(2);
-    expect(r.getCell(4).value).toBe('1 (22 Pers.)'); // Ist = week (weekPax)
+    expect(r.getCell(4).value).toBe('22 Pers. (1 Gruppen)'); // Ist = week (weekPax)
     expect(r.getCell(3).value ?? '').toBe(''); // keine VJ-Woche
   });
 });

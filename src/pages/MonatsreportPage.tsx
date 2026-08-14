@@ -138,10 +138,11 @@ const fmtNum = (v: number, dec = 2) =>
 function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
   if (v === null || v === undefined) return '';
   if (fmt === 'countPax') {
+    // Hauptwert = PERSONEN (Einheit des Budgets), Gruppen-Anzahl in Klammern:
+    // «40 Pers. (2 Gruppen)» — der Anteil steht als Unterzeile, nie inline.
     const n = fmtNum(v, 0);
-    // «8 (255 Pers.)» — der Anteil steht als Unterzeile in der Zelle, nie inline.
-    if (pax !== null && pax !== undefined) return `${n} (${fmtNum(pax, 0)} Pers.)`;
-    return n;
+    if (pax !== null && pax !== undefined) return `${n} Pers. (${fmtNum(pax, 0)} Gruppen)`;
+    return `${n} Pers.`;
   }
   if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
@@ -334,11 +335,11 @@ function ReportTable({
             // Budget hinterlegt ist (Spec 08/2026): Anteil-Zeilen (sharePct,
             // z.B. Gäste Take Away) rechnen gegen das Budget, sobald eines
             // existiert; sonst Ist − VJ. Nie zwei Basen in derselben Zeile.
-            // countPax-Ausnahme (Gruppen ab 20 Pax): Budget ist in PERSONEN,
-            // der Zeilenwert in ANZAHL Gruppen — Δ gegen Budget wäre ein
-            // Einheiten-Mix, daher weiterhin vs. VJ.
+            // countPax (Gruppen ab 20 Pax): Hauptwert ist seit 08/2026 in
+            // PERSONEN — gleiche Einheit wie das Budget, Δ = Ist − Budget wie
+            // bei allen anderen Kennzahlen (keine VJ-Sonderregel mehr).
             const useVj = row.deltaVsVj
-              || (!!row.sharePct && (p.devBudget === null || row.fmt === 'countPax'));
+              || (!!row.sharePct && p.devBudget === null);
             const devAbsBase = useVj ? p.vj : p.devBudget;
             const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
             if (row.deltaPp) {
@@ -716,9 +717,9 @@ export function WochenTable({ cols, testid, onDrill }: {
     // «vs. VJ» nur ohne hinterlegtes Budget (sharePct-Zeilen mit Budget → Budget).
     let dev: number | null = null;
     let inverted = !!skel.deltaInverted;
-    // countPax-Ausnahme: Budget in Personen vs. Wert in Anzahl Gruppen → vs. VJ.
+    // countPax (Gruppen): Hauptwert = Personen = Budget-Einheit → Δ vs. Budget.
     const useVj = skel.deltaVsVj
-      || (!!skel.sharePct && (p.devBudget === null || skel.fmt === 'countPax'));
+      || (!!skel.sharePct && p.devBudget === null);
     const devAbsBase = useVj ? p.vj : p.devBudget;
     const devAbs = p.ist !== null && devAbsBase !== null ? p.ist - devAbsBase : null;
     if (skel.deltaPp) {

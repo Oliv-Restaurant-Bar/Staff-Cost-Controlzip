@@ -690,9 +690,10 @@ export interface MrRow {
    */
   deltaPctBasis?: { month: number | null; week: number | null };
   /**
-   * Begleit-«Personen»-Werte für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»).
-   * Pro Spalte parallel zu month/week/vjMonth; null = kein Zusatzwert.
-   * Nur bei fmt='countPax' relevant, sonst undefined.
+   * Begleitwerte für fmt='countPax': Hauptwert = Σ PERSONEN (Einheit des
+   * Budgets), *Pax-Felder = ANZAHL GRUPPEN als Klammer-Zusatz («40 Pers.
+   * (2 Gruppen)»). Pro Spalte parallel zu month/week/vjMonth; null = kein
+   * Zusatzwert. Nur bei fmt='countPax' relevant, sonst undefined.
    */
   monthPax?: number | null;
   weekPax?: number | null;
@@ -2011,16 +2012,19 @@ export async function ladeMonatsreport(
         vjMonth: anteilPct(resVjMonth.reservedGuests, vjGaesteV),
       },
     },
-    // Gruppen ab N Pax: Anzeige «Anzahl (Σ Personen · Anteil an Gäste IN)».
-    // Companion-Personen je Spalte in *Pax-Feldern. VJ-Woche leer; VJ-Monat vorhanden.
+    // Gruppen ab N Pax: HAUPTWERT = Σ PERSONEN (gleiche Einheit wie das
+    // Budget!), Anzahl Gruppen als Zusatz in Klammern («40 Pers. (2 Gruppen)»).
+    // Δ rechnet damit Ist − Budget in Personen — wie alle anderen Kennzahlen;
+    // der VJ-Vergleich bleibt als eigene Spalte sichtbar (nicht mehr Δ-Basis).
+    // VJ-Woche leer; VJ-Monat vorhanden.
     {
       ...d('gruppen_ab_20', `Gruppen ab ${resSettings.groupThreshold} Pax`, {
-        month: resMonth.largeGroupCount, week: resWeek.largeGroupCount,
-        vj: null, vjMonth: resVjMonth.largeGroupCount,
-        monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
-        vjMonthPax: resVjMonth.largeGroupPersons,
-        // Budget in PERSONEN (Gruppen-Anteil-% × reservierte-Gäste-Budget) —
-        // vergleichbar mit den Σ-Personen in Klammern, nicht mit der Anzahl.
+        month: resMonth.largeGroupPersons, week: resWeek.largeGroupPersons,
+        vj: null, vjMonth: resVjMonth.largeGroupPersons,
+        monthPax: resMonth.largeGroupCount, weekPax: resWeek.largeGroupCount,
+        vjMonthPax: resVjMonth.largeGroupCount,
+        // Budget ebenfalls in PERSONEN (Gruppen-Anteil-% × reservierte-Gäste-
+        // Budget bzw. «Aus Vorjahr übernehmen») — Einheitengleichheit mit Ist.
         monthBudget: ckMk('gruppen_20pax'), weekBudget: ckWk('gruppen_20pax'),
         budget: ckWk('gruppen_20pax'),
       }, { fmt: 'countPax', ckId: 'gruppen_20pax' }),

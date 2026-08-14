@@ -625,6 +625,29 @@ export async function reservierteGaesteIstMonate(
   }));
 }
 
+/**
+ * IST «Gruppen ab 20 Pax» je Monat eines Jahres — in PERSONEN (Σ Personen der
+ * grossen Gruppen, gleiche Einheit wie die Budget-Position gruppen_20pax).
+ * Quelle Foratable-Reservationen, zentrale Zählregel. Monate ohne Daten → null
+ * («leer statt 0», nie erfinden). Basis für «Aus Vorjahr übernehmen».
+ */
+export async function gruppenPersonenIstMonate(
+  tenantId: TenantId, tenantKey: KeyFn, year: number,
+): Promise<(number | null)[]> {
+  const [{ loadReservationCounting, DEFAULT_RESERVATION_COUNTING },
+    { loadReservationMetrics }] = await Promise.all([
+    import('@/lib/reservation-cockpit-settings'), import('@/lib/reservation-cockpit-metrics')]);
+  const counting = (await loadReservationCounting(tenantKey).catch(() => null))
+    ?? DEFAULT_RESERVATION_COUNTING;
+  return Promise.all(Array.from({ length: 12 }, async (_, i) => {
+    const from = `${year}-${pad2(i + 1)}-01`;
+    const to = `${year}-${pad2(i + 1)}-${pad2(daysInMonth(year, i + 1))}`;
+    const m = await loadReservationMetrics(tenantId, from, to, counting)
+      .catch(() => ({ largeGroupPersons: null }));
+    return m.largeGroupPersons ?? null;
+  }));
+}
+
 // ── Auflösung (Monat / Woche / Periode) ──────────────────────────────────────
 
 /** ISO-Wochen-Schlüssel 'GGGG-Www' eines Datums (ISO-Wochenjahr!). */

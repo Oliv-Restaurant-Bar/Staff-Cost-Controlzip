@@ -38,7 +38,7 @@ import {
   loadCockpitBudget, saveCockpitBudget, kalendertagGewichte, verteileJahreswert,
   ladeSaisonGewichte, istMonatswerteAlle, abgeschlosseneMonate,
   kalkulierteWeqMonate, bedarfSollStundenMonate,
-  dienstplanStundenMonate, reservierteGaesteIstMonate,
+  dienstplanStundenMonate, reservierteGaesteIstMonate, gruppenPersonenIstMonate,
   RESERVIERUNGS_ANTEIL_DEFAULT, GRUPPEN_ANTEIL_DEFAULT, AVG_VERKAUF_ZIEL_DEFAULT,
   weqMonatswerteMitStufen,
   erNettoBudgetMonate, type CockpitBudgetKpiDef, type TenantId,
@@ -822,6 +822,45 @@ export default function BudgetCockpitPage() {
   }, [anteilMonate, getPos, getPosById, tenantId, setPos, toast]);
 
   /**
+   * GRUPPEN — «Aus Vorjahr übernehmen»: setzt das Budget je Monat auf den
+   * VORJAHRES-IST-Wert derselben Kennzahl (Σ PERSONEN der Gruppen ab 20 Pax,
+   * gleiche Einheit wie das Budget). «Gleich wie letztes Jahr» als Ziel —
+   * Monate ohne VJ-Daten bleiben leer (nie 0), Werte danach editierbar.
+   */
+  const gruppenVjUebernehmen = useCallback(async () => {
+    // Kontext-Wache: Mandant/Jahr-Wechsel während des Ladens → Ergebnis
+    // verwerfen (nie ins fremde Budget schreiben, beide Mandanten getrennt).
+    const ctx = ctxRef.current;
+    setBusy('gruppen_20pax');
+    try {
+      const mv = await gruppenPersonenIstMonate(tenantId as TenantId, tenantKey, year - 1);
+      if (ctxRef.current !== ctx) return;
+      if (!mv.some(v => v !== null)) {
+        toast({ title: 'Kein Vorjahres-Ist vorhanden', description: `Für ${year - 1} sind keine Gruppen-Reservationen erfasst — das Budget bleibt unverändert (nie 0).` });
+        return;
+      }
+      const def = COCKPIT_BUDGET_KPIS.find(d => d.id === 'gruppen_20pax')!;
+      const pos = getPos(def);
+      setPos('gruppen_20pax', {
+        ...pos, monthlyValues: mv.map(v => (v !== null ? Math.round(v) : null)),
+        monthlyExplicit: Array(12).fill(false),
+        inputMode: 'chf', pctValue: null,
+        yearValue: r2(mv.reduce<number>((s, v) => s + (v ?? 0), 0)),
+      });
+      const leer = mv.map((v, i) => (v === null ? MONATE_KURZ[i] : null)).filter(Boolean);
+      toast({
+        title: 'Vorjahres-Ist übernommen',
+        description: leer.length
+          ? `Budget = VJ-Ist ${year - 1} (Personen); ohne VJ-Daten: ${leer.join(', ')} (leer).`
+          : `Budget = VJ-Ist ${year - 1} (Personen), je Monat editierbar.`,
+      });
+    } catch (e) {
+      console.error('[CK-BUDGET] Gruppen-VJ-Ladung fehlgeschlagen:', e);
+      toast({ title: 'Vorjahr nicht ladbar', description: String((e as Error)?.message ?? e), variant: 'destructive' });
+    } finally { setBusy(null); }
+  }, [tenantId, tenantKey, year, getPos, setPos, toast]);
+
+  /**
    * DIENSTPLAN-STUNDEN: EIGENES Budget aus dem tatsächlichen Dienstplan
    * (netto je Monat) — bewusst nicht die Bedarf-Stunden.
    */
@@ -1173,13 +1212,17 @@ export default function BudgetCockpitPage() {
                       </div>
                     )}
                     {def.id === 'gruppen_20pax' && (
-                      <div className="flex items-center gap-1.5 text-xs">
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         <Button variant="outline" size="sm" className="h-7 text-xs"
                           onClick={gruppenAbleiten} data-testid="button-gruppen-ableiten">
                           Aus Gruppen-Anteil × Reservierte ableiten
                         </Button>
+                        <Button variant="outline" size="sm" className="h-7 text-xs" disabled={busy !== null}
+                          onClick={gruppenVjUebernehmen} data-testid="button-gruppen-vj-uebernehmen">
+                          {busy === 'gruppen_20pax' ? 'Übernimmt …' : 'Aus Vorjahr übernehmen'}
+                        </Button>
                         <span className="text-[10px] text-muted-foreground">
-                          Anteil je Monat in «Gruppen-Anteil ab 20 Pax» editierbar (Personen)
+                          Anteil je Monat in «Gruppen-Anteil ab 20 Pax» editierbar (Personen) · «Aus Vorjahr» = VJ-Ist-Personen als Budget
                         </span>
                       </div>
                     )}

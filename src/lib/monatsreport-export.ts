@@ -52,10 +52,9 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const devBudget = granularity === 'monat' ? row.monthBudget : row.weekBudget;
   // Δ-Basis wie die Bildschirmtabelle: «vs. VJ» NUR ohne hinterlegtes Budget
   // (sharePct-Zeilen mit Budget rechnen Ist − Budget, z.B. Gäste Take Away).
-  // countPax-Ausnahme (Gruppen ab 20 Pax): Budget in PERSONEN, Wert in
-  // ANZAHL Gruppen → weiterhin vs. VJ (kein Einheiten-Mix). Nie ÷ 0.
-  const vsVj = !!(row.deltaVsVj
-    || (row.sharePct && (devBudget == null || row.fmt === 'countPax')));
+  // countPax (Gruppen ab 20 Pax): Hauptwert ist seit 08/2026 in PERSONEN —
+  // gleiche Einheit wie das Budget → Δ = Ist − Budget. Nie ÷ 0.
+  const vsVj = !!(row.deltaVsVj || (row.sharePct && devBudget == null));
   const devBase = vsVj ? vj : devBudget;
   const devAbs = ist !== null && devBase !== null ? ist - devBase : null;
   // Warenkosten-Zeilen (deltaPctBasis): Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz
@@ -92,18 +91,18 @@ export function vjColumnHeader(
 }
 
 /**
- * «Anzahl (Σ Personen · Anteil %)»-Text für fmt='countPax'; null → leer.
- * Gleiches Format wie die Bildschirmtabelle: «8 (255 Pers. · 1.8 %)»;
- * ohne Gäste-IN-Basis (share=null) nur «8 (255 Pers.)».
+ * «Personen (Anzahl Gruppen · Anteil %)»-Text für fmt='countPax'; null → leer.
+ * Gleiches Format wie die Bildschirmtabelle: «255 Pers. (8 Gruppen · 1.8 %)»;
+ * ohne Gruppen-Anzahl (pax=null) nur «255 Pers.».
  */
-function countPaxText(count: number | null, pax: number | null, share: number | null): string {
-  if (count === null || count === undefined) return '';
-  const c = Math.round(count).toLocaleString('de-CH');
-  if (pax === null || pax === undefined) return c;
-  const p = Math.round(pax).toLocaleString('de-CH');
+function countPaxText(persons: number | null, groups: number | null, share: number | null): string {
+  if (persons === null || persons === undefined) return '';
+  const p = Math.round(persons).toLocaleString('de-CH');
+  if (groups === null || groups === undefined) return `${p} Pers.`;
+  const g = Math.round(groups).toLocaleString('de-CH');
   return share !== null && share !== undefined
-    ? `${c} (${p} Pers. · ${share.toFixed(1)} %)`
-    : `${c} (${p} Pers.)`;
+    ? `${p} Pers. (${g} Gruppen · ${share.toFixed(1)} %)`
+    : `${p} Pers. (${g} Gruppen)`;
 }
 
 /**

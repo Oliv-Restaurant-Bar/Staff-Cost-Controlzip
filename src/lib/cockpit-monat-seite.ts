@@ -46,8 +46,10 @@ const fmtNum = (v: number, dec = 2) =>
 function fmtWert(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
   if (v === null || v === undefined) return '';
   if (fmt === 'countPax') {
+    // Hauptwert = PERSONEN (Budget-Einheit), Gruppen-Anzahl in Klammern.
     const n = fmtNum(v, 0);
-    return pax !== null && pax !== undefined ? `${n} (${fmtNum(pax, 0)} Pers.)` : n;
+    return pax !== null && pax !== undefined
+      ? `${n} Pers. (${fmtNum(pax, 0)} Gruppen)` : `${n} Pers.`;
   }
   if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
@@ -90,8 +92,10 @@ function berechneZeile(row: MrRow): ZeileBerechnet | null {
 
   let dev: number | null = null;
   let inverted = !!row.deltaInverted;
+  // countPax (Gruppen): Hauptwert = Personen = Budget-Einheit → Δ vs. Budget
+  // (Spec 08/2026, keine VJ-Sonderregel mehr).
   const useVj = row.deltaVsVj
-    || (!!row.sharePct && (budget === null || row.fmt === 'countPax'));
+    || (!!row.sharePct && budget === null);
   const devAbsBase = useVj ? vj : budget;
   const devAbs = ist !== null && devAbsBase !== null ? ist - devAbsBase : null;
   if (row.deltaPp) {

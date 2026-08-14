@@ -87,8 +87,9 @@ export function fmtWert(v: number | null | undefined, fmt: MrFormat | undefined)
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   switch (fmt) {
     case 'pct': return `${fmtZahl(v, 1)} %`;
-    case 'count':
-    case 'countPax': return fmtZahl(Math.round(v), 0);
+    case 'count': return fmtZahl(Math.round(v), 0);
+    // Hauptwert der Gruppen-Zeile ist in PERSONEN (Budget-Einheit).
+    case 'countPax': return `${fmtZahl(Math.round(v), 0)} Pers.`;
     case 'hours': return `${fmtZahl(Math.round(v), 0)} h`;
     default: return fmtZahl(v, 0); // CHF: ganze Franken, einheitlich
   }
@@ -219,8 +220,9 @@ export function buildWochenPdfModel(
       if (!r) return null;
       const m = mapRowForExport(r, gran);
       const ist: CrWert = { text: fmtWert(m.ist, r.fmt) };
-      // Unterzeilen: Personen (countPax), Anteil (share), Ampeln.
-      if (r.fmt === 'countPax' && m.istPax !== null) ist.sub = `${fmtZahl(Math.round(m.istPax), 0)} Pers.`;
+      // Unterzeilen: Gruppen-Anzahl (countPax — Hauptwert ist in Personen),
+      // Anteil (share), Ampeln.
+      if (r.fmt === 'countPax' && m.istPax !== null) ist.sub = `${fmtZahl(Math.round(m.istPax), 0)} Gruppen`;
       else if (r.sharePct && m.istShare !== null && m.ist !== null) {
         ist.sub = `${fmtZahl(m.istShare, 1)} % ${r.shareHint ?? 'Anteil Gäste IN'}`;
       }
