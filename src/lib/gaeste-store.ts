@@ -124,3 +124,29 @@ export async function saveAvgCheck(
     await saveMerged(avgMonthlyKey(tk), monthly);
   }
 }
+
+// ── Umsatz pro Gast (CHF pro Person) ─────────────────────────────────────────
+// NICHT verwechseln mit dem Durchschnittsbon (avgcheck-*, CHF pro BON):
+// «Umsatz/Gast» ist der Gastronovi-Tagesexport «Durchschnitt» in CHF PRO
+// PERSON (z.B. Beaulieu ~20.56) und dient der ABLEITUNG der Gästezahl
+// (Gäste = Brutto ÷ Umsatz/Gast, siehe gaeste-derived.ts). Der Durchschnitts-
+// bon (~66.71) bleibt die Basis der Bon-Statistik. Save = Merge pro Tag
+// (gleiche Tage ersetzen, andere bleiben) — dublettensicher wie avgcheck.
+
+const uppDailyKey   = (tk: KeyFn) => tk('umsatzprogast-daily');
+const uppMonthlyKey = (tk: KeyFn) => tk('umsatzprogast-monthly');
+
+export const loadUmsatzProGastDaily   = (tk: KeyFn) => load(uppDailyKey(tk));
+export const loadUmsatzProGastMonthly = (tk: KeyFn) => load(uppMonthlyKey(tk));
+
+export async function saveUmsatzProGast(
+  tk: KeyFn,
+  daily: Record<string, number>,
+  /** "YYYY-MM" → Zeitraum-Wert der Datei (nur Info); null = nicht in der Datei */
+  monthly: Record<string, number> | null,
+): Promise<void> {
+  await saveMerged(uppDailyKey(tk), daily);
+  if (monthly && Object.keys(monthly).length > 0) {
+    await saveMerged(uppMonthlyKey(tk), monthly);
+  }
+}

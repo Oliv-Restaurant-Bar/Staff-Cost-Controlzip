@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { OpenHoursSection, useOpenParkedCount } from '@/components/import-center/OpenHoursSection';
@@ -101,8 +101,9 @@ import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDailyMergeStrict, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
-import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, type GaesteDiff } from '@/lib/gaeste-store';
+import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, saveUmsatzProGast, loadUmsatzProGastDaily, loadUmsatzProGastMonthly, type GaesteDiff } from '@/lib/gaeste-store';
 import { berechneBonStats, ladeBruttoTageJahr, AUSREISSER_FAKTOR, type BonStats } from '@/lib/bon-stats';
+import { deriveGaesteDaily, ladeInhouseBruttoTageJahr } from '@/lib/gaeste-derived';
 import { ladeUmsatzTage } from '@/lib/umsatz';
 import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
@@ -2797,17 +2798,19 @@ function BudgetVerifyTable({ rows }: { rows: BeaulieuBudgetVerifyRow[] }) {
 // wird NICHTS gespeichert. Nutzt die bestehenden Parser/Speicherpfade.
 
 const TYP_LABEL: Record<TagesdatenTyp, string> = {
-  umsatz:       'Umsatz (Ist / Vorjahr)',
-  marketing:    'Marketing-Umsatz',
-  gaeste:       'Gäste',
-  durchschnitt: 'Durchschnittsverkauf',
+  umsatz:        'Umsatz (Ist / Vorjahr)',
+  marketing:     'Marketing-Umsatz',
+  gaeste:        'Gäste',
+  durchschnitt:  'Durchschnittsverkauf (Ø pro Bon)',
+  umsatzprogast: 'Umsatz/Gast (CHF pro Person)',
 };
 
 const TYP_BADGE: Record<TagesdatenTyp, string> = {
-  umsatz:       'border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20',
-  marketing:    'border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20',
-  gaeste:       'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
-  durchschnitt: 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
+  umsatz:        'border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20',
+  marketing:     'border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20',
+  gaeste:        'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
+  durchschnitt:  'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
+  umsatzprogast: 'border-sky-300 text-sky-700 bg-sky-50 dark:bg-sky-950/20',
 };
 
 /** Vorschau-Datenmodell (nach Parsen, vor Speichern). */
@@ -2847,6 +2850,10 @@ interface TagesdatenPreview {
   /** Nur durchschnitt: Kontrolltabelle Anzahl Bons (Bestand ⊕ Datei fürs Jahr,
       gepaart mit Brutto-Tagesumsätzen; abgeleitet, wird NICHT gespeichert). */
   bonStats?: BonStats;
+  /** Nur umsatzprogast: Kontrolltabelle je Monat — abgeleitete Gäste
+      (Brutto ÷ Umsatz/Person, Bestand ⊕ Datei) vs. getippte Referenz.
+      Abgeleitet, wird NICHT gespeichert. */
+  ppStats?: Array<{ month: string; tage: number; abgeleitet: number; getippt: number | null }>;
 }
 
 /** Datums-Diff gegen den Bestand: neu / aktualisiert (Wert ändert sich) / unverändert. */
@@ -2863,14 +2870,15 @@ function diffGegenBestand(prior: Record<string, number>, daily: Record<string, n
 }
 
 /** UI-Auswahl «Datentyp» (Pflicht): Umsatz nach Ziel getrennt, Rest = TagesdatenTyp. */
-type TagesdatenTypWahl = 'umsatz-ist' | 'umsatz-vj' | 'gaeste' | 'marketing' | 'durchschnitt';
+type TagesdatenTypWahl = 'umsatz-ist' | 'umsatz-vj' | 'gaeste' | 'marketing' | 'durchschnitt' | 'umsatzprogast';
 
 const TYP_WAHL_LABEL: Record<TagesdatenTypWahl, string> = {
   'umsatz-ist': 'Umsatz Ist',
   'umsatz-vj': 'Umsatz Vorjahr',
-  gaeste: 'Gäste / Anzahl Personen',
+  gaeste: 'Gäste / Anzahl Personen (getippt — nur Referenz)',
   marketing: 'Marketing',
-  durchschnitt: 'Durchschnittsverkauf',
+  durchschnitt: 'Durchschnittsverkauf (Ø pro Bon)',
+  umsatzprogast: 'Umsatz/Gast (CHF pro Person)',
 };
 
 const typWahlToTyp = (w: TagesdatenTypWahl): TagesdatenTyp =>
@@ -2893,7 +2901,7 @@ function TagesdatenImportSection() {
   const yearOptions: number[] = [];
   for (let y = currentYear; y >= 2023; y--) yearOptions.push(y);
 
-  const isCHF = (t: TagesdatenTyp) => t === 'umsatz' || t === 'marketing' || t === 'durchschnitt';
+  const isCHF = (t: TagesdatenTyp) => t === 'umsatz' || t === 'marketing' || t === 'durchschnitt' || t === 'umsatzprogast';
   // Nie «CHF NaN» rendern: nicht-endliche Werte immer als «—» (leer statt 0).
   const fmtValueByTyp = (t: TagesdatenTyp, n: number) =>
     !Number.isFinite(n) ? '—'
@@ -3010,7 +3018,10 @@ function TagesdatenImportSection() {
         if (r.zeitraum != null && r.zeitraum !== r.tagessumme) {
           setWarn(`Zeitraum-Spalte der Datei: ${r.zeitraum.toLocaleString('de-CH')} P. — abweichend, Tageswerte sind massgeblich.`);
         }
-      } else if (typ === 'durchschnitt') {
+      } else if (typ === 'durchschnitt' || typ === 'umsatzprogast') {
+        // Beide Typen nutzen den Gastronovi-Tagesexport mit Kopfzeile
+        // «Durchschnitt» — der TYP entscheidet über die Bedeutung (pro Bon
+        // vs. pro Person) und damit über den Speicherort. Nutzer wählt bewusst.
         const r = await parseDurchschnittXlsx(file, year);
         daily = r.daily; zeitraum = r.zeitraum;
         unlesbareWerte = r.unlesbareWerte;
@@ -3064,7 +3075,7 @@ function TagesdatenImportSection() {
           const ym = r.date.slice(0, 7);
           monthMap.set(ym, Math.round(((monthMap.get(ym) ?? 0) + r.total) * 100) / 100);
         }
-      } else if (typ === 'durchschnitt') {
+      } else if (typ === 'durchschnitt' || typ === 'umsatzprogast') {
         // Ø je Monat (Mittelwert der Tageswerte)
         const acc = new Map<string, { sum: number; n: number }>();
         for (const d of dates) {
@@ -3142,6 +3153,7 @@ function TagesdatenImportSection() {
         if (typ === 'gaeste') prior = await loadGaesteDaily(tenantKey);
         else if (typ === 'marketing') prior = await loadMaisonDaily(tenantKey);
         else if (typ === 'durchschnitt') prior = await loadAvgCheckDaily(tenantKey);
+        else if (typ === 'umsatzprogast') prior = await loadUmsatzProGastDaily(tenantKey);
         else {
           // umsatz: Zielfeld hängt vom Jahr ab (Ist vs. Vorjahr)
           const base = await loadDailyBudgetsBaseStrict(tenantKey('dailyBudgets'));
@@ -3162,6 +3174,36 @@ function TagesdatenImportSection() {
       // Datei ersetzt gleiche Tage), gepaart mit den Brutto-Tagesumsätzen
       // («Gesamt»-Zeile; laufendes Jahr dailyBudgets, Vorjahre vj_daily).
       // Abgeleiteter Wert — wird nicht gespeichert; Fehler blockieren nichts.
+      // Umsatz/Gast: Kontrolltabelle «abgeleitete Gäste» (Brutto ÷ pp, gerundet)
+      // je betroffenem Monat, plus Referenz «getippt» (alter Personen-Import).
+      // Abgeleiteter Wert — wird nicht gespeichert; Fehler blockieren nichts.
+      let ppStats: TagesdatenPreview['ppStats'];
+      if (typ === 'umsatzprogast') {
+        try {
+          const [priorPp, getippt, brutto] = await Promise.all([
+            loadUmsatzProGastDaily(tenantKey),
+            loadGaesteDaily(tenantKey),
+            // IN-HOUSE-Brutto (Gesamt − Take Away): «Umsatz pro Person» ist
+            // eine In-House-Kennzahl; TA-Gäste kommen aus eigener Quelle.
+            ladeInhouseBruttoTageJahr(tenantId ?? 'oliv', year),
+          ]);
+          const derived = deriveGaesteDaily({ ...priorPp, ...daily }, brutto);
+          const months = [...new Set(dates.map(d => d.slice(0, 7)))].sort();
+          ppStats = months.map(ym => {
+            let abgeleitet = 0, tage = 0, getipptSum = 0, hatGetippt = false;
+            for (const [d, g] of Object.entries(derived)) {
+              if (d.slice(0, 7) === ym) { abgeleitet += g; tage++; }
+            }
+            for (const [d, g] of Object.entries(getippt)) {
+              if (d.slice(0, 7) === ym && g > 0) { getipptSum += g; hatGetippt = true; }
+            }
+            return { month: ym, tage, abgeleitet, getippt: hatGetippt ? getipptSum : null };
+          });
+        } catch (err) {
+          console.warn('[TAGESDATEN] Gäste-Kontrolltabelle nicht berechenbar:', err);
+        }
+      }
+
       let bonStats: BonStats | undefined;
       if (typ === 'durchschnitt') {
         try {
@@ -3181,7 +3223,7 @@ function TagesdatenImportSection() {
       }
 
       setPreview({
-        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths, bonStats,
+        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths, bonStats, ppStats,
         marketingYears, marketingJahrTotals, datenDiff, geaendert,
         dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
         monthTotals, zeitraum, tagessumme,
@@ -3262,6 +3304,20 @@ function TagesdatenImportSection() {
               entries: { [monthKey]: priorMonthly[monthKey] ?? null },
             });
           }
+        } else if (typ === 'umsatzprogast') {
+          const priorDaily = await loadUmsatzProGastDaily(tenantKey);
+          undoBlobs = [{
+            key: tenantKey('umsatzprogast-daily'),
+            entries: Object.fromEntries(preview.dates.map(d => [d, priorDaily[d] ?? null])),
+          }];
+          if (preview.zeitraum != null) {
+            const monthKey = preview.from ? preview.from.slice(0, 7) : `${preview.year}-01`;
+            const priorMonthly = await loadUmsatzProGastMonthly(tenantKey);
+            undoBlobs.push({
+              key: tenantKey('umsatzprogast-monthly'),
+              entries: { [monthKey]: priorMonthly[monthKey] ?? null },
+            });
+          }
         } else if (typ === 'marketing') {
           // Ersetzen PRO TAG: Snapshot nur der Datei-Tage aus dem FRISCHEN
           // Bestand — Tage ausserhalb der Datei werden nicht angefasst.
@@ -3299,6 +3355,7 @@ function TagesdatenImportSection() {
       }
       const typLabel = typ === 'gaeste' ? 'Gäste'
         : typ === 'durchschnitt' ? 'Durchschnittsverkauf'
+        : typ === 'umsatzprogast' ? 'Umsatz/Gast (CHF pro Person)'
         : typ === 'marketing' ? 'Marketing-Umsatz'
         : targetForYear(preview.year, currentYear) === 'actual' ? 'Ist-Umsatz' : 'Vorjahresumsatz';
       const recordRun = () => recordImportRun(tenantId, {
@@ -3333,6 +3390,18 @@ function TagesdatenImportSection() {
         );
         void recordRun();
         toast.success(`Durchschnittsverkauf gespeichert: ${preview.dates.length} Tage`);
+      } else if (typ === 'umsatzprogast') {
+        // Ersetzen PRO TAG (Merge): gleiche Tage überschreiben, Bestand
+        // ausserhalb der Datei bleibt. «Gäste IN» wird überall daraus
+        // ABGELEITET (Brutto ÷ Umsatz/Person, gaeste-derived.ts).
+        const monthKey = preview.from ? preview.from.slice(0, 7) : `${preview.year}-01`;
+        await saveUmsatzProGast(
+          tenantKey,
+          daily,
+          preview.zeitraum != null ? { [monthKey]: preview.zeitraum } : null,
+        );
+        void recordRun();
+        toast.success(`Umsatz/Gast gespeichert: ${preview.dates.length} Tage — «Gäste IN» wird jetzt daraus abgeleitet`);
       } else if (typ === 'marketing') {
         // Ersetzen PRO TAG (wie Umsatz-Import): nur Datei-Tage aktualisieren,
         // nie addieren; Bestands-Tage ausserhalb des Datei-Zeitraums bleiben
@@ -3379,6 +3448,7 @@ function TagesdatenImportSection() {
     ? preview.typ === 'umsatz' ? 'Umsatz brutto (Zeile «Gesamt»)'
       : preview.typ === 'gaeste' ? 'Personen'
       : preview.typ === 'durchschnitt' ? 'Ø Verkauf'
+      : preview.typ === 'umsatzprogast' ? 'Ø Umsatz/Gast'
       : 'Marketing (CHF)'
     : '';
 
@@ -3387,7 +3457,7 @@ function TagesdatenImportSection() {
       {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
       <LastImportPanel
         source="tagesdaten-einheitsimport"
-        undoHint="Zurückgesetzt werden genau die importierten Tage des Laufs (je nach Typ: Umsatz, Gäste, Marketing oder Durchschnittsverkauf); vorher nicht vorhandene Tage werden entfernt. Beim Vorjahresumsatz werden auch die vj_daily-Tageswerte zurückgesetzt. Andere Tage und Datentypen bleiben unberührt."
+        undoHint="Zurückgesetzt werden genau die importierten Tage des Laufs (je nach Typ: Umsatz, Gäste, Marketing, Durchschnittsverkauf oder Umsatz/Gast); vorher nicht vorhandene Tage werden entfernt. Beim Vorjahresumsatz werden auch die vj_daily-Tageswerte zurückgesetzt. Andere Tage und Datentypen bleiben unberührt."
       />
       <div className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/10 p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
@@ -3568,6 +3638,41 @@ function TagesdatenImportSection() {
                   </div>
                 ))}
               </div>
+
+              {/* Umsatz/Gast: Kontrolltabelle abgeleitete Gäste (nicht gespeichert) */}
+              {preview.typ === 'umsatzprogast' && preview.ppStats && preview.ppStats.length > 0 && (
+                <div
+                  className="rounded border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 px-2.5 py-2 space-y-1"
+                  data-testid="tagesdaten-gaeste-abgeleitet"
+                >
+                  <p className="text-[10px] uppercase tracking-wide text-sky-700 dark:text-sky-300 font-medium">
+                    Kontrolle abgeleitete Gäste IN (nach Import)
+                  </p>
+                  <div className="grid grid-cols-4 gap-x-4 text-xs tabular-nums">
+                    <span className="text-muted-foreground">Monat</span>
+                    <span className="text-muted-foreground">Tage</span>
+                    <span className="text-muted-foreground">Gäste abgeleitet</span>
+                    <span className="text-muted-foreground">getippt (Referenz)</span>
+                    {preview.ppStats.map(s => (
+                      <Fragment key={s.month}>
+                        <span className="font-medium">{monthLabel(s.month)}</span>
+                        <span data-testid={`pp-kontrolle-tage-${s.month}`}>{s.tage.toLocaleString('de-CH')}</span>
+                        <span className="font-medium" data-testid={`pp-kontrolle-gaeste-${s.month}`}>{s.abgeleitet.toLocaleString('de-CH')}</span>
+                        <span data-testid={`pp-kontrolle-getippt-${s.month}`}>
+                          {s.getippt != null
+                            ? `${s.getippt.toLocaleString('de-CH')}${s.abgeleitet > 0 ? ` (${(((s.getippt - s.abgeleitet) / s.abgeleitet) * 100) >= 0 ? '+' : ''}${(((s.getippt - s.abgeleitet) / s.abgeleitet) * 100).toFixed(1)} %)` : ''}`
+                            : '—'}
+                        </span>
+                      </Fragment>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Gäste je Tag = In-House-Brutto (Gesamt − Take Away) ÷ Umsatz/Gast, kaufmännisch gerundet.
+                    Tage ohne Umsatz/Gast-Wert bleiben leer (nie 0). MASSGEBLICH für alle Kennzahlen
+                    ist der abgeleitete Wert; der getippte Personen-Import bleibt nur Referenz.
+                  </p>
+                </div>
+              )}
 
               {/* Durchschnitt: Kontrolltabelle Anzahl Bons (abgeleitet, nicht gespeichert) */}
               {preview.typ === 'durchschnitt' && preview.bonStats && (

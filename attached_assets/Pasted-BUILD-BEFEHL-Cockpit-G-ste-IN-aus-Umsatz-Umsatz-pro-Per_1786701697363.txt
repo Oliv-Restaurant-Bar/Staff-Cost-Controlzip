@@ -1,0 +1,21 @@
+BUILD-BEFEHL — Cockpit „Gäste IN" aus Umsatz ÷ Umsatz-pro-Person ableiten (beide Mandanten)
+
+Kontext: Die getippte Personenzahl (beim Tisch-Eröffnen) ist unzuverlässig und zu hoch (Beaulieu August: 4'056 statt real ~3'258, +24.5%). Gastronovi liefert eine „Umsatz pro Person"-Kennzahl (Tagesexport, Kopfzeile „Durchschnitt", z.B. Beaulieu Monatsschnitt CHF 20.56). Daraus wird die Gästezahl konsistent zurückgerechnet.
+
+Aufgabe:
+
+Import-Datentyp „Umsatz/Gast (CHF)" anlegen bzw. sauber trennen: Gastronovi-Tagesexport mit Kopf „Durchschnitt" in CHF pro Person. Nicht verwechseln mit „Durchschnittsverkauf pro Bon" (DB Bon, ~66.71) — das ist eine andere Kennzahl. Eindeutig benennen.
+„Gäste IN" nicht mehr aus dem Personen-Import, sondern pro Tag berechnen:
+Gäste(Tag) = Brutto-Ist-Umsatz(Tag) ÷ Umsatz-pro-Person(Tag), kaufmännisch auf ganze Gäste gerundet; Monatswert = Σ Tageswerte im Zeitraum [Monatsanfang … Stichtag].
+Schutzregeln: Umsatz-pro-Person(Tag) = 0 oder fehlt → dieser Tag bleibt leer (nie durch 0 teilen; ein Tag mit Umsatz, aber ohne pp, wird NICHT auf 0 gesetzt). Fehlt die pp-Quelle ganz → „Gäste IN" bleibt leer, kein Rückfall auf den alten Personen-Wert.
+Personen-Import weiterhin speichern, aber nur als Referenz (Tooltip: „getippt: X · abgeleitet: Y · Abweichung Z%"). Maßgeblich für alle Kennzahlen ist der abgeleitete Wert.
+Abhängige Kennzahlen ziehen automatisch nach: Ø-Verkauf pro Gast = Netto ÷ Gäste IN (abgeleitet); „Anteil Gäste IN" bei Reservierten = Reservierte ÷ Gäste IN (abgeleitet).
+Wochen-/Tagesaufteilung: dieselbe Tageslogik (Umsatz÷pp je Tag), summiert je ISO-Woche.
+Mandantengetrennt (Oliv unpräfixiert / Beaulieu beaulieu:), dublettensicher (Ersetzen pro Tag), Vorschau + Undo wie bei den anderen Importen.
+
+Akzeptanztest (Beaulieu, August 2026, Stand 13.08.):
+
+Tages-Gäste: 01.→169, 03.→199, 04.→364, 05.→370, 06.→377, 07.→361, 08.→174, 10.→280, 11.→353, 12.→309, 13.→302.
+Gäste IN (Summe) ≈ 3'258 (statt 4'056).
+Ø-Verkauf pro Gast (netto) = 62'134.60 ÷ 3'258 ≈ 19.07 (vorher 15.32).
+Referenzwert getippt weiterhin sichtbar: 4'056, Abweichung +24.5%.

@@ -30,6 +30,7 @@ import {
   personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
 } from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
+import { ladeGaesteInAbgeleitet } from '@/lib/gaeste-derived';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { istAlsVjRecord } from '@/lib/vj-overlay';
 import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
@@ -702,6 +703,11 @@ export interface MrRow {
    */
   tint?: 'green' | 'red';
   /**
+   * Info-Tooltip-Text der Zeile (z.B. Gäste IN: «getippt: X · abgeleitet: Y ·
+   * Abweichung Z%»). Reine Anzeige neben dem Label; kein Einfluss auf Werte.
+   */
+  hinweis?: string;
+  /**
    * ID der Eltern-Zeile: diese Zeile ist ein ausklappbares Kind (z.B.
    * Lieferanten-Zeilen unter «Warenkosten total»). Kinder werden IMMER direkt
    * unter ihrer Eltern-Zeile gerendert (unabhängig von der gespeicherten
@@ -1033,11 +1039,15 @@ export async function ladeMonatsreport(
   }
 
   const [
-    gaesteDaily, avgDaily, avgMonthly, vjDaily, resWeek, resVjMonth,
+    gaesteDaily, gaesteGetippt, avgDaily, avgMonthly, vjDaily, resWeek, resVjMonth,
     taMonth, taWeek, taVjMonth, pk,
     pkVj, staffingPositions, staffingReqs, staffingConfig,
     mrEmployees, mrSchedule, mrActual,
   ] = await Promise.all([
+    // «Gäste IN» = ABGELEITET aus Umsatz ÷ Umsatz-pro-Person (Spec 08/2026,
+    // gaeste-derived.ts). Der getippte Personen-Import (gaeste-daily) ist NUR
+    // noch Referenz für den Tooltip — nie Fallback für Kennzahlen.
+    ladeGaesteInAbgeleitet(tenantId, tenantKey).catch(() => ({} as Record<string, number>)),
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
@@ -1355,12 +1365,21 @@ export async function ladeMonatsreport(
     id !== 'wareneinsatz'
     && ckBlob?.positions?.[id]?.monthlyExplicit?.[month - 1] === true;
 
-  // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
+  // ── Gäste IN (ABGELEITET: Brutto ÷ Umsatz/Person, gaeste-derived.ts) ───────
   let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
   for (const [date, n] of Object.entries(gaesteDaily)) {
     if (date < fromIso || !standIso || date > standIso) continue;
     if (!(n > 0)) continue;
     mGaeste += n; hatGaeste = true;
+  }
+  // Referenz «getippt» (alter Personen-Import) über denselben Zeitraum — NUR
+  // für den Tooltip («getippt: X · abgeleitet: Y · Abweichung Z%»), nie für
+  // Kennzahlen. Abweichung relativ zum ABGELEITETEN (massgeblichen) Wert.
+  let mGaesteGetippt = 0, hatGetippt = false;
+  for (const [date, n] of Object.entries(gaesteGetippt)) {
+    if (date < fromIso || !standIso || date > standIso) continue;
+    if (!(n > 0)) continue;
+    mGaesteGetippt += n; hatGetippt = true;
   }
   for (const date of wocheTage) {
     const n = gaesteDaily[date] ?? 0;
@@ -1585,7 +1604,7 @@ export async function ladeMonatsreport(
       week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null;
       monthPax?: number | null; weekPax?: number | null; vjMonthPax?: number | null;
     },
-    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean; tint?: 'green' | 'red'; ckId?: string } = {},
+    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean; tint?: 'green' | 'red'; ckId?: string; hinweis?: string } = {},
   ): MrRow => ({
     type: 'data', id, label,
     ckId: opts.ckId,
@@ -1599,6 +1618,7 @@ export async function ladeMonatsreport(
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
     deltaInverted: opts.deltaInverted, warnAbove: opts.warnAbove,
     deltaPp: opts.deltaPp, deltaVsVj: opts.deltaVsVj, tint: opts.tint,
+    hinweis: opts.hinweis,
   });
 
   /**
@@ -1960,7 +1980,17 @@ export async function ladeMonatsreport(
     d('gaeste_in', 'Gäste IN', {
       month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV,
       monthBudget: ckMk('gaeste_in'), weekBudget: ckWk('gaeste_in'), budget: ckWk('gaeste_in'),
-    }, { fmt: 'count', ckId: 'gaeste_in' }),
+    }, {
+      fmt: 'count', ckId: 'gaeste_in',
+      // Tooltip-Referenz: getippter Personen-Import vs. abgeleiteter Wert.
+      hinweis: hatGetippt
+        ? `getippt: ${Math.round(mGaesteGetippt).toLocaleString('de-CH')}`
+          + (hatGaeste
+            ? ` · abgeleitet: ${Math.round(mGaeste).toLocaleString('de-CH')}`
+              + ` · Abweichung ${(((mGaesteGetippt - mGaeste) / mGaeste) * 100) >= 0 ? '+' : ''}${(((mGaesteGetippt - mGaeste) / mGaeste) * 100).toFixed(1)} %`
+            : ' · abgeleitet: — (kein Umsatz/Gast-Import)')
+        : undefined,
+    }),
     // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
     // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
     // KW-genaue VJ-Zuordnung); VJ-Monat = gleicher Monat Vorjahr.
@@ -2502,7 +2532,8 @@ export async function ladeWochenverlauf(
   // Globale KV-Maps sind ISO-datumsbasiert → liefern automatisch die Daten des
   // gewählten Jahres (Gäste, Durchschnittsverkauf).
   const [gaesteDaily, avgDaily] = await Promise.all([
-    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    // Abgeleitete Gäste IN (Umsatz ÷ Umsatz/Person) — gleiche Quelle wie Monatssicht.
+    ladeGaesteInAbgeleitet(tenantId, tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
   ]);
 
@@ -2895,7 +2926,8 @@ export async function ladeJahresvergleich(
 
   // ── Aktuelles Jahr: Umsatz + globale KV-Maps ───────────────────────────────
   const [gaesteDaily, avgDaily, umsatzTage] = await Promise.all([
-    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    // Abgeleitete Gäste IN (Umsatz ÷ Umsatz/Person) — gleiche Quelle wie Monatssicht.
+    ladeGaesteInAbgeleitet(tenantId, tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     ladeUmsatzTage(tenantId, curFrom, curTo),
   ]);

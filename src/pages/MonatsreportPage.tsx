@@ -408,6 +408,23 @@ function ReportTable({
                       {row.label}
                     </button>
                   ) : row.label}
+                  {row.hinweis ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground"
+                          aria-label={`${row.label}: Details`}
+                          data-testid={`info-hinweis-${row.id}-${granularity}`}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-[280px] text-xs">
+                        <p>{row.hinweis}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   {row.id === 'netto_umsatz' && mkt !== null ? (
                     <Tooltip>
                       <TooltipTrigger asChild>

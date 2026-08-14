@@ -23,7 +23,7 @@
 
 import ExcelJS from 'exceljs';
 
-export type TagesdatenTyp = 'gaeste' | 'durchschnitt' | 'umsatz' | 'marketing';
+export type TagesdatenTyp = 'gaeste' | 'durchschnitt' | 'umsatzprogast' | 'umsatz' | 'marketing';
 
 /** Zellwert robust in Text wandeln (RichText-/Formel-/NBSP-tolerant). */
 function cellToString(val: unknown): string {
@@ -165,6 +165,9 @@ export function suggestTypFromFileName(fileName: string): TagesdatenTyp | null {
   const n = fileName.toLowerCase();
   if (/anzahl|g[äa]ste|gaeste|personen|pax/u.test(n)) return 'gaeste';
   if (/marketing|maison/u.test(n)) return 'marketing';
+  // «Umsatz pro Person/Gast»: gleicher Datei-Kopf «Durchschnitt» wie der
+  // Durchschnittsbon — nur der Dateiname kann die pro-Person-Variante nahelegen.
+  if (/pro[\s._-]*(person|gast)|umsatz[\s._-]*gast/u.test(n)) return 'umsatzprogast';
   if (/durchschnitt/u.test(n)) return 'durchschnitt';
   if (/umsatz|revenue/u.test(n)) return 'umsatz';
   return null;
@@ -231,7 +234,7 @@ export function istHartBlockiert(typ: TagesdatenTyp, muster: Wertemuster): boole
 
 export function wertemusterWarnung(typ: TagesdatenTyp, muster: Wertemuster): string | null {
   if (muster == null) return null;
-  const chfTyp = typ === 'umsatz' || typ === 'marketing' || typ === 'durchschnitt';
+  const chfTyp = typ === 'umsatz' || typ === 'marketing' || typ === 'durchschnitt' || typ === 'umsatzprogast';
   if (chfTyp && muster === 'anzahl') {
     return 'Die Werte sehen nach ANZAHL PERSONEN aus (ganze Zahlen im Personen-Bereich), gewählt ist aber ein CHF-Typ. Werte passen nicht zum gewählten Typ — bitte prüfen.';
   }

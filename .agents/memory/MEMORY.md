@@ -91,7 +91,7 @@
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang MwSt-0-Pfand>Artikel>Text-Pfand>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
 - [Gebühren → immer 4701](waren-gebuehren-4701.md) — Zwangs-Regel in JEDEM Kontierungspfad, auch ZSF-Summenpfad (Bucket-Herausrechnung); Pfand hat Vorrang, «gebühr» nur am Wortende.
 - [Pfand/Depot = Konto 4800](pfand-konto-4800.md) — Pfand/Leergut/Gebinde universal auf echtes 4800 (neutral, nie WKQ/Betriebskosten) via istPfandKonto; Legacy-«Depot»-Splits gleichwertig, nie migrieren.
-- [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
+- [Gäste IN = abgeleitet aus Umsatz÷pp](gaeste-in-import.md) — seit 08/2026 round(In-House-Brutto [−TA] ÷ Umsatz/Person) via gaeste-derived.ts; getippter Import nur Tooltip-Referenz; pp fehlt → leer, nie Fallback; umsatzprogast ≠ Durchschnittsbon.
 - [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE; Gast, Stundenbestätigung, Onboarding- UND Personaleintritt-per-Link entfernt; 0 öffentliche Routen (auch App.tsx-Early-Returns geprüft).
 - [PDF-Zeilen-Clustering](pdf-zeilen-clustering.md) — Tabellen-PDFs nie mit festen y-Buckets zeilen; Namens-Anker + nächster-|Δy|-Zuordnung, Fixture-Tests via extract-pdf-items.
 - [Plan-Std SSoT Personalkosten↔Dienstplan](plan-std-ssot.md) — schedule-v2-Cache voll durch Supabase ersetzen (kein Merge/Tick-Guard); Aggregation braucht Monatsfilter; async Spiegel braucht Stale-Guard.
