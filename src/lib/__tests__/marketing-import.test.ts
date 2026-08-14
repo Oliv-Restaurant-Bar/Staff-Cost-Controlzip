@@ -6,9 +6,9 @@
  * enthalten (case-insensitive, inkl. Tippvarianten). Maison/Rabatte/
  * Gutschein/Sponsoring/Einzelnamen zählen NIE.
  *
- * Speichern: Datei = massgebliche Quelle → ersetzt die Marketing-Tageswerte
- * der Datei-Jahre komplett (gleiche Tage ersetzen, Alt-Tage entfernen, nie
- * addieren); andere Jahre bleiben unberührt. Merge-Basis strikt aus dem KV.
+ * Speichern: ERSETZEN PRO TAG (wie Umsatz-Import) — nur Datei-Tage werden
+ * aktualisiert (nie addieren); Bestands-Tage AUSSERHALB des Datei-Zeitraums
+ * bleiben unberührt (kein Full-Year-Replace). Merge-Basis strikt aus dem KV.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isMarketingLabel } from '../maison-import';
@@ -23,7 +23,7 @@ vi.mock('../supabase-kv', () => ({
   kvSet: vi.fn(async (key: string, value: unknown) => { kv.store[key] = value; }),
 }));
 
-import { saveMaisonDailyReplaceYears } from '../maison-store';
+import { saveMaisonDailyMergeStrict } from '../maison-store';
 
 const tk = (k: string) => k; // Oliv: unpräfixiert
 
@@ -48,37 +48,38 @@ describe('isMarketingLabel — verbindliche Definition', () => {
   });
 });
 
-describe('saveMaisonDailyReplaceYears — Jahres-Ersatz', () => {
+describe('saveMaisonDailyMergeStrict — Ersetzen pro Tag', () => {
   beforeEach(() => { kv.store = {}; kv.failGet = false; ls.clear(); });
 
-  it('ersetzt Datei-Jahre komplett: gleiche Tage ersetzt, Alt-Tage entfernt, andere Jahre unberührt', async () => {
+  it('ersetzt NUR Datei-Tage: Bestands-Tage ausserhalb des Datei-Zeitraums bleiben erhalten', async () => {
     kv.store['maison-daily'] = {
       '2026-01-05': 100,   // wird ersetzt
-      '2026-03-09': 999,   // Alt-Tag nicht in Datei → entfernt
+      '2026-03-09': 999,   // NICHT in Datei → bleibt (kein Full-Year-Replace)
       '2025-12-31': 55.5,  // anderes Jahr → bleibt
     };
-    await saveMaisonDailyReplaceYears(tk, [2026], {
+    await saveMaisonDailyMergeStrict(tk, {
       '2026-01-05': 120.4,
       '2026-07-01': 300,
     });
     expect(kv.store['maison-daily']).toEqual({
       '2025-12-31': 55.5,
       '2026-01-05': 120.4,
+      '2026-03-09': 999,
       '2026-07-01': 300,
     });
   });
 
   it('addiert nie doppelt: zweiter identischer Import ändert nichts', async () => {
     const daily = { '2026-07-01': 300, '2026-07-02': 150.25 };
-    await saveMaisonDailyReplaceYears(tk, [2026], daily);
-    await saveMaisonDailyReplaceYears(tk, [2026], daily);
+    await saveMaisonDailyMergeStrict(tk, daily);
+    await saveMaisonDailyMergeStrict(tk, daily);
     expect(kv.store['maison-daily']).toEqual(daily);
   });
 
   it('strikte Merge-Basis: KV-Lesefehler → KEIN Write (kein Remote-Wipe)', async () => {
     kv.store['maison-daily'] = { '2025-12-31': 55.5 };
     kv.failGet = true;
-    await expect(saveMaisonDailyReplaceYears(tk, [2026], { '2026-07-01': 300 })).rejects.toThrow();
+    await expect(saveMaisonDailyMergeStrict(tk, { '2026-07-01': 300 })).rejects.toThrow();
     kv.failGet = false;
     expect(kv.store['maison-daily']).toEqual({ '2025-12-31': 55.5 });
   });

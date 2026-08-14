@@ -100,18 +100,17 @@ export async function saveMaisonDaily(
 }
 
 /**
- * Massgeblicher Jahres-Ersatz (dublettensicher): die Datei ERSETZT alle
- * Marketing-Tageswerte der betroffenen Jahre — gleiche Tage werden ersetzt,
- * Alt-Tage der Jahre, die nicht in der Datei stehen, werden ENTFERNT
- * (nie addieren). Andere Jahre bleiben unberührt.
+ * Import-Save: ERSETZEN PRO TAG (dublettensicher, wie der Umsatz-Import).
+ * Nur die Tage, die in der Datei stehen, werden aktualisiert (nie addieren);
+ * bestehende Tage AUSSERHALB des Datei-Zeitraums bleiben unberührt —
+ * KEIN Full-Year-Replace (Datenverlust-Risiko bei Teilperioden-Uploads).
  *
  * Merge-Basis wird STRIKT frisch aus dem KV gelesen (Lesefehler ≠ leer):
  * schlägt das Lesen fehl, wird NICHT geschrieben — sonst würde eine leere/
- * stale Basis die übrigen Jahre im Remote-Blob wegwischen.
+ * stale Basis die übrigen Tage im Remote-Blob wegwischen.
  */
-export async function saveMaisonDailyReplaceYears(
+export async function saveMaisonDailyMergeStrict(
   tk: (k: string) => string,
-  years: number[],
   incoming: Record<string, number>,
 ): Promise<void> {
   const remote = await kvGet(dailyKey(tk)); // wirft bei KV-Fehler → kein Write
@@ -119,10 +118,6 @@ export async function saveMaisonDailyReplaceYears(
     remote && typeof remote === 'object' && !Array.isArray(remote)
       ? { ...(remote as Record<string, number>) }
       : {};
-  const yearSet = new Set(years.map(String));
-  for (const d of Object.keys(base)) {
-    if (yearSet.has(d.slice(0, 4))) delete base[d];
-  }
   const next = { ...base, ...incoming };
   localStorage.setItem(dailyKey(tk), JSON.stringify(next));
   await kvSet(dailyKey(tk), next);
