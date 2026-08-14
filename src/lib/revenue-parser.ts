@@ -799,10 +799,11 @@ export const parseGastronoviExcel = async (
         const gesamtMap: Record<string, number>    = {};
         const takeAwayMap: Record<string, number>  = {};
         const currencyMap: Record<string, 'CHF' | 'EUR'> = {};
-        // «Zeitraum»-Spalte (Spalte 1) = MASSGEBLICHES Perioden-Total pro Zeile.
-        // Die Tageszellen des Exports summieren NICHT immer exakt auf dieses
-        // Total — die Tageswerte werden deshalb proportional darauf abgeglichen.
-        let zGesamt = 0, zTakeAway = 0, zFood = 0, zBeverage = 0;
+        // «Zeitraum»-Spalte (Spalte 1) = Info/Kontrolle. NIE zur Skalierung
+        // der Tageswerte verwenden (deckt den ganzen Anzeigezeitraum ab, auch
+        // wenn nur ein Teil der Tage Spalten hat). zGesamt dient nur der
+        // hasGesamt-Erkennung.
+        let zGesamt = 0;
         // Präsenz der Take-Away-Zeile: fehlt sie in der Datei, ist takeAway
         // «nicht geliefert» (undefined) statt explizite 0 — Konsumenten dürfen
         // bestehende Take-Away-Werte dann nicht überschreiben.
@@ -843,12 +844,7 @@ export const parseGastronoviExcel = async (
             unlesbareWerte?.push({ zeile: String(row[0]).trim(), spalte: 'Zeitraum', roh: String(row[1]).trim() });
           }
           const zeitraum = zParsed.unreadable ? 0 : zParsed.amount;
-          if (zeitraum !== 0) {
-            if (isGesamt)        zGesamt   += zeitraum;
-            else if (isTakeAway) zTakeAway += zeitraum;
-            else if (isFood)     zFood     += zeitraum;
-            else if (isBeverage) zBeverage += zeitraum;
-          }
+          if (zeitraum !== 0 && isGesamt) zGesamt += zeitraum;
 
           for (const { colIdx, date } of dateColumns) {
             const cell = row[colIdx];
@@ -915,42 +911,14 @@ export const parseGastronoviExcel = async (
           };
         }).filter(r => r.total !== 0);
 
-        // ── 5. Abgleich auf die «Zeitraum»-Totale (massgeblich) ──
-        // Die Tageszellen des Gastronovi-Exports summieren nicht immer exakt
-        // auf das Perioden-Total. Jede Serie wird proportional skaliert und
-        // der Rundungsrest auf den letzten Tag mit Wert gelegt, damit die
-        // Monatssummen EXAKT den Zeitraum-Werten entsprechen.
-        const adjustSeries = (
-          get: (r: GastronoviDayResult) => number,
-          set: (r: GastronoviDayResult, v: number) => void,
-          target: number,
-        ) => {
-          if (target === 0 || results.length === 0) return;
-          const sum = results.reduce((s, r) => s + get(r), 0);
-          if (Math.abs(sum - target) < 0.05) return;
-          let lastIdx = results.length - 1;
-          results.forEach((r, i) => { if (get(r) !== 0) lastIdx = i; });
-          if (sum !== 0 && Math.sign(sum) === Math.sign(target)) {
-            // Proportional skalieren, Rundungsrest auf letzten Tag mit Wert.
-            const factor = target / sum;
-            let acc = 0;
-            results.forEach(r => {
-              const v = Math.round(get(r) * factor * 100) / 100;
-              set(r, v); acc += v;
-            });
-            const rest = Math.round((target - acc) * 100) / 100;
-            set(results[lastIdx], Math.round((get(results[lastIdx]) + rest) * 100) / 100);
-          } else {
-            // Keine skalierbare Basis (Summe 0 oder Vorzeichenwechsel):
-            // gesamte Differenz auf den letzten Tag mit Wert legen.
-            const rest = Math.round((target - sum) * 100) / 100;
-            set(results[lastIdx], Math.round((get(results[lastIdx]) + rest) * 100) / 100);
-          }
-        };
-        adjustSeries(r => r.total,    (r, v) => { r.total    = v; }, zGesamt);
-        if (hasTakeAwayRow) adjustSeries(r => r.takeAway ?? 0, (r, v) => { r.takeAway = v; }, zTakeAway);
-        adjustSeries(r => r.food,     (r, v) => { r.food     = v; }, zFood);
-        adjustSeries(r => r.beverage, (r, v) => { r.beverage = v; }, zBeverage);
+        // ── 5. KEIN Abgleich auf die «Zeitraum»-Totale ──
+        // Die Spalte «Gesamtbetrag im Anzeigezeitraum» deckt den GANZEN
+        // Anzeigezeitraum ab, auch wenn nur ein Teil der Tage als Spalten
+        // vorhanden ist. Ein proportionaler Abgleich hat die Tageswerte
+        // massiv aufgeblasen (verifiziert: Faktor ×2.62 bei 4 Tagesspalten).
+        // Die Per-Tag-Spaltenwerte werden deshalb 1:1 gespeichert; die
+        // Zeitraum-Spalte dient nur noch als Info/Kontrolle (zGesamt für
+        // hasGesamt-Erkennung).
 
         // Datenqualitäts-Guard: Take Away ist Teilmenge von Gesamt.
         for (const r of results) {

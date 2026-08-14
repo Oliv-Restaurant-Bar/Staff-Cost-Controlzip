@@ -31,3 +31,6 @@ Alle Tagesdaten-Parser (Gäste/Durchschnitt/Marketing/Umsatz) parsen Zellen stri
 - Monatstotale der Umsatz-Vorschau = BRUTTO-Summe der «Gesamt»-Zeile (gegen die Quelldatei kontrollierbar); nie via UmsatzTag/summiereUmsatz aus Import-Rohzeilen bauen — UmsatzTag verlangt ALLE Felder als Zahl, ein undefined takeAway ergibt NaN («CHF NaN»).
 - Zeilen-Labels flexibel, aber mit Neutral-Guard: Non-Foods/Aufladung Kundenkarten/Trinkgeld/Rundungsdifferenzen/Rabatte sind NIE eigene Kategorien («Non-Foods» matcht sonst includes('food') als Food). Gilt für revenue-parser UND den separaten VJ-Import (VjDailyImportSection hat einen EIGENEN Parser — bei Parser-Härtungen immer beide Pfade prüfen).
 - «None»/«null»-Platzhalter aus Exporten = leer (kein Wert), nicht unlesbar.
+
+## Zeitraum-Spalte NIE zur Skalierung
+- Die Spalte «Zeitraum»/«Gesamtbetrag im Anzeigezeitraum» deckt den GANZEN Anzeigezeitraum ab, auch wenn die Datei nur einen Teil der Tage als Spalten enthält. Ein proportionaler Abgleich der Tageswerte auf dieses Total blähte alle Tage auf (08/2026: Faktor ×2.62 bei 4 Tagesspalten). **Regel:** Tagesspaltenwerte immer 1:1 speichern; Zeitraum-Total nur Info/Kontrolle (zGesamt nur für hasGesamt-Erkennung). Regressionstest: revenue-parser-noscale.test.ts.
