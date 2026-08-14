@@ -119,3 +119,4 @@
 - [FIBU-Vergleichsscope 4020–4070](fibu-vergleichsscope.md) — Lieferanten-Abgleich beidseitig NUR 4020–4070; 4000 = Prodega-LSV-Durchlauf, 0-Anteil-Rechnungen nie zeigen/matchen.
 - [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.
 - [FIBU-Abgrenzungen & Jahres-Übernahme](fibu-abgrenzungen-jahresuebernahme.md) — TP/RB nie Kandidaten (auch degradiert aus Total); Jahres-Übernahme monats-gekeyt routen, nie Jahres-Keyspace.
+- [Abgrenzung → Rechnung umdatieren](abgrenzung-umdatieren.md) — Cross-Monats-Move: Ziel zuerst, Read-back-Verify für Move UND Rollback, Undo erst nach Erfolg, fibu-matches bereinigen.

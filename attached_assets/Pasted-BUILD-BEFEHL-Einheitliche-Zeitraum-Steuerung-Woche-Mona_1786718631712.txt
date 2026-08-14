@@ -1,0 +1,25 @@
+BUILD-BEFEHL — Einheitliche Zeitraum-Steuerung (Woche/Monat/Jahr) über alle Auswertungs-Seiten (beide Mandanten)
+
+Ziel: Die Zeitraum-/Granularitäts-Steuerung aus dem FIBU-Abgleich (Umschalter Woche · Monat · Jahr + Perioden-Auswahl, oben rechts) als EINE gemeinsame Komponente überall dort einsetzen, wo es bereits eine Jahr-/Monats-/Zeitraum-Navigation gibt.
+
+1. Gemeinsame Komponente: Die bestehende FIBU-Abgleich-Steuerung als wiederverwendbare Komponente extrahieren (Single Source), NICHT pro Seite duplizieren. Gleiche Optik, gleiche Position (oben rechts), gleiche Labels (Woche/Monat/Jahr), gleiche Perioden-Auswahl mit < > Blättern.
+
+2. Ausrollen auf:
+   - Erfolgsrechnung (Woche/Monat/Jahr; falls dort Quartal existiert, beibehalten)
+   - Warenrechnungen — ALLE Tabs: Erfassung, Analyse, FIBU-Abgleich (hat es schon), Lieferanten-Cockpit
+   - Budget
+   - Personalkosten
+   - Produktanalyse
+   - Generell zusätzlich überall, wo bereits eine Zeitraum-Navigation existiert
+   AUSNAHME — NICHT anfassen: Cockpit und Dienstplan (bleiben unverändert).
+
+3. Aggregations-Logik (konsistent mit dem, was Cockpit/FIBU schon machen):
+   - Additive Kennzahlen (Umsätze, Warenkosten, Stunden, Beträge) summieren über den gewählten Zeitraum je Tag; Wochen = volle ISO-Wochen über Monatsgrenzen; jeder Tag zieht aus seinem eigenen Monat.
+   - Quotienten/Verhältnisse (WKQ, PKQ, Ø-Werte) korrekt über den Zeitraum bilden, nur über Tage mit gültiger Basis (leer statt 0, nie durch 0 teilen).
+   - Bestehende SSOT/Berechnungen wiederverwenden, keine Parallel-Rechnung.
+
+4. Read-only-Regel für aggregierte Ansichten: In Jahr- (und ggf. Wochen-übergreifenden) Ansichten sind Pflege-/Bearbeitungs-Aktionen (Matches, Erklärt-Markierungen, Übernahmen, Budget-Eingaben, Umdatierungen) DEAKTIVIERT mit Hinweis "bitte in der Monatsansicht pflegen" — genau wie heute im FIBU-Abgleich. Reine Anzeige/Export bleibt erlaubt.
+
+5. Verhalten: gewählte Granularität + Periode innerhalb einer Seite über die Tabs beibehalten (nicht zurückspringen). Mandantengetrennt. Bestehende seiteneigene Monats-Navigation durch die gemeinsame Komponente ersetzen (keine doppelte Navigation).
+
+Akzeptanz: Auf Erfolgsrechnung, Warenrechnungen (alle Tabs), Budget, Personalkosten und Produktanalyse erscheint dieselbe Woche/Monat/Jahr-Steuerung wie im FIBU-Abgleich; Umschalten aggregiert die Kennzahlen korrekt (additive summieren, Quoten korrekt); Jahr-Ansicht ist für Pflege read-only. Cockpit und Dienstplan bleiben unverändert.

@@ -1156,7 +1156,7 @@ export async function saveMarktLieferantenMapping(tenantId: TenantId, mapping: i
 // Undo verweigert sauber, wenn der aktuelle Stand nicht mehr «nachher»
 // entspricht (zwischenzeitliche manuelle Edits werden nie überschrieben).
 
-export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie' | 'pdf_profil' | 'kreditoren' | 'manuell';
+export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie' | 'pdf_profil' | 'kreditoren' | 'manuell' | 'umdatierung';
 
 export interface WarenImportSnapshot {
   /** supplier_invoices_YYYY-MM pro betroffenem Monat */

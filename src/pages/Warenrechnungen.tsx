@@ -23,6 +23,9 @@ import {
   reaktiviereIgnorierteRechnung,
   filtereIgnorierteRechnungen,
   saveMonthInvoices,
+  erstelleWarenImportSnapshot,
+  saveWarenImportUndo,
+  bereinigeFibuMatchesFuerMonat,
   type IgnoreListe,
   uploadInvoiceReceipt,
   getInvoiceReceiptUrl,
@@ -57,7 +60,10 @@ import {
 } from '@/lib/waren-db';
 import { ladeNettoUmsatzByDate, ladeUmsatzTage, foodBeverageSplit, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
-import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
+import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor, WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
+import {
+  baueAbgrenzungVorschlaege, verschiebeDatumInMonat, type AbgrenzungVorschlag,
+} from '@/lib/waren-abgrenzungen';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
 import { ManuelleBuchungenImport } from '@/components/waren/ManuelleBuchungenImport';
@@ -110,7 +116,9 @@ import {
   autoMatchVorschlaege, LEERER_MATCH_STATE, DEFAULT_FIBU_MATCH_TOLERANZ,
   ERKLAER_GRUENDE, erklaerGrundLabel, zerlegeLieferantDifferenz,
   type FibuMatchGruppe, type FibuMatchState, type ErklaerteDifferenz, type ErklaerGrundId,
+  type DiffPosten,
 } from '@/lib/waren-fibu-matches';
+import { parseDatumCH } from '@/lib/profil-pdf-parse';
 import type { SageJournalEntry } from '@/types/reporting';
 import { computePLForMonth } from '@/lib/pl-engine';
 import { HintBox } from '@/components/ui/hint-box';
@@ -858,6 +866,156 @@ export default function WarenrechnungenPage() {
     () => paareAbgrenzungen(abgleich?.abgrenzungen ?? []),
     [abgleich],
   );
+  /** Abgrenzungen auflösen: Vorschläge (Lieferant+Betrag → App-Rechnung) —
+   *  nur in der Monatsansicht; Umdatieren NUR auf Bestätigung. */
+  const abgrenzungVorschlaege = useMemo<AbgrenzungVorschlag[]>(() => {
+    if (granular !== 'monat' || abgrenzungenAnzeige.offen.length === 0) return [];
+    return baueAbgrenzungVorschlaege({
+      offen: abgrenzungenAnzeige.offen, journalMonat: monthKey,
+      invoices: entries, resolve: abgleichResolver,
+    });
+  }, [granular, abgrenzungenAnzeige, monthKey, entries, abgleichResolver]);
+  /** Bestätigungs-Dialog «auf Leistungsmonat umdatieren» (+ WKQ-Vorschau). */
+  const [umdatierung, setUmdatierung] = useState<null | { vorschlag: AbgrenzungVorschlag; entry: InvoiceEntry }>(null);
+  const [umdatierPreview, setUmdatierPreview] = useState<null | {
+    key: string;
+    monate: Array<{ monat: string; aufwandVor: number; aufwandNach: number; wkqVor: number | null; wkqNach: number | null }>;
+  }>(null);
+  const [umdatierBusy, setUmdatierBusy] = useState(false);
+  const [umdatierRefresh, setUmdatierRefresh] = useState(0);
+  useEffect(() => {
+    if (!umdatierung) { setUmdatierPreview(null); return; }
+    const { vorschlag, entry } = umdatierung;
+    const quellMonat = entry.date.slice(0, 7);
+    const ziel = vorschlag.zielMonat;
+    const key = `${tenantId}|${entry.id}|${ziel}`;
+    let aktiv = true;
+    void (async () => {
+      try {
+        const [zielInvs, zielRev, quellRev] = await Promise.all([
+          loadMonthInvoices(tenantId, ziel),
+          ladeNettoUmsatzByDate(tenantId, `${ziel}-01`, `${ziel}-31`),
+          quellMonat === monthKey
+            ? Promise.resolve(revenueByDate)
+            : ladeNettoUmsatzByDate(tenantId, `${quellMonat}-01`, `${quellMonat}-31`),
+        ]);
+        if (!aktiv) return;
+        const quellInvs = await loadMonthInvoices(tenantId, quellMonat);
+        if (!aktiv) return;
+        // GLEICHE Basis wie alle Seiten-WKQs: nurWarenAnteil (Splits!) + relevantNet.
+        const rel = (invs: InvoiceEntry[]) => relevantNetOf(invs, warenGrenze);
+        const revSum = (rev: Record<string, number>) => Object.values(rev).reduce((s, v) => s + v, 0);
+        const moved = { ...entry, date: verschiebeDatumInMonat(entry.date, ziel) };
+        const zeile = (monat: string, vor: InvoiceEntry[], nach: InvoiceEntry[], rev: Record<string, number>) => {
+          const umsatz = revSum(rev);
+          const aVor = rel(vor); const aNach = rel(nach);
+          return {
+            monat, aufwandVor: aVor, aufwandNach: aNach,
+            wkqVor: warenkostenQuote(aVor, umsatz > 0 ? umsatz : null),
+            wkqNach: warenkostenQuote(aNach, umsatz > 0 ? umsatz : null),
+          };
+        };
+        setUmdatierPreview({
+          key,
+          monate: [
+            zeile(ziel, zielInvs, [...zielInvs, moved], zielRev),
+            zeile(quellMonat, quellInvs, quellInvs.filter(e => e.id !== entry.id), quellRev),
+          ].sort((a, b) => a.monat.localeCompare(b.monat)),
+        });
+      } catch {
+        if (aktiv) setUmdatierPreview({ key, monate: [] }); // Vorschau leer — Umdatieren bleibt möglich
+      }
+    })();
+    return () => { aktiv = false; };
+  }, [umdatierung, tenantId, monthKey, revenueByDate, warenGrenze]);
+
+  /** Umdatieren ausführen: VERSCHIEBEN (nie kopieren), Undo über beide Monate. */
+  async function handleUmdatieren() {
+    if (!umdatierung || !canCreate) return;
+    const { vorschlag, entry } = umdatierung;
+    const quellMonat = entry.date.slice(0, 7);
+    const ziel = vorschlag.zielMonat;
+    if (quellMonat === ziel) { toast.error('Rechnung liegt bereits im Leistungsmonat.'); return; }
+    setUmdatierBusy(true);
+    try {
+      const monate = [quellMonat, ziel];
+      const vorher = await erstelleWarenImportSnapshot(tenantId, { monate });
+      const quellBestand = vorher.invoicesProMonat[quellMonat] ?? [];
+      const zielBestand = vorher.invoicesProMonat[ziel] ?? [];
+      // Stale-Wache: Rechnung muss unverändert im Quellmonat stehen.
+      const aktuell = quellBestand.find(e => e.id === entry.id);
+      if (!aktuell) { toast.error('Rechnung nicht mehr im Quellmonat gefunden — bitte neu laden.'); return; }
+      const neuesDatum = verschiebeDatumInMonat(aktuell.date, ziel);
+      // Dublettensicher: existiert im Zielmonat bereits ein gleicher Beleg?
+      const dublette = findeDublette(zielBestand, {
+        supplierName: aktuell.supplierName, date: neuesDatum,
+        amountGross: aktuell.amountGross, reference: aktuell.reference,
+      });
+      if (dublette) {
+        const ok = window.confirm(
+          `Mögliche Dublette im Zielmonat: ${dublette.supplierName} · ${dublette.date} · CHF ${fmtChf(dublette.amountGross)}`
+          + `${dublette.reference ? ` · Ref. ${dublette.reference}` : ''} ist dort bereits erfasst.\n\nTrotzdem verschieben?`);
+        if (!ok) return;
+      }
+      const jetzt = new Date().toISOString();
+      const hinweis = `Umdatiert auf Leistungsmonat ${ziel} (FIBU-Abgrenzung${vorschlag.buchung.belegNr ? ` Beleg ${vorschlag.buchung.belegNr}` : ''})`;
+      const moved: InvoiceEntry = {
+        ...aktuell, date: neuesDatum, updatedAt: jetzt,
+        note: aktuell.note ? `${aktuell.note} · ${hinweis}` : hinweis,
+      };
+      // Reihenfolge bewusst ZIEL zuerst: schlägt der zweite Schritt fehl,
+      // entsteht schlimmstenfalls ein sichtbares Duplikat (kein Datenverlust).
+      const quellNeu = quellBestand.filter(e => e.id !== entry.id);
+      await saveMonthInvoices(tenantId, ziel, [...zielBestand, moved]);
+      await saveMonthInvoices(tenantId, quellMonat, quellNeu);
+      // Read-back-Verifikation (kvSet ohne CAS/Strict): beide Monate müssen den
+      // Zielzustand zeigen, sonst kompensieren wir auf den Ausgangszustand.
+      const [zielCheck, quellCheck] = await Promise.all([
+        loadMonthInvoices(tenantId, ziel), loadMonthInvoices(tenantId, quellMonat),
+      ]);
+      const ok = zielCheck.some(e => e.id === entry.id && e.date === neuesDatum)
+        && !quellCheck.some(e => e.id === entry.id);
+      if (!ok) {
+        // Kompensation MIT Read-back-Verifikation (kvSet unterdrückt Fehler —
+        // ein try/catch allein würde einen stillen No-op als Erfolg melden).
+        let restored = false;
+        try {
+          await saveMonthInvoices(tenantId, ziel, zielBestand);
+          await saveMonthInvoices(tenantId, quellMonat, quellBestand);
+          const [zielR, quellR] = await Promise.all([
+            loadMonthInvoices(tenantId, ziel), loadMonthInvoices(tenantId, quellMonat),
+          ]);
+          const gleich = (a: InvoiceEntry[], b: InvoiceEntry[]) =>
+            a.length === b.length && a.every(e => b.some(x => x.id === e.id && x.date === e.date));
+          restored = gleich(zielR, zielBestand) && gleich(quellR, quellBestand);
+        } catch { /* restored bleibt false */ }
+        toast.error(restored
+          ? 'Verschieben fehlgeschlagen — Ausgangszustand wiederhergestellt.'
+          : `Verschieben unvollständig — bitte Bestand ${quellMonat}/${ziel} für ${aktuell.supplierName} prüfen.`);
+        return;
+      }
+      // FIBU-Match-Zuordnungen des Quellmonats bereinigen (sonst «gematcht»-Leiche
+      // auf der entfernten Rechnungs-ID). Zielmonat referenziert die ID noch nicht.
+      await bereinigeFibuMatchesFuerMonat(tenantId, quellMonat, new Set(quellCheck.map(e => e.id)));
+      // Sichtbaren Abgleich-State sofort nachziehen (sonst «gematcht»-Leiche bis
+      // zum nächsten Monats-/Tab-Wechsel), nur wenn der Quellmonat gerade angezeigt wird.
+      if (quellMonat === monthKey) {
+        try { setFibuState(await loadFibuMatchState(tenantId, quellMonat)); } catch { /* nächster Load heilt */ }
+      }
+      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate });
+      await saveWarenImportUndo(tenantId, {
+        typ: 'umdatierung',
+        label: `Umdatierung ${aktuell.supplierName} ${quellMonat} → ${ziel}`,
+        zeitpunkt: jetzt, anzahlRechnungen: 1, vorher, nachher,
+      });
+      setUmdatierRefresh(k => k + 1);
+      setUmdatierung(null);
+      toast.success(`${aktuell.supplierName}: Rechnung auf ${neuesDatum} umdatiert (verschoben, nicht kopiert).`);
+      await loadData();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setUmdatierBusy(false); }
+  }
   // Ignorier-Liste anwenden: ignorierte Buchhaltungszeilen verschwinden aus der
   // Differenz (zählen NICHT mehr), bleiben aber über «Ignorierte anzeigen» erreichbar.
   const { sichtbar: uebernahmeKandidaten, ignoriert: ignorierteKandidaten } = useMemo(
@@ -2428,6 +2586,43 @@ export default function WarenrechnungenPage() {
     setReceiptFile(null);
     setReceiptInputKey(k => k + 1);
     if (clearQueue) setPdfQueue([]);
+  }
+
+  /**
+   * FIBU-Drilldown «als Rechnung nacherfassen»: öffnet den manuellen
+   * Erfassungs-Dialog mit den Werten der FIBU-Buchung vorausgefüllt.
+   * FIBU-Beträge sind NETTO (Soll−Haben auf dem Aufwandskonto) → Betrag als
+   * Netto-Erfassung (vatIncluded=false). Speichern läuft über handleSave —
+   * Dublettencheck und provisorisch/final-Logik bleiben unverändert.
+   */
+  function handleNacherfassen(lieferant: string, p: DiffPosten) {
+    if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
+    if (!(p.betrag > 0)) { toast.error('Nur positive FIBU-Buchungen können nacherfasst werden (Gutschrift/Storno bitte matchen oder erklären).'); return; }
+    let iso = p.datum ? (parseDatumCH(p.datum) ?? (/^\d{4}-\d{2}-\d{2}$/.test(p.datum) ? p.datum : null)) : null;
+    // Kalender-Gegenprobe (parseDatumCH akzeptiert z.B. 31.02.): ungültig → nicht übernehmen.
+    if (iso) {
+      const d = new Date(`${iso}T00:00:00Z`);
+      if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== iso) iso = null;
+    }
+    // Lieferant: kanonischer Abgleich-Name; wenn er ci im Stamm existiert,
+    // die Stamm-Schreibweise übernehmen (Aggregation ist case-sensitiv).
+    const stamm = suppliers.find(s => s.name.trim().toLowerCase() === lieferant.trim().toLowerCase());
+    const konto = p.konto ?? stamm?.defaultWarenkonto ?? '';
+    setForm(f => ({
+      ...EMPTY_FORM,
+      date: iso ?? f.date,
+      supplierName: stamm?.name ?? lieferant,
+      amount: p.betrag > 0 ? String(Math.round(p.betrag * 100) / 100) : '',
+      vatIncluded: false, // FIBU-Betrag ist netto
+      vatRate: f.vatRate,
+      reference: p.beleg ?? '',
+      note: 'Nacherfasst aus FIBU-Buchung',
+      warenkonto: konto,
+      kategorie: konto ? kontoKategorie(konto, warenkonten) : (stamm?.defaultKategorie ?? 'Sonstiges'),
+    }));
+    setReceiptFile(null);
+    setNeuOpen(true);
+    toast.info(`Vorausgefüllt aus FIBU: ${lieferant}${p.beleg ? ` · Beleg ${p.beleg}` : ''} — bitte prüfen und speichern.${iso ? '' : ' Datum konnte nicht übernommen werden — bitte manuell setzen.'}`);
   }
 
   async function handleSave() {
@@ -6000,6 +6195,7 @@ export default function WarenrechnungenPage() {
                                           buchungen={z.buchungen}
                                           gruppen={fibuState.gruppen}
                                           warenGrenze={warenGrenze}
+                                          {...(canCreate ? { onNacherfassen: (p: DiffPosten) => handleNacherfassen(z.lieferant, p) } : {})}
                                         />
                                       )}
                                       <FibuMatchBereich
@@ -6237,8 +6433,11 @@ export default function WarenrechnungenPage() {
                         {abgrenzungenAnzeige.offen.length > 0 && (
                           <table className="w-full text-sm">
                             <tbody>
-                              {abgrenzungenAnzeige.offen.map((e, i) => (
-                                <tr key={`${e.date}|${e.text}|${i}`} className="border-b border-border/30 text-muted-foreground">
+                              {abgrenzungenAnzeige.offen.map((e, i) => {
+                                const v = abgrenzungVorschlaege.find(x => x.buchung === e) ?? null;
+                                return (
+                                <Fragment key={`${e.date}|${e.text}|${i}`}>
+                                <tr className="border-b border-border/30 text-muted-foreground">
                                   <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap">{e.date}</td>
                                   <td className="py-1.5 pr-3">{e.text}</td>
                                   <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{e.belegNr ?? '–'}</td>
@@ -6247,14 +6446,110 @@ export default function WarenrechnungenPage() {
                                     <Badge variant="outline" className="text-[10px] border-sky-400/50 text-sky-700">Abgrenzung</Badge>
                                   </td>
                                 </tr>
-                              ))}
+                                {v && (
+                                  <tr className="border-b border-border/30">
+                                    <td />
+                                    <td colSpan={4} className="pb-2 text-xs">
+                                      {v.kandidaten.length > 0 ? (
+                                        <div className="space-y-1" data-testid={`abgrenzung-vorschlag-${i}`}>
+                                          {v.kandidaten.map(k => (
+                                            <div key={k.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                              <span className="text-muted-foreground">Passende App-Rechnung:</span>
+                                              <span className="font-medium">{k.supplierName}</span>
+                                              {k.reference && <span className="text-muted-foreground">Beleg {k.reference}</span>}
+                                              <span className="tabular-nums">CHF {fmtChf(k.amountNet)} netto</span>
+                                              <span className="text-muted-foreground tabular-nums">aktuell {k.date}</span>
+                                              {canCreate && (
+                                                <button
+                                                  type="button"
+                                                  className="inline-flex items-center rounded border border-sky-400/60 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors"
+                                                  data-testid={`abgrenzung-umdatieren-${i}`}
+                                                  onClick={() => setUmdatierung({ vorschlag: v, entry: k })}
+                                                >
+                                                  auf Leistungsmonat umdatieren ({v.zielMonat})
+                                                </button>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span className="text-muted-foreground italic" data-testid={`abgrenzung-keine-rechnung-${i}`}>
+                                          keine App-Rechnung gefunden ({v.lieferant ?? 'Lieferant nicht erkennbar'}, CHF {fmtChf(v.betragAbs)})
+                                          — evtl. nur in FIBU abgegrenzt.
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                                </Fragment>
+                                );
+                              })}
                             </tbody>
                           </table>
                         )}
+                        <WarenImportUndoButton tenantId={tenantId} typ="umdatierung"
+                          refresh={umdatierRefresh} onUndone={() => { void loadData(); }} />
                       </div>
                     )}
                   </section>
                 )}
+
+                {/* ── Abgrenzung auflösen: Rechnung auf Leistungsmonat umdatieren ── */}
+                <Dialog open={umdatierung !== null} onOpenChange={o => { if (!o) setUmdatierung(null); }}>
+                  <DialogContent className="max-w-lg" aria-describedby={undefined}>
+                    <DialogHeader>
+                      <DialogTitle>Auf Leistungsmonat umdatieren</DialogTitle>
+                    </DialogHeader>
+                    {umdatierung && (
+                      <div className="space-y-3 text-sm">
+                        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1">
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Abgrenzung (FIBU)</span><span className="text-right">{umdatierung.vorschlag.buchung.text}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Rechnung</span><span>{umdatierung.entry.supplierName}{umdatierung.entry.reference ? ` · ${umdatierung.entry.reference}` : ''}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-muted-foreground">Betrag (netto)</span><span className="tabular-nums font-medium">CHF {fmtChf(umdatierung.entry.amountNet)}</span></div>
+                          <div className="flex justify-between gap-3">
+                            <span className="text-muted-foreground">Belegdatum</span>
+                            <span className="tabular-nums">{umdatierung.entry.date} → <b>{verschiebeDatumInMonat(umdatierung.entry.date, umdatierung.vorschlag.zielMonat)}</b></span>
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border p-3">
+                          <p className="text-xs font-medium text-muted-foreground mb-1.5">Wirkung auf den direkten Warenaufwand / die WKQ</p>
+                          {umdatierPreview === null ? (
+                            <p className="text-xs text-muted-foreground">Vorschau wird berechnet…</p>
+                          ) : umdatierPreview.monate.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">Vorschau nicht verfügbar.</p>
+                          ) : (
+                            <table className="w-full text-xs">
+                              <tbody>
+                                {umdatierPreview.monate.map(m => (
+                                  <tr key={m.monat} className="border-b border-border/30 last:border-0">
+                                    <td className="py-1 pr-2 font-medium tabular-nums">{m.monat}</td>
+                                    <td className="py-1 pr-2 text-right tabular-nums">CHF {fmtChf(m.aufwandVor)} → <b>{fmtChf(m.aufwandNach)}</b></td>
+                                    <td className="py-1 text-right tabular-nums whitespace-nowrap">
+                                      {m.wkqVor !== null && m.wkqNach !== null
+                                        ? <>WKQ {fmtPct(m.wkqVor)} → <b>{fmtPct(m.wkqNach)}</b></>
+                                        : <span className="text-muted-foreground">WKQ — (kein Umsatz)</span>}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Die Rechnung wird VERSCHOBEN, nie kopiert — kein Doppelzählen. Rückgängig über
+                          «Umdatierung rückgängig» im Abgrenzungs-Block.
+                        </p>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <Button variant="outline" size="sm" onClick={() => setUmdatierung(null)}>Abbrechen</Button>
+                          <Button size="sm" disabled={umdatierBusy} onClick={() => { void handleUmdatieren(); }}
+                            data-testid="abgrenzung-umdatieren-bestaetigen">
+                            {umdatierBusy ? 'Verschieben…' : 'Umdatieren'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </DialogContent>
+                </Dialog>
 
                 {/* ── Ignorieren-Vorschau: Buchhaltungszeile im Abgleich ausblenden ── */}
                 <Dialog open={ignorierKandidat !== null} onOpenChange={o => { if (!o) setIgnorierKandidat(null); }}>
@@ -7320,13 +7615,15 @@ function DiffAufschluesselungPanel({ data, testid }: { data: DiffAufschluesselun
  * (Match-Reste/Rundung, nicht gebuchte Rechnungen, Nur-FIBU-Buchungen) —
  * Summe der Posten = Differenz der Zeile. Rein informativ.
  */
-function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen, warenGrenze }: {
+function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen, warenGrenze, onNacherfassen }: {
   lieferant: string;
   invoices: InvoiceEntry[];
   buchungen: SageJournalEntry[];
   gruppen: FibuMatchGruppe[];
   /** Kontoklassen-Grenze des Mandanten (Warenaufwand = 4000–Grenze). */
   warenGrenze?: number;
+  /** «als Rechnung nacherfassen» für nur-in-FIBU-Posten (fehlt = kein Button). */
+  onNacherfassen?: (p: DiffPosten) => void;
 }) {
   const { posten, summe } = useMemo(
     () => zerlegeLieferantDifferenz(invoices, buchungen, buchungKeysMitIndex(buchungen), gruppen, warenGrenze),
@@ -7341,6 +7638,19 @@ function DiffZusammensetzung({ lieferant, invoices, buchungen, gruppen, warenGre
           <span>
             {p.label}
             {p.detail && <span className="text-muted-foreground"> · {p.detail}</span>}
+            {/* Nur für positive Aufwands-Buchungen: Gutschriften/Storni (Betrag ≤ 0)
+                lassen sich nicht als Rechnung nacherfassen — dort Match/Erklärung nutzen. */}
+            {p.typ === 'nur_fibu' && p.betrag > 0 && onNacherfassen && (
+              <button
+                type="button"
+                className="ml-2 inline-flex items-center rounded border border-border/70 px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted/60 transition-colors"
+                data-testid={`nacherfassen-${lieferant}-${i}`}
+                title="Öffnet die manuelle Erfassung mit den Werten dieser FIBU-Buchung (dublettensicher, prüfen vor dem Speichern)."
+                onClick={() => onNacherfassen(p)}
+              >
+                als Rechnung nacherfassen
+              </button>
+            )}
           </span>
           <span className={cn('tabular-nums shrink-0', (p.typ === 'rundung' || p.typ === 'gruppe_extern') ? 'text-muted-foreground' : p.betrag < 0 ? 'text-amber-600' : 'text-red-600 dark:text-red-400')}>
             {p.betrag > 0 ? '+' : ''}{fmtChf(p.betrag)}
