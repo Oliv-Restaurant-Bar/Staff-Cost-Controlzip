@@ -5,6 +5,20 @@ description: How matchAnzahlUmsatz handles a product listed on multiple export l
 
 # Gastronovi product-sales import: duplicate-name line-items
 
+## Hierarchischer Export («> »-Detailzeilen) — Dreifachzählungs-Schutz (08/2026)
+Neuere Exporte sind hierarchisch: Kategorie-SUMMEN («Food (Speisen)», «Beverage (Getränke)», «Gesamt»)
+plus «> »-Detailzeilen; jede der 4 Dateien (BA/BU/FA/FU) enthält EINE Kategorie im Detail, die andere
+nur als Summe. Regeln in `parseWideFile` (hierarchischer Modus, sobald eine Zeile mit «>» beginnt):
+- Nicht-«>»-Zeilen = Aggregate → komplett überspringen; Ausnahme Blattwerte OHNE Kinder:
+  **Trinkgeld** und **Non-Foods (Nichtlebensmittel)** (`HIERARCHIE_BLATT_AUSNAHMEN`).
+- «> »-Präfix wird für Speicherung/Matching entfernt.
+- Blatt-Ausnahmen stehen in BEIDEN Dateipaaren → `dedupeAcrossPairs` (SalesUpload, in doParse =
+  Vorschau-paritätisch) entfernt NUR diese per Name+Datum (Food gewinnt); Lösch-Scope beim Import
+  aus den UN-deduplizierten Zeilen (sonst überleben Alt-Dubletten).
+- Umsatz-only-Produkte werden mit quantity 0 importiert (nicht mehr verworfen), «(nur in Umsatz)»-Flag bleibt.
+**Why:** Aggregat+Detail+Paar-Doppelung ergab exakt Faktor 3 (Beaulieu 08/2026: 18'897 statt 6'300).
+**How to apply:** Faktor gegen die Gesamt-Zeile der Datei muss 1.0 sein; Altformat (ohne «>») bleibt unverändert.
+
 When a single product name appears on **more than one line** in a Gastronovi wide-format
 export (the "Anzahl"/quantity file and/or the "Umsatz"/revenue file), `matchAnzahlUmsatz`
 in `src/lib/gastronovi-csv-parser.ts` aggregates them.

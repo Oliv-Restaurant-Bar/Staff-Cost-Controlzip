@@ -29,7 +29,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  parseWideFile, matchAnzahlUmsatz, generateImportBatch, saleDateRange,
+  parseWideFile, matchAnzahlUmsatz, generateImportBatch, saleDateRange, dedupeAcrossPairs,
   type NormalizedSaleRow, type MatchResult, type ParseResult,
 } from '@/lib/gastronovi-csv-parser';
 import { insertProductSales, deleteProductSalesForPeriod, computeDeleteScope, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
@@ -362,6 +362,9 @@ export default function SalesUpload() {
   const [parseError, setParseError] = useState('');
   const [foodResult, setFoodResult]         = useState<SectionResult | null>(null);
   const [beverageResult, setBeverageResult] = useState<SectionResult | null>(null);
+  // UN-deduplizierte Beverage-Zeilen — nur für den Lösch-Scope beim Import
+  // (Alt-Dubletten der Datei-Tage/Quellen werden mit ersetzt).
+  const [bevScopeRows, setBevScopeRows] = useState<NormalizedSaleRow[]>([]);
   const [importCount, setImportCount]       = useState(0);
   const [deletedCount, setDeletedCount]     = useState(0);
   const [importBatchId, setImportBatchId]   = useState('');
@@ -436,7 +439,22 @@ export default function SalesUpload() {
             notes,
           }
         );
-        setBeverageResult({ matchResult: bevMatch, anzahlParse: bevAnzahl, umsatzParse: bevUmsatz });
+        // Paar-übergreifende Dublettensicherung SCHON HIER (Vorschau = Import):
+        // Blattwerte ohne Detailzeilen (Trinkgeld, Non-Foods) stehen in BEIDEN
+        // Dateipaaren — sie fliessen genau einmal ein (Food-Paar gewinnt).
+        // Der Lösch-Scope beim Import nutzt die UN-deduplizierten Zeilen,
+        // damit Alt-Dubletten dieser Tage/Quellen mit ersetzt werden.
+        const { rows: bevRows, removed } = dedupeAcrossPairs(foodMatch.rows, bevMatch.rows);
+        setBevScopeRows(bevMatch.rows);
+        if (removed.length > 0) {
+          console.log('[SalesUpload] Paar-Dubletten entfernt (Food gewinnt):', removed);
+        }
+        setBeverageResult({
+          matchResult: { ...bevMatch, rows: bevRows },
+          anzahlParse: bevAnzahl, umsatzParse: bevUmsatz,
+        });
+      } else {
+        setBevScopeRows([]);
       }
 
       setStep('preview');
@@ -450,6 +468,7 @@ export default function SalesUpload() {
   // ── Importieren ─────────────────────────────────────────────────────────────
 
   async function doImport() {
+    // Vorschau = Import: beverageResult ist bereits paar-dedupliziert (doParse).
     const allRows: NormalizedSaleRow[] = [
       ...(foodResult?.matchResult.rows ?? []),
       ...(beverageResult?.matchResult.rows ?? []),
@@ -462,7 +481,12 @@ export default function SalesUpload() {
     // Nur die tatsächlich in der Datei enthaltenen Tage (pro Mandant + source)
     // werden gelöscht; Tage/Produkte ausserhalb der Datei bleiben unverändert.
     // Re-Import derselben Datei ⇒ identische Summen (idempotent).
-    const scope = computeDeleteScope(allRows);
+    // Scope aus UN-deduplizierten Zeilen: auch Tage/Quellen, deren Zeile durch
+    // die Paar-Dublettensicherung entfiel, werden bereinigt (kein Alt-Rest).
+    const scope = computeDeleteScope([
+      ...(foodResult?.matchResult.rows ?? []),
+      ...(bevScopeRows.length > 0 ? bevScopeRows : (beverageResult?.matchResult.rows ?? [])),
+    ]);
 
     console.log('[SalesUpload] Delete-before-insert (tag-genau, tenant=' + tenantId + '):', scope);
     const { deleted, error: delErr } = await deleteProductSalesForPeriod(tenantId, scope);
@@ -495,6 +519,7 @@ export default function SalesUpload() {
     setBeverageFiles({ anzahl: null, umsatz: null });
     setFoodResult(null);
     setBeverageResult(null);
+    setBevScopeRows([]);
     setParseError('');
     setImportCount(0);
     setDeletedCount(0);

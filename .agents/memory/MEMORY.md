@@ -17,7 +17,7 @@
 - [gn_imports data integrity](gn-import-data-integrity.md) — cost-center overlap filter only when non-empty; verify replace via .select rows-affected; batch keyed by stable id not fileName; never auto-split multi-day.
 - [Gastronovi parser diagnostics](gn-parser-diagnostics.md) — every GN import parser must return a debug object + failureReason on all paths; surface real CSV structure on failure, never blind-adapt to a guessed format.
 - [gn_* RLS live-DB state](gn-rls-live-state.md) — live DB had RLS on + zero policies despite DISABLE-RLS in setup; verify RLS empirically; Mgmt-API DDL is manual.
-- [Gastronovi product CSV duplicate lines](gastronovi-product-csv-duplicate-lines.md) — duplicate same-name lines are summed per product/date (flat CSV has no article#).
+- [Gastronovi product CSV duplicate lines](gastronovi-product-csv-duplicate-lines.md) — same-name lines summed per product/date; hierarchischer «> »-Export: Aggregate skippen, Trinkgeld/Non-Foods paar-dedupen, sonst Faktor 3.
 - [Guest duplicate merge safety](guest-merge.md) — no DB tx: move reservations FIRST, recompute aggregates from records, never touch match_key, tenant-filter every op.
 - [Import-Historie logging](import-history-logging.md) — audit log (import_runs) is best-effort/never-throws, additive (don't touch core import write), no guest PII, DB-default timestamp.
 - [Role-based employee visibility](role-employee-visibility.md) — one chokepoint getVisibleEmployeesForRole for dept-scoping; restricted role wins; render scoping isn't a hard guarantee.

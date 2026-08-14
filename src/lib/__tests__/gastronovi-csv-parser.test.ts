@@ -240,9 +240,13 @@ describe('matchAnzahlUmsatz – unmatched products (unchanged behaviour)', () =>
     expect(res.unmatchedProducts).toContain('NurMenge');
   });
 
-  it('flags Umsatz-only products as "(nur in Umsatz)" and does not import them', () => {
+  it('imports Umsatz-only products with quantity 0 and flags them as "(nur in Umsatz)"', () => {
+    // Spec 08/2026: «Produkt ohne Gegenstück bleibt erlaubt (Menge ohne Umsatz
+    // oder umgekehrt)» — Umsatz-only Zeilen werden mit quantity 0 importiert
+    // statt still verworfen (kein Datenverlust).
     const res = match([], [row('NurUmsatz', { '01.06.': 99 })], ['01.06.']);
-    expect(res.rows).toHaveLength(0);
+    expect(res.rows).toHaveLength(1);
+    expect(res.rows[0]).toMatchObject({ product_name: 'NurUmsatz', quantity: 0, revenue: 99, sale_date: '2026-06-01' });
     expect(res.unmatchedProducts.some(p => p.includes('NurUmsatz'))).toBe(true);
   });
 });

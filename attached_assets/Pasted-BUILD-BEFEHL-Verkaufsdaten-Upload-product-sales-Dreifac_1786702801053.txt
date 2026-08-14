@@ -1,0 +1,19 @@
+BUILD-BEFEHL — „Verkaufsdaten Upload" (product_sales) Dreifachzählung beheben (beide Mandanten)
+
+Problem: Der product_sales-Import zählt jede Position ~3× (Beaulieu: Absatz 18'897 statt 6'300, Umsatz 201'471.20 statt 67'174.40 — exakt Faktor 3.0). Ursachen: (a) Kategorie-Summenzeilen werden zusätzlich zu den Detailzeilen gezählt, (b) die 4 Dateien BA/BU/FA/FU überlappen sich, (c) einzelne Produkte stehen doppelt in der Datei.
+
+Aufgabe:
+
+Nur Blatt-Produktzeilen importieren. Zeilen, die reine Aggregate sind, komplett überspringen: Beverage (Getränke), Food (Speisen) und die Gesamt-Zeile. Diese sind Summen ihrer Detailzeilen (> …) und dürfen NICHT mitgezählt werden.
+Ausnahme: Trinkgeld und Non-Foods (Nichtlebensmittel) haben keine Detailzeilen → sie sind selbst Blattwerte und werden einmal gezählt.
+Datei-Überlappung auflösen. BA/FA liefern Anzahl, BU/FU liefern Umsatz; jede Datei enthält eine Kategorie im Detail und die andere nur als Summenzeile. Jedes Produkt darf genau einmal einfließen (Beverage-Produkte aus dem Beverage-Detail, Food-Produkte aus dem Food-Detail). Ein Produkt NICHT aus einer Datei als Detail UND aus einer anderen als Summe zählen.
+Doppelte Produkte deduplizieren. Gleiche Bezeichnung (z.B. > Fischknusperli, > Bärner Pommes Beilage, > Rösti Beilage stehen 2×) → Tageswerte zusammenführen (Mengen und Umsätze pro Tag addieren), nicht als zwei Produkte behalten.
+Anzahl↔Umsatz je Produkt/Tag matchen (per Bezeichnung + Datum). „Produkt ohne Gegenstück" bleibt erlaubt (Menge ohne Umsatz oder umgekehrt → leerer Gegenwert, nicht 0 erzwingen).
+Dublettensicher (Ersetzen pro Monat/Quelle, wie bereits im Hinweis „Re-Import sicher"), mandantengetrennt, Vorschau + Undo.
+
+Akzeptanztest (Beaulieu August 2026):
+
+Gesamt-Absatz = 6'300 (01.–14.08.) bzw. 6'299 bis 13.08.; nicht 18'897.
+Gesamt-Umsatz = 67'174.40 (inkl. 14.08.) bzw. 67'167.50 bis 13.08.; nicht 201'471.20.
+Food = 42'864.60 / 2'692 Stück · Beverage = 24'257.80 / 3'605 Stück · Trinkgeld 4.00 · Non-Food 48.00.
+Faktor gegenüber Gesamtzeile der Datei muss 1.0 sein.

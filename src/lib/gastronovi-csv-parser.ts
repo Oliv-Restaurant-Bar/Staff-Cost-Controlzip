@@ -86,7 +86,23 @@ const STRUCTURAL_PATTERNS: RegExp[] = [
   /^sonstiges$/i,
   // Zeilen die mit "Gesamt" beginnen
   /^gesamt/i,
+  // Kategorie-Summenzeilen im hierarchischen Export (Belt & Braces —
+  // im hierarchischen Modus werden Nicht-Detail-Zeilen ohnehin übersprungen)
+  /^food\s*\(speisen\)$/i,
+  /^beverage\s*\(getr[äa]nke\)$/i,
 ];
+
+/**
+ * Blattwerte OHNE Detailzeilen im hierarchischen Export («> …»-Format):
+ * Trinkgeld und Non-Foods haben keine «> »-Kinder und zählen selbst einmal.
+ */
+const HIERARCHIE_BLATT_AUSNAHMEN: RegExp[] = [
+  /^trinkgeld$/i,
+  /^non-?foods?\s*(\(nichtlebensmittel\))?$/i,
+];
+
+/** Erkennt eine Detailzeile («> Produkt») des hierarchischen Exports. */
+const DETAIL_PREFIX_REGEX = /^>+\s*/;
 
 /** Datumsformat der Spaltenheader: "01.03." / "01.03" / "01.03.2026" (mit Jahr) */
 const DATE_COL_REGEX = /^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$/;
@@ -255,13 +271,33 @@ export async function parseWideFile(file: File): Promise<ParseResult> {
   const skippedRows: string[]        = [];
   const warningRows: string[]        = [];
 
+  // HIERARCHISCHER Export erkannt? (Detailzeilen mit «> »-Präfix vorhanden)
+  // Dann sind Zeilen OHNE Präfix Kategorie-SUMMEN ihrer «> »-Kinder
+  // («Beverage (Getränke)», «Food (Speisen)», «Gesamt») und werden komplett
+  // übersprungen — sonst zählt jede Position mehrfach (Dreifachzählung).
+  // Ausnahme: Trinkgeld/Non-Foods haben keine Kinder → selbst Blattwerte.
+  const istHierarchisch = lines.some((l, i) =>
+    i >= 1 && DETAIL_PREFIX_REGEX.test((parseTsvLine(l)[0] ?? '').trim()) && (parseTsvLine(l)[0] ?? '').trim().length > 1);
+
   // Datenzeilen (ab Zeile 2)
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) continue;
 
     const cells = parseTsvLine(line);
-    const productName = cells[0]?.trim() ?? '';
+    let productName = cells[0]?.trim() ?? '';
+
+    if (istHierarchisch) {
+      if (DETAIL_PREFIX_REGEX.test(productName)) {
+        // Detailzeile: «> »-Präfix für Speicherung/Matching entfernen
+        productName = productName.replace(DETAIL_PREFIX_REGEX, '').trim();
+        if (!productName) { skippedRows.push(`Zeile ${i + 1}`); continue; }
+      } else if (!HIERARCHIE_BLATT_AUSNAHMEN.some(p => p.test(productName))) {
+        // Kategorie-/Gesamt-Summenzeile → NIE mitzählen
+        skippedRows.push(productName || `Zeile ${i + 1}`);
+        continue;
+      }
+    }
 
     // Strukturzeilen überspringen
     if (isStructuralRow(productName)) {
@@ -339,6 +375,34 @@ function aggregateRowsByName(rows: ParsedWideRow[]): Map<string, AggregatedProdu
     }
   }
   return map;
+}
+
+// ─── Paar-übergreifende Dublettensicherung ───────────────────────────────────
+
+/**
+ * Entfernt aus `secondary` die HIERARCHIE-BLATTWERTE (nur Trinkgeld/Non-Foods),
+ * deren (normalisierter Name, Datum) bereits in `primary` vorkommt. Diese
+ * Blattwerte stehen in BEIDEN Dateipaaren — sie dürfen pro Tag genau EINMAL
+ * einfliessen (das Food-Paar gewinnt). Bewusst NICHT auf beliebige Produkte
+ * angewandt: Ein echtes Food- und ein echtes Beverage-Produkt mit zufällig
+ * gleichem Namen bleiben beide erhalten (verschiedene Kategorien/Quellen).
+ */
+export function dedupeAcrossPairs(
+  primary: NormalizedSaleRow[],
+  secondary: NormalizedSaleRow[],
+): { rows: NormalizedSaleRow[]; removed: string[] } {
+  const seen = new Set(primary.map(r => `${normalizeProductName(r.product_name)}|${r.sale_date}`));
+  const rows: NormalizedSaleRow[] = [];
+  const removedSet = new Set<string>();
+  for (const r of secondary) {
+    const istBlattAusnahme = HIERARCHIE_BLATT_AUSNAHMEN.some(p => p.test(r.product_name.trim()));
+    if (istBlattAusnahme && seen.has(`${normalizeProductName(r.product_name)}|${r.sale_date}`)) {
+      removedSet.add(r.product_name);
+    } else {
+      rows.push(r);
+    }
+  }
+  return { rows, removed: [...removedSet] };
 }
 
 // ─── Matching: Anzahl + Umsatz → Tagesdatensätze ────────────────────────────
@@ -443,10 +507,27 @@ export function matchAnzahlUmsatz(
     }
   }
 
-  // Produkte nur in Umsatz (kein Anzahl-Gegenstück)
+  // Produkte nur in Umsatz (kein Anzahl-Gegenstück): trotzdem importieren
+  // (Umsatz ohne Menge — quantity 0 als «leerer Gegenwert», kein Datenverlust)
   for (const [key, umsatzEntry] of umsatzAgg) {
-    if (!anzahlAgg.has(key)) {
-      unmatched.push(`(nur in Umsatz) ${umsatzEntry.displayName}`);
+    if (anzahlAgg.has(key)) continue;
+    unmatched.push(`(nur in Umsatz) ${umsatzEntry.displayName}`);
+    for (const dateCol of allDateCols) {
+      const isoDate = headerToIsoDate(dateCol, year);
+      if (!isoDate) continue;
+      const rev = umsatzEntry.dayValues[dateCol] ?? 0;
+      if (rev === 0) continue;
+      rows.push({
+        product_name: umsatzEntry.displayName,
+        quantity:     0,
+        revenue:      rev,
+        sale_date:    isoDate,
+        category,
+        source:       meta.source || `${category}_csv_export`,
+        import_batch: meta.importBatch,
+        file_name:    fileNames,
+        notes:        meta.notes,
+      });
     }
   }
 
