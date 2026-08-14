@@ -257,6 +257,10 @@ describe('headerToIsoDate — gewähltes Jahr fliesst in die Datierung ein', () 
   it('akzeptiert Header ohne abschliessenden Punkt', () => {
     expect(headerToIsoDate('9.7', 2024)).toBe('2024-07-09');
   });
+  it('Header MIT Jahr («01.08.2026»): Jahr aus dem Header, nicht das Dropdown-Jahr', () => {
+    expect(headerToIsoDate('01.08.2026', 2025)).toBe('2026-08-01');
+    expect(headerToIsoDate('13.08.2026', 2026)).toBe('2026-08-13');
+  });
   it('Nicht-Datums-Header → null', () => {
     expect(headerToIsoDate('Bezeichnung', 2025)).toBeNull();
     expect(headerToIsoDate('', 2025)).toBeNull();

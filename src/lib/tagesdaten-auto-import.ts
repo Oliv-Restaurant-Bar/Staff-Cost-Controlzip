@@ -276,18 +276,20 @@ export async function detectTagesdatenTypFromFile(file: File): Promise<Tagesdate
  * ODER der Tag im gewählten Jahr nicht existiert.
  */
 export function isoFromDayMonth(header: string, year: number): string | null {
-  const m = String(header).trim().match(/^(\d{1,2})\.(\d{1,2})\.?$/);
+  // «TT.MM.» (Jahr aus Dropdown) ODER «TT.MM.JJJJ» (Jahr aus dem Header selbst)
+  const m = String(header).trim().match(/^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$/);
   if (!m) return null;
   const day = parseInt(m[1], 10);
   const month = parseInt(m[2], 10);
+  const y = m[3] ? parseInt(m[3], 10) : year;
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   // Echte Kalendergültigkeit: Date-Konstruktion muss verlustfrei zurückkommen
   // (fängt 29.02. in Nicht-Schaltjahren, 31.04., 31.06. usw. ab).
-  const dt = new Date(Date.UTC(year, month - 1, day));
-  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+  const dt = new Date(Date.UTC(y, month - 1, day));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
     return null;
   }
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 /** Menschliche Anzeige einer ungültigen Datumsspalte für Warnungen («29.02.»). */

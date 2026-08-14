@@ -342,7 +342,8 @@ export async function parseProdukteCSV(file: File): Promise<{
   if (rows.length < 2) return { entries: [], type, category };
 
   // Header-Zeile finden: Spalten im Format "DD.MM."
-  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?$/;
+  // «DD.MM.» (Jahr aus Dateiname/aktuell) ODER «DD.MM.YYYY» (Jahr aus Spalte)
+  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?(\d{4})?$/;
   let headerRowIdx = -1;
   const colMonthMap = new Map<number, string>();
 
@@ -356,7 +357,7 @@ export async function parseProdukteCSV(file: File): Promise<{
       const dayMatch = cell.match(DAY_COL_RE);
       if (dayMatch) {
         const mm = dayMatch[2].padStart(2, '0');
-        tempMap.set(c, `${year}-${mm}`);
+        tempMap.set(c, `${dayMatch[3] ?? year}-${mm}`);
         dayColCount++;
       }
     }
@@ -430,7 +431,8 @@ export async function parseProdukteExcel(
   // ── Header-Zeile analysieren ───────────────────────────────────────────────
   // Suche die Zeile mit den Datumsangaben (DD.MM.) — meistens Zeile 0 oder 1
   // Regex: "01.01." = Tag.Monat. (mit oder ohne trailing point)
-  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?$/;
+  // «DD.MM.» (Jahr aus Dateiname/aktuell) ODER «DD.MM.YYYY» (Jahr aus Spalte)
+  const DAY_COL_RE = /^(\d{1,2})\.(\d{2})\.?(\d{4})?$/;
 
   // Monatsname-Fallback für alternative Formate
   const MONTH_NAME_MAP: Record<string, string> = {
@@ -468,7 +470,7 @@ export async function parseProdukteExcel(
       const dayMatch = cell.match(DAY_COL_RE);
       if (dayMatch) {
         const mm = dayMatch[2].padStart(2, '0');
-        tempMap.set(c, `${year}-${mm}`);
+        tempMap.set(c, `${dayMatch[3] ?? year}-${mm}`);
         dayColCount++;
         continue;
       }

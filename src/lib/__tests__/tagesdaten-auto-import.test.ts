@@ -138,6 +138,15 @@ describe('isoFromDayMonth — Jahr-Zuordnung (Dropdown ist massgeblich)', () => 
     expect(isos.every(iso => iso!.startsWith('2024-'))).toBe(true);
   });
 
+  it('Header MIT Jahr («TT.MM.JJJJ»): Jahr aus dem Header, nicht aus dem Dropdown', () => {
+    expect(isoFromDayMonth('01.08.2026', 2025)).toBe('2026-08-01');
+    expect(isoFromDayMonth('13.08.2026', 2026)).toBe('2026-08-13');
+    expect(isoFromDayMonth('5.3.2024', 2026)).toBe('2024-03-05');
+    // Kalendergültigkeit gegen das Header-Jahr: 29.02.2025 existiert nicht.
+    expect(isoFromDayMonth('29.02.2025', 2024)).toBeNull();
+    expect(isoFromDayMonth('29.02.2024', 2025)).toBe('2024-02-29');
+  });
+
   it('gibt null bei ungültigem/keinem Datumsheader zurück', () => {
     expect(isoFromDayMonth('Zeitraum', 2026)).toBeNull();
     expect(isoFromDayMonth('', 2026)).toBeNull();

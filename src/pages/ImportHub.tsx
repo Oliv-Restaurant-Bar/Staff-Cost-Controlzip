@@ -2971,12 +2971,31 @@ function TagesdatenImportSection() {
       const headerRow = rawRows[0] ?? [];
       const invalidDates: string[] = [];
       const validIsoSet = new Set<string>();
+      const headerJahre = new Set<number>();
       for (const h of headerRow) {
         const s = String(h ?? '').trim();
-        if (!/^\d{1,2}\.\d{1,2}\.?$/.test(s)) continue; // keine TT.MM.-Spalte
+        // «TT.MM.» ODER «TT.MM.JJJJ» — sonst keine Datumsspalte
+        const dm = s.match(/^\d{1,2}\.\d{1,2}\.?(\d{4})?$/);
+        if (!dm) continue;
+        if (dm[1]) headerJahre.add(parseInt(dm[1], 10));
         const iso = isoFromDayMonth(s, year);
         if (iso == null) invalidDates.push(formatInvalidDayMonth(s));
         else validIsoSet.add(iso);
+      }
+      // Header MIT Jahr: das Spalten-Jahr ist massgeblich — es muss aber mit
+      // dem gewählten Jahr übereinstimmen, weil Ziel-Auswahl (Ist/Vorjahr),
+      // Sperren und Undo am Dropdown-Jahr hängen. Mismatch → hart blockieren
+      // statt still Daten in ein anderes Jahr zu schreiben.
+      if (headerJahre.size > 1) {
+        setError(`Die Datei enthält Datumsspalten aus mehreren Jahren (${[...headerJahre].sort().join(', ')}) — bitte Datei pro Jahr aufteilen.`);
+        setStatus('error');
+        return;
+      }
+      const headerJahr = headerJahre.size === 1 ? [...headerJahre][0] : null;
+      if (headerJahr != null && headerJahr !== year) {
+        setError(`Die Datumsspalten der Datei tragen das Jahr ${headerJahr}, gewählt ist aber ${year}. Bitte das Jahr-Dropdown auf ${headerJahr} stellen.`);
+        setStatus('error');
+        return;
       }
 
       let daily: Record<string, number> = {};

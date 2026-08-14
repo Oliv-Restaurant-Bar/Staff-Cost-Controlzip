@@ -75,13 +75,14 @@ export async function parseMaisonXlsx(
   if (!ws) throw new Error('Keine Tabelle im Excel gefunden');
 
   const headerRow = ws.getRow(1);
-  const dateCols: { col: number; day: number; month: number }[] = [];
+  const dateCols: { col: number; day: number; month: number; year: number }[] = [];
 
   headerRow.eachCell({ includeEmpty: false }, (cell, col) => {
     if (col < 3) return;
     const str = String(cell.value ?? '').trim();
-    const m = str.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
-    if (m) dateCols.push({ col, day: parseInt(m[1], 10), month: parseInt(m[2], 10) });
+    // «01.08.» (ohne Jahr → Dropdown-Jahr) ODER «01.08.2026» (Jahr aus Spalte)
+    const m = str.match(/^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$/);
+    if (m) dateCols.push({ col, day: parseInt(m[1], 10), month: parseInt(m[2], 10), year: m[3] ? parseInt(m[3], 10) : year });
   });
 
   if (dateCols.length === 0) throw new Error('Keine Datumsspalten in Zeile 1 gefunden');
@@ -101,11 +102,11 @@ export async function parseMaisonXlsx(
     if (!isMarketingLabel(label)) return;
 
     rowsFound.push(label);
-    dateCols.forEach(({ col, day, month }) => {
+    dateCols.forEach(({ col, day, month, year: y }) => {
       const spalte = `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}.`;
       const amount = parseCHFCell(row.getCell(col).value, label, spalte, unlesbareWerte);
       if (amount !== null && amount > 0) {
-        const key = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const key = `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         daily[key] = (daily[key] ?? 0) + amount;
         totalGross += amount;
       }

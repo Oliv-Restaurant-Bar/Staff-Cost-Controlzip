@@ -88,8 +88,8 @@ const STRUCTURAL_PATTERNS: RegExp[] = [
   /^gesamt/i,
 ];
 
-/** Datumsformat der Spaltenheader: "01.03." oder "01.03" */
-const DATE_COL_REGEX = /^(\d{1,2})\.(\d{1,2})\.?$/;
+/** Datumsformat der Spaltenheader: "01.03." / "01.03" / "01.03.2026" (mit Jahr) */
+const DATE_COL_REGEX = /^(\d{1,2})\.(\d{1,2})\.?(\d{4})?$/;
 
 // ─── Numerisches Parsen ───────────────────────────────────────────────────────
 
@@ -138,7 +138,9 @@ export function headerToIsoDate(header: string, year: number): string | null {
   if (!m) return null;
   const day   = m[1].padStart(2, '0');
   const month = m[2].padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  // Header MIT Jahr («01.08.2026») ist massgeblich — sonst Dropdown-Jahr.
+  const y = m[3] ? parseInt(m[3], 10) : year;
+  return `${y}-${month}-${day}`;
 }
 
 /** Erkennt ob ein Spaltenheader ein Datumsspalte ist */
