@@ -1,0 +1,19 @@
+BUILD-BEFEHL — Warenrechnungen: Import "Manuelle Buchungen (CSV/Text)" (beide Mandanten)
+
+Ziel: Im Dialog "Neue Rechnung erfassen" ein neuer Import "Manuelle Buchungen (CSV/Text)". Nimmt entweder einen eingefügten Text-Block ODER eine hochgeladene .csv/.txt-Datei mit festem, semikolon-getrenntem Schema und legt je Zeile eine Warenrechnungs-Buchung an.
+
+Schema (Kopfzeile erforderlich):
+Mandant;Lieferant;Datum;BelegNr;Kategorie;Konto;Netto;MwSt%;Bemerkung
+
+Regeln:
+1. Mandant: "Oliv" oder "Beaulieu" → in die korrekten tenant-Keys schreiben (Oliv unpräfixiert / Beaulieu beaulieu:). Zeilen mit fremdem Mandant klar markieren, nicht still ins falsche Mandat buchen.
+2. Lieferant: gegen den bestehenden Lieferanten-Stamm matchen (case-insensitiv). Unbekannter Lieferant → in der Vorschau als "neuer Lieferant" markieren (nicht still raten); Import erst nach Bestätigung.
+3. Datum: DD.MM.YYYY (auch DD.MM.YY tolerieren).
+4. BelegNr: Referenz. Dublettensicher: existiert (Mandant, Lieferant, BelegNr) schon, werden ALLE Zeilen dieses Belegs ERSETZT (nicht addiert). Ein Beleg darf mehrere Zeilen haben (z.B. gemischte MwSt) — alle mit gleicher BelegNr gehören zusammen.
+5. Kategorie: Food/Beverage/... ; Konto: Warenkonto (4060/4020/4070/4701 …) exakt übernehmen.
+6. Netto: Betrag CHF. MwSt%: 2.6/8.1/0 → App berechnet MwSt CHF und Brutto selbst (Netto × Satz). Als provisorische Buchung im Dual-Modell (spätere Monatsrechnung darf ersetzen).
+7. Bemerkung: Freitext übernehmen (z.B. "Barausgabe Quittung", "Lieferschein", "Rechnung").
+8. Parsing robust: Trennzeichen Semikolon (auch Tab/Komma tolerieren), Leerzeilen und Zeilen mit führendem # ignorieren, Tausender-Apostroph/Punkt bei Beträgen tolerieren. "leer statt 0", Beträge exakt.
+9. Vorschau vor Import (wie die anderen Importe): geparste Zeilen, berechnete MwSt/Brutto, Summen je Mandant, Flags für neue Lieferanten + Dubletten. Undo verfügbar.
+
+Akzeptanz: Einen 4-Zeilen-Block einfügen → Vorschau zeigt 4 Zeilen mit berechneter MwSt/Brutto + Summen; Import legt 4 Buchungen an (richtiger Mandant/Konto/Kategorie); erneuter Import derselben Zeilen → 0 neu / 4 ersetzt (dublettensicher).

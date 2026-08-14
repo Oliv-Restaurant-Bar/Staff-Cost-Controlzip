@@ -105,6 +105,37 @@ describe('wendeMonatsrechnungAn', () => {
   });
 });
 
+describe('Manuelle Buchungen (CSV/Text) im Dual-Modell', () => {
+  it('manuell erfasste Belege (id manuell-*, kein quelle/final) werden wie PDF-Lieferscheine abgeglichen & ersetzt', () => {
+    // Struktur exakt wie sie ManuelleBuchungenImport schreibt.
+    const manuell = (id: string, net: number) => inv({
+      id: `manuell-${id}`, supplierName: 'Fideco', date: '2026-08-05',
+      amountNet: net, amountGross: Math.round(net * 1.081 * 100) / 100,
+      vatIncluded: false, reference: `77460${id}`,
+      warenkonto: '4060', kategorie: 'Food',
+    });
+    const bestand = [manuell('26', 200), manuell('27', 167.7)];
+    const matchtFideco = (n: string) => n.trim().toLowerCase() === 'fideco';
+
+    expect(bestand.every(istProvisorischerLieferschein)).toBe(true);
+    const v = baueMonatsAbgleich({ bestand, monat: '2026-08', totalNet: 380, totalGross: 410.78, matcht: matchtFideco });
+    expect(v.lieferscheine).toHaveLength(2);
+    expect(v.sigmaNet).toBe(367.7);
+    expect(v.differenzNet).toBe(12.3); // Differenz sichtbar, kein Doppelzählen
+
+    const out = wendeMonatsrechnungAn({
+      bestand, vorschau: v, modus: 'anteilig', now: NOW,
+      rechnung: { datum: '2026-08-31', referenz: 'MR-08', totalNet: 380, totalGross: 410.78 },
+    });
+    expect(out).toHaveLength(2); // ersetzt, NIE addiert
+    expect(out.every(e => e.final === true && e.abgleichStatus === 'abgeglichen')).toBe(true);
+    expect(Math.round(out.reduce((s, e) => s + e.amountNet, 0) * 100) / 100).toBe(380);
+    // Beleg-Nr & Konto bleiben für Rückverfolgung/WKQ erhalten.
+    expect(out.map(e => e.reference)).toEqual(['7746026', '7746027']);
+    expect(out.every(e => e.warenkonto === '4060')).toBe(true);
+  });
+});
+
 describe('markiereDifferenzOffen / lieferantStatus', () => {
   it('markiert nur die Lieferscheine; Status-Priorität differenz_offen > provisorisch > abgeglichen', () => {
     const bestand = [inv({ id: 'l1' }), inv({ id: 'fremd', supplierName: 'Caporaso' })];

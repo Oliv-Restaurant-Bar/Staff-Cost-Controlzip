@@ -60,6 +60,7 @@ import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
+import { ManuelleBuchungenImport } from '@/components/waren/ManuelleBuchungenImport';
 import { klassifiziereWarenDateien, type UploadRouting } from '@/components/waren/WarenUniversalUpload';
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
@@ -3397,6 +3398,10 @@ export default function WarenrechnungenPage() {
                         uploadUiVersteckt={!importRouted}
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
                     </div>
+
+                    {/* ── Manuelle Buchungen (CSV/Text) — beide Mandanten, festes Schema ── */}
+                    <ManuelleBuchungenImport tenantId={tenantId}
+                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
                     {/* ── Manuelle Einzelerfassung: nur noch eingeklappt ── */}
                     <button
