@@ -100,27 +100,35 @@ function isTakeAwayLabel(row: string[]): boolean {
  * entscheidet die Mehrheit der CHF-Kategorienzeilen → umsatz. Eine reine
  * Durchschnitt-Datei (nur «Durchschnitt», keine Kategorien) → durchschnitt.
  */
-export function detectTagesdatenTyp(rows: string[][]): TagesdatenTyp | null {
-  if (!Array.isArray(rows) || rows.length === 0) return null;
+/** Gescannte Inhalts-Merkmale einer Datei (eine Durchlauf-Analyse aller Zeilen). */
+interface RowScan {
+  gesamtHasChf: boolean;
+  gaesteEindeutig: boolean;      // «Gesamt» mit «… P.»-Suffix
+  hasMarketing: boolean;
+  durchschnittChf: boolean;      // Zeile «Durchschnitt» mit CHF
+  umsatzProGastChf: boolean;     // Zeile «Umsatz pro Gast»/«Umsatz/Gast» mit CHF
+  umsatzKategorien: number;      // CHF-Kategorien Gesamt/Food/Beverage/Take Away
+}
 
+function scanRows(rows: string[][]): RowScan {
   let hasGesamt = false;
   let gesamtHasChf = false;
   let gesamtHasPersonSuffix = false;
   let hasMarketing = false;
-  let hasDurchschnitt = false;
-  let durchschnittHasChf = false;
-  let hasFood = false, foodHasChf = false;
-  let hasBeverage = false, beverageHasChf = false;
-  let hasTakeAway = false, takeAwayHasChf = false;
+  let durchschnittChf = false;
+  let umsatzProGastChf = false;
+  let foodHasChf = false, beverageHasChf = false, takeAwayHasChf = false;
 
-  for (const row of rows) {
+  for (const row of Array.isArray(rows) ? rows : []) {
     if (!Array.isArray(row) || row.length === 0) continue;
     const l = label(row);
     if (!l) continue;
     const chf = hasChfValue(row);
 
     if (labelIs(row, 'marketing')) hasMarketing = true;
-    if (labelIs(row, 'durchschnitt')) { hasDurchschnitt = true; if (chf) durchschnittHasChf = true; }
+    if (labelIs(row, 'durchschnitt') && chf) durchschnittChf = true;
+    // Bezeichnung explizit pro Person: «Umsatz pro Gast» / «Umsatz/Gast»
+    if (labelIs(row, 'umsatz pro gast', 'umsatz/gast') && chf) umsatzProGastChf = true;
 
     // «Gesamt»/«Total» (aber nicht die Take-Away-Zeile)
     if (!isTakeAwayLabel(row) && (l === 'gesamt' || l === 'total' || l.includes('gesamt') || l.includes('total'))) {
@@ -129,32 +137,68 @@ export function detectTagesdatenTyp(rows: string[][]): TagesdatenTyp | null {
       if (hasPersonSuffix(row)) gesamtHasPersonSuffix = true;
     }
 
-    if (isTakeAwayLabel(row)) { hasTakeAway = true; if (chf) takeAwayHasChf = true; }
-    if (labelIncludes(row, 'food', 'speisen')) { hasFood = true; if (chf) foodHasChf = true; }
-    if (labelIncludes(row, 'beverage', 'getränke')) { hasBeverage = true; if (chf) beverageHasChf = true; }
+    if (isTakeAwayLabel(row)) { if (chf) takeAwayHasChf = true; }
+    if (labelIncludes(row, 'food', 'speisen')) { if (chf) foodHasChf = true; }
+    if (labelIncludes(row, 'beverage', 'getränke')) { if (chf) beverageHasChf = true; }
   }
+
+  return {
+    gesamtHasChf,
+    gaesteEindeutig: hasGesamt && gesamtHasPersonSuffix,
+    hasMarketing,
+    durchschnittChf,
+    umsatzProGastChf,
+    umsatzKategorien:
+      Number(gesamtHasChf) + Number(foodHasChf) + Number(beverageHasChf) + Number(takeAwayHasChf),
+  };
+}
+
+export function detectTagesdatenTyp(rows: string[][]): TagesdatenTyp | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const s = scanRows(rows);
 
   // 1) Gäste: «Gesamt» mit Personen-Suffix
-  if (hasGesamt && gesamtHasPersonSuffix) return 'gaeste';
+  if (s.gaesteEindeutig) return 'gaeste';
 
   // 2) Marketing: vor Umsatz prüfen (Marketing-Dateien können Gesamt-Zeilen haben)
-  if (hasMarketing) return 'marketing';
+  if (s.hasMarketing) return 'marketing';
 
-  // Anzahl echter CHF-Umsatz-Kategorien (Gesamt/Food/Beverage/Take Away)
-  const umsatzKategorien =
-    Number(gesamtHasChf) + Number(foodHasChf) + Number(beverageHasChf) + Number(takeAwayHasChf);
+  // 3) Explizite Bezeichnung «Umsatz pro Gast»/«Umsatz/Gast» → pro Person.
+  if (s.umsatzProGastChf) return 'umsatzprogast';
 
-  // 3) Durchschnittsverkauf: «Durchschnitt» mit CHF …
-  if (hasDurchschnitt && durchschnittHasChf) {
-    // … aber wenn zusätzlich mehrheitlich CHF-Kategorien da sind → umsatz.
-    if (umsatzKategorien >= 2) return 'umsatz';
-    return 'durchschnitt';
+  // 4) «Durchschnitt» mit CHF …
+  if (s.durchschnittChf) {
+    // … mit mehrheitlich CHF-Kategorien daneben → umsatz.
+    if (s.umsatzKategorien >= 2) return 'umsatz';
+    // Sonst MEHRDEUTIG (Ø pro Bon vs. CHF pro Person) → KEIN Auto-Vorschlag;
+    // die UI zeigt einen neutralen Wahl-Hinweis (istDurchschnittMehrdeutig).
+    return null;
   }
 
-  // 4) Umsatz: Gesamt/Food/Beverage/Take Away MIT CHF-Werten
-  if (umsatzKategorien >= 1) return 'umsatz';
+  // 5) Umsatz: Gesamt/Food/Beverage/Take Away MIT CHF-Werten
+  if (s.umsatzKategorien >= 1) return 'umsatz';
 
   return null;
+}
+
+/**
+ * Mehrdeutige «Durchschnitt»-CHF-Datei (Ø pro Bon ODER Umsatz/Gast)? Die UI
+ * zeigt dann statt eines Auto-Vorschlags den neutralen Hinweis «Bitte wählen».
+ */
+export function istDurchschnittMehrdeutig(rows: string[][]): boolean {
+  const s = scanRows(rows);
+  return s.durchschnittChf && !s.umsatzProGastChf && !s.gaesteEindeutig
+    && !s.hasMarketing && s.umsatzKategorien < 2;
+}
+
+/**
+ * Enthält die Datei CHF-Werte PRO PERSON («Umsatz pro Gast»/«Umsatz/Gast»/
+ * «Durchschnitt» mit CHF) statt Personen-Anzahlen? Für die klare Fehlermeldung,
+ * wenn so eine Datei fälschlich als «Gäste / Anzahl Personen» geparst wird.
+ */
+export function istChfProPersonDatei(rows: string[][]): boolean {
+  const s = scanRows(rows);
+  return (s.durchschnittChf || s.umsatzProGastChf) && !s.gaesteEindeutig;
 }
 
 /**
@@ -181,7 +225,12 @@ export function suggestTypFromFileName(fileName: string): TagesdatenTyp | null {
  * füllt nur das Auswahlfeld vor, der Nutzer bestätigt aktiv.
  */
 export function suggestTagesdatenTyp(fileName: string, rows: string[][]): TagesdatenTyp | null {
-  return suggestTypFromFileName(fileName) ?? detectTagesdatenTyp(rows);
+  const ausName = suggestTypFromFileName(fileName);
+  // «Durchschnitt» im DATEINAMEN ist genauso mehrdeutig (Ø pro Bon vs. pro
+  // Person) wie die Inhalts-Zeile: bei mehrdeutigem Inhalt KEIN Vorschlag —
+  // die UI zeigt den neutralen Wahl-Hinweis.
+  if (ausName === 'durchschnitt' && istDurchschnittMehrdeutig(rows)) return null;
+  return ausName ?? detectTagesdatenTyp(rows);
 }
 
 /** Grobes Wertemuster der Datenzeilen: Personenzahlen vs. CHF-Beträge. */

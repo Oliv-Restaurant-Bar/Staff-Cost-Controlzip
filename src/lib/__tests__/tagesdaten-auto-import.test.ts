@@ -7,7 +7,7 @@
  * die vier Typen und der Nicht-erkannt-Fall ohne echte Excel-Datei prüfen.
  */
 import { describe, it, expect } from 'vitest';
-import { detectTagesdatenTyp, isoFromDayMonth, formatInvalidDayMonth } from '../tagesdaten-auto-import';
+import { detectTagesdatenTyp, istDurchschnittMehrdeutig, istChfProPersonDatei, isoFromDayMonth, formatInvalidDayMonth } from '../tagesdaten-auto-import';
 
 const HEADER = ['Bezeichnung', 'Zeitraum', '01.07.', '02.07.', '03.07.'];
 
@@ -29,12 +29,24 @@ describe('detectTagesdatenTyp', () => {
     expect(detectTagesdatenTyp(rows)).toBe('marketing');
   });
 
-  it('erkennt DURCHSCHNITT an der «Durchschnitt»-Zeile (CHF)', () => {
+  it('«Durchschnitt»-Zeile (CHF) ist MEHRDEUTIG (Ø pro Bon vs. pro Person) → kein Auto-Typ', () => {
     const rows = [
       HEADER,
       ['Durchschnitt', 'CHF 53.47', 'CHF 52.10', 'CHF 55.00', 'CHF 53.30'],
     ];
-    expect(detectTagesdatenTyp(rows)).toBe('durchschnitt');
+    expect(detectTagesdatenTyp(rows)).toBeNull();
+    expect(istDurchschnittMehrdeutig(rows)).toBe(true);
+  });
+
+  it('erkennt UMSATZ/GAST an der Bezeichnung «Umsatz pro Gast» bzw. «Umsatz/Gast» (CHF)', () => {
+    for (const bez of ['Umsatz pro Gast', ' umsatz pro gast ', 'Umsatz/Gast']) {
+      const rows = [
+        HEADER,
+        [bez, 'CHF 29.48', 'CHF 26.39', 'CHF 29.43', 'CHF 24.82'],
+      ];
+      expect(detectTagesdatenTyp(rows)).toBe('umsatzprogast');
+      expect(istDurchschnittMehrdeutig(rows)).toBe(false);
+    }
   });
 
   it('erkennt UMSATZ an Gesamt/Food/Beverage/Take Away in CHF', () => {
@@ -110,12 +122,25 @@ describe('detectTagesdatenTyp', () => {
     expect(detectTagesdatenTyp(rows)).toBe('umsatz');
   });
 
-  it('RANDFALL: reine Durchschnitt-Datei (keine Food/Beverage-Zeilen) → durchschnitt', () => {
+  it('RANDFALL: reine Durchschnitt-Datei (keine Food/Beverage-Zeilen) → mehrdeutig, kein Auto-Typ', () => {
     const rows = [
       HEADER,
       ['Durchschnitt', 'CHF 53.47', 'CHF 52.10', 'CHF 55.00', 'CHF 53.30'],
     ];
-    expect(detectTagesdatenTyp(rows)).toBe('durchschnitt');
+    expect(detectTagesdatenTyp(rows)).toBeNull();
+    expect(istDurchschnittMehrdeutig(rows)).toBe(true);
+  });
+
+  it('istChfProPersonDatei: CHF-Bezeichnungszeile ja, Gäste-Datei nein', () => {
+    expect(istChfProPersonDatei([
+      HEADER, ['Durchschnitt', 'CHF 29.48', 'CHF 26.39', 'CHF 29.43', 'CHF 24.82'],
+    ])).toBe(true);
+    expect(istChfProPersonDatei([
+      HEADER, ['Umsatz pro Gast', 'CHF 29.48', 'CHF 26.39', 'CHF 29.43', 'CHF 24.82'],
+    ])).toBe(true);
+    expect(istChfProPersonDatei([
+      HEADER, ['Gesamt', '8604 P.', '300 P.', '280 P.', '310 P.'],
+    ])).toBe(false);
   });
 });
 
@@ -188,8 +213,22 @@ describe('suggestTypFromFileName / suggestTagesdatenTyp', () => {
   it('weitere Dateinamen-Muster', () => {
     expect(suggestTypFromFileName('Umsatz Beaulieu 06.2026.xlsx')).toBe('umsatz');
     expect(suggestTypFromFileName('Durchschnitt 07.2026.xlsx')).toBe('durchschnitt');
+    expect(suggestTypFromFileName('Umsatz pro Gast 08.2026.xlsx')).toBe('umsatzprogast');
     expect(suggestTypFromFileName('Maison Marketing.xlsx')).toBe('marketing');
     expect(suggestTypFromFileName('irgendwas.xlsx')).toBeNull();
+  });
+  it('Dateiname «Durchschnitt» + mehrdeutiger Inhalt → KEIN Vorschlag (neutraler Hinweis in der UI)', () => {
+    const rows = [
+      ['Bezeichnung', 'Zeitraum', '01.08.', '02.08.', '03.08.'],
+      ['Durchschnitt', 'CHF 29.48', 'CHF 26.39', 'CHF 29.43', 'CHF 24.82'],
+    ];
+    expect(suggestTagesdatenTyp('Durchschnitt Oliv 08.2026.xlsx', rows)).toBeNull();
+    // Bezeichnung «Umsatz pro Gast» im Inhalt → eindeutig pro Person.
+    const rows2 = [
+      ['Bezeichnung', 'Zeitraum', '01.08.', '02.08.', '03.08.'],
+      ['Umsatz pro Gast', 'CHF 29.48', 'CHF 26.39', 'CHF 29.43', 'CHF 24.82'],
+    ];
+    expect(suggestTagesdatenTyp('export.xlsx', rows2)).toBe('umsatzprogast');
   });
 });
 

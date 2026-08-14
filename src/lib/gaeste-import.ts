@@ -170,3 +170,18 @@ export async function parseDurchschnittXlsx(file: File, year: number): Promise<T
   if (r.zeitraum != null) r.zeitraum = Math.round(r.zeitraum * 100) / 100;
   return r;
 }
+
+/**
+ * UMSATZ/GAST-Import (CHF pro Person): akzeptierte Bezeichnungszeilen sind
+ * «Umsatz pro Gast», «Umsatz/Gast» ODER «Durchschnitt» (case-insensitiv,
+ * getrimmt — Gastronovi exportiert die pro-Person-Variante teils mit derselben
+ * Kopfzeile «Durchschnitt» wie den Bon-Durchschnitt; der vom Nutzer GEWÄHLTE
+ * Typ entscheidet die Bedeutung). KEINE «Gesamt»-Zeile nötig; CHF-Tageswerte
+ * je Datumsspalte, unverändert übernommen.
+ */
+export async function parseUmsatzProGastXlsx(file: File, year: number): Promise<TagesmetrikImportResult> {
+  const r = await parseTagesmetrikXlsx(file, year, l =>
+    l === 'durchschnitt' || l === 'umsatz pro gast' || l === 'umsatz/gast');
+  if (r.zeitraum != null) r.zeitraum = Math.round(r.zeitraum * 100) / 100;
+  return r;
+}

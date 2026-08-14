@@ -100,12 +100,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDailyMergeStrict, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
-import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
+import { parseGaesteXlsx, parseDurchschnittXlsx, parseUmsatzProGastXlsx } from '@/lib/gaeste-import';
 import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, saveUmsatzProGast, loadUmsatzProGastDaily, loadUmsatzProGastMonthly, type GaesteDiff } from '@/lib/gaeste-store';
 import { berechneBonStats, ladeBruttoTageJahr, AUSREISSER_FAKTOR, type BonStats } from '@/lib/bon-stats';
 import { deriveGaesteDaily, ladeInhouseBruttoTageJahr } from '@/lib/gaeste-derived';
 import { ladeUmsatzTage } from '@/lib/umsatz';
-import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
+import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, istDurchschnittMehrdeutig, istChfProPersonDatei, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
 import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
 import { type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
@@ -2875,10 +2875,10 @@ type TagesdatenTypWahl = 'umsatz-ist' | 'umsatz-vj' | 'gaeste' | 'marketing' | '
 const TYP_WAHL_LABEL: Record<TagesdatenTypWahl, string> = {
   'umsatz-ist': 'Umsatz Ist',
   'umsatz-vj': 'Umsatz Vorjahr',
-  gaeste: 'Gäste / Anzahl Personen (getippt — nur Referenz)',
+  gaeste: 'Gäste / Anzahl Personen — nur Referenz (getippte Personen)',
   marketing: 'Marketing',
-  durchschnitt: 'Durchschnittsverkauf (Ø pro Bon)',
-  umsatzprogast: 'Umsatz/Gast (CHF pro Person)',
+  durchschnitt: 'Durchschnittsverkauf (Ø pro Bon) — speist Bon-Statistik',
+  umsatzprogast: 'Umsatz/Gast (CHF pro Person) — speist Gäste IN',
 };
 
 const typWahlToTyp = (w: TagesdatenTypWahl): TagesdatenTyp =>
@@ -2926,7 +2926,15 @@ function TagesdatenImportSection() {
     try {
       const rows = await readFirstSheetRows(f);
       const typ = suggestTagesdatenTyp(f.name, rows);
-      if (typ == null) { setTypVorschlag(null); return; }
+      if (typ == null) {
+        setTypVorschlag(null);
+        // Mehrdeutige «Durchschnitt»-CHF-Datei (Ø pro Bon ODER pro Person):
+        // bewusst KEIN Auto-Vorschlag — neutraler Wahl-Hinweis.
+        if (istDurchschnittMehrdeutig(rows)) {
+          setWarn('Bitte wählen: «Umsatz/Gast (CHF pro Person)» (→ Gäste IN) oder «Durchschnittsverkauf (Ø pro Bon)» (→ Bon-Statistik) — die Datei-Bezeichnung «Durchschnitt» ist mehrdeutig.');
+        }
+        return;
+      }
       const wahl: TagesdatenTypWahl = typ === 'umsatz'
         ? (targetForYear(selectedYear, currentYear) === 'actual' ? 'umsatz-ist' : 'umsatz-vj')
         : typ;
@@ -3012,6 +3020,14 @@ function TagesdatenImportSection() {
       let unlesbareWerte: UnlesbareZelle[] = [];
 
       if (typ === 'gaeste') {
+        // CHF-pro-Person-Datei («Umsatz pro Gast»/«Durchschnitt») als
+        // Personen-Anzahl gewählt → klare Meldung statt «Erwartete Zeile nicht
+        // gefunden» (dieser Typ verlangt eine «Gesamt»-Zeile mit Personen).
+        if (istChfProPersonDatei(rawRows)) {
+          setError('Diese Datei enthält CHF-Werte pro Person, keine Personen-Anzahlen. Bitte Typ «Umsatz/Gast (CHF pro Person)» wählen.');
+          setStatus('error');
+          return;
+        }
         const r = await parseGaesteXlsx(file, year);
         daily = r.daily; zeitraum = r.zeitraum; tagessumme = r.tagessumme;
         unlesbareWerte = r.unlesbareWerte;
@@ -3019,10 +3035,13 @@ function TagesdatenImportSection() {
           setWarn(`Zeitraum-Spalte der Datei: ${r.zeitraum.toLocaleString('de-CH')} P. — abweichend, Tageswerte sind massgeblich.`);
         }
       } else if (typ === 'durchschnitt' || typ === 'umsatzprogast') {
-        // Beide Typen nutzen den Gastronovi-Tagesexport mit Kopfzeile
-        // «Durchschnitt» — der TYP entscheidet über die Bedeutung (pro Bon
-        // vs. pro Person) und damit über den Speicherort. Nutzer wählt bewusst.
-        const r = await parseDurchschnittXlsx(file, year);
+        // Beide Typen nutzen den Gastronovi-Tagesexport — der TYP entscheidet
+        // über die Bedeutung (pro Bon vs. pro Person) und den Speicherort.
+        // umsatzprogast akzeptiert zusätzlich die Bezeichnungen «Umsatz pro
+        // Gast»/«Umsatz/Gast»; durchschnitt bleibt strikt «Durchschnitt».
+        const r = typ === 'umsatzprogast'
+          ? await parseUmsatzProGastXlsx(file, year)
+          : await parseDurchschnittXlsx(file, year);
         daily = r.daily; zeitraum = r.zeitraum;
         unlesbareWerte = r.unlesbareWerte;
       } else if (typ === 'marketing') {

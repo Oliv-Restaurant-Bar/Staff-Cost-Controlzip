@@ -1,0 +1,17 @@
+BUILD-BEFEHL — Import „Umsatz/Gast (CHF pro Person)" robust & auffindbar machen (beide Mandanten)
+
+Kontext: Bei Oliv lässt sich „Gäste IN" nicht befüllen. Der Datentyp „Umsatz/Gast (CHF pro Person)" ist schwer wählbar; die Auto-Erkennung schlägt bei „Durchschnitt"-CHF-Dateien fälschlich „Durchschnittsverkauf (Ø pro Bon)" vor; wählt man „Gäste / Anzahl Personen", kommt „Erwartete Zeile nicht gefunden" (dieser Typ erwartet eine „Gesamt"-Zeile). Die Datei ist inhaltlich korrekt: Bezeichnungszeile „Umsatz pro Gast" bzw. „Durchschnitt", CHF-Tageswerte (Aug 26.39/29.43/24.82).
+
+Aufgabe:
+
+Datentyp „Umsatz/Gast (CHF pro Person)" in BEIDEN Mandanten (Oliv + Beaulieu) im Dropdown sicher verfügbar und klar beschriftet. Prüfen, warum er bei Oliv nicht klar wählbar ist, und beheben.
+Parser akzeptiert die Bezeichnungszeile robust: erlaubte Werte für diese Zeile = „Umsatz pro Gast" ODER „Umsatz/Gast" ODER „Durchschnitt" (case-insensitiv, getrimmt). CHF-Tageswerte je Datumsspalte. Keine „Gesamt"-Zeile verlangen.
+Klare Fehlermeldung statt „Erwartete Zeile nicht gefunden": Wenn eine CHF-Datei („Umsatz pro Gast"/„Durchschnitt") mit Typ „Gäste / Anzahl Personen" hochgeladen wird, melden: „Diese Datei enthält CHF-Werte pro Person, keine Personen-Anzahlen. Bitte Typ ‚Umsatz/Gast (CHF pro Person)' wählen."
+Auto-Erkennung: Bezeichnung „Umsatz pro Gast" → „Umsatz/Gast (CHF pro Person)" vorschlagen. Bei „Durchschnitt"+CHF (mehrdeutig Bon vs. Person) keinen Typ automatisch setzen, sondern neutral: „Bitte wählen: Umsatz/Gast (→ Gäste IN) oder Ø pro Bon (→ Bon-Statistik)". Immer manuell überstimmbar.
+Drei ähnliche Typen klar unterscheiden (Label + Kurzbeschreibung direkt im Dropdown):
+„Umsatz/Gast (CHF pro Person)" → speist Gäste IN
+„Durchschnittsverkauf (Ø pro Bon)" → speist Bon-Statistik
+„Gäste / Anzahl Personen" → nur Referenz (getippte Personen)
+Mandantengetrennt, Vorschau + Undo unverändert.
+
+Akzeptanz (Oliv): Datei „Umsatz pro Gast" (CHF, Aug 26.39/29.43/24.82) mit Typ „Umsatz/Gast (CHF pro Person)" → ohne Fehler; Vorschau „KONTROLLE ABGELEITETE GÄSTE IN"; nach Import Gäste IN = 3'809, Ø-Verkauf pro Gast 29.48.
