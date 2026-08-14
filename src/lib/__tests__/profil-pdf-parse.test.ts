@@ -194,6 +194,38 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     const r = parseProfilPdf(text, P);
     expect(r.lieferdatum).toBeNull();
   });
+  it('Fideco gescannter Lieferschein (OCR-Text, ohne MWST-Nr): Erkennung via Name/Kd-Nr, LS-Nr, LS-Datum, Gesamt-Betrag', () => {
+    const r = parse('fideco-ls-7746026-ocr.txt');
+    expect(r.profil?.id).toBe('fideco');
+    expect(r.rechnungsNr).toBe('7746026');
+    // «LS-Datum 3.08.26»: 1-stelliger Tag + 2-stelliges Jahr → 2026-08-03
+    expect(r.lieferdatum).toBe('2026-08-03');
+    // «Gesamt-Betrag» = NETTO (Lieferschein-Warenwert)
+    expect(r.netto).toBe(164.5);
+    expect(r.mwstSatz).toBe(2.6);
+  });
+  it('Fideco Scan ohne LS-Datum/Gesamt-Betrag: Felder bleiben leer (nie raten)', () => {
+    const text = fx('fideco-ls-7746026-ocr.txt')
+      .replace(/LS-Datum[^\n]*/, 'LS-Datum')
+      .replace(/Gesamt-Betrag[^\n]*/, 'Gesamt-Betrag');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('fideco');
+    expect(r.lieferdatum).toBeNull();
+    expect(r.netto).toBeNull();
+  });
+  it('Fideco Scan: generisches «Warenwert»-Label liefert im Scan-Pfad KEINEN Betrag', () => {
+    const text = fx('fideco-ls-7746026-ocr.txt')
+      .replace(/Gesamt-Betrag[^\n]*/, 'Warenwert 123.45');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('fideco');
+    expect(r.netto).toBeNull();
+  });
+  it('Nackte Kundennr «27135» im Kopf ist KEIN Fideco-Signal (kein Raten bei Unbekannten)', () => {
+    const text = ['Unbekannte Firma GmbH', 'Referenz 127135 / 2026', 'Lieferschein 999999',
+      'Betrag 50.00'].join('\n');
+    const { profil } = findeProfilImText(text, P);
+    expect(profil).toBeNull();
+  });
   it('Fideco 5356149: netto 3416.45 / MwSt 88.85 (2.6%)', () => {
     const r = parse('fideco-5356149.txt');
     expect(r.profil?.id).toBe('fideco');

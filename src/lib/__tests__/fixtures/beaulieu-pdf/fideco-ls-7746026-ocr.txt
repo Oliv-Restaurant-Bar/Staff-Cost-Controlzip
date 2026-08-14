@@ -1,0 +1,20 @@
+FIDECO AG
+Fleisch und Comestibles
+Industriestrasse 3
+3210 Kerzers
+
+Lieferschein-Nr 7746026
+LS-Datum 3.08.26
+Kd-Nr 27135
+
+Restaurant Beaulieu
+Beaulieustrasse 26
+3012 Bern
+
+Art-Nr Bezeichnung Menge Einheit Preis Betrag M
+4851 Rindsentrecote 2.350 KG 43.10 101.29 1
+4903 Kalbsgeschnetzeltes 1.800 KG 35.12 63.21 1
+
+Gesamt-Betrag 164.50
+
+MWST: 1 = 2,6% / 2 = 8,1% / 3 = 0%

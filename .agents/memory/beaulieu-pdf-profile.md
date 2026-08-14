@@ -85,3 +85,5 @@ Ein Dropzone klassifiziert Dateien (CSV→CSV-Import, FS-Kennung/ZIP→Feldschl�
 - Beleg-Adresse ist IMMER Beaulieu (auch für Oliv-Lieferungen) — Mandant via Kunden-Nr: 9865.2 = Beaulieu, andere (Oliv 1422004) ⇒ null in erkenneMandantImText.
 - Blöcke «Lieferschein Nr.» UND «Nachlieferung Nr.» = eigenständige Belege; Kopf-«Total» ist Beleg-Summe, keine Position; Positionszeilen via Artikel-Nr-Muster XX.NN.NN mit optionalem 4. Segment (BW.90.00.3, Rechnung 48162!) und \s+-Trennern (produktive Rekonstruktion liefert EINZEL-Leerzeichen!).
 - Dokumenttyp-Override muss auch dt==='lieferschein' übersteuern («Rechnungsnummer» matcht \bRechnung\b nicht → generische Erkennung kippt auf lieferschein).
+
+**Fideco-Scan-OCR (08/2026):** Gescannte Fideco-Lieferscheine ohne Textlayer laufen über den OCR-Fallback (`pdf-ocr.ts`, tesseract 'deu', nur bei `hasTextLayer:false`). Erkennung nur via Kopf-Token «fideco» (nackte Kundennr 27135 bewusst KEIN Signal). Scan-Pfad im Fideco-Kopfparser: Betrag NUR aus «Gesamt-Betrag» (als NETTO interpretiert), generische Labels wie «Warenwert» liefern dort nichts; kein Datum/Betrag → leer, nie heute.

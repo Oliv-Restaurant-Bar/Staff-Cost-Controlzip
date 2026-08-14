@@ -154,12 +154,26 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       for (const f of pdfs) {
         try {
           const extract = await extractGnPdfTextItems(f);
+          let text: string;
+          let ausOcr = false;
           if (!extract.hasTextLayer) {
-            toast.warning(`${f.name}: kein Text im PDF (Scan?) — bitte manuell erfassen.`);
-            continue;
+            // OCR-Fallback NUR für Scans ohne Textebene (z.B. Fideco-Liefer-
+            // scheine) — text-basierte Importe bleiben unverändert schnell.
+            toast.info(`${f.name}: kein Text-Layer — Texterkennung (OCR) läuft …`);
+            const ocr = await (await import('@/lib/pdf-ocr')).ocrPdfText(f).catch(() => null);
+            if (!ocr) {
+              toast.warning(`${f.name}: kein Text im PDF erkennbar (auch per OCR nicht) — bitte manuell erfassen.`);
+              continue;
+            }
+            text = ocr.text;
+            ausOcr = true;
+          } else {
+            text = reconstructGnPdfLines(extract.pages).map(l => l.text).join('\n');
           }
-          const text = reconstructGnPdfLines(extract.pages).map(l => l.text).join('\n');
           const erg = parseProfilPdf(text, aktuelleProfile);
+          if (ausOcr) {
+            erg.hinweise.unshift('Text per OCR aus Scan gewonnen — Beleg-Nr, Datum und Betrag bitte gegen das Original prüfen.');
+          }
           // Dual-Lieferant: Dokumenttyp INHALTSBASIERT (Belegüberschrift).
           // «Sammelrechnung/Monatsrechnung» = massgeblich/final — auch mit nur
           // EINER Lieferung. «Lieferschein»/AB/Offerte = provisorisch — auch

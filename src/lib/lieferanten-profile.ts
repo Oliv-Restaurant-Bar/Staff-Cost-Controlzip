@@ -99,7 +99,12 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // Firmenname ODER die Spahni-Kundennummer XBEA (= Restaurant Beaulieu).
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true,
     erkennungTokenGruppen: [['metzgerei spahni'], ['xbea']] },
-  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
+  // Kopf-Fallback für gescannte Lieferscheine (OCR, keine MWST-Nr im Text):
+  // NUR der Firmenname «Fideco» in der Kopfzone. Die Kundennr 27135 ist als
+  // nacktes Ziffern-Substring bewusst KEIN Signal (Teiltreffer in fremden
+  // Referenz-/Belegnummern wären möglich — kein Raten bei Unbekannten).
+  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual',
+    erkennungTokenGruppen: [['fideco']] },
   // Gourmador: DUAL — Lieferscheine laufen provisorisch (importiert ODER
   // manuell erfasst); die Faktura (Monatsrechnung) gleicht gegen die
   // Lieferschein-Summe ab und ERSETZT sie (Differenz einzeln bestätigen).

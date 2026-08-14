@@ -768,11 +768,30 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     while ((m = re.exec(text)) !== null) {
       netto += parseBetrag(m[1]) ?? 0; mwst += parseBetrag(m[2]) ?? 0; gefunden = true;
     }
+    // Gescannter Einzel-Lieferschein (OCR): «Lieferschein-Nr 7746026»,
+    // «LS-Datum 3.08.26» (1-stelliger Tag/2-stelliges Jahr möglich) und
+    // «Gesamt-Betrag 164.50». Der Gesamt-Betrag wird als NETTO interpretiert
+    // (Lieferschein-Warenwert; MWST-Legende 1=2.6%/2=8.1%/3=0% ist auf dem
+    // LS nur informativ) — Kontrolle im Abgleich mit der Monatsrechnung.
+    // Kein Fund → Felder bleiben leer (nie raten, nie heutiges Datum).
+    const lsNr = suche(text, [
+      /Lieferschein[\s-]*(?:Nr\.?)?\s*:?\s*(\d{6,10})/i,
+      /\bLS[\s-]*Nr\.?\s*:?\s*(\d{6,10})/i,
+    ]);
+    const lsDatum = parseDatumCH(suche(text, [/LS[\s-]*Datum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
+    const lsBetrag = gefunden ? null
+      : sucheBetrag(text, [new RegExp(`Gesamt[\\s-]*Betrag\\s*:?\\s*(?:CHF\\s*)?(${BETRAG_RE.source})`, 'i')]);
+    // Scan-Lieferschein erkannt (LS-Nr oder LS-Datum vorhanden): der Betrag
+    // kommt AUSSCHLIESSLICH aus «Gesamt-Betrag» — generische Labels
+    // («Warenwert» u.ä.) dürfen im Scan-Pfad KEINEN Betrag liefern (kein
+    // Raten); ohne Fund bleibt das Feld leer.
+    const istScanLs = !gefunden && (lsNr !== null || lsDatum !== null);
     return {
       ...g,
-      rechnungsNr: suche(text, [/RECHNUNG\s+Nr\.\s*(\d{4,10})/i]),
-      netto: gefunden ? rundung2(netto) : g.netto,
-      mwst: gefunden ? rundung2(mwst) : g.mwst,
+      rechnungsNr: suche(text, [/RECHNUNG\s+Nr\.\s*(\d{4,10})/i]) ?? lsNr,
+      lieferdatum: lsDatum ?? g.lieferdatum,
+      netto: gefunden ? rundung2(netto) : istScanLs ? lsBetrag : g.netto,
+      mwst: gefunden ? rundung2(mwst) : istScanLs ? null : g.mwst,
       mwstSatz: 2.6,
     };
   },
