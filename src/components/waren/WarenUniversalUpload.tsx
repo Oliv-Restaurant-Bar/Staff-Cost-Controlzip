@@ -65,23 +65,37 @@ export async function klassifiziereWarenDateien(
     // Import (zeigt selbst die passende Fehlermeldung/manuelle Zuordnung).
     try {
       const res = await extractGnPdfTextItems(f);
+      let text: string;
+      let perOcr = false;
       if (!res.hasTextLayer) {
-        routing.profil.push(f);
-        routing.erkannt.push({ datei: f, file: f.name, ziel: 'Lieferanten-PDF (kein Text-Layer — manuelle Prüfung)', kanal: 'profil' });
-        continue;
+        // OCR-FALLBACK VOR dem Text-Layer-Gate: Scans werden ZUERST per OCR
+        // gelesen und erst DANACH klassifiziert/abgewiesen — nie vorher.
+        toast.info(`${f.name}: kein Text-Layer — Texterkennung (OCR) läuft …`);
+        const ocr = await (await import('@/lib/pdf-ocr')).ocrPdfText(f).catch(() => null);
+        if (!ocr) {
+          routing.profil.push(f);
+          routing.erkannt.push({ datei: f, file: f.name, ziel: 'Lieferanten-PDF (kein Text erkennbar, auch per OCR nicht — manuelle Prüfung)', kanal: 'profil' });
+          continue;
+        }
+        text = ocr.text;
+        perOcr = true;
+      } else {
+        const zeilen = toFsZeilen(reconstructGnPdfLines(res.pages));
+        if (istFeldschloesschenPdf(zeilen)) {
+          routing.fs.push(f);
+          routing.erkannt.push({ datei: f, file: f.name, ziel: 'Feldschlösschen', kanal: 'fs' });
+          continue;
+        }
+        text = zeilen.map(z => z.text).join('\n');
       }
-      const zeilen = toFsZeilen(reconstructGnPdfLines(res.pages));
-      if (istFeldschloesschenPdf(zeilen)) {
-        routing.fs.push(f);
-        routing.erkannt.push({ datei: f, file: f.name, ziel: 'Feldschlösschen', kanal: 'fs' });
-        continue;
-      }
-      const text = zeilen.map(z => z.text).join('\n');
       const { profil } = findeProfilImText(text, profile);
       routing.profil.push(f);
       routing.erkannt.push({
         datei: f, file: f.name, kanal: 'profil',
-        ziel: profil ? `${profil.name} (Profil)` : 'Unbekannter Lieferant — manuelle Zuordnung',
+        ziel: profil
+          ? `${profil.name} (Profil${perOcr ? ', OCR' : ''})`
+          : perOcr ? 'Scan (OCR) — unbekannter Lieferant, manuelle Zuordnung'
+          : 'Unbekannter Lieferant — manuelle Zuordnung',
         profilName: profil?.name,
       });
     } catch (e) {

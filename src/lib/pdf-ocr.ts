@@ -28,11 +28,27 @@ export interface PdfOcrResult {
   pageCount: number;
 }
 
+/** Ergebnis-Cache pro File-Objekt: Klassifikation (Upload-Routing) und
+ *  Import-Vorschau brauchen beide den OCR-Text — dieselbe Datei wird nur
+ *  EINMAL erkannt. Auch `null` (OCR gescheitert) wird gecacht; Fehler nicht. */
+const ocrCache = new WeakMap<File, Promise<PdfOcrResult | null>>();
+
 /**
  * OCR über alle Seiten eines Scan-PDFs. Gibt `null` zurück, wenn praktisch
  * kein Text erkannt wurde — der Aufrufer darf dann NICHTS ableiten.
+ * In-flight-Promise-Cache: auch parallele Aufrufer derselben Datei starten
+ * nur EINEN OCR-Lauf; abgelehnte Promises werden entfernt (Retry möglich).
  */
-export async function ocrPdfText(file: File): Promise<PdfOcrResult | null> {
+export function ocrPdfText(file: File): Promise<PdfOcrResult | null> {
+  const laufend = ocrCache.get(file);
+  if (laufend) return laufend;
+  const p = ocrPdfTextUncached(file);
+  ocrCache.set(file, p);
+  p.catch(() => { if (ocrCache.get(file) === p) ocrCache.delete(file); });
+  return p;
+}
+
+async function ocrPdfTextUncached(file: File): Promise<PdfOcrResult | null> {
   ensurePdfWorkerConfigured();
   const buffer = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
