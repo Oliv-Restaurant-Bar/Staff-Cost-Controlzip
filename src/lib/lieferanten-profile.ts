@@ -43,6 +43,12 @@ export interface LieferantenProfil {
   mwstSatz?: number;
   /** Namens-Fallback: alle Tokens müssen im PDF-Text vorkommen (lowercase). */
   erkennungTokens?: string[];
+  /** Kopf-Fallback (ODER-Gruppen): greift NUR, wenn keine MWST-Nr im Text zu
+   *  einem Profil passt. Eine Gruppe matcht, wenn ALLE ihre Tokens in der
+   *  KOPFZONE (erste ~25 nicht-leere Zeilen) vorkommen (lowercase). Für
+   *  Belege ohne MWST-Nr im Kopf (z.B. Metzgerei-Spahni-Lieferscheine).
+   *  Fest an die Default-Profile gebunden — nie geraten/gelernt. */
+  erkennungTokenGruppen?: string[][];
   /** IBAN-Fallback (ohne Leerzeichen, uppercase). */
   iban?: string;
   /** Stufe-2-Parser (Positionen je Lieferung), wo das Layout es hergibt. */
@@ -89,7 +95,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // wieder aktiv (Wein-Einzelrechnungen, bucht sofort final wie Schenk).
   { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, monatsrechnung: false },
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna', belegtyp: 'dual', abAlsLieferschein: true, monatsrechnung: true },
-  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true },
+  // Spahni-LIEFERSCHEINE tragen teils keine MWST-Nr im Kopf → Kopf-Fallback:
+  // Firmenname ODER die Spahni-Kundennummer XBEA (= Restaurant Beaulieu).
+  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true,
+    erkennungTokenGruppen: [['metzgerei spahni'], ['xbea']] },
   { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   // Gourmador: DUAL — Lieferscheine laufen provisorisch (importiert ODER
   // manuell erfasst); die Faktura (Monatsrechnung) gleicht gegen die
@@ -167,6 +176,7 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
       // Parser + Fallback-Erkennung sind fest an die Default-Profile gebunden.
       parser: def?.parser,
       erkennungTokens: def?.erkennungTokens ?? g.erkennungTokens,
+      erkennungTokenGruppen: def?.erkennungTokenGruppen,
       iban: def?.iban ?? g.iban,
       // AB-als-Lieferschein ist fest an die Default-Profile gebunden (Terravigna).
       abAlsLieferschein: def?.abAlsLieferschein,
@@ -280,8 +290,12 @@ export function findeProfilImText(
   }
   const lower = text.toLowerCase();
   const kompakt = text.replace(/\s/g, '').toUpperCase();
+  // Kopfzone (erste ~25 nicht-leere Zeilen) für die Kopf-Fallback-Gruppen —
+  // Fusstexte/Zahlteile dürfen die Lieferanten-Erkennung nicht bestimmen.
+  const kopfLower = text.split('\n').map(z => z.trim()).filter(Boolean).slice(0, 25).join('\n').toLowerCase();
   for (const p of profile) {
     if (p.erkennungTokens?.length && p.erkennungTokens.every(t => lower.includes(t))) return { profil: p, mwstNrn };
+    if (p.erkennungTokenGruppen?.some(gr => gr.length > 0 && gr.every(t => kopfLower.includes(t)))) return { profil: p, mwstNrn };
     if (p.iban && kompakt.includes(p.iban.replace(/\s/g, '').toUpperCase())) return { profil: p, mwstNrn };
   }
   return { profil: null, mwstNrn };

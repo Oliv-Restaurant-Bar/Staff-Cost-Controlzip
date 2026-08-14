@@ -524,6 +524,30 @@ describe('Erkennung', () => {
     expect(r.profil).toBeNull();
     expect(r.mwstNrn).toContain('999888777');
   });
+  it('Spahni-Kopf-Fallback: LS ohne MWST-Nr via Kd.-Nr. XBEA erkannt', () => {
+    const text = 'LIEFERSCHEIN\nLiefersch./Kd.-Nr. : 5210840 / XBEA\nLieferdatum : 04.08.26\n'
+      + 'Restaurant Beaulieu AG\nErlachstrasse 3\n3012 Bern\n'
+      + 'Art.Nr. Bezeichnung\n01250 Rindsentrecôte 4.500 KG 43.90 197.55 1\nTotal CHF 197.55';
+    const { profil } = findeProfilImText(text, P);
+    expect(profil?.id).toBe('spahni');
+  });
+  it('Spahni-Kopf-Fallback: Firmenname «Metzgerei Spahni AG» im Kopf erkannt', () => {
+    const { profil } = findeProfilImText('Metzgerei Spahni AG\nLIEFERSCHEIN 5212687\nRestaurant Beaulieu AG', P);
+    expect(profil?.id).toBe('spahni');
+  });
+  it('Kopf-Fallback greift NICHT für Fusstext (Token ausserhalb der Kopfzone)', () => {
+    const zeilen = Array.from({ length: 30 }, (_, i) => `Zeile ${i + 1} irgendein Inhalt`);
+    const { profil } = findeProfilImText(zeilen.join('\n') + '\nFusszeile: Kd.-Nr. XBEA', P);
+    expect(profil).toBeNull();
+  });
+  it('völlig unbekannter Lieferant ohne MWST-Nr bleibt offen (kein Raten)', () => {
+    const { profil } = findeProfilImText('LIEFERSCHEIN\nIrgendeine Firma GmbH\nKd.-Nr. : 12345\nTotal CHF 50.00', P);
+    expect(profil).toBeNull();
+  });
+  it('MWST-Nr hat Vorrang: fremde bekannte Nr gewinnt trotz XBEA im Kopf', () => {
+    const { profil } = findeProfilImText('Rechnung 999\nCHE-112.839.932 MWST\nKd.-Nr. XBEA', P);
+    expect(profil?.id).toBe('fideco');
+  });
 });
 
 describe('erkenneDokumenttyp (inhaltsbasiert, Dual-Lieferanten)', () => {
