@@ -143,6 +143,14 @@ export function parseDatumCH(s: string): string | null {
 
 const BETRAG_RE = /-?[\d’'.,]+\d/;
 
+/**
+ * Spahni-Kopfzeile «Lieferdatum : Di 04.08.26 / 201»: optionaler WOCHENTAG
+ * (explizit nur Mo–So, nie beliebige Tokens oder Monatsnamen wie «Mai») vor
+ * dem Datum; «/ <Code>» dahinter wird ignoriert. Kein Fund → kein Datum.
+ */
+const SPAHNI_LIEFERDATUM_RE =
+  /Lieferdatum\s*:?\s*(?:(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?\s+)?(\d{1,2}\.\d{1,2}\.\d{2,4})/i;
+
 function suche(text: string, res: RegExp[]): string | null {
   for (const re of res) {
     const m = re.exec(text);
@@ -209,7 +217,8 @@ function parseSpahniLieferungen(lines: string[], profil: LieferantenProfil, mwst
   if (bloecke.length === 0) {
     const text = lines.join('\n');
     const ls = /Liefersch\.?\s*\/?\s*Kd\.-?Nr\.?\s*:?\s*(\d{4,10})\s*\/\s*\w+/i.exec(text);
-    const datum = /Lieferdatum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(text);
+    // Optionaler Wochentag («Di 04.08.26 / 201») vor dem Datum zulassen.
+    const datum = SPAHNI_LIEFERDATUM_RE.exec(text);
     const iso = datum ? parseDatumCH(datum[1]) : null;
     if (ls && iso) bloecke = [{ nr: ls[1], datum: iso, zeilen: lines }];
   }
@@ -731,7 +740,10 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     const g = generischerKopf(text);
     // Einzel-Lieferschein: «Liefersch./Kd.-Nr. : 5210840 / XBEA» + «Lieferdatum».
     const ls = /Liefersch\.?\s*\/?\s*Kd\.-?Nr\.?\s*:?\s*(\d{4,10})\s*\/\s*\w+/i.exec(text);
-    const lieferdatum = parseDatumCH(suche(text, [/Lieferdatum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
+    // «Lieferdatum : Di 04.08.26 / 201» — optionaler WOCHENTAG (nur Mo–So,
+    // nie beliebige Tokens/Monatsnamen) vor dem Datum, «/ <Code>» dahinter
+    // ignorieren. Kein Fund → null (NIE heutiges Datum raten).
+    const lieferdatum = parseDatumCH(suche(text, [SPAHNI_LIEFERDATUM_RE]) ?? '');
     return {
       ...g,
       rechnungsNr: suche(text, [/RECHNUNG\s*:?\s*(\d{4,10})/i]) ?? (ls ? ls[1] : null),

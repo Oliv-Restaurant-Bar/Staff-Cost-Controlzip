@@ -30,7 +30,7 @@ import autoTable from 'jspdf-autotable';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { RestaurantBranding } from '@/lib/pl-branding';
 import {
-  ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H, UEBERSTUNDEN_START,
+  bewertePeriode, ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H, UEBERSTUNDEN_START,
 } from '@/lib/ueberstunden';
 import { ladePersonalkostenDaten, type PersonalkostenDaten } from '@/lib/personalkosten';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
@@ -54,6 +54,9 @@ export interface PbUeberstundenZeile {
   laufend: number | null;
   /** «Keine Zeiterfassung erforderlich» → ausgenommen, nicht im Total. */
   ausgenommen: boolean;
+  /** AG-Stundenkostensatz (CHF/h, Lohn-SSOT wie die Ansicht); null = Lohn fehlt
+   *  → MA zählt nicht in die Kosten-Zeile (gleiches Prädikat wie ÜStd-Kosten). */
+  satz: number | null;
 }
 
 /** Mitarbeiter-Detailzeile innerhalb einer abgerechneten Woche. */
@@ -92,6 +95,9 @@ export interface PbUeberstundenOptionen {
   mitLaufenderWoche?: boolean;
   /** Soll der laufenden Woche: false = anteilig bis Stichtag (Standard), true = volles Wochen-Soll. */
   laufendSollVoll?: boolean;
+  /** ÜStd-Kosten (CHF) als zweite Total-Zeile zeigen (Standard false; wie
+   *  «Kosten anzeigen» der Überstunden-Ansicht). */
+  mitKosten?: boolean;
 }
 
 /** Max. KW-Spalten (A4 hoch bleibt lesbar). */
@@ -109,6 +115,11 @@ export interface PersonalBlockDaten {
   laufendSollModus: 'anteilig' | 'voll' | null;
   ueZeilen: PbUeberstundenZeile[];
   totalLaufend: number | null;
+  /** ÜStd-Kosten-Total (CHF, SSOT wie die Ansicht: Σ max(0, laufend) × Satz);
+   *  null = keine bewertbare Datenbasis ODER Kosten nicht angefordert. */
+  totalUeKosten: number | null;
+  /** true = Kosten-Zeile im Überstunden-Teil zeichnen. */
+  ueMitKosten: boolean;
   /** Flex-Teil: nur Wochen MIT hochgeladenem Ist. */
   wochen: PbWochenZeile[];
   flexTotalPlanH: number;
@@ -189,7 +200,9 @@ export async function ladePersonalBlockDaten(
   const jahreSet = new Set(mondays.map(mo => Number(mo.slice(0, 4))));
   const startJahr = Number(UEBERSTUNDEN_START.slice(0, 4));
   for (let j = startJahr; j <= Number(heuteIso.slice(0, 4)); j++) jahreSet.add(j);
-  const jahre = [...jahreSet];
+  // Aufsteigend sortieren: «Satz des jüngsten Jahres gilt» braucht eine
+  // definierte Verarbeitungsreihenfolge (wie die Perioden-/Total-SSOT).
+  const jahre = [...jahreSet].sort((a, b) => a - b);
   const jahresDaten = await Promise.all(
     jahre.map(j => ladeUeberstundenJahr(tenantId, tenantKey, j, heuteIso)),
   );
@@ -219,6 +232,7 @@ export async function ladePersonalBlockDaten(
           saldi: mondays.map(() => null),
           laufend: null,
           ausgenommen: ma.ausgenommen,
+          satz: ma.stundensatz,
           _laufendJeJahr: [],
           _laufendSoll: null,
           _wochenSollH: ma.wochenSollH,
@@ -226,6 +240,9 @@ export async function ladePersonalBlockDaten(
         proId.set(ma.id, z);
       }
       z.ausgenommen = z.ausgenommen || ma.ausgenommen;
+      // Satz des JÜNGSTEN Jahres mit Datenbasis gilt (Jahre sind aufsteigend
+      // sortiert) — wie die Perioden-/Total-SSOT bei Dez/Jan-Lohnwechseln.
+      z.satz = ma.stundensatz ?? z.satz;
       z._laufendJeJahr.push(ma.laufend);
       for (const w of ma.wochen) {
         const idx = mondays.indexOf(w.monday);
@@ -248,6 +265,21 @@ export async function ladePersonalBlockDaten(
     if (erg.totalLaufend !== null) totalLaufend = (totalLaufend ?? 0) + erg.totalLaufend;
   }
   if (totalLaufend !== null) totalLaufend = r1(totalLaufend);
+  // ÜStd-Kosten-Total (KONTO über Jahre, wie ladeUeberstundenTotals): erst je
+  // MA alle Jahres-Laufend-Salden konsolidieren (negatives Altjahr verrechnet
+  // sich mit positivem Folgejahr), Satz des jüngsten Jahres, DANN einmal
+  // max(0, Saldo) × Satz bewerten — NIE Jahres-Kosten aufsummieren.
+  const kontoProMa = new Map<string, { saldo: number | null; satz: number | null }>();
+  for (const erg of ergebnisse) {
+    for (const ma of erg.mitarbeiter) {
+      if (ma.laufend === null) continue;
+      const cur = kontoProMa.get(ma.id) ?? { saldo: null, satz: null };
+      cur.saldo = (cur.saldo ?? 0) + ma.laufend;
+      if (ma.stundensatz !== null) cur.satz = ma.stundensatz;
+      kontoProMa.set(ma.id, cur);
+    }
+  }
+  const totalUeKosten = bewertePeriode([...kontoProMa.values()]).kosten;
   const laufendIdx = mitLaufender ? mondays.indexOf(stichMonday) : -1;
   for (const z of proId.values()) {
     const werte = z._laufendJeJahr.filter((v): v is number => v !== null);
@@ -364,6 +396,8 @@ export async function ladePersonalBlockDaten(
     kwLabels, kwBereiche, stichtag: heuteIso,
     laufendSollModus: mitLaufender ? (sollVoll ? 'voll' : 'anteilig') : null,
     ueZeilen, totalLaufend,
+    totalUeKosten: ueOpts.mitKosten === true ? totalUeKosten : null,
+    ueMitKosten: ueOpts.mitKosten === true,
     wochen,
     flexTotalPlanH: r1(rohProWoche.reduce((s, w) => s + w.planH, 0)),
     flexTotalIstH: r1(rohProWoche.reduce((s, w) => s + w.istH, 0)),
@@ -456,6 +490,15 @@ export function zeichnePersonalBlock(
     return werte.length > 0 ? r1(werte.reduce((s, v) => s + v, 0)) : null;
   });
   const totalStil = { fontStyle: 'bold' as const, ...rechts };
+  // Kosten-Zeile (optional, wie «Kosten anzeigen» der Ansicht): je KW-Spalte
+  // dieselbe SSOT wie die ÜStd-Kosten (bewertePeriode: Σ max(0, Saldo) × Satz
+  // je MA; Minus-Salden erzeugen keine Kosten; leer statt 0).
+  const kwKosten = d.ueMitKosten
+    ? d.kwLabels.map((_, i) => bewertePeriode(
+        d.ueZeilen.filter(z => !z.ausgenommen).map(z => ({ saldo: z.saldi[i], satz: z.satz })),
+      ).kosten)
+    : [];
+  const chfStil = { ...rechts, textColor: INK2 };
   const ueBody = [
     ...d.ueZeilen.map(z => [
       z.name,
@@ -466,6 +509,11 @@ export function zeichnePersonalBlock(
     [{ content: 'Total', styles: { fontStyle: 'bold' as const } }, '',
       ...kwTotals.map(t => ({ content: fmtSaldo(t), styles: totalStil })),
       { content: d.totalLaufend === null ? '–' : `${fmtSaldo(d.totalLaufend)} h`, styles: totalStil }],
+    ...(d.ueMitKosten ? [[
+      { content: 'Total CHF', styles: { textColor: INK2 } }, '',
+      ...kwKosten.map(k => ({ content: fmtChf(k), styles: chfStil })),
+      { content: fmtChf(d.totalUeKosten), styles: chfStil },
+    ]] : []),
   ];
   const laufendCol = 2 + d.kwLabels.length;
   // Laufende KW-Spalte optisch dezent abheben (heller Grundton).

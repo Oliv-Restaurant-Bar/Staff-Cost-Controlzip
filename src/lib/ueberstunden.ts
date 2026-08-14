@@ -601,7 +601,10 @@ export interface UePeriodenWerte {
   plusStunden: number | null;
 }
 
-function bewertePeriode(
+/** Perioden-Bewertung (SSOT für Ansicht/Export/Cockpit): Σ Saldo (h) sowie
+ *  Kosten = Σ max(0, Saldo) × AG-Satz je MA (Minus-Salden erzeugen keine
+ *  Kosten); null = keine Datenbasis, nie stille 0. */
+export function bewertePeriode(
   saldi: Array<{ saldo: number | null; satz: number | null }>,
 ): UePeriodenWerte {
   let stunden: number | null = null;

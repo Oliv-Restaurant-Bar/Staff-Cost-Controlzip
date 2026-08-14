@@ -173,6 +173,27 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.lieferungen[0].positionen).toHaveLength(2);
     expect(r.lieferungen[0].nettoTotal).toBe(284.9);
   });
+  it('Spahni Lieferdatum mit Wochentag + Code («Di 04.08.26 / 201») wird erkannt', () => {
+    const text = fx('spahni-ls-5210840.txt')
+      .replace(/Lieferdatum\s*:\s*04\.08\.26/, 'Lieferdatum        : Di 04.08.26 / 201');
+    const r = parseProfilPdf(text, P);
+    expect(r.profil?.id).toBe('spahni');
+    expect(r.rechnungsNr).toBe('5210840');
+    expect(r.lieferdatum).toBe('2026-08-04');
+    expect(r.lieferungen[0]?.datum).toBe('2026-08-04');
+  });
+  it('Spahni: Nicht-Wochentag-Tokens vor dem Datum werden NICHT als Lieferdatum akzeptiert', () => {
+    for (const zeile of ['Lieferdatum        : Mai 04.08.26', 'Lieferdatum        : abc 04.08.26 / 201']) {
+      const text = fx('spahni-ls-5210840.txt').replace(/Lieferdatum[^\n]*/, zeile);
+      const r = parseProfilPdf(text, P);
+      expect(r.lieferdatum, zeile).toBeNull();
+    }
+  });
+  it('Spahni ohne erkennbares Lieferdatum: Feld bleibt leer (nie heutiges Datum)', () => {
+    const text = fx('spahni-ls-5210840.txt').replace(/Lieferdatum[^\n]*/g, 'Lieferdatum        :');
+    const r = parseProfilPdf(text, P);
+    expect(r.lieferdatum).toBeNull();
+  });
   it('Fideco 5356149: netto 3416.45 / MwSt 88.85 (2.6%)', () => {
     const r = parse('fideco-5356149.txt');
     expect(r.profil?.id).toBe('fideco');

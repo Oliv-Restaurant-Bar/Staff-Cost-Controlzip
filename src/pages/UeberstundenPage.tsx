@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import {
+  bewertePeriode,
   ladeUeberstundenJahr, ladeUeAbsenzenStrict, speichereUeAbsenzen, UeAbsenzenKonflikt,
   UE_ABSENZ_LABELS, UEBERSTUNDEN_START, VOLLZEIT_WOCHE_H,
   type UeJahresDaten, type UeAbsenzTyp, type UeAbsenzenBlob,
@@ -154,6 +155,18 @@ export default function UeberstundenPage() {
     }
     return tot;
   }, [gerechnet]);
+  /** Kosten je KW-Spalte (SSOT bewertePeriode: Σ max(0, Saldo) × Satz je MA). */
+  const wochenKosten = useCallback((monday: string): number | null =>
+    bewertePeriode(gerechnet.map(m => ({
+      saldo: m.wochen.find(w => w.monday === monday)?.saldo ?? null, satz: m.stundensatz,
+    }))).kosten, [gerechnet]);
+  /** Kosten je Monatsspalte (gleiche SSOT-Logik). */
+  const monatsKosten = useCallback((mIdx: number): number | null =>
+    bewertePeriode(gerechnet.map(m => ({
+      saldo: m.monatsSaldo[mIdx] ?? null, satz: m.stundensatz,
+    }))).kosten, [gerechnet]);
+  const fmtChf = (n: number | null): string =>
+    n === null ? '–' : n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const selAbsenzen = (selEmp && daten?.absenzen.entries[selEmp]) || {};
 
   const editDays = useMemo(() => {
@@ -501,6 +514,22 @@ export default function UeberstundenPage() {
                         </td>
                       )}
                     </tr>
+                    {/* Total CHF: kostenwirksame Plus-Stunden × Satz je KW (SSOT bewertePeriode) */}
+                    {showKosten && (
+                      <tr className="border-t text-muted-foreground" data-testid="row-total-chf">
+                        <td className="py-1 pr-2">Total CHF</td>
+                        <td />
+                        {wochenSpalten.map(ws => (
+                          <td key={ws.monday} className="text-right px-1 tabular-nums" data-testid={`total-chf-${ws.monday}`}>
+                            {fmtChf(wochenKosten(ws.monday))}
+                          </td>
+                        ))}
+                        <td className="text-right pl-2 tabular-nums sticky right-24 border-l border-border bg-background" data-testid="total-chf-laufend">
+                          {fmtChf(erg.totalKosten)}
+                        </td>
+                        <td className="sticky right-0 border-l border-border bg-background" />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
                 </>
@@ -559,6 +588,22 @@ export default function UeberstundenPage() {
                         </td>
                       )}
                     </tr>
+                    {/* Total CHF: kostenwirksame Plus-Stunden × Satz je Monat (SSOT bewertePeriode) */}
+                    {showKosten && (
+                      <tr className="border-t text-muted-foreground" data-testid="row-total-chf-monat">
+                        <td className="py-1 pr-2">Total CHF</td>
+                        <td />
+                        {MONATE.slice(startMonatIdx).map((_, i) => (
+                          <td key={i} className="text-right px-1 tabular-nums" data-testid={`total-chf-monat-${startMonatIdx + i + 1}`}>
+                            {fmtChf(monatsKosten(startMonatIdx + i))}
+                          </td>
+                        ))}
+                        <td className="text-right pl-2 tabular-nums" data-testid="total-chf-laufend-monat">
+                          {fmtChf(erg.totalKosten)}
+                        </td>
+                        <td />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               )}

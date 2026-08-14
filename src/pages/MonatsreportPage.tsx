@@ -136,6 +136,30 @@ function parseWeekValue(v: string): WeekSelection {
 const fmtNum = (v: number, dec = 2) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
+/** Netto-Saldo mit Vorzeichen (typografisches Minus): +12 / −18 / 0. */
+const fmtSaldoNetto = (v: number) =>
+  v > 0 ? `+${fmtNum(v, 0)}` : fmtNum(v, 0).replace('-', '−');
+
+/**
+ * Ist-Zelle der Überstunden-Zeile: führend die kostenwirksamen Plus-Stunden
+ * (Kostentreiber → rot; wie die Überstunden-Ansicht), dahinter gedämpft der
+ * kumulierte Netto-Saldo in Klammern. Ohne Plus-Stunden-Wert nur der Saldo.
+ */
+function HoursIstCell({ ist, istPax }: { ist: number | null; istPax?: number | null }) {
+  if (ist === null || ist === undefined) return null;
+  if (istPax === null || istPax === undefined) return <>{fmtNum(ist, 0)}</>;
+  return (
+    <span title="kostenwirksame Überstunden · in Klammern: Netto-Saldo aller Mitarbeiter">
+      <span className={istPax > 0
+        ? 'text-red-600 dark:text-red-400 font-semibold'
+        : 'text-emerald-600 dark:text-emerald-400'}>
+        +{fmtNum(istPax, 1)} h
+      </span>{' '}
+      <span className="text-[11px] font-normal text-muted-foreground">({fmtSaldoNetto(ist)})</span>
+    </span>
+  );
+}
+
 function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
   if (v === null || v === undefined) return '';
   if (fmt === 'countPax') {
@@ -146,12 +170,11 @@ function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): stri
     return `${n} Pers.`;
   }
   if (fmt === 'hours') {
-    // Überstunden-Zeile: Netto-Saldo als Hauptwert, kostenwirksame Plus-
-    // Stunden (Σ max(0, Saldo je MA)) als Klammer-Zusatz — erklärt, warum
-    // ein negativer Netto-Saldo trotzdem positive ÜStd-Kosten erzeugt.
-    const n = fmtNum(v, 0);
-    if (pax !== null && pax !== undefined) return `${n} (davon +${fmtNum(pax, 1)} kostenwirksam)`;
-    return n;
+    // Überstunden-Zeile: Hauptwert = KOSTENWIRKSAME Plus-Stunden (Σ max(0,
+    // Saldo je MA) — sie erzeugen die ÜStd-Kosten), Klammer = kumulierter
+    // Netto-Saldo aller MA (Plus und Minus verrechnet): «+86.5 h (−18)».
+    if (pax !== null && pax !== undefined) return `+${fmtNum(pax, 1)} h (${fmtSaldoNetto(v)})`;
+    return fmtNum(v, 0);
   }
   if (fmt === 'count') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
@@ -504,7 +527,9 @@ function ReportTable({
                 {/* Ist-Zelle: Zahl gross; bei Anteil-Zeilen der Anteil als dezente
                     Unterzeile («18.3 % Anteil Gäste IN»). Ohne Basis kein Anteil. */}
                 <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>
-                  {fmtCell(p.ist, row.fmt, p.istPax)}
+                  {row.fmt === 'hours'
+                    ? <HoursIstCell ist={p.ist} istPax={p.istPax} />
+                    : fmtCell(p.ist, row.fmt, p.istPax)}
                   {wkq && wkq.pct != null && p.ist !== null ? (
                     <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`wkq-ist-${row.id}-${granularity}`}>
                       {wkq.pct.toFixed(1)} %
@@ -758,7 +783,9 @@ export function WochenTable({ cols, testid, onDrill }: {
       <>
         <td className={cn('px-2 py-1.5 text-right tabular-nums', tintClass, warnClass)}
           data-testid={`${keyPrefix}-ist-${skel.id}`}>
-          {fmtCell(p.ist, skel.fmt, p.istPax)}
+          {skel.fmt === 'hours'
+            ? <HoursIstCell ist={p.ist} istPax={p.istPax} />
+            : fmtCell(p.ist, skel.fmt, p.istPax)}
           {skel.sharePct && p.ist !== null && p.istShare !== null ? (
             <span className="block text-[10px] font-normal text-muted-foreground">
               {p.istShare.toFixed(1)} % {skel.shareHint ?? 'Anteil Gäste IN'}
@@ -982,6 +1009,8 @@ export default function MonatsreportPage() {
   const [expUeLaufend, setExpUeLaufend] = useState(true);
   /** Soll laufende Woche: false = anteilig bis Stichtag (Standard), true = volles Wochen-Soll. */
   const [expUeSollVoll, setExpUeSollVoll] = useState(false);
+  /** ÜStd-Kosten (CHF) als zweite Total-Zeile im Überstunden-Block (wie «Kosten anzeigen» der Ansicht). */
+  const [expUeKosten, setExpUeKosten] = useState(false);
   const [expAktuell, setExpAktuell] = useState(true);
   const [expVierWochen, setExpVierWochen] = useState(false);
   const [expVerlauf, setExpVerlauf] = useState(false);
@@ -1368,10 +1397,11 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       kwBereich: bereichOk ? { von, bis } : null,
       mitLaufenderWoche: expUeLaufend,
       laufendSollVoll: expUeSollVoll,
+      mitKosten: expUeKosten,
     });
     const branding = getBranding(tenantId);
     return { kind: 'zeichner', zeichne: pdf => mod.zeichnePersonalBlock(pdf, pd, branding, heute) };
-  }, [tenantId, tenantKey, year, month, heute, expUeWochen, expUeVon, expUeBis, expUeLaufend, expUeSollVoll]);
+  }, [tenantId, tenantKey, year, month, heute, expUeWochen, expUeVon, expUeBis, expUeLaufend, expUeSollVoll, expUeKosten]);
 
   // PDF-Export der aktiven Ansicht — 1:1 wie angezeigt (DOM-Raster), optional
   // mit Waren-Block (Frage vorab im Dialog).
@@ -2011,6 +2041,10 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   <label className="flex items-start gap-2 cursor-pointer" data-testid="checkbox-ue-laufend">
                     <Checkbox checked={expUeLaufend} onCheckedChange={v => setExpUeLaufend(v === true)} className="mt-0.5" />
                     <span className="text-xs">Laufende Woche als eigene Spalte — markiert «laufend (unvollständig)»</span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer" data-testid="checkbox-ue-kosten">
+                    <Checkbox checked={expUeKosten} onCheckedChange={v => setExpUeKosten(v === true)} className="mt-0.5" />
+                    <span className="text-xs">ÜStd-Kosten (CHF) als zweite Total-Zeile — kostenwirksame Plus-Stunden × Satz je Spalte</span>
                   </label>
                   {expUeLaufend ? (
                     <div className="flex items-center gap-2">

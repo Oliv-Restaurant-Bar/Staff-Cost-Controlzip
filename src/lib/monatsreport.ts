@@ -694,7 +694,7 @@ export interface MrRow {
    * Budgets), *Pax-Felder = ANZAHL GRUPPEN als Klammer-Zusatz («40 Pers.
    * (2 Gruppen)»). Pro Spalte parallel zu month/week/vjMonth; null = kein
    * Zusatzwert. Bei fmt='hours' (Überstunden-Zeile) tragen die *Pax-Felder
-   * die KOSTENWIRKSAMEN Plus-Stunden («davon +X.X kostenwirksam»);
+   * die KOSTENWIRKSAMEN Plus-Stunden (Hauptwert «+X.X h», Netto in Klammern);
    * sonst undefined.
    */
   monthPax?: number | null;
@@ -2188,7 +2188,7 @@ export async function ladeMonatsreport(
     // Überstunden total: Σ laufender Saldo aller FIX-MA ab Juli 2026 bis HEUTE
     // (je Mandant; unabhängig vom gewählten Monat — Konto-Stand, kein
     // Periodenwert). leer statt 0 wenn keine Datenbasis. Kein Budget/VJ.
-    // Klammer-Zusatz «(davon +X.X kostenwirksam)»: Σ max(0, Saldo je MA) —
+    // Hauptwert der Anzeige: kostenwirksame Plus-Stunden = Σ max(0, Saldo je MA) —
     // genau die Plus-Stunden hinter der Kosten-Zeile (Minus-Salden erzeugen
     // keine negativen Kosten). Transport über die *Pax-Begleitfelder.
     d('ueberstunden_total', 'Überstunden (Fix-MA)', {

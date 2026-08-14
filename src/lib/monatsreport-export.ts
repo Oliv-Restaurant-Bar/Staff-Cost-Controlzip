@@ -153,8 +153,8 @@ export function buildMonatsreportWorkbook(
     //  - Δ%-Spalte = Veränderung Ist vs. Vorjahr (c.dev, s. mapRowForExport).
     //  - Ohne Basis (share=null) keine Anteil-Zeile.
     const isCountPax = row.fmt === 'countPax';
-    // Überstunden-Zeile: Netto-Saldo + kostenwirksame Plus-Stunden in Klammern
-    // (wie am Bildschirm) — Zelle wird dann Text statt Zahl.
+    // Überstunden-Zeile: Hauptwert = kostenwirksame Plus-Stunden, Netto-Saldo
+    // in Klammern (wie am Bildschirm) — Zelle wird dann Text statt Zahl.
     const isHoursPlus = row.fmt === 'hours' && c.istPax !== null && c.istPax !== undefined;
     const isShareRow = row.sharePct !== undefined;
     const shareLineIst = isShareRow && c.ist !== null && c.istShare !== null
@@ -173,7 +173,7 @@ export function buildMonatsreportWorkbook(
       : vjIsShareText ? `${vjBase}${shareLineVj}` : c.vj;
     const istOut = isCountPax ? `${istBase}${shareLineIst}`
       : isHoursPlus && c.ist !== null
-        ? `${Math.round(c.ist).toLocaleString('de-CH')} (davon +${c.istPax!.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kostenwirksam)`
+        ? `+${c.istPax!.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h (${c.ist > 0 ? '+' : ''}${Math.round(c.ist).toLocaleString('de-CH').replace('-', '−')})`
       : istIsShareText ? `${istBase}${shareLineIst}` : c.ist;
     // Kombinierte Δ-Zelle wie am Bildschirm: Hauptwert = absolute Veränderung
     // (CHF, bzw. PP bei Quoten-Zeilen), darunter der Prozentwert (nicht bei
