@@ -51,7 +51,14 @@ function fmtWert(v: number | null, fmt: MrRow['fmt'], pax?: number | null): stri
     return pax !== null && pax !== undefined
       ? `${n} Pers. (${fmtNum(pax, 0)} Gruppen)` : `${n} Pers.`;
   }
-  if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
+  if (fmt === 'hours') {
+    // Überstunden-Zeile: Netto-Saldo + kostenwirksame Plus-Stunden in Klammern
+    // (Σ max(0, Saldo je MA) — identisch zur Bildschirm-Tabelle).
+    const n = fmtNum(v, 0);
+    return pax !== null && pax !== undefined
+      ? `${n} (davon +${fmtNum(pax, 1)} kostenwirksam)` : n;
+  }
+  if (fmt === 'count') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
   return fmtNum(v);
 }

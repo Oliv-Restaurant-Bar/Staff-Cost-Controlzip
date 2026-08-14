@@ -594,6 +594,11 @@ export interface UePeriodenWerte {
   stunden: number | null;
   /** Σ max(0, Perioden-Saldo) × AG-Satz je MA; null = keine Datenbasis/kein Satz. */
   kosten: number | null;
+  /** KOSTENWIRKSAME Plus-Stunden: Σ max(0, Perioden-Saldo) je MA — EXAKT die
+   *  Stunden hinter `kosten` (gleiches Prädikat: nur MA MIT Stundensatz;
+   *  Minus-Salden werden NICHT verrechnet); null = keine bewertbare
+   *  Datenbasis, nie stille 0. */
+  plusStunden: number | null;
 }
 
 function bewertePeriode(
@@ -601,16 +606,21 @@ function bewertePeriode(
 ): UePeriodenWerte {
   let stunden: number | null = null;
   let kosten: number | null = null;
+  let plusStunden: number | null = null;
   for (const { saldo, satz } of saldi) {
     if (saldo === null) continue;
     stunden = (stunden ?? 0) + saldo;
     if (satz !== null) {
+      // plusStunden folgt EXAKT dem Kosten-Prädikat (nur bewertbare MA):
+      // «Plus-Stunden × Satz = Kosten-Zeile» muss immer aufgehen.
+      plusStunden = (plusStunden ?? 0) + Math.max(0, saldo);
       const k = saldo > 0 ? Math.round(saldo * satz * 100) / 100 : 0;
       kosten = Math.round(((kosten ?? 0) + k) * 100) / 100;
     }
   }
   if (stunden !== null) stunden = Math.round(stunden * 100) / 100;
-  return { stunden, kosten };
+  if (plusStunden !== null) plusStunden = Math.round(plusStunden * 100) / 100;
+  return { stunden, kosten, plusStunden };
 }
 
 /**
@@ -626,7 +636,7 @@ export async function ladeUeberstundenPeriode(
   opts: { year: number; month: number; weekMonday: string | null },
   heute: string = iso(new Date()),
 ): Promise<{ monat: UePeriodenWerte; woche: UePeriodenWerte; jahr: UePeriodenWerte }> {
-  const leer: UePeriodenWerte = { stunden: null, kosten: null };
+  const leer: UePeriodenWerte = { stunden: null, kosten: null, plusStunden: null };
   const jahrDaten = await ladeUeberstundenJahrCached(tenantId, tenantKey, opts.year, heute);
   const mas = jahrDaten?.ergebnis.mitarbeiter ?? [];
   const monat = bewertePeriode(mas.map(m => ({ saldo: m.monatsSaldo[opts.month - 1] ?? null, satz: m.stundensatz })));

@@ -45,6 +45,7 @@ import { buildWochenPdfModel, buildVerlaufPdfModel } from '@/lib/cockpit-report-
 import { getBranding } from '@/lib/pl-branding';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -144,7 +145,15 @@ function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): stri
     if (pax !== null && pax !== undefined) return `${n} Pers. (${fmtNum(pax, 0)} Gruppen)`;
     return `${n} Pers.`;
   }
-  if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
+  if (fmt === 'hours') {
+    // Überstunden-Zeile: Netto-Saldo als Hauptwert, kostenwirksame Plus-
+    // Stunden (Σ max(0, Saldo je MA)) als Klammer-Zusatz — erklärt, warum
+    // ein negativer Netto-Saldo trotzdem positive ÜStd-Kosten erzeugt.
+    const n = fmtNum(v, 0);
+    if (pax !== null && pax !== undefined) return `${n} (davon +${fmtNum(pax, 1)} kostenwirksam)`;
+    return n;
+  }
+  if (fmt === 'count') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
   return fmtNum(v);
 }
@@ -965,6 +974,14 @@ export default function MonatsreportPage() {
   const [warenFrageModus, setWarenFrageModus] = useState<'einzel' | 'auswahl'>('einzel');
   const [expWarenBlock, setExpWarenBlock] = useState(false);
   const [expPersonalBlock, setExpPersonalBlock] = useState(false);
+  /** Überstunden-Fenster im Personal-Block: 4/8/12 abgeschlossene KWs oder freier Bereich. */
+  const [expUeWochen, setExpUeWochen] = useState<'4' | '8' | '12' | 'bereich'>('4');
+  const [expUeVon, setExpUeVon] = useState('');
+  const [expUeBis, setExpUeBis] = useState('');
+  /** Laufende Woche als eigene letzte Spalte (Standard an). */
+  const [expUeLaufend, setExpUeLaufend] = useState(true);
+  /** Soll laufende Woche: false = anteilig bis Stichtag (Standard), true = volles Wochen-Soll. */
+  const [expUeSollVoll, setExpUeSollVoll] = useState(false);
   const [expAktuell, setExpAktuell] = useState(true);
   const [expVierWochen, setExpVierWochen] = useState(false);
   const [expVerlauf, setExpVerlauf] = useState(false);
@@ -1343,10 +1360,18 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
   const ladePersonalTeil = useCallback(async (): Promise<CockpitExportPart> => {
     const mod = await import('@/lib/cockpit-personal-block');
     const heuteIso = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-${String(heute.getDate()).padStart(2, '0')}`;
-    const pd = await mod.ladePersonalBlockDaten(tenantId, tenantKey, year, month, heuteIso);
+    const von = Number(expUeVon), bis = Number(expUeBis);
+    const bereichOk = expUeWochen === 'bereich'
+      && Number.isInteger(von) && Number.isInteger(bis) && von >= 1 && bis >= von && bis <= 53;
+    const pd = await mod.ladePersonalBlockDaten(tenantId, tenantKey, year, month, heuteIso, {
+      abgeschlosseneWochen: expUeWochen === 'bereich' ? undefined : Number(expUeWochen),
+      kwBereich: bereichOk ? { von, bis } : null,
+      mitLaufenderWoche: expUeLaufend,
+      laufendSollVoll: expUeSollVoll,
+    });
     const branding = getBranding(tenantId);
     return { kind: 'zeichner', zeichne: pdf => mod.zeichnePersonalBlock(pdf, pd, branding, heute) };
-  }, [tenantId, tenantKey, year, month, heute]);
+  }, [tenantId, tenantKey, year, month, heute, expUeWochen, expUeVon, expUeBis, expUeLaufend, expUeSollVoll]);
 
   // PDF-Export der aktiven Ansicht — 1:1 wie angezeigt (DOM-Raster), optional
   // mit Waren-Block (Frage vorab im Dialog).
@@ -1953,10 +1978,56 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 <span className="text-sm">
                   <span className="font-medium">Personal-Block</span>
                   <span className="block text-muted-foreground text-xs">
-                    Überstunden Wochen-Ansicht · Flex-Auswertung Plan vs. Ist je Woche &amp; Mitarbeiter
+                    Überstunden – Wochensaldo (Fenster wählbar) · Flex-Auswertung Plan vs. Ist je Woche &amp; Mitarbeiter
                   </span>
                 </span>
               </label>
+              {expPersonalBlock ? (
+                <div className="ml-6 space-y-2 rounded-md border border-border p-2" data-testid="panel-ue-fenster">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-muted-foreground">Abgeschlossene Wochen:</span>
+                    <Select value={expUeWochen} onValueChange={v => setExpUeWochen(v as typeof expUeWochen)}>
+                      <SelectTrigger className="h-7 w-36 text-xs" data-testid="select-ue-wochen">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="4">4 Wochen</SelectItem>
+                        <SelectItem value="8">8 Wochen</SelectItem>
+                        <SelectItem value="12">12 Wochen</SelectItem>
+                        <SelectItem value="bereich">KW-Bereich (von–bis)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {expUeWochen === 'bereich' ? (
+                      <span className="flex items-center gap-1 text-xs">
+                        KW
+                        <Input value={expUeVon} onChange={e => setExpUeVon(e.target.value)}
+                          inputMode="numeric" placeholder="von" className="h-7 w-14 text-xs" data-testid="input-ue-kw-von" />
+                        –
+                        <Input value={expUeBis} onChange={e => setExpUeBis(e.target.value)}
+                          inputMode="numeric" placeholder="bis" className="h-7 w-14 text-xs" data-testid="input-ue-kw-bis" />
+                      </span>
+                    ) : null}
+                  </div>
+                  <label className="flex items-start gap-2 cursor-pointer" data-testid="checkbox-ue-laufend">
+                    <Checkbox checked={expUeLaufend} onCheckedChange={v => setExpUeLaufend(v === true)} className="mt-0.5" />
+                    <span className="text-xs">Laufende Woche als eigene Spalte — markiert «laufend (unvollständig)»</span>
+                  </label>
+                  {expUeLaufend ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Soll laufende Woche:</span>
+                      <ToggleGroup type="single" value={expUeSollVoll ? 'voll' : 'anteilig'}
+                        onValueChange={v => { if (v) setExpUeSollVoll(v === 'voll'); }}>
+                        <ToggleGroupItem value="anteilig" className="h-7 px-2 text-xs" data-testid="toggle-ue-soll-anteilig">
+                          anteilig bis Stichtag
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="voll" className="h-7 px-2 text-xs" data-testid="toggle-ue-soll-voll">
+                          volles Wochen-Soll
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button

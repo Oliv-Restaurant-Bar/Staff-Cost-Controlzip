@@ -693,7 +693,9 @@ export interface MrRow {
    * Begleitwerte für fmt='countPax': Hauptwert = Σ PERSONEN (Einheit des
    * Budgets), *Pax-Felder = ANZAHL GRUPPEN als Klammer-Zusatz («40 Pers.
    * (2 Gruppen)»). Pro Spalte parallel zu month/week/vjMonth; null = kein
-   * Zusatzwert. Nur bei fmt='countPax' relevant, sonst undefined.
+   * Zusatzwert. Bei fmt='hours' (Überstunden-Zeile) tragen die *Pax-Felder
+   * die KOSTENWIRKSAMEN Plus-Stunden («davon +X.X kostenwirksam»);
+   * sonst undefined.
    */
   monthPax?: number | null;
   weekPax?: number | null;
@@ -1529,7 +1531,10 @@ export async function ladeMonatsreport(
   // Woche = Saldo genau der gewählten ISO-Woche. Kosten = Σ max(0, Perioden-
   // Saldo) × AG-Satz je MA. Das laufende Konto bleibt der Überstunden-Ansicht
   // («Laufend») vorbehalten.
-  let uePeriode: { monat: { stunden: number | null; kosten: number | null }; woche: { stunden: number | null; kosten: number | null } } | null = null;
+  let uePeriode: {
+    monat: { stunden: number | null; kosten: number | null; plusStunden: number | null };
+    woche: { stunden: number | null; kosten: number | null; plusStunden: number | null };
+  } | null = null;
   try {
     uePeriode = await ladeUeberstundenPeriode(
       tenantId, tenantKey, { year, month, weekMonday: weekFrom }, todayIso);
@@ -2183,9 +2188,14 @@ export async function ladeMonatsreport(
     // Überstunden total: Σ laufender Saldo aller FIX-MA ab Juli 2026 bis HEUTE
     // (je Mandant; unabhängig vom gewählten Monat — Konto-Stand, kein
     // Periodenwert). leer statt 0 wenn keine Datenbasis. Kein Budget/VJ.
+    // Klammer-Zusatz «(davon +X.X kostenwirksam)»: Σ max(0, Saldo je MA) —
+    // genau die Plus-Stunden hinter der Kosten-Zeile (Minus-Salden erzeugen
+    // keine negativen Kosten). Transport über die *Pax-Begleitfelder.
     d('ueberstunden_total', 'Überstunden (Fix-MA)', {
       month: uePeriode?.monat.stunden != null ? r2(uePeriode.monat.stunden) : null,
       week: uePeriode?.woche.stunden != null ? r2(uePeriode.woche.stunden) : null,
+      monthPax: uePeriode?.monat.plusStunden != null ? r2(uePeriode.monat.plusStunden) : null,
+      weekPax: uePeriode?.woche.plusStunden != null ? r2(uePeriode.woche.plusStunden) : null,
     }, { fmt: 'hours', deltaInverted: true }),
     // Überstunden-Kosten: Σ max(0, Perioden-Saldo) × AG-Stundensatz je MA.
     d('ueberstunden_kosten_total', 'Überstunden-Kosten (Fix-MA)', {

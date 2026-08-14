@@ -20,6 +20,8 @@ description: Aktuelle Regel für den Cockpit-PDF-Export — 1:1-DOM-Raster der a
 
 ## Personal-Block & gemeinsames Stil-Modul (08/2026)
 - Gemeinsames Design-System für Cockpit-PDF-Blöcke lebt in `cockpit-block-stil.ts`; Waren- und Personal-Block teilen Kopfband/KPI-Boxen/Chips — neue Blöcke NIE eigene Stile duplizieren.
-- Personal-Block-Regeln: Stichtag IMMER auf min(heute, Monatsende) klemmen (Vergangenheits-Export sonst mit späteren Ist-Daten verfälscht); Überstunden-«Laufend» über ALLE Konto-Jahre seit UEBERSTUNDEN_START summieren, Totale aus den Lib-Ergebnissen (nie gerundete Zeilen summieren).
+- Personal-Block-Regeln: Stichtag IMMER auf min(heute, Monatsende) klemmen (Vergangenheits-Export sonst mit späteren Ist-Daten verfälscht); Überstunden-«Laufend» über ALLE Konto-Jahre seit UEBERSTUNDEN_START summieren (Jahres-Loads = Start…Stichtag-Jahr, NICHT nur die Jahre der 4 KW-Spalten!), Totale aus den Lib-Ergebnissen (nie gerundete Zeilen summieren).
+- Seite «Überstunden – Wochensaldo» muss für abgeschlossene KWs zahlengleich zur /ueberstunden-Ansicht sein: Saldi ROH summieren und erst am Schluss runden; MA ohne Eintritt ausschliessen; leer bleibt leer (nie 0).
+- Zwei Rechen-Fallen (Architect-Befunde 08/2026): (1) Dez/Jan-ISO-Wochen liegen in BEIDEN Jahres-Ergebnissen der Lib (je Kalenderjahr-Anteil) — beim Mergen ADDIEREN, nie überschreiben. (2) Lib-`ist` enthält die gedeckelte Absenz-Gutschrift bereits — «volles Wochen-Soll» der laufenden Woche = saldo + anteiliges Soll − Pensum-Soll, NIE ist+gutschrift (Doppelzählung).
 - Zusatzkosten-Zeilen (Fix-MA) brauchen dieselbe Quellen-Auflösung wie ladePersonalkostenDaten (Supabase kanonisch, localStorage-Fallback/Overrides), sonst weicht der Export von PersonalFix ab.
 - «ohne AG»-Flags (pfix_ag_soz_off_<tenant>) liegen NUR im Browser-localStorage — headless-Harness sieht sie nicht; CHF-Kontrollwerte nur im echten Browser prüfbar.

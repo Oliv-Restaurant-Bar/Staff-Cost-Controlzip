@@ -153,6 +153,9 @@ export function buildMonatsreportWorkbook(
     //  - Δ%-Spalte = Veränderung Ist vs. Vorjahr (c.dev, s. mapRowForExport).
     //  - Ohne Basis (share=null) keine Anteil-Zeile.
     const isCountPax = row.fmt === 'countPax';
+    // Überstunden-Zeile: Netto-Saldo + kostenwirksame Plus-Stunden in Klammern
+    // (wie am Bildschirm) — Zelle wird dann Text statt Zahl.
+    const isHoursPlus = row.fmt === 'hours' && c.istPax !== null && c.istPax !== undefined;
     const isShareRow = row.sharePct !== undefined;
     const shareLineIst = isShareRow && c.ist !== null && c.istShare !== null
       ? `\n${c.istShare.toFixed(1)} % ${row.shareHint ?? 'Anteil Gäste IN'}` : '';
@@ -169,6 +172,8 @@ export function buildMonatsreportWorkbook(
     const vjOut = isCountPax ? `${vjBase}${shareLineVj}`
       : vjIsShareText ? `${vjBase}${shareLineVj}` : c.vj;
     const istOut = isCountPax ? `${istBase}${shareLineIst}`
+      : isHoursPlus && c.ist !== null
+        ? `${Math.round(c.ist).toLocaleString('de-CH')} (davon +${c.istPax!.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kostenwirksam)`
       : istIsShareText ? `${istBase}${shareLineIst}` : c.ist;
     // Kombinierte Δ-Zelle wie am Bildschirm: Hauptwert = absolute Veränderung
     // (CHF, bzw. PP bei Quoten-Zeilen), darunter der Prozentwert (nicht bei
@@ -192,7 +197,7 @@ export function buildMonatsreportWorkbook(
       const cell = r.getCell(col);
       // Text-Zellen (countPax bzw. count mit Anteil, Spalten 3/4) — kein Zahlenformat.
       const isText = (col === 3 && (isCountPax || vjIsShareText))
-        || (col === 4 && (isCountPax || istIsShareText));
+        || (col === 4 && (isCountPax || istIsShareText || isHoursPlus));
       if (!isText) cell.numFmt = numFmt;
       // Anteil-Unterzeile: zweizeilige Zelle → Zeilenumbruch aktivieren.
       const wrap = (col === 3 && vjIsShareText) || (col === 4 && istIsShareText);

@@ -5,10 +5,13 @@
  * gleiches Report-Design wie der Waren-Block (Kopfband, KPI-Zeile, Zebra,
  * Chips/Ampel; Fusszeile zentral via zeichneFusszeilen):
  *
- *  A) Überstunden Wochen-Ansicht — IMMER die letzten 4 Kalenderwochen bis zum
- *     Stichtag (rollierend). Je Fix-MA: Pensum · Wochen-Saldo je KW · Laufend.
- *     FARBLOGIK (Kosten): Überstunden (+) = ROT · Minusstunden (−) = GRÜN.
- *     «Keine Zeiterfassung»-MA: «–» + Chip «ausgenommen · kein ÜStd-Konto»,
+ *  A) Überstunden – Wochensaldo (letzte 4 Wochen) — IMMER die letzten 4
+ *     Kalenderwochen bis zum Stichtag (rollierend). Je Fix-MA: Name · Pensum ·
+ *     Wochen-Saldo je KW (Kopf mit KW + Datumsbereich) · Laufend; Total-Zeile
+ *     je KW + Laufend. Saldi ROH aus der Lib (Rundung erst beim Formatieren),
+ *     MA ohne Eintritt wie die Ansicht ausgeschlossen — Export = zahlengleich
+ *     zur Überstunden-Seite. FARBLOGIK (Kosten): (+) = ROT · (−) = GRÜN.
+ *     «Keine Zeiterfassung»-MA: «–» + Chip «ausgenommen – kein ÜStd-Konto»,
  *     NICHT im Total. Quelle: ueberstunden.ts (SSOT, leer statt 0).
  *
  *  B) Flex-Auswertung Plan vs. Ist — VERSCHACHTELT je Woche & Mitarbeiter
@@ -27,7 +30,7 @@ import autoTable from 'jspdf-autotable';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { RestaurantBranding } from '@/lib/pl-branding';
 import {
-  ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H,
+  ladeUeberstundenJahr, mondayOf, isoWeekOf, VOLLZEIT_WOCHE_H, UEBERSTUNDEN_START,
 } from '@/lib/ueberstunden';
 import { ladePersonalkostenDaten, type PersonalkostenDaten } from '@/lib/personalkosten';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
@@ -44,7 +47,8 @@ export interface PbUeberstundenZeile {
   name: string;
   /** Pensum in % (weeklyHours ÷ 42). */
   pensumPct: number;
-  /** Wochen-Saldo je angezeigter KW (Reihenfolge = kwLabels); null = leer. */
+  /** Wochen-Saldo je angezeigter KW (Reihenfolge = kwLabels); null = leer.
+   *  ROH (ungerundet) wie die Ansicht — Rundung erst bei der Formatierung. */
   saldi: Array<number | null>;
   /** Laufendes Konto (ab Juli 2026) bis zum Stichtag; null = leer. */
   laufend: number | null;
@@ -78,10 +82,31 @@ export interface PbWochenZeile {
   mitarbeiter: PbWocheMaZeile[];
 }
 
+/** Optionen für den Überstunden-Teil (Export-Dialog: wählbares Wochenfenster). */
+export interface PbUeberstundenOptionen {
+  /** Anzahl abgeschlossener KWs vor der laufenden Woche (Standard 4); ignoriert, wenn kwBereich gesetzt. */
+  abgeschlosseneWochen?: number;
+  /** Freier KW-Bereich (von–bis, ISO-KWs des Stichtag-Wochenjahrs); nur abgeschlossene KWs. */
+  kwBereich?: { von: number; bis: number } | null;
+  /** Laufende Woche als eigene, letzte KW-Spalte anzeigen (Standard true). */
+  mitLaufenderWoche?: boolean;
+  /** Soll der laufenden Woche: false = anteilig bis Stichtag (Standard), true = volles Wochen-Soll. */
+  laufendSollVoll?: boolean;
+}
+
+/** Max. KW-Spalten (A4 hoch bleibt lesbar). */
+const MAX_KW_SPALTEN = 12;
+
 export interface PersonalBlockDaten {
   monatLabel: string;
   /** Überstunden-Teil (letzte 4 KWs bis Stichtag). */
   kwLabels: string[];
+  /** Datumsbereich je KW (Mo–So), Reihenfolge = kwLabels, z.B. «10.08.–16.08.». */
+  kwBereiche: string[];
+  /** Stichtag (ISO) der Überstunden-Rechnung. */
+  stichtag: string;
+  /** Soll-Modus der laufenden Woche (null = laufende Woche nicht im Fenster). */
+  laufendSollModus: 'anteilig' | 'voll' | null;
   ueZeilen: PbUeberstundenZeile[];
   totalLaufend: number | null;
   /** Flex-Teil: nur Wochen MIT hochgeladenem Ist. */
@@ -124,19 +149,47 @@ export async function ladePersonalBlockDaten(
   year: number,
   month: number,
   heuteIso: string,
+  ueOpts: PbUeberstundenOptionen = {},
 ): Promise<PersonalBlockDaten> {
-  // ── A) Überstunden: letzte 4 KWs bis zum Stichtag (rollierend) ────────────
+  // ── A) Überstunden: wählbares KW-Fenster bis zum Stichtag ─────────────────
   const stichMonday = mondayOf(heuteIso);
-  const mondays = [-3, -2, -1, 0].map(i => addTage(stichMonday, i * 7));
-  // Laufende (nicht abgeschlossene) Woche kennzeichnen — gleicher Stil wie im
-  // Wochenverlauf-Header («KW 33 (laufend)»); Fenster = 3 abgeschlossene + laufende.
+  const mitLaufender = ueOpts.mitLaufenderWoche !== false;
+  const sollVoll = ueOpts.laufendSollVoll === true;
+
+  // Abgeschlossene Wochen: entweder freier KW-Bereich (ISO-KWs des Stichtag-
+  // Wochenjahrs, nur Wochen VOR der laufenden) oder die letzten N Wochen.
+  let abgeschlossen: string[];
+  const bereich = ueOpts.kwBereich ?? null;
+  if (bereich && bereich.von >= 1 && bereich.bis >= bereich.von) {
+    const { kwYear } = isoWeekOf(stichMonday);
+    const mon1 = mondayOf(`${kwYear}-01-04`);
+    abgeschlossen = [];
+    for (let kw = bereich.von; kw <= bereich.bis; kw++) {
+      const mo = addTage(mon1, (kw - 1) * 7);
+      if (mo < stichMonday) abgeschlossen.push(mo); // laufende KW nur via Schalter
+    }
+    abgeschlossen = abgeschlossen.slice(-MAX_KW_SPALTEN);
+  } else {
+    const n = Math.min(MAX_KW_SPALTEN, Math.max(1, Math.round(ueOpts.abgeschlosseneWochen ?? 4)));
+    abgeschlossen = Array.from({ length: n }, (_, i) => addTage(stichMonday, (i - n) * 7));
+  }
+  const mondays = mitLaufender ? [...abgeschlossen, stichMonday] : abgeschlossen;
+  // Laufende (unvollständige) Woche als eigene, klar markierte letzte Spalte.
   const kwLabels = mondays.map(mo => {
     const { kw } = isoWeekOf(mo);
-    return mo === stichMonday ? `KW ${kw} (laufend)` : `KW ${kw}`;
+    return mo === stichMonday && mitLaufender
+      ? `KW ${kw} laufend (${sollVoll ? 'volles Soll' : 'anteilig'})`
+      : `KW ${kw}`;
   });
+  const kwBereiche = mondays.map(mo => `${fmtDat(mo)}–${fmtDat(addTage(mo, 6))}`);
 
-  // Jahres-Ergebnisse laden (Fenster kann über den Jahreswechsel reichen).
-  const jahre = [...new Set(mondays.map(mo => Number(mo.slice(0, 4))))];
+  // Jahres-Ergebnisse laden: ALLE Konto-Jahre seit UEBERSTUNDEN_START bis zum
+  // Stichtag-Jahr (Laufend = kumuliertes Konto über alle Jahre, wie die
+  // Überstunden-Totale-SSOT) — plus die Jahre der 4 KW-Spalten (Jahreswechsel).
+  const jahreSet = new Set(mondays.map(mo => Number(mo.slice(0, 4))));
+  const startJahr = Number(UEBERSTUNDEN_START.slice(0, 4));
+  for (let j = startJahr; j <= Number(heuteIso.slice(0, 4)); j++) jahreSet.add(j);
+  const jahre = [...jahreSet];
   const jahresDaten = await Promise.all(
     jahre.map(j => ladeUeberstundenJahr(tenantId, tenantKey, j, heuteIso)),
   );
@@ -146,9 +199,18 @@ export async function ladePersonalBlockDaten(
 
   // Pro MA (id-basiert über Jahre gemerged): Saldi je KW.
   const ueZeilen: PbUeberstundenZeile[] = [];
-  const proId = new Map<string, PbUeberstundenZeile & { _laufendJeJahr: Array<number | null> }>();
+  type UeIntern = PbUeberstundenZeile & {
+    _laufendJeJahr: Array<number | null>;
+    /** Anteiliges Soll der laufenden Woche (über Jahresgrenzen summiert). */
+    _laufendSoll: number | null;
+    _wochenSollH: number;
+  };
+  const proId = new Map<string, UeIntern>();
   for (const erg of ergebnisse) {
     for (const ma of erg.mitarbeiter) {
+      // Wie die Ansicht: MA ohne Eintrittsdatum werden nicht gerechnet und
+      // erscheinen nicht in der Matrix (dort nur Hinweis-Liste).
+      if (ma.ohneEintritt) continue;
       let z = proId.get(ma.id);
       if (!z) {
         z = {
@@ -158,6 +220,8 @@ export async function ladePersonalBlockDaten(
           laufend: null,
           ausgenommen: ma.ausgenommen,
           _laufendJeJahr: [],
+          _laufendSoll: null,
+          _wochenSollH: ma.wochenSollH,
         };
         proId.set(ma.id, z);
       }
@@ -165,7 +229,15 @@ export async function ladePersonalBlockDaten(
       z._laufendJeJahr.push(ma.laufend);
       for (const w of ma.wochen) {
         const idx = mondays.indexOf(w.monday);
-        if (idx >= 0 && w.saldo !== null) z.saldi[idx] = r1(w.saldo);
+        // ROH übernehmen (keine Zeilen-Rundung) — die KW-Totale summieren wie
+        // die Ansicht die ungerundeten Saldi und runden erst am Schluss.
+        if (idx < 0 || w.saldo === null) continue;
+        // ADDITIV mergen: eine Dez/Jan-Woche liegt in BEIDEN Jahres-Ergebnissen
+        // (je Kalenderjahr-Anteil) — überschreiben würde den Dez-Anteil verlieren.
+        z.saldi[idx] = (z.saldi[idx] ?? 0) + w.saldo;
+        if (w.monday === stichMonday && w.soll !== null) {
+          z._laufendSoll = (z._laufendSoll ?? 0) + w.soll;
+        }
       }
     }
   }
@@ -176,10 +248,18 @@ export async function ladePersonalBlockDaten(
     if (erg.totalLaufend !== null) totalLaufend = (totalLaufend ?? 0) + erg.totalLaufend;
   }
   if (totalLaufend !== null) totalLaufend = r1(totalLaufend);
+  const laufendIdx = mitLaufender ? mondays.indexOf(stichMonday) : -1;
   for (const z of proId.values()) {
     const werte = z._laufendJeJahr.filter((v): v is number => v !== null);
     z.laufend = z.ausgenommen ? null : werte.length > 0 ? r1(werte.reduce((s, v) => s + v, 0)) : null;
-    const { _laufendJeJahr: _drop, ...zeile } = z;
+    // «Volles Wochen-Soll» für die laufende Woche: anteiliges Soll durch das
+    // volle Pensum-Soll ersetzen (Saldo' = Saldo + anteiliges Soll − Pensum-
+    // Soll). Gutschriften stecken bereits in Ist/Saldo der Lib — nie doppelt.
+    // Nur wenn Datenbasis vorhanden (Saldo ≠ null); «–» bleibt «–».
+    if (sollVoll && laufendIdx >= 0 && z.saldi[laufendIdx] !== null) {
+      z.saldi[laufendIdx] = z.saldi[laufendIdx]! + (z._laufendSoll ?? 0) - z._wochenSollH;
+    }
+    const { _laufendJeJahr: _d1, _laufendSoll: _d2, _wochenSollH: _d3, ...zeile } = z;
     ueZeilen.push(zeile);
   }
   ueZeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
@@ -281,7 +361,9 @@ export async function ladePersonalBlockDaten(
 
   return {
     monatLabel: `${MONATE[month - 1]} ${year}`,
-    kwLabels, ueZeilen, totalLaufend,
+    kwLabels, kwBereiche, stichtag: heuteIso,
+    laufendSollModus: mitLaufender ? (sollVoll ? 'voll' : 'anteilig') : null,
+    ueZeilen, totalLaufend,
     wochen,
     flexTotalPlanH: r1(rohProWoche.reduce((s, w) => s + w.planH, 0)),
     flexTotalIstH: r1(rohProWoche.reduce((s, w) => s + w.istH, 0)),
@@ -346,13 +428,24 @@ export function zeichnePersonalBlock(
     };
   };
 
-  // ── A) Überstunden Wochen-Ansicht ──
+  // ── A) Überstunden – Wochensaldo (wählbares KW-Fenster) ──
+  const ueTitel = 'Personal · Überstunden – Wochensaldo';
   pdf.addPage('a4', 'portrait');
-  let y = kopfband(pdf, branding, 'Personal · Überstunden Wochen-Ansicht', d.monatLabel, heute);
+  let y = kopfband(pdf, branding, ueTitel, d.monatLabel, heute);
   y = kpiZeile(pdf, y, d);
-  y = abschnitt(pdf, y, accent, `Letzte 4 Kalenderwochen (${d.kwLabels.join(' · ')})`,
-    'Wochen-Saldo = Ist − anteiliges Soll · leer statt 0');
-  const ausgenommenChip = 'ausgenommen · kein ÜStd-Konto';
+  const stichtagTxt = `${d.stichtag.slice(8, 10)}.${d.stichtag.slice(5, 7)}.${d.stichtag.slice(0, 4)}`;
+  // Fenster-Titel: bei vielen Spalten kompakt «KW x – KW y», sonst alle KWs.
+  const fensterTitel = d.kwLabels.length > 6
+    ? `Kalenderwochen ${d.kwLabels[0]} – ${d.kwLabels[d.kwLabels.length - 1]}`
+    : `Kalenderwochen (${d.kwLabels.join(' · ')})`;
+  const sollModusTxt = d.laufendSollModus === null
+    ? 'ohne laufende Woche'
+    : d.laufendSollModus === 'voll'
+      ? 'laufende Woche (unvollständig): volles Wochen-Soll'
+      : 'laufende Woche (unvollständig): Soll anteilig bis Stichtag';
+  y = abschnitt(pdf, y, accent, fensterTitel,
+    `Stichtag ${stichtagTxt} · Saldo = Ist − Soll (Pensum × ${VOLLZEIT_WOCHE_H} h/Woche) · ${sollModusTxt} · leer statt 0`);
+  const ausgenommenChip = 'ausgenommen – kein ÜStd-Konto';
   // Total-Zeile: Spaltensumme je KW über alle NICHT ausgenommenen MA
   // (Summe der angezeigten Wochen-Saldi; keine Werte = leer, nie 0).
   const kwTotals = d.kwLabels.map((_, i) => {
@@ -366,20 +459,22 @@ export function zeichnePersonalBlock(
   const ueBody = [
     ...d.ueZeilen.map(z => [
       z.name,
+      `${z.pensumPct} %`,
       ...(z.ausgenommen ? d.kwLabels.map(() => '–') : z.saldi.map(fmtSaldo)),
       z.ausgenommen ? ausgenommenChip : fmtSaldo(z.laufend),
     ]),
-    [{ content: 'Total', styles: { fontStyle: 'bold' as const } },
+    [{ content: 'Total', styles: { fontStyle: 'bold' as const } }, '',
       ...kwTotals.map(t => ({ content: fmtSaldo(t), styles: totalStil })),
       { content: d.totalLaufend === null ? '–' : `${fmtSaldo(d.totalLaufend)} h`, styles: totalStil }],
   ];
-  const laufendCol = 1 + d.kwLabels.length;
+  const laufendCol = 2 + d.kwLabels.length;
   // Laufende KW-Spalte optisch dezent abheben (heller Grundton).
-  const laufendKwCol = d.kwLabels.findIndex(l => l.includes('(laufend)'));
+  const laufendKwCol = d.kwLabels.findIndex(l => l.includes('laufend'));
   autoTable(pdf, {
     ...stil,
     startY: y,
-    head: [['Mitarbeiter', ...d.kwLabels, 'Laufend']],
+    head: [['Mitarbeiter', 'Pensum',
+      ...d.kwLabels.map((l, i) => `${l}\n${d.kwBereiche[i]}`), 'Laufend']],
     body: ueBody as Parameters<typeof autoTable>[1]['body'],
     columnStyles: Object.fromEntries(
       Array.from({ length: laufendCol }, (_, i) => [i + 1, rechts]),
@@ -394,8 +489,8 @@ export function zeichnePersonalBlock(
           && data.row.raw && (data.row.raw as unknown[])[laufendCol] === ausgenommenChip) {
         data.cell.text = [''];
       }
-      // Kosten-Farblogik: Überstunden (+) rot, Minusstunden (−) grün.
-      if (data.section === 'body' && data.column.index >= 1) {
+      // Kosten-Farblogik: Überstunden (+) rot, Minusstunden (−) grün (nie Pensum).
+      if (data.section === 'body' && data.column.index >= 2) {
         const t = typeof data.cell.raw === 'string' ? data.cell.raw
           : typeof (data.cell.raw as { content?: unknown })?.content === 'string'
             ? (data.cell.raw as { content: string }).content : '';
@@ -403,7 +498,7 @@ export function zeichnePersonalBlock(
         else if (t.startsWith('-') || t.startsWith('−')) data.cell.styles.textColor = GRUEN_INK;
       }
       // Laufende KW dezent abheben (heller Grundton, Farblogik unverändert).
-      if (data.section === 'body' && laufendKwCol >= 0 && data.column.index === 1 + laufendKwCol) {
+      if (data.section === 'body' && laufendKwCol >= 0 && data.column.index === 2 + laufendKwCol) {
         data.cell.styles.fillColor = [246, 246, 248];
       }
     },
@@ -413,7 +508,7 @@ export function zeichnePersonalBlock(
         zeichneChip(pdf, data.cell, ausgenommenChip, 'grau', 'rechts');
       }
     },
-    didDrawPage: mitFolgeKopf('Personal · Überstunden Wochen-Ansicht'),
+    didDrawPage: mitFolgeKopf(ueTitel),
   });
   legende(pdf, 'Farblogik (Kosten): Überstunden (+) = rot · Minusstunden (-) = grün · 0/leer neutral');
 

@@ -1,0 +1,17 @@
+BUILD-BEFEHL — Cockpit: Überstunden-Zeile um kostenwirksame Plus-Stunden ergänzen (beide Mandanten)
+
+Kontext: Im Cockpit steht "Überstunden (Fix-MA)" = -18 (Netto, Plus- und Minus-Stunden saldiert) und "Überstunden-Kosten (Fix-MA)" = 3'518.12. Das verwirrt, weil ein negativer Netto-Saldo positive Kosten erzeugt. Grund: Kosten entstehen NUR aus Plus-Stunden je Mitarbeiter; Minus-Stunden (Unterzeit) erzeugen keine negativen Kosten. Der Netto-Saldo mischt beide, die Kosten spiegeln nur die Plus-Stunden.
+
+Aufgabe:
+1. In der Cockpit-Zeile "Überstunden (Fix-MA)" den Netto-Saldo als Hauptwert lassen und direkt daneben in Klammern die kostenwirksamen Plus-Stunden ausweisen. Format: "-18 (davon +XX.X kostenwirksam)". XX.X = Summe NUR der positiven Überstunden-Salden je Fix-Mitarbeiter (bis Stichtag) — genau die Stunden, die die 3'518.12 verursachen.
+2. Berechnung Plus-Stunden = Σ max(0, Saldo_je_Mitarbeiter) über alle Fix-MA mit ÜStd-Konto, Stand bis Stichtag. Minus-Salden werden NICHT abgezogen. Gleiche SSOT wie die Ansicht "Überstunden (Fix-Mitarbeiter)".
+3. Konsistenz-Pflicht: Die ausgewiesenen Plus-Stunden, mit den jeweiligen Stundensätzen bewertet, müssen EXAKT die Zeile "Überstunden-Kosten (Fix-MA)" (3'518.12) ergeben.
+4. Ausgenommene Mitarbeiter (Ramadani Mejdi, Lokaj Mendim - kein ÜStd-Konto) zählen NICHT mit.
+5. Schutzregeln: leer statt 0 wenn keine Datenbasis; nie durch 0 teilen; mandantengetrennt (Oliv unpräfixiert / Beaulieu beaulieu:).
+
+Akzeptanztest:
+- Jahresansicht "Überstunden": Σ positiver Laufend-Salden = +90.4 Std. (Blaku 5.5 + Gimenez 2.3 + Haxhiraj 2.1 + Kolev 16.6 + Krasniqi 23.3 + Mawlood 8.8 + Mehdi 16.2 + Ramadani Asim 15.6); bewertet = ÜStd-Kosten total 3'778.81.
+- Cockpit (Stichtag 13.08.): Zeile zeigt "-18 (davon +XX.X kostenwirksam)", wobei die Bewertung der Plus-Stunden = 3'518.12 ergibt.
+- Minus-Salden (Abdii -30.0, Krauss -32.0, Ilir -27.9, Novak -12.6, de Jong -6.2, Grecuccio -2.6) fließen NICHT in die Plus-Stunden ein.
+
+Vorher kurz zusammenfassen, in welcher Datei/Funktion die Cockpit-Zeile gerendert wird, dann umsetzen, tsc + Tests grün halten.
