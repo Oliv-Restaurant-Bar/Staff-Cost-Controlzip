@@ -98,6 +98,7 @@ import { BankInvestorView } from '@/components/reporting/BankInvestorView';
 import { MULTI_YEAR_POSITIONS, type YearSeries } from '@/lib/multi-year-analysis';
 import { BANK_ROW_IDS } from '@/lib/bank-investor-analysis';
 import { loadAnnualCostImports, ANNUAL_COST_IMPORTS_KEY, type AnnualCostImportEntry } from '@/lib/annual-cost-imports-store';
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
 
 /** Datenbasis-Hinweis für Mehrjahresanalyse + Management Report (gleiche Quelle). */
 const MULTI_YEAR_DATA_SOURCE_HINT =
@@ -3593,57 +3594,29 @@ const PLViewPage = () => {
               </button>
             </div>
 
-            {/* Jahr (nicht bei Mehrjahresanalyse/Report/Bankensicht — dort werden alle Jahre gezeigt) */}
+            {/* Einheitliche Zeitraum-Steuerung (nicht bei Mehrjahresanalyse/Report/
+                Bankensicht — dort werden alle Jahre gezeigt). Budget-P&L: Monat/
+                Quartal/Jahr; Monatsansicht: Monat; Jahresübersicht: Jahr. */}
             {mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor' && (
-              <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
-
-            {/* Periode: Monat / Quartal / Jahr (nur Budget P&L — Aggregat ist read-only) */}
-            {mode === 'budget_pl' && (
-              <div className="flex rounded-md border border-border overflow-hidden" role="group" aria-label="Periode">
-                {(['month', 'quarter', 'year'] as const).map(p => (
-                  <button
-                    key={p}
-                    onClick={() => setPeriod(p)}
-                    data-testid={`plview-period-${p}`}
-                    className={cn(
-                      'h-8 px-2.5 text-xs transition-colors',
-                      period === p
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-card hover:bg-muted text-muted-foreground',
-                    )}
-                  >
-                    {p === 'month' ? 'Monat' : p === 'quarter' ? 'Quartal' : 'Jahr'}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {mode === 'budget_pl' && period === 'quarter' && (
-              <Select value={String(quarter)} onValueChange={v => setQuarter(Number(v))}>
-                <SelectTrigger className="h-8 w-36 text-xs" data-testid="plview-quarter-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4].map(q => (
-                    <SelectItem key={q} value={String(q)}>Q{q} · {QUARTER_RANGE_LABELS[q - 1]}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-
-            {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month')) && (
-              <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-                <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MONTH_NAMES_DE.slice(1).map((name, i) => (
-                    <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ZeitraumSteuerung
+                value={{
+                  granular: mode === 'yearly' ? 'jahr'
+                    : mode === 'monthly' ? 'monat'
+                    : period === 'quarter' ? 'quartal' : period === 'year' ? 'jahr' : 'monat',
+                  year, month, quartal: quarter, wochenStart: `${year}-01-05`,
+                }}
+                onChange={z => {
+                  setYear(z.year);
+                  if (z.granular === 'monat') setMonth(z.month);
+                  if (z.granular === 'quartal') setQuarter(z.quartal);
+                  if (mode === 'budget_pl') {
+                    setPeriod(z.granular === 'quartal' ? 'quarter' : z.granular === 'jahr' ? 'year' : 'month');
+                  }
+                }}
+                granularitaeten={mode === 'budget_pl' ? ['monat', 'quartal', 'jahr'] : mode === 'yearly' ? ['jahr'] : ['monat']}
+                minJahr={Math.min(...years)}
+                maxJahr={Math.max(...years)}
+              />
             )}
 
             {/* Konto hinzufügen (nur Monatsansicht — Quartal/Jahr ist read-only) */}

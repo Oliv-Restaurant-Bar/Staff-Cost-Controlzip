@@ -49,6 +49,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { HintBox } from '@/components/ui/hint-box';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
 import {
   Calculator, Copy, Plus, Trash2,
   AlertTriangle, CheckCircle2,
@@ -530,14 +531,13 @@ function BudgetContent() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(y => (
-                <SelectItem key={y} value={String(y)}>{y} {savedYears.includes(y) ? '✓' : ''}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <ZeitraumSteuerung
+            value={{ granular: 'jahr', year: selectedYear, month: 1, quartal: 1, wochenStart: `${selectedYear}-01-05` }}
+            onChange={z => setSelectedYear(z.year)}
+            granularitaeten={['jahr']}
+            minJahr={currentYear - 1}
+            maxJahr={currentYear + 2}
+          />
           <Button variant="outline" size="sm" onClick={() => setCopyDialog(true)} className="gap-1.5">
             <Copy className="h-4 w-4" /> Jahr kopieren
           </Button>

@@ -6,7 +6,8 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, ChevronDown, AlertCircle } from 'lucide-react';
+import { ChevronDown, AlertCircle } from 'lucide-react';
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
@@ -85,9 +86,6 @@ export default function PersonalkostenNeu() {
     return { stichtag, fix, fixHr, tage, kIst, kHr, bud, ums, pkq, zielQuote, istTageBisStichtag, flexIstAnteil, flexPlanAnteil };
   }, [daten, year, month]);
 
-  const prev = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
-  const next = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
-
   const stichtagDate = berechnung && berechnung.stichtag > 0
     ? `${year}-${String(month).padStart(2, '0')}-${String(berechnung.stichtag).padStart(2, '0')}`
     : null;
@@ -109,11 +107,11 @@ export default function PersonalkostenNeu() {
               Zentrale Berechnungsquelle (personalkosten.ts) — Zahlen-Abgleich vor der Umstellung der bestehenden Ansichten.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prev} className="p-2 rounded-lg border hover:bg-muted"><ChevronLeft className="h-4 w-4" /></button>
-            <span className="font-semibold min-w-[10rem] text-center">{MONATE[month - 1]} {year}</span>
-            <button onClick={next} className="p-2 rounded-lg border hover:bg-muted"><ChevronRight className="h-4 w-4" /></button>
-          </div>
+          <ZeitraumSteuerung
+            value={{ granular: 'monat', year, month, quartal: 1, wochenStart: `${year}-01-05` }}
+            onChange={z => { setYear(z.year); setMonth(z.month); }}
+            granularitaeten={['monat']}
+          />
         </div>
 
         {error && (

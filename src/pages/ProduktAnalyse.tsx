@@ -23,7 +23,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  BarChart3, RefreshCw, ChevronRight, ChevronLeft, CalendarDays,
+  BarChart3, RefreshCw,
   Layers, Utensils, Wine,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -43,8 +43,8 @@ import {
 } from '@/lib/produkt-quellen';
 import {
   filtersToParams, filtersFromParams, isoWeekInfo, isoWeeksInYear, localISODate,
-  weekRangeLabel, shiftIsoWeek, periodBounds, categoryOf, formatDayLabel,
-  MONTH_NAMES, PERIOD_KIND_LABEL,
+  periodBounds, categoryOf, formatDayLabel,
+  MONTH_NAMES,
   type PeriodKind, type PeriodSelection, type CategoryFilter, type Metric,
   type AnalysisFilters,
 } from '@/lib/product-analytics';
@@ -52,6 +52,8 @@ import {
   addDays, quickRangeSelection, comparisonPeriod, QUICK_RANGE_KEYS, QUICK_RANGE_LABEL,
   COMPARE_MODE_LABEL, type QuickRangeKey, type CompareMode,
 } from '@/lib/produkt-zeitraum';
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
+import { getIsoWeek as getIsoWeekZ, isoWeekRange as isoWeekRangeZ } from '@/lib/zeitraum';
 import ProdukteTab, { isLimitMode, type LimitMode } from '@/components/produktanalyse/ProdukteTab';
 import UebersichtTab from '@/components/produktanalyse/UebersichtTab';
 import KategorienTab from '@/components/produktanalyse/KategorienTab';
@@ -78,7 +80,6 @@ function isCompareMode(v: string | null): v is CompareMode {
   return v === 'none' || v === 'vorperiode' || v === 'vorjahr';
 }
 
-const PERIOD_KINDS: PeriodKind[] = ['day', 'week', 'month', 'year', 'range'];
 
 /** Tabs, für die die gemeinsame Perioden-Filterleiste gilt. */
 const SHARED_FILTER_TABS: TabKey[] = ['uebersicht', 'produkte', 'kategorien'];
@@ -292,19 +293,6 @@ export default function ProduktAnalyse() {
     applySelection(quickRangeSelection(key));
   }, [applySelection]);
 
-  // ── Wochen-Navigation ────────────────────────────────────────────────────────
-  const weekRange = useMemo(
-    () => (selection.kind === 'week' ? weekRangeLabel(selection.year, selection.week) : ''),
-    [selection],
-  );
-
-  const stepWeek = useCallback((delta: number) => {
-    if (selection.kind !== 'week') return;
-    const next = shiftIsoWeek(selection.year, selection.week, delta);
-    setWeekYear(next.year);
-    setWeek(next.week);
-  }, [selection]);
-
   // ── Jahr/Monat für Lunch/Take-away (aus derselben Filterleiste) ──────────────
   const lunchTaYear  = year;
   const lunchTaMonth = month;
@@ -362,144 +350,68 @@ export default function ProduktAnalyse() {
 
           {isSharedFilterTab ? (
             <>
-              {/* Ansicht */}
+              {/* Einheitliche Zeitraum-Steuerung (Woche/Monat/Jahr) + Zusatz-Modi
+                  Tag und Von–Bis (seitenspezifisch, im selben Popover). */}
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground font-medium">Ansicht</span>
-                <Select value={periodKind} onValueChange={v => setPeriodKind(v as PeriodKind)}>
-                  <SelectTrigger className="h-8 w-[130px] text-sm" data-testid="select-ansicht"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PERIOD_KINDS.map(k => (
-                      <SelectItem key={k} value={k}>{PERIOD_KIND_LABEL[k]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Tag */}
-              {periodKind === 'day' && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground font-medium">Datum</span>
-                  <Input
-                    type="date"
-                    value={day}
-                    onChange={e => setDay(e.target.value || localISODate())}
-                    className="h-8 w-[160px] text-sm"
-                  />
-                </div>
-              )}
-
-              {/* Woche – Navigation mit exakter Datumsspanne */}
-              {periodKind === 'week' && (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Jahr</span>
-                    <Select value={String(weekYear)} onValueChange={v => setWeekYear(Number(v))}>
-                      <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {yearOptions.map(y => (
-                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Kalenderwoche</span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 shrink-0"
-                        onClick={() => stepWeek(-1)}
-                        title="Vorherige Woche"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <div className="h-8 px-3 min-w-[215px] inline-flex items-center justify-center gap-1.5 rounded-md border bg-muted/40 text-sm font-medium tabular-nums">
-                        <CalendarDays className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                        {weekRange}
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 shrink-0"
-                        onClick={() => stepWeek(1)}
-                        title="Nächste Woche"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
+                <span className="text-xs text-muted-foreground font-medium">Zeitraum</span>
+                <ZeitraumSteuerung
+                  value={(() => {
+                    // Woche: year/month aus dem ISO-Montag ableiten (KW1 kann im
+                    // Vorjahr-Dezember starten) — der Monat-Wechsel folgt der Woche.
+                    const ws = isoWeekRangeZ(weekYear, Math.min(week, isoWeeksInYear(weekYear))).from;
+                    return {
+                      granular: periodKind === 'week' ? 'woche' as const : periodKind === 'year' ? 'jahr' as const : 'monat' as const,
+                      year: periodKind === 'week' ? Number(ws.slice(0, 4)) : year,
+                      month: periodKind === 'week' ? Number(ws.slice(5, 7)) : month,
+                      quartal: 1, wochenStart: ws,
+                    };
+                  })()}
+                  onChange={z => {
+                    if (z.granular === 'woche') {
+                      const w = getIsoWeekZ(z.wochenStart);
+                      setPeriodKind('week'); setWeekYear(w.isoYear); setWeek(w.week);
+                    } else if (z.granular === 'jahr') {
+                      setPeriodKind('year'); setYear(z.year);
+                    } else {
+                      setPeriodKind('month'); setYear(z.year); setMonth(z.month);
+                    }
+                  }}
+                  minJahr={Math.min(2024, ...yearOptions)}
+                  extraModes={[{ id: 'day', label: 'Tag' }, { id: 'range', label: 'Von–Bis' }]}
+                  aktiverExtraMode={periodKind === 'day' ? 'day' : periodKind === 'range' ? 'range' : null}
+                  onExtraMode={id => setPeriodKind(id as PeriodKind)}
+                  extraLabel={periodKind === 'day'
+                    ? `${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)}`
+                    : `${rangeFrom.slice(8, 10)}.${rangeFrom.slice(5, 7)}.–${rangeTo.slice(8, 10)}.${rangeTo.slice(5, 7)}.${rangeTo.slice(0, 4)}`}
+                  onExtraShift={periodKind === 'day' ? (r => setDay(addDays(day, r))) : undefined}
+                  extraNextGesperrt={periodKind === 'day' ? day >= localISODate() : true}
+                  extraContent={periodKind === 'day' ? (
+                    <Input
+                      type="date"
+                      value={day}
+                      onChange={e => setDay(e.target.value || localISODate())}
+                      className="h-8 w-full text-sm"
+                    />
+                  ) : (
+                    <div className="space-y-1.5">
+                      <Input
+                        type="date"
+                        value={rangeFrom}
+                        onChange={e => setRangeFrom(e.target.value || rangeFrom)}
+                        className="h-8 w-full text-sm"
+                        data-testid="input-range-von"
+                      />
+                      <Input
+                        type="date"
+                        value={rangeTo}
+                        onChange={e => setRangeTo(e.target.value || rangeTo)}
+                        className="h-8 w-full text-sm"
+                        data-testid="input-range-bis"
+                      />
                     </div>
-                  </div>
-                </>
-              )}
-
-              {/* Monat */}
-              {periodKind === 'month' && (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Jahr</span>
-                    <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-                      <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {yearOptions.map(y => (
-                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Monat</span>
-                    <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-                      <SelectTrigger className="h-8 w-[130px] text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {MONTH_NAMES.map((name, i) => (
-                          <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </>
-              )}
-
-              {/* Jahr */}
-              {periodKind === 'year' && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground font-medium">Jahr</span>
-                  <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-                    <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {yearOptions.map(y => (
-                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {/* Von–Bis */}
-              {periodKind === 'range' && (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Von</span>
-                    <Input
-                      type="date"
-                      value={rangeFrom}
-                      onChange={e => setRangeFrom(e.target.value || rangeFrom)}
-                      className="h-8 w-[160px] text-sm"
-                      data-testid="input-range-von"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground font-medium">Bis</span>
-                    <Input
-                      type="date"
-                      value={rangeTo}
-                      onChange={e => setRangeTo(e.target.value || rangeTo)}
-                      className="h-8 w-[160px] text-sm"
-                      data-testid="input-range-bis"
-                    />
-                  </div>
-                </>
-              )}
+                  )}
+                />
+              </div>
 
               {/* Schnellwahl */}
               <div className="flex flex-col gap-1">

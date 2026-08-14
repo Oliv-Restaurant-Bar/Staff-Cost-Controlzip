@@ -64,6 +64,7 @@ import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor, Waren
 import {
   baueAbgrenzungVorschlaege, verschiebeDatumInMonat, type AbgrenzungVorschlag,
 } from '@/lib/waren-abgrenzungen';
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
 import { ManuelleBuchungenImport } from '@/components/waren/ManuelleBuchungenImport';
@@ -1126,7 +1127,6 @@ export default function WarenrechnungenPage() {
   /** Direkter-Warenaufwand-Popup: Aufbau nach Konto ↔ nach Lieferant. */
   const [direktAnsicht, setDirektAnsicht] = useState<'konto' | 'lieferant'>('konto');
   /** Perioden-Dropdown im Seitenkopf. */
-  const [kopfPeriodeOpen, setKopfPeriodeOpen] = useState(false);
   /** Listen-Umschalter: Total Netto ↔ nur direkter Warenaufwand (4020–4070). */
   const [listeAnsicht, setListeAnsicht] = useState<'total' | 'direkt'>('total');
   /** Zusätzliche Listen-Filter (kombinierbar). */
@@ -1531,31 +1531,7 @@ export default function WarenrechnungenPage() {
     }
   }, [year, month, analyseMode]);
 
-  const prevMonth = () => {
-    if (month === 1) { setYear(y => y - 1); setMonth(12); }
-    else setMonth(m => m - 1);
-  };
-  const nextMonth = () => {
-    if (month === 12) { setYear(y => y + 1); setMonth(1); }
-    else setMonth(m => m + 1);
-  };
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1;
-  const prevWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() - 7); geheZuWoche(ymdLocal(d)); };
-  const nextWoche = () => { const d = new Date(wochenStart + 'T12:00:00'); d.setDate(d.getDate() + 7); geheZuWoche(ymdLocal(d)); };
-  const istAktuelleWoche = todayStr >= wochenStart && todayStr <= wochenEnde;
-  const prevJahr = () => setYear(y => y - 1);
-  const nextJahr = () => setYear(y => y + 1);
-  const isCurrentYear = year >= today.getFullYear();
-  /** Granularität umschalten: Woche startet in der Woche von heute (aktueller
-   *  Monat) bzw. des Monatsersten; Monat folgt immer dem Montag. */
-  const wechsleGranular = (g: 'monat' | 'woche' | 'jahr') => {
-    setGranular(g);
-    if (g === 'woche') {
-      const ref = isCurrentMonth ? todayStr : `${monthKey}-01`;
-      const w = getIsoWeek(ref);
-      geheZuWoche(isoWeekRange(w.isoYear, w.week).from);
-    }
-  };
+  // Perioden-Navigation/-Umschaltung: gemeinsame ZeitraumSteuerung (src/lib/zeitraum.ts).
 
   // «Neue Rechnung»-Overlay: beim Öffnen Fokus ins Panel (Escape schliesst).
   useEffect(() => { if (neuOpen) neuPanelRef.current?.focus(); }, [neuOpen]);
@@ -2384,12 +2360,6 @@ export default function WarenrechnungenPage() {
   }, [analyseMode, analysisEntries, analysisRevenue, aYear, aMonth, targetPct, todayStr, warenGrenze]);
 
   // Navigation-Helfer für Analyse
-  const prevAWeek = () => { let w = aWeekNum - 1, y = aYear; if (w < 1) { y--; w = getIsoWeek(`${y}-12-28`).week; } setAWeekNum(w); setAYear(y); };
-  const nextAWeek = () => { const maxW = getIsoWeek(`${aYear}-12-28`).week; let w = aWeekNum + 1, y = aYear; if (w > maxW) { w = 1; y++; } setAWeekNum(w); setAYear(y); };
-  const isCurrentAWeek = aYear === today.getFullYear() && aWeekNum === getIsoWeek(todayStr).week;
-  const prevAMonth = () => { if (aMonth === 1) { setAYear(y => y - 1); setAMonth(12); } else setAMonth(m => m - 1); };
-  const nextAMonth = () => { if (aMonth === 12) { setAYear(y => y + 1); setAMonth(1); } else setAMonth(m => m + 1); };
-  const isCurrentAMonth = aYear === today.getFullYear() && aMonth === today.getMonth() + 1;
   const analyseRangeLabel = (() => {
     if (analyseMode === 'week')        return `KW ${String(aWeekNum).padStart(2,'0')} · ${aYear}`;
     if (analyseMode === 'month')       return `${MONTHS_LONG[aMonth-1]} ${aYear}`;
@@ -2407,7 +2377,6 @@ export default function WarenrechnungenPage() {
     return `year_${aRangeYear}`;
   })();
   const [forecastOpen, setForecastOpen] = useState(false);
-  const [periodePickerOpen, setPeriodePickerOpen] = useState(false);
   const forecastRev      = forecastRevs[forecastKey] ?? 0;         // nur der Zusatzumsatz
   const forecastTotal    = analyseKPIs.totalRev + forecastRev;     // aktuell + zusatz
   const forecastPct      = forecastRev > 0 && analyseKPIs.relevantCost > 0 && forecastTotal > 0
@@ -2997,7 +2966,6 @@ export default function WarenrechnungenPage() {
       return { week: i + 1, from: r.from, to: r.to };
     });
   };
-  const pickerJahre = Array.from({ length: today.getFullYear() - 2024 + 1 }, (_, i) => 2024 + i);
   const kpiVariant = (pct: number | null): 'ok' | 'warn' | 'alert' | 'muted' => {
     if (pct === null) return 'muted';
     if (pct > 35) return 'alert';
@@ -3027,185 +2995,62 @@ export default function WarenrechnungenPage() {
           {/* Periode: Pfeile + klickbares Dropdown — im Analyse-Tab steuert
               dieselbe Kopf-Steuerung die Analyse-Periode (einzige Steuerung). */}
           {tab === 'analyse' ? (
-          <div className="flex items-center gap-1.5">
-            {analyseMode !== 'multi_month' && (
-              <button
-                onClick={analyseMode === 'week' ? prevAWeek : analyseMode === 'month' ? prevAMonth : () => setARangeYear(y => y - 1)}
-                className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors"
-                data-testid="analyse-periode-prev" aria-label="Vorherige Periode"
-              ><ChevronLeft className="h-4 w-4" /></button>
-            )}
-            <Popover open={periodePickerOpen} onOpenChange={setPeriodePickerOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  data-testid="analyse-periode-trigger"
-                  title="Periode wählen (Woche / Monat / Mehrere Monate / Jahr / YTD)"
-                  className="h-8 px-3 rounded-md border border-border flex items-center justify-center gap-1.5 hover:bg-muted transition-colors text-sm font-semibold tabular-nums min-w-[170px]"
-                >
-                  <span className="truncate">{analyseMode === 'year' ? `Jahr ${aRangeYear}` : analyseRangeLabel}</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-3 space-y-2" align="center">
-                <p className="text-xs font-medium text-muted-foreground">Periode</p>
-                <select
-                  value={analyseMode}
-                  onChange={e => setAnalyseMode(e.target.value as AnalyseMode)}
-                  data-testid="analyse-mode-select"
-                  className="h-8 w-full rounded-lg border border-border bg-background px-2 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  {([
-                    ['week',        'Woche'],
-                    ['month',       'Monat'],
-                    ['multi_month', 'Mehrere Monate'],
-                    ['year',        'Jahr'],
-                    ['ytd',         'YTD'],
-                  ] as [AnalyseMode, string][]).map(([m, label]) => (
-                    <option key={m} value={m}>{label}</option>
-                  ))}
+          <ZeitraumSteuerung
+            value={(() => {
+              // Woche: year/month folgen dem ISO-Montag (KW1 kann im Vorjahr-
+              // Dezember beginnen) — sonst wechselt «Monat» auf den falschen Monat.
+              const ws = isoWeekRange(aYear, aWeekNum).from;
+              return {
+                granular: analyseMode === 'week' ? 'woche' as const : analyseMode === 'year' ? 'jahr' as const : 'monat' as const,
+                year: analyseMode === 'week' ? Number(ws.slice(0, 4)) : analyseMode === 'year' ? aRangeYear : aYear,
+                month: analyseMode === 'week' ? Number(ws.slice(5, 7)) : aMonth,
+                quartal: 1, wochenStart: ws,
+              };
+            })()}
+            onChange={z => {
+              if (z.granular === 'woche') {
+                const w = getIsoWeek(z.wochenStart);
+                setAnalyseMode('week'); setAYear(w.isoYear); setAWeekNum(w.week);
+              } else if (z.granular === 'jahr') {
+                setAnalyseMode('year'); setARangeYear(z.year);
+              } else {
+                setAnalyseMode('month'); setAYear(z.year); setAMonth(z.month);
+              }
+            }}
+            extraModes={[{ id: 'multi_month', label: 'Mehrere Mte.' }, { id: 'ytd', label: 'YTD' }]}
+            aktiverExtraMode={analyseMode === 'multi_month' ? 'multi_month' : analyseMode === 'ytd' ? 'ytd' : null}
+            onExtraMode={id => setAnalyseMode(id as AnalyseMode)}
+            extraLabel={analyseRangeLabel}
+            onExtraShift={analyseMode === 'ytd' ? (r => setARangeYear(y => y + r)) : undefined}
+            extraNextGesperrt={aRangeYear >= today.getFullYear()}
+            extraContent={analyseMode === 'multi_month' ? (
+              <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 text-sm pt-1">
+                <span className="text-muted-foreground text-xs">Von</span>
+                <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                  {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
                 </select>
-                {analyseMode === 'month' && (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <select value={aMonth} onChange={e => setAMonth(Number(e.target.value))}
-                      data-testid="analyse-monat-select"
-                      className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                    </select>
-                    <select value={aYear} onChange={e => setAYear(Number(e.target.value))}
-                      data-testid="analyse-jahr-select"
-                      className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                  </div>
-                )}
-                {analyseMode === 'multi_month' && (
-                  <div className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 text-sm pt-1">
-                    <span className="text-muted-foreground text-xs">Von</span>
-                    <select value={aFromMonth} onChange={e => setAFromMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                    </select>
-                    <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                    <span className="text-muted-foreground text-xs">Bis</span>
-                    <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
-                    </select>
-                    <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                      {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-            {analyseMode !== 'multi_month' && (
-              <button
-                onClick={analyseMode === 'week' ? nextAWeek : analyseMode === 'month' ? nextAMonth : () => setARangeYear(y => y + 1)}
-                disabled={analyseMode === 'week' ? isCurrentAWeek : analyseMode === 'month' ? isCurrentAMonth : aRangeYear >= today.getFullYear()}
-                className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40"
-                data-testid="analyse-periode-next" aria-label="Nächste Periode"
-              ><ChevronRight className="h-4 w-4" /></button>
-            )}
-          </div>
+                <select value={aFromYear} onChange={e => setAFromYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                  {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <span className="text-muted-foreground text-xs">Bis</span>
+                <select value={aToMonth} onChange={e => setAToMonth(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                  {MONTHS_LONG.map((ml, i) => <option key={i+1} value={i+1}>{ml}</option>)}
+                </select>
+                <select value={aToYear} onChange={e => setAToYear(Number(e.target.value))} className="h-8 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                  {[today.getFullYear()-2, today.getFullYear()-1, today.getFullYear()].map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            ) : null}
+          />
           ) : (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={granular === 'woche' ? prevWoche : granular === 'jahr' ? prevJahr : prevMonth}
-              className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors"
-              data-testid="periode-zurueck" aria-label="Vorherige Periode"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <Popover open={kopfPeriodeOpen} onOpenChange={setKopfPeriodeOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  className="h-8 px-3 rounded-md border border-border flex items-center justify-center gap-1.5 hover:bg-muted transition-colors text-sm font-semibold tabular-nums min-w-[170px]"
-                  data-testid="periode-dropdown"
-                >
-                  {periodenLabel}
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="center" className="w-64 p-3 space-y-2.5">
-                <div>
-                  <p className="text-[11px] font-medium text-muted-foreground mb-1">Granularität</p>
-                  <div className="grid grid-cols-3 gap-1">
-                    {(['woche', 'monat', 'jahr'] as const).map(g => (
-                      <button
-                        key={g}
-                        onClick={() => wechsleGranular(g)}
-                        className={cn('h-7 rounded-md border text-xs font-medium transition-colors',
-                          granular === g ? 'border-foreground bg-foreground text-background' : 'border-border hover:bg-muted')}
-                        data-testid={`granular-${g}`}
-                      >
-                        {g === 'woche' ? 'Woche' : g === 'jahr' ? 'Jahr' : 'Monat'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {granular === 'monat' ? (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <select
-                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                      value={month}
-                      onChange={e => setMonth(Number(e.target.value))}
-                      data-testid="periode-monat-select"
-                    >
-                      {MONTHS_LONG.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                    </select>
-                    <select
-                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                      value={year}
-                      onChange={e => setYear(Number(e.target.value))}
-                      data-testid="periode-jahr-select"
-                    >
-                      {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
-                    </select>
-                  </div>
-                ) : granular === 'jahr' ? (
-                  <select
-                    className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-                    value={year}
-                    onChange={e => setYear(Number(e.target.value))}
-                    data-testid="periode-jahresansicht-select"
-                  >
-                    {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
-                  </select>
-                ) : (
-                  <div className="grid grid-cols-[1fr_auto] gap-1.5">
-                    <select
-                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                      value={wochenStart}
-                      onChange={e => geheZuWoche(e.target.value)}
-                      data-testid="periode-woche-select"
-                    >
-                      {wochenDesJahres(getIsoWeek(wochenStart).isoYear).map(w => (
-                        <option key={w.from} value={w.from}>
-                          KW {String(w.week).padStart(2, '0')} · {fmtKurzDatum(w.from)}–{fmtKurzDatum(w.to)}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                      value={getIsoWeek(wochenStart).isoYear}
-                      onChange={e => { const j = Number(e.target.value); geheZuWoche(isoWeekRange(j, 1).from); }}
-                      data-testid="periode-wochenjahr-select"
-                    >
-                      {pickerJahre.map(j => <option key={j} value={j}>{j}</option>)}
-                    </select>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
-            <button
-              onClick={granular === 'woche' ? nextWoche : granular === 'jahr' ? nextJahr : nextMonth}
-              disabled={granular === 'woche' ? istAktuelleWoche || wochenStart > todayStr : granular === 'jahr' ? isCurrentYear : isCurrentMonth}
-              className="h-8 w-8 rounded-md border border-border flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-40"
-              data-testid="periode-vor" aria-label="Nächste Periode"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
+          <ZeitraumSteuerung
+            value={{ granular, year, month, quartal: 1, wochenStart }}
+            onChange={z => {
+              setGranular(z.granular as 'monat' | 'woche' | 'jahr');
+              if (z.granular === 'woche') geheZuWoche(z.wochenStart);
+              else { setYear(z.year); setMonth(z.month); }
+            }}
+          />
           )}
 
           {/* Lieferanten – nur für Benutzer mit Schreibrecht */}
