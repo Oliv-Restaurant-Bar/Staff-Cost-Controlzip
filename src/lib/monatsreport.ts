@@ -1033,7 +1033,7 @@ export async function ladeMonatsreport(
   }
 
   const [
-    gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth,
+    gaesteDaily, avgDaily, avgMonthly, vjDaily, resWeek, resVjMonth,
     taMonth, taWeek, taVjMonth, pk,
     pkVj, staffingPositions, staffingReqs, staffingConfig,
     mrEmployees, mrSchedule, mrActual,
@@ -1042,8 +1042,6 @@ export async function ladeMonatsreport(
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
     loadVjDailyMonth(year - 1, vjMonth, tenantId),
-    // Reservationen: GANZER Monat (inkl. Zukunft — geplante Perioden zählen mit).
-    loadReservationMetrics(tenantId, fromIso, toIso, resSettings),
     // Reservationen der gewählten Woche (ungeklemmt, future-capable).
     loadReservationMetrics(tenantId, resWeekFrom, resWeekTo, resSettings),
     // Vorjahr: gleicher Monat Jahr−1 (für die Vorjahr-Spalte der Monatssicht).
@@ -1161,6 +1159,16 @@ export async function ladeMonatsreport(
   }
   const standIso = standTag > 0 ? `${year}-${mm}-${pad2(standTag)}` : '';
   const istTage = alleTage.filter(d => standIso && d <= standIso);
+
+  // ── Reservationen des Monats: BIS STICHTAG (Spec 08/2026) ──────────────────
+  // Wie alle anderen Ist-Kennzahlen klemmt «Reservierte Gäste» der Monats-
+  // Spalte auf den Stichtag [Monatsanfang … standIso] — sonst wäre der Wert
+  // (ganzer Monat inkl. zukünftiger Reservationen) inkonsistent zu Brutto/
+  // Netto/Gäste IN und verzerrte «Anteil Gäste IN». Zukunftsmonate (kein
+  // Stichtag) zeigen weiterhin den ganzen Monat (geplante Perioden).
+  // Zählregel/Import unverändert (zentrale Settings, Dedup via Res.Nr.).
+  const resMonthTo = standIso && standIso < toIso ? standIso : toIso;
+  const resMonth = await loadReservationMetrics(tenantId, fromIso, resMonthTo, resSettings);
   /** Anteil Kalendertage bis Stichtag (für anteilige absolute Budgets). */
   const standAnteil = standTag > 0 && daysInMonth > 0 ? standTag / daysInMonth : null;
   /** Absolutes Monats-Budget im gewählten Modus: 'stichtag' → anteilig

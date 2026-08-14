@@ -1,0 +1,21 @@
+BUILD-BEFEHL — Cockpit: „Reservierte Gäste" auf Stichtag begrenzen (beide Mandanten)
+
+Kontext: In der Monatsübersicht respektieren alle Kennzahlen (Brutto, Netto, Gäste IN, Ø-Verkauf) den Stichtag „Stand bis" (z.B. 13.08.). Nur die Kennzahl „Reservierte Gäste" summiert den ganzen Monat (inkl. zukünftiger Reservationen 14.–31.08.) und ist dadurch inkonsistent. Auch der Wert „Anteil Gäste IN" ist dadurch verzerrt (Reservationen ganzer Monat ÷ Gäste nur bis Stichtag).
+
+Aufgabe:
+
+Finde die Berechnung der Kennzahl „Reservierte Gäste" (Monatsübersicht / Cockpit) und den zugehörigen Wert „Anteil Gäste IN".
+Ändere die Aggregation so, dass nur Reservationen mit Reservationsdatum ≤ Stichtag („Stand bis"-Datum) gezählt werden — analog zu allen anderen Kennzahlen. Untergrenze bleibt der Monatsanfang. Also Zeitraum [Monatsanfang … Stichtag] statt [Monatsanfang … Monatsende].
+Die bestehende Stornologik bleibt unverändert: Status storniert, no-show, nicht beantwortet, abgelehnt werden weiterhin ausgeschlossen; gezählt werden nur bestätigte/abgeschlossene Reservationen. Dedublierung über Res.Nr. bleibt wie bisher (nichts am Import ändern).
+„Anteil Gäste IN" = Reservierte Gäste (bis Stichtag) ÷ Gäste IN (bis Stichtag). Beide Werte auf denselben Stichtag beziehen.
+Schutzregeln: nie durch 0 teilen — wenn Gäste IN (bis Stichtag) = 0 oder fehlt, bleibt der Anteil leer (nicht 0 %). Wenn keine Reservationsquelle vorhanden ist, bleibt die Zelle leer statt 0.
+Gilt automatisch für beide Mandanten (Oliv unpräfixiert / Beaulieu beaulieu:) über die bestehende Tenant-Logik — keine Storage-Keys ändern, nur die Anzeige-/Aggregationslogik.
+Nicht die Import-, Undo- oder Ersetzen-Logik anfassen. Nur die Cockpit-Auswertung.
+
+Akzeptanztest (Mandant Beaulieu, August 2026):
+
+Stand bis 13.08. → „Reservierte Gäste" = 957 (vorher fälschlich 1'700); Anteil Gäste IN = 957 ÷ 4'056 = 23.6 %.
+Stand bis 31.08. (Monatsende) → „Reservierte Gäste" = 1'700 (unverändert).
+Test-Gegenprobe Oliv: derselbe Mechanismus greift, ohne separate Anpassung.
+
+Bitte vorher kurz zusammenfassen, in welcher Datei/Funktion die Änderung erfolgt, dann umsetzen und die tsc/Tests grün halten.
