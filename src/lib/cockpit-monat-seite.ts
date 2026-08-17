@@ -23,6 +23,7 @@ import {
   kopfband, folgeKopf, kpiZeileBoxen, abschnitt, tabellenStil,
   zeichneAmpelPunktFarbe, type KpiBox, type Rgb,
 } from '@/lib/cockpit-block-stil';
+import { kpiBoxenDaten, type KpiSpalte } from '@/lib/cockpit-kpi-boxen';
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli',
   'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -36,6 +37,12 @@ export interface MonatsSeiteInput {
   /** Stand-Datum der Ist-Werte (YYYY-MM-DD) oder null. */
   standBis: string | null;
   rows: MrRow[];
+  /**
+   * ZWEITE KPI-Boxen-Reihe: letzte ABGESCHLOSSENE Woche (dynamisch bestimmt,
+   * gleiche Quelle wie die Wochenübersicht). null = keine Wochen-Reihe.
+   * rows = Report-Zeilen, deren WOCHEN-Spalten diese Woche tragen.
+   */
+  woche?: { rows: MrRow[]; label: string } | null;
 }
 
 // ─── Formatierung (identisch zur Bildschirm-Tabelle) ─────────────────────────
@@ -170,51 +177,22 @@ function sektionFuer(row: MrRow): SektionKey {
 
 // ─── KPI-Karten ──────────────────────────────────────────────────────────────
 
-function kpiKarten(rows: MrRow[]): KpiBox[] {
-  const byId = new Map<string, MrRow>();
-  for (const r of rows) if (r.type === 'data' && r.id) byId.set(r.id, r);
-  const boxen: KpiBox[] = [];
-  const hinweis = (z: ZeileBerechnet | null): string =>
-    z?.deltaPct ? ` (${z.deltaPct})` : z?.deltaAbs ? ` (${z.deltaAbs})` : '';
-
-  const netto = byId.get('netto_umsatz');
-  if (netto) {
-    const z = berechneZeile(netto);
-    boxen.push({ label: `Netto-Umsatz${hinweis(z)}`, wert: z?.ist ? `CHF ${z.ist}` : '–' });
-  }
-  const waren = byId.get('warenkosten_total');
-  const wkq = waren?.wkqInline?.month ?? null;
-  if (wkq?.pct != null) {
-    const gut = wkq.ziel != null ? wkq.pct <= wkq.ziel : null;
-    boxen.push({
-      label: wkq.ziel != null ? `WKQ (Ziel max. ${wkq.ziel.toFixed(0)} %)` : 'WKQ',
-      wert: `${wkq.pct.toFixed(1)} %`,
-      ampel: gut === null ? undefined
-        : gut ? { dot: GRUEN_DOT, ink: GRUEN_INK } : { dot: ROT_DOT, ink: ROT_INK },
-    });
-  }
-  const pkq = byId.get('personalquote');
-  if (pkq?.month != null) {
-    const grenze = pkq.warnAbove ?? null;
-    const gut = grenze != null ? pkq.month <= grenze : null;
-    boxen.push({
-      label: grenze != null ? `PKQ (max. ${grenze.toFixed(0)} %)` : 'Personalquote',
-      wert: `${pkq.month.toFixed(1)} %`,
-      ampel: gut === null ? undefined
-        : gut ? { dot: GRUEN_DOT, ink: GRUEN_INK } : { dot: ROT_DOT, ink: ROT_INK },
-    });
-  }
-  const prod = byId.get('produktivitaet');
-  if (prod?.month != null) {
-    const z = berechneZeile(prod);
-    boxen.push({ label: `Produktivität${hinweis(z)}`, wert: fmtNum(prod.month) });
-  }
-  const gaeste = byId.get('gaeste_in');
-  if (gaeste?.month != null) {
-    const z = berechneZeile(gaeste);
-    boxen.push({ label: `Gäste IN${hinweis(z)}`, wert: fmtNum(gaeste.month, 0) });
-  }
-  return boxen.slice(0, 5);
+/**
+ * Gemeinsame KPI-Box-Daten (cockpit-kpi-boxen.ts) → PDF-Boxen. Δ% wandert wie
+ * bisher in Klammern ins Label; Ampel (WKQ/PKQ) färbt Punkt + Wert.
+ * IMMER 5 Boxen (fehlende Quelle ⇒ «–»), damit die Monats- und die
+ * Wochen-Reihe deckungsgleich untereinander stehen.
+ */
+function kpiKarten(rows: MrRow[], spalte: KpiSpalte): KpiBox[] {
+  return kpiBoxenDaten(rows, spalte).map((b): KpiBox => ({
+    label: b.delta ? `${b.label} (${b.delta.text})` : b.label,
+    wert: b.wert ?? '–',
+    ampel: b.wert !== null && b.ampelGut !== undefined
+      ? (b.ampelGut
+        ? { dot: GRUEN_DOT, ink: GRUEN_INK }
+        : { dot: ROT_DOT, ink: ROT_INK })
+      : undefined,
+  }));
 }
 
 // ─── Seite zeichnen ──────────────────────────────────────────────────────────
@@ -235,7 +213,29 @@ export function zeichneMonatsUebersicht(
   // gleiche Degradation wie Waren-/Personal-Block, nie stilles Abschneiden.
   let y = kopfband(pdf, branding, titel, zeitraum, heute);
 
-  y = kpiZeileBoxen(pdf, y, kpiKarten(rows));
+  // KPI-Boxen: Reihe 1 = Monat, Reihe 2 = letzte abgeschlossene Woche —
+  // jeweils mit kleinem Reihen-Label, damit Monat/Woche nie verwechselt werden.
+  const reihenLabel = (text: string) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.6);
+    pdf.setTextColor(...MUTED);
+    pdf.text(text.toUpperCase(), M, y + 2.4);
+    y += 3.6;
+  };
+  const monatLabel = input.standBis
+    ? `Monat · Ist bis ${input.standBis.slice(8, 10)}.${input.standBis.slice(5, 7)}.`
+    : 'Monat';
+  // Mit Wochen-Reihe: kompakte Boxen (12 statt 15 mm) + engere Kopplung,
+  // damit die 4 Abschnitte weiterhin auf die Kopfseite passen.
+  const kompakt = !!input.woche;
+  const boxOpts = kompakt ? { boxH: 12 } : undefined;
+  reihenLabel(monatLabel);
+  y = kpiZeileBoxen(pdf, y, kpiKarten(rows, 'month'), boxOpts);
+  if (input.woche) {
+    y -= 3.5; // Reihen kompakter koppeln (eine Kopfseite)
+    reihenLabel(input.woche.label);
+    y = kpiZeileBoxen(pdf, y, kpiKarten(input.woche.rows, 'week'), boxOpts);
+    y -= 1.5;
+  }
 
   // Hauptzeilen (keine Trenner, keine eingeklappten Kinder) je Sektion.
   const sektionen: Record<SektionKey, Array<{ row: MrRow; z: ZeileBerechnet }>> = {
@@ -267,8 +267,11 @@ export function zeichneMonatsUebersicht(
   const basis = tabellenStil(branding);
   const stil = {
     ...basis,
-    styles: { ...basis.styles, fontSize: 7.3, cellPadding: { top: 0.7, bottom: 0.7, left: 2.2, right: 2.2 } },
-    headStyles: { ...basis.headStyles, fontSize: 7.2, cellPadding: { top: 1.2, bottom: 1.2, left: 2.2, right: 2.2 } },
+    // Mit zweiter KPI-Reihe nochmals leicht verdichtet, damit alle 4
+    // Abschnitte weiterhin auf die Kopfseite passen (Degradation via
+    // Fortsetzungsseite bleibt als Fallback bestehen).
+    styles: { ...basis.styles, fontSize: kompakt ? 7.0 : 7.3, cellPadding: { top: kompakt ? 0.55 : 0.7, bottom: kompakt ? 0.55 : 0.7, left: 2.2, right: 2.2 } },
+    headStyles: { ...basis.headStyles, fontSize: kompakt ? 7.0 : 7.2, cellPadding: { top: kompakt ? 1.0 : 1.2, bottom: kompakt ? 1.0 : 1.2, left: 2.2, right: 2.2 } },
     rowPageBreak: 'avoid' as const,
   };
   const rechts = { halign: 'right' as const };

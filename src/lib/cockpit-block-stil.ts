@@ -83,10 +83,14 @@ export interface KpiBox {
 }
 
 /** KPI-Zeile: 3–4 Boxen mit Label oben, Wert (optional mit Ampelpunkt) unten. */
-export function kpiZeileBoxen(pdf: jsPDF, y: number, kpis: KpiBox[]): number {
+export function kpiZeileBoxen(
+  pdf: jsPDF, y: number, kpis: KpiBox[],
+  /** Kompakt-Variante (z.B. zweizeilige KPI-Kopfe): niedrigere Boxen. */
+  opts?: { boxH?: number },
+): number {
   const gap = 4;
   const boxW = (CW - gap * (kpis.length - 1)) / kpis.length;
-  const boxH = 15;
+  const boxH = opts?.boxH ?? 15;
   kpis.forEach((k, i) => {
     const x = M + i * (boxW + gap);
     pdf.setFillColor(...BAND_BG);

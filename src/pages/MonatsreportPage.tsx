@@ -57,6 +57,7 @@ import {
   loadReservationCounting, DEFAULT_RESERVATION_COUNTING,
 } from '@/lib/reservation-cockpit-settings';
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
+import { CockpitKpiBoxenReihen } from '@/components/CockpitKpiBoxenReihen';
 
 /** Metadaten fürs PDF (Titel/Zeitraum/Dateiname/Fussnote), von jedem Tab gemeldet. */
 export interface CockpitPdfMeta {
@@ -1136,14 +1137,55 @@ export default function MonatsreportPage() {
     let alive = true;
     setLoading(true);
     setFehler(null);
+    const weekKind = weekSelection.kind;
     ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection, budgetModus, stichtagTag)
-      .then(d => { if (alive) setDaten(d); })
-      .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
+      .then(d => { if (alive) { setDaten(d); setDatenWeekKind(weekKind); } })
+      .catch(e => { if (alive) { setDaten(null); setDatenWeekKind(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection, budgetReloadTick, budgetModus, stichtagTag]);
 
   useEffect(() => { setBudgetUndo(null); }, [year, month, tenantId]);
+
+  // ── KPI-Boxen-Reihe 2 (Monatsübersicht): letzte ABGESCHLOSSENE Woche ──────
+  // Standard: `daten` ist bereits mit weekSelection='lastComplete' geladen →
+  // dessen Wochen-Spalten direkt wiederverwenden (nichts neu berechnen).
+  // Hat der User im Woche-Tab eine ANDERE Woche gewählt, wird für die
+  // KPI-Reihe separat mit {kind:'lastComplete'} geladen (gleicher Mandant,
+  // gleiche Logik) — Fehler ⇒ Reihe weggelassen (nie Falschwerte).
+  const kpiWocheAusDaten = weekSelection.kind === 'lastComplete';
+  /** Week-Selektion, mit der `daten` tatsächlich geladen wurde — Wache gegen
+   *  den transienten Frame nach Umschalten der Woche-Auswahl (nie alte
+   *  KW-Spalten als «letzte abgeschl. Woche» ausweisen). */
+  const [datenWeekKind, setDatenWeekKind] = useState<string | null>(null);
+  const [kpiWocheDaten, setKpiWocheDaten] = useState<MonatsreportDaten | null>(null);
+  useEffect(() => {
+    if (kpiWocheAusDaten || ratesLoading || !rates) { setKpiWocheDaten(null); return; }
+    let alive = true;
+    setKpiWocheDaten(null); // sofort invalidieren (nie stale Mandant/Monat zeigen)
+    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute,
+      { kind: 'lastComplete' }, budgetModus, stichtagTag)
+      .then(d => { if (alive) setKpiWocheDaten(d); })
+      .catch(() => { if (alive) setKpiWocheDaten(null); })
+      .finally(() => { /* kein eigener Spinner — Reihe erscheint, sobald da */ });
+    return () => { alive = false; };
+  }, [kpiWocheAusDaten, year, month, tenantId, tenantKey, rates, ratesLoading, heute,
+    budgetModus, stichtagTag, budgetReloadTick]);
+  const kpiWocheQuelle = kpiWocheAusDaten
+    ? (datenWeekKind === 'lastComplete' ? daten : null)
+    : kpiWocheDaten;
+  const kpiWocheLabel = useMemo(() => {
+    const from = kpiWocheQuelle?.weekFrom, to = kpiWocheQuelle?.weekTo;
+    if (!from || !to) return 'Letzte abgeschl. Woche';
+    // parseIso ist erst weiter unten definiert (TDZ) → hier lokal parsen.
+    const kw = isoWeekOf(new Date(
+      Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)))).week;
+    const dm = (s: string) => `${s.slice(8, 10)}.${s.slice(5, 7)}.`;
+    return `Letzte abgeschl. Woche · KW${kw} (${dm(from)}–${dm(to)})`;
+  }, [kpiWocheQuelle?.weekFrom, kpiWocheQuelle?.weekTo]);
+  const kpiMonatLabel = daten?.standBis
+    ? `Monat · Ist bis ${daten.standBis.slice(8, 10)}.${daten.standBis.slice(5, 7)}.`
+    : 'Monat';
 
   // ── Vorwoche für die 2-Wochen-Ansicht der Wochenübersicht ──────────────────
   // Nur laden, wenn der Woche-Tab aktiv ist (ladeMonatsreport ist teuer);
@@ -1415,9 +1457,16 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
     if (!daten) return null;
     const mod = await import('@/lib/cockpit-monat-seite');
     const branding = getBranding(tenantId);
-    const input = { year, month, standBis: daten.standBis, rows: daten.rows };
+    const input = {
+      year, month, standBis: daten.standBis, rows: daten.rows,
+      // Reihe 2 der KPI-Boxen: letzte abgeschlossene Woche (gleiche Quelle
+      // wie On-Screen); fehlt sie (noch), wird sie im PDF weggelassen.
+      woche: kpiWocheQuelle
+        ? { rows: kpiWocheQuelle.rows, label: kpiWocheLabel }
+        : null,
+    };
     return { kind: 'zeichner', zeichne: pdf => mod.zeichneMonatsUebersicht(pdf, input, branding, heute) };
-  }, [daten, tenantId, year, month, heute]);
+  }, [daten, tenantId, year, month, heute, kpiWocheQuelle, kpiWocheLabel]);
 
   const handlePdfExport = useCallback(async (mitWaren: boolean, mitPersonal: boolean) => {
     const branding = getBranding(tenantId);
@@ -1581,15 +1630,26 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
   return (
     <PageShell>
       <div className="space-y-4 max-w-5xl">
-        {/* Kopf */}
-        <div className="flex items-center gap-3">
-          <CalendarDays className="h-6 w-6 text-muted-foreground" />
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Cockpit</h1>
-            <p className="text-xs text-muted-foreground">
-              Meeting-Cockpit — automatisch gefüllte Kennzahlen, fehlende Quellen bleiben leer
-            </p>
+        {/* Kopf: Titel links, kompakter KPI-Streifen (Monat + letzte
+            abgeschlossene Woche) daneben — dezent, nur Ampelpunkte/Δ farbig. */}
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex items-center gap-3">
+            <CalendarDays className="h-6 w-6 text-muted-foreground" />
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Cockpit</h1>
+              <p className="text-xs text-muted-foreground">fehlende Quellen bleiben leer</p>
+            </div>
           </div>
+          {!loading && daten && (activeTab === 'monat' || activeTab === 'woche') && (
+            <div className="min-w-[320px] flex-1">
+              <CockpitKpiBoxenReihen
+                monatRows={daten.rows}
+                monatLabel={kpiMonatLabel}
+                wocheRows={kpiWocheQuelle?.rows ?? null}
+                wocheLabel={kpiWocheLabel}
+              />
+            </div>
+          )}
         </div>
 
         <Tabs value={activeTab} onValueChange={onTabChange}>
@@ -1839,6 +1899,19 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               {daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}
               {wocheRange ? ` ${wocheRange}` : ''}
             </div>
+            {/* Capture-only: KPI-Streifen (Monat + letzte abgeschl. Woche) —
+                on-screen sitzt er im Seitenkopf, im Raster-PDF der Wochen-
+                übersicht wird er hier mit eingefangen. */}
+            {daten && (
+              <div className="pdf-only hidden">
+                <CockpitKpiBoxenReihen
+                  monatRows={daten.rows}
+                  monatLabel={kpiMonatLabel}
+                  wocheRows={kpiWocheQuelle?.rows ?? null}
+                  wocheLabel={kpiWocheLabel}
+                />
+              </div>
+            )}
             <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month-woche">
                 <ChevronLeft className="h-4 w-4" />
