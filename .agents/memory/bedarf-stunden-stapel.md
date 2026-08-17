@@ -10,3 +10,9 @@ description: Einheitliche Quelle für Bedarf-/Plan-/Ist-Stunden in Cockpit und P
 **Why:** Zwei getrennte Berechnungen (personalkosten.ts vs. Bedarf-Helfer) lieferten unterschiedliche Populationen (FE-only-Ausschluss, isAdditionalCost, manuelle Pausen statt ArG) → Δ-zum-Bedarf war nicht vergleichbar (Review-Fail).
 
 **How to apply:** Neue Flächen mit Plan-/Ist-Stunden gegen Bedarf immer über diese Helfer summieren; personalkosten.ts bleibt SSOT nur für KOSTEN (CHF/PKQ), nicht für die Stunden-Stapel-Anzeige. Vorjahres-Personalkosten (Buchhaltung, Jahre <2026) kommen read-only aus Tabelle `vorjahres_personalkosten` via `loadVorjahresPersonalkosten` (nur Monats-Spalte, keine Wochenverteilung).
+
+## Absenz-Stunden (Info) im Ist-Grid (08/2026)
+- Absenztag (kanonischer Code K/U/FE/F/FT, Legacy via canonicalAbsenceCode normalisiert, Unbekanntes skip) + Ist-Stunden EXAKT 0 → Plan-Netto-Stunden des Tages als reine Info («X.Xh Plan», violett) + pro-MA-Summe «A X.X».
+- Plan-Basis nimmt die geplanten Zeiten AUCH bei Plan-Absenzmarke; keine Plan-Basis → leer, nie geraten.
+- STRIKT getrennt: fliesst NIE in produktive Ist-Summen, getDailyStats, Footer, Produktivität oder Personalkosten (Fixlohn zahlt Krankheit ohnehin — kein zweiter Kostenblock).
+- Summen- und Zellen-Anzeige MÜSSEN dieselbe Wache nutzen (canonicalAbsenceCode + hours===0), sonst divergieren Zelle und Summe bei Bestandsdaten.

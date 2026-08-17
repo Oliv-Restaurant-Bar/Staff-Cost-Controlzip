@@ -16,6 +16,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon, Lock, LockOpen } from 'lucide-react';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import type { DaySchedule } from '@/lib/supabase-db';
+import { absencePlanHoursForEmployeeDate, absenceInfoHoursForEmployee, canonicalAbsenceCode } from '@/lib/bedarf-stunden-utils';
 import { toast } from 'sonner';
 
 export type AbsenceCode = 'FE' | 'FT' | 'K' | 'U' | 'F';
@@ -54,6 +56,12 @@ interface ActualHoursGridProps {
   onToggleDayLock?: (dates: string[], lock?: boolean) => void;
   /** Nur mit Bearbeitungsrecht dürfen Sperren geändert werden. */
   canLock?: boolean;
+  /**
+   * Dienstplan-Daten für die Absenz-Stunden-Info: An Absenztagen ohne
+   * MIRUS-Ist (hours=0 + Code) werden die geplanten Netto-Stunden des Tages
+   * als reine Info angezeigt — NIE zu den produktiven Ist-Stunden addiert.
+   */
+  scheduleData?: Record<string, DaySchedule>;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -98,6 +106,7 @@ const ActualHoursCell = ({
   showCosts = false,
   quickEntry = null,
   locked = false,
+  planInfoHours = null,
 }: {
   employee: Employee;
   day: Date;
@@ -106,6 +115,8 @@ const ActualHoursCell = ({
   showCosts?: boolean;
   quickEntry?: AbsenceCode | null;
   locked?: boolean;
+  /** Absenz-Stunden-Info: Plan-Netto-Stunden des Tages (nur Anzeige, nie produktiv). */
+  planInfoHours?: number | null;
 }) => {
   const { rates: socialCostRates } = useSocialCostRates();
   const [isEditing, setIsEditing] = useState(false);
@@ -276,6 +287,15 @@ const ActualHoursCell = ({
             )}>
               {absenceType}
             </span>
+            {planInfoHours != null && (
+              <span
+                className="text-[9px] font-medium text-purple-600 dark:text-purple-400"
+                title={`Geplante ${planInfoHours.toFixed(2)} h als Absenz-Stunden (nur Info — zählt NICHT zu den produktiven Ist-Stunden)`}
+                data-testid={`text-absence-plan-hours-${employee.id}-${format(day, 'yyyy-MM-dd')}`}
+              >
+                {planInfoHours.toFixed(1)}h Plan
+              </span>
+            )}
             {showCosts && (
               <span className="text-[9px] text-muted-foreground">
                 {cost.toFixed(0)} CHF
@@ -641,6 +661,7 @@ export const ActualHoursGrid = ({
   lockedDates,
   onToggleDayLock,
   canLock = false,
+  scheduleData,
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
   const lockedSet = lockedDates ?? new Set<string>();
@@ -1060,6 +1081,14 @@ export const ActualHoursGrid = ({
           <tbody>
             {employees.map((employee) => {
               const actualHours = getEmployeeActualHours(employee.id);
+              // Absenz-Stunden (Info): Plan-Stunden der Absenztage ohne MIRUS-Ist —
+              // strikt getrennt, zählt NIE zu den produktiven Ist-Stunden.
+              const absenceInfo = scheduleData ? absenceInfoHoursForEmployee({
+                actualHours: actualHoursData,
+                scheduleData,
+                employeeId: employee.id,
+                dates: days.map(d => format(d, 'yyyy-MM-dd')),
+              }) : null;
               const targetHours = getTargetHours(employee);
               const percentage = Math.min((actualHours / targetHours) * 100, 100);
               const isInRange = percentage >= 90 && percentage <= 110;
@@ -1121,6 +1150,14 @@ export const ActualHoursGrid = ({
                                 !isInRange && !isUnder && "[&>div]:bg-red-500"
                               )}
                             />
+                            {absenceInfo && (
+                              <div
+                                className="text-[8px] font-medium text-purple-600 dark:text-purple-400"
+                                data-testid={`text-absence-sum-${employee.id}`}
+                              >
+                                A {absenceInfo.total.toFixed(1)}
+                              </div>
+                            )}
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
@@ -1128,6 +1165,15 @@ export const ActualHoursGrid = ({
                             <div>Ist: {actualHours.toFixed(1)}h</div>
                             <div>Soll: {targetHours.toFixed(1)}h</div>
                             <div>Diff: {(actualHours - targetHours).toFixed(1)}h</div>
+                            {absenceInfo && (
+                              <div className="mt-1 pt-1 border-t border-border text-purple-500">
+                                <div>Absenz-Std. (Info): {absenceInfo.total.toFixed(1)}h</div>
+                                {Object.entries(absenceInfo.byCode).map(([code, h]) => (
+                                  <div key={code}>{code}: {h.toFixed(1)}h</div>
+                                ))}
+                                <div className="text-muted-foreground">zählt nicht zu Ist/Produktivität</div>
+                              </div>
+                            )}
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -1150,6 +1196,15 @@ export const ActualHoursGrid = ({
                         showCosts={showCosts}
                         quickEntry={quickEntry}
                         locked={lockedSet.has(dateStr)}
+                        planInfoHours={
+                          // Nur an kanonischen Absenztagen mit exakt 0 Ist-Stunden:
+                          // Plan-Stunden als Info (gleiche Wache wie die Summenlogik)
+                          scheduleData
+                          && canonicalAbsenceCode(entry?.absenceType) != null
+                          && Number.isFinite(Number(entry?.hours)) && Number(entry?.hours) === 0
+                            ? absencePlanHoursForEmployeeDate({ scheduleData, employeeId: employee.id, dateStr })
+                            : null
+                        }
                       />
                     );
                   })}

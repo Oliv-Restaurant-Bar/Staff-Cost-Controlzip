@@ -132,6 +132,85 @@ export function planNettoHoursForDates(args: {
 }
 
 /**
+ * ABSENZ-Stunden (reine Info): geplante Netto-Stunden EINES Mitarbeiters an
+ * EINEM Datum — Basis für «Kranken-/Absenz-Stunden» an Absenztagen ohne
+ * MIRUS-Ist. Nimmt die geplanten Zeiten AUCH dann, wenn der Plan selbst eine
+ * Absenz-Marke trägt (die geplanten Zeiten sind die Info-Basis).
+ * null, wenn keine Plan-Basis existiert (nie geraten, nie 0).
+ */
+export function absencePlanHoursForEmployeeDate(args: {
+  scheduleData: Record<string, DaySchedule>;
+  employeeId: string;
+  dateStr: string;
+}): number | null {
+  const ds = args.scheduleData[`${args.employeeId}-${args.dateStr}`];
+  if (!ds) return null;
+  const slots: Array<{ start: string; end: string }> = [];
+  if (ds.früh?.start && ds.früh?.end) slots.push({ start: ds.früh.start, end: ds.früh.end });
+  if (ds.spät?.start && ds.spät?.end) slots.push({ start: ds.spät.start, end: ds.spät.end });
+  if (slots.length === 0) return null;
+  const h = r1(nettoMinutesForSlots(slots) / 60);
+  return h > 0 ? h : null;
+}
+
+/**
+ * Kanonischer Absenzcode (K/U/FE/F/FT) aus einem Ist-Eintrag; Legacy-Strings
+ * («ferien», «krank», …) werden normalisiert, Unbekanntes ergibt null (skip).
+ */
+export function canonicalAbsenceCode(raw: string | undefined | null): 'K' | 'U' | 'FE' | 'F' | 'FT' | null {
+  if (!raw) return null;
+  const v = String(raw).trim().toUpperCase();
+  if (v === 'K' || v === 'U' || v === 'FE' || v === 'F' || v === 'FT') return v;
+  switch (v) {
+    case 'FERIEN': case 'URLAUB': return 'FE';
+    case 'KRANK': case 'KRANKHEIT': return 'K';
+    case 'UNFALL': return 'U';
+    case 'FEIERTAG': return 'FT';
+    case 'FREI': return 'F';
+    default: return null;
+  }
+}
+
+/** Absenz-Stunden-Summe (Info) eines MA über einen Datumsbereich, nach Code. */
+export interface AbsenceHoursInfo {
+  total: number;
+  byCode: Record<string, number>;
+}
+
+/**
+ * Regel: NUR Tage mit kanonischem Ist-Absenzcode (K/U/FE/F/FT, Legacy-Strings
+ * normalisiert, Unbekanntes übersprungen) UND hours EXAKT 0 (MIRUS > 0
+ * überschreibt den Code ohnehin und zählt als echte Arbeit). Wert =
+ * Plan-Netto-Stunden des Tages; ohne Plan-Basis wird der Tag übersprungen
+ * (leer, nie geraten). STRIKT getrennt von produktiven Ist-Stunden.
+ */
+export function absenceInfoHoursForEmployee(args: {
+  actualHours: Record<string, ActualHourEntry>;
+  scheduleData: Record<string, DaySchedule>;
+  employeeId: string;
+  dates: string[];
+}): AbsenceHoursInfo | null {
+  let total = 0;
+  const byCode: Record<string, number> = {};
+  let any = false;
+  for (const dateStr of args.dates) {
+    const e = args.actualHours[`${args.employeeId}-${dateStr}`];
+    const code = canonicalAbsenceCode(e?.absenceType);
+    if (!code) continue;
+    const ist = Number(e!.hours);
+    if (!(Number.isFinite(ist) && ist === 0)) continue;
+    const h = absencePlanHoursForEmployeeDate({
+      scheduleData: args.scheduleData, employeeId: args.employeeId, dateStr,
+    });
+    if (h == null) continue;
+    total += h;
+    byCode[code] = r1((byCode[code] ?? 0) + h);
+    any = true;
+  }
+  return any ? { total: r1(total), byCode } : null;
+}
+
+/**
  * IST-Stunden (gestempelt/MIRUS) für EIN Datum: Σ hours der actual-hours-
  * Einträge des Tages, OHNE Absenz-Einträge (absenceType) — analog zur
  * Overtime-/Ist-Analytik. null, wenn für den Tag KEIN Eintrag existiert

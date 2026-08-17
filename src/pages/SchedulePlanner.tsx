@@ -4722,6 +4722,7 @@ const SchedulePlanner = () => {
                     lockedDates={lockedIstDates}
                     canLock={canEditEmployees}
                     onToggleDayLock={(dates, lock) => { void toggleIstDayLocks(dates, lock); }}
+                    scheduleData={scheduleData}
                   />
                 </>
               )}
