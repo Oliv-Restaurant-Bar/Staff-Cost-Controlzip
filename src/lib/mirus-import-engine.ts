@@ -54,6 +54,12 @@ export interface MirusPlanInfo {
   hours: number;
   /** Kanonischer Absenzcode FE | K | U (andere Plan-Codes zählen nicht). */
   absence: 'FE' | 'K' | 'U' | null;
+  /**
+   * Roher Plan-Absenzcode (z.B. 'F', 'FT'), auch wenn er nicht kanonisch ist.
+   * Zählt NUR im Konfliktfall «MIRUS > 0 vs. Absenz» (Muster 4) — bei MIRUS 0
+   * bleibt die bisherige Regel (nur FE/K/U werden behalten/materialisiert).
+   */
+  absenceRaw?: string | null;
 }
 
 export type MirusCellDecision =
@@ -63,7 +69,7 @@ export type MirusCellDecision =
   | 'unchanged_equal'  // Werte praktisch identisch (< 0.005) → nichts zu tun
   | 'conflict_zero'    // Muster 2: MIRUS 0 vs. Stunden (Ist oder Plan)
   | 'absence_keep'     // Muster 3: Absenz + MIRUS 0 → Code behalten (bestätigen)
-  | 'conflict_absence' // Muster 4: Absenz vs. MIRUS-Stunden
+  | 'conflict_absence' // Muster 4: Absenz durch MIRUS-Ist ersetzt (Info, automatisch)
   | 'conflict_diff';   // Muster 5: Stunden vs. Stunden, Differenz > Schwelle
 
 /** Muster-Nummer (1–5) je Entscheidung; null = kein sichtbarer Fall. */
@@ -91,7 +97,9 @@ export interface MirusCellPlan {
   /**
    * Entscheid je Muster-Zelle: 'mirus' = MIRUS-Wert übernehmen,
    * 'keep' = Bestehendes behalten (bei Muster 3 = Absenzcode bestätigen).
-   * Defaults: Muster 1/2/4/5 → 'mirus', Muster 3 → 'keep'.
+   * Defaults: Muster 1/2/5 → 'mirus', Muster 3 → 'keep'.
+   * Muster 4 (Absenz vs. MIRUS-Stunden): IMMER 'mirus' — echte Stempeluhr-
+   * Stunden haben Vorrang, der Absenzcode wird entfernt (Info, keine Rückfrage).
    */
   resolution?: 'mirus' | 'keep';
 }
@@ -259,9 +267,12 @@ function classifyCell(
   const beforeHours = before?.hours ?? 0;
   // Absenz-Marke: gespeicherte Ist-Marke ODER (Ist leer + Plan-Absenz FE/K/U).
   const hasAbsence = !!before?.absenceType || (!before && plan.absence != null);
+  // Konflikt-Sicht (MIRUS > 0): auch NICHT-kanonische Plan-Codes (F/FT) zählen —
+  // echte MIRUS-Stunden dürfen nie still an einem Absenzcode scheitern.
+  const hasAbsenceConflict = hasAbsence || (!before && plan.absenceRaw != null);
 
   if (fileHours > 0) {
-    if (hasAbsence) return 'conflict_absence';                       // Muster 4
+    if (hasAbsenceConflict) return 'conflict_absence';               // Muster 4
     if (before && beforeHours > 0) {
       const d = Math.abs(beforeHours - fileHours);
       if (d < 0.005) return 'unchanged_equal';
@@ -283,14 +294,38 @@ function defaultResolution(decision: MirusCellDecision): 'mirus' | 'keep' | unde
   switch (decision) {
     case 'auto_take':
     case 'conflict_zero':
-    case 'conflict_absence':
     case 'conflict_diff':
+    // Muster 4: Stempeluhr hat IMMER Vorrang — Stunden übernehmen, Code entfernen.
+    case 'conflict_absence':
       return 'mirus';
     case 'absence_keep':
       return 'keep';
     default:
       return undefined;
   }
+}
+
+/**
+ * Roher Plan-Absenzcode aus Früh-/Spätschicht: erster NICHT-LEERER Code gewinnt.
+ * Wichtig: leere Strings ('') dürfen einen vorhandenen Spätcode nicht verdecken
+ * (?? würde '' bevorzugen und einen F/FT-Konflikt übersehen).
+ */
+export function rawPlanAbsence(frueh?: string | null, spaet?: string | null): string | null {
+  return (frueh || spaet || null) as string | null;
+}
+
+/**
+ * Muster-4-Zellen «Absenz durch MIRUS-Ist ersetzt» — reine Info-Liste für die
+ * Vorschau (automatische Übernahme, keine Entscheidung nötig).
+ */
+export function absenceOverrides(plan: MirusReconcilePlan): MirusCellPlan[] {
+  const out: MirusCellPlan[] = [];
+  for (const emp of plan.employees) {
+    for (const cell of emp.cells) {
+      if (cell.decision === 'conflict_absence') out.push(cell);
+    }
+  }
+  return out;
 }
 
 /**
@@ -476,8 +511,8 @@ export function resolvePlanToWrites(plan: MirusReconcilePlan): MirusWriteOp[] {
           }
           // bestehende Ist-Absenz bleibt vollständig unangetastet
           break;
-        case 'conflict_absence': // Muster 4: MIRUS-Stunden übernehmen entfernt die Marke
-          if (take) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
+        case 'conflict_absence': // Muster 4: Stempeluhr hat IMMER Vorrang — Marke wird entfernt
+          ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
           break;
         case 'conflict_diff': // Muster 5
           if (take) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
@@ -566,7 +601,7 @@ export function expectedAfterTotals(plan: MirusReconcilePlan): Record<string, nu
         case 'unchanged_equal':  total += cell.before?.hours ?? 0; break;
         case 'absence_keep':     total += take ? 0 : (cell.before?.hours ?? 0); break;
         case 'conflict_zero':    total += take ? 0 : (cell.before?.hours ?? 0); break;
-        case 'conflict_absence': total += take ? cell.fileHours : (cell.before?.hours ?? 0); break;
+        case 'conflict_absence': total += cell.fileHours; break; // immer übernommen
         case 'conflict_diff':    total += take ? cell.fileHours : (cell.before?.hours ?? 0); break;
         default: break;
       }

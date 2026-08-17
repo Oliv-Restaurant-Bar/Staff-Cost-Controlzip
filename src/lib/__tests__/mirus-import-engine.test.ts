@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   checkMirusScope, buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
   groupPlanCells, canonicalAbsence, computeIstCoverage, formatDayRanges, daysInMonthOf,
+  absenceOverrides, rawPlanAbsence,
   MirusResolvedEntry,
 } from '@/lib/mirus-import-engine';
 
@@ -205,7 +206,7 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     expect(writes[0].entry).toMatchObject({ hours: 0, absenceType: 'FE' });
   });
 
-  it('Muster 4: Absenz vs. MIRUS-Stunden → Rückfrage; mirus entfernt Marke', () => {
+  it('Muster 4: echte MIRUS-Stunden übernehmen IMMER und entfernen die Marke', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 9.27)],
       existing: { 'a-2026-07-01': { hours: 0, absenceType: 'F' } },
@@ -214,12 +215,64 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     });
     const cell = plan.employees[0].cells[0];
     expect(cell.decision).toBe('conflict_absence');
+    // Stempeluhr hat Vorrang: Default 'mirus', Schreib-Op auch ohne Nutzeraktion
+    expect(cell.resolution).toBe('mirus');
+    expect(absenceOverrides(plan)).toHaveLength(1);
     const writes = resolvePlanToWrites(plan);
     expect(writes).toHaveLength(1);
     expect(writes[0].entry?.hours).toBe(9.27);
     expect(writes[0].entry?.absenceType).toBeUndefined();
+    // Auch eine (theoretische) keep-Resolution ändert nichts — immer übernehmen
     cell.resolution = 'keep';
-    expect(resolvePlanToWrites(plan)).toHaveLength(0);
+    expect(resolvePlanToWrites(plan)).toHaveLength(1);
+    expect(expectedAfterTotals(plan)['a']).toBe(9.27);
+  });
+
+  it('Muster 4 auch bei nicht-kanonischer PLAN-Absenz (F/FT) mit MIRUS-Stunden', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8.5)],
+      existing: {},
+      planned: { 'a-2026-07-01': { hours: 0, absence: null, absenceRaw: 'F' } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('conflict_absence');
+    expect(cell.resolution).toBe('mirus');
+    expect(resolvePlanToWrites(plan)[0]?.entry).toMatchObject({ hours: 8.5 });
+    // MIRUS = 0 bei F/FT bleibt wie bisher: KEIN absence_keep (nicht kanonisch)
+    const plan0 = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 0)],
+      existing: {},
+      planned: { 'a-2026-07-01': { hours: 0, absence: null, absenceRaw: 'FT' } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    expect(plan0.employees[0].cells[0].decision).not.toBe('conflict_absence');
+    expect(resolvePlanToWrites(plan0)).toHaveLength(0);
+  });
+
+  it('rawPlanAbsence: leerer Frühcode verdeckt Spätcode nicht', () => {
+    expect(rawPlanAbsence('', 'F')).toBe('F');
+    expect(rawPlanAbsence(undefined, 'FT')).toBe('FT');
+    expect(rawPlanAbsence('K', 'F')).toBe('K');
+    expect(rawPlanAbsence('', '')).toBeNull();
+    expect(rawPlanAbsence(null, undefined)).toBeNull();
+  });
+
+  it('expectedAfterTotals: ersetzte Absenz zählt immer als gespeichert (K + 9.25 h)', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 9.25), entry('a', '2026-07-02', 8)],
+      existing: { 'a-2026-07-01': { hours: 0, absenceType: 'K' } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    // K wird durch 9.25 h ersetzt, dazu der auto_take-Tag (8 h)
+    expect(expectedAfterTotals(plan)['a']).toBe(17.25);
+    expect(absenceOverrides(plan)).toHaveLength(1);
+    const writes = resolvePlanToWrites(plan);
+    expect(writes.find(w => w.date === '2026-07-01')?.entry).toMatchObject({ hours: 9.25 });
+    expect(writes.find(w => w.date === '2026-07-01')?.entry?.absenceType).toBeUndefined();
   });
 
   it('MANUELL-Mitarbeiter in der Datei werden übersprungen, nie geschrieben', () => {
@@ -270,7 +323,10 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
-    // 01. Muster 5, 03. Muster 4 — Defaults mirus → alles = Datei
+    // 01. Muster 5 (Default mirus), 03. Muster 4 (kein Default → explizit mirus)
+    for (const c of plan.employees[0].cells) {
+      if (c.decision === 'conflict_absence') c.resolution = 'mirus';
+    }
     expect(expectedAfterTotals(plan).a).toBe(24.51);
     expect(plan.employees[0].fileTotal).toBe(24.51);
   });

@@ -71,3 +71,10 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Rote Report-Zeilen (Gegenprüfung) lassen sich per Button auf die Dateiwerte auflösen; Logik pure in der Engine (`planAdoptFileWrites`): Datei>0 → Stunden=Dateiwert (Absenz-Marke reitet mit); Datei=0 + Marke + Stunden>0 → Stunden 0, Marke BEHALTEN (Altstand «8.40 h + K» aus plan_sync); reine Absenz bleibt; Datei=0 ohne Marke → Zelle leeren.
 - Adoptionspfad braucht dieselbe Disziplin wie der Import: Backup vorher, awaited Writes mit {ok}-Check, UND die KV-Absenz-Bereinigung (absence-ist-*) für erfolgreiche >0h-Writes — sonst reanimiert eine alte Marke die Zelle beim Reload.
 - Alt-Reports ohne employeeId/fileHours: ID per exaktem Namensabgleich, Stunden aus Anzeigestrings parsen (`hoursFromReportVal`).
+
+## Muster 4 = automatische Übernahme (08/2026, ersetzt kurzlebiges «kein Default»)
+- Regel: MIRUS-Ist > 0 überschreibt IMMER einen Absenzcode (Ist absenceType ODER Plan-raw inkl. F/FT) — kein Konfliktdialog, kein Import-Gate; MIRUS=0 + Code bleibt unverändert (nur kanonische FE/K/U für Muster 3).
+- Alle vier Fallmatrix-Stellen (resolvePlanToWrites UNCONDITIONAL, expectedAfterTotals immer fileHours, finalEntryForCell, decisionForCell='uebernommen') synchron; questionCount zählt nur Gruppen 2/3/5.
+- Vorschau: Muster-4-Gruppe reine Info («Absenz X durch MIRUS-Ist ersetzt»), Badge mit Anzahl (absenceOverrides-Helper); «Wird gespeichert»-Spalte = expectedAfterTotals.
+- `absenceRaw` via rawPlanAbsence(früh, spät) — truthy-Fallback, '' darf Spätcode nicht verdecken.
+- Sperr-Rennen: Report/Totale/assignedHours aus reportPlan (Zellen auf inzwischen gesperrten Tagen als unchanged_equal neutralisiert), nie aus dem Roh-Plan; assignedHours = nur uebernommen/still_gerundet-Tage.

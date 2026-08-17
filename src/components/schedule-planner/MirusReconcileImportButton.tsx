@@ -67,6 +67,7 @@ import {
   computeIstCoverage, formatDayRanges, daysInMonthOf,
   hoursFromReportVal, planAdoptFileWrites,
   groupPlanCells, patternOf, canonicalAbsence, MIRUS_ROUNDING_THRESHOLD_H,
+  absenceOverrides, rawPlanAbsence,
   MirusReconcilePlan, MirusResolvedEntry, MirusCellPlan, MirusPlanInfo,
 } from '@/lib/mirus-import-engine';
 import type { ActualHourEntry } from '@/lib/supabase-db';
@@ -138,6 +139,7 @@ function fmtEntry(e: { hours?: number; absenceType?: string | null } | null): st
 
 function fmtPlan(p: MirusPlanInfo): string {
   if (p.absence) return p.absence;
+  if (p.absenceRaw) return p.absenceRaw;
   return p.hours > 0 ? `${p.hours.toFixed(2)} h` : '—';
 }
 
@@ -151,7 +153,7 @@ function finalEntryForCell(cell: MirusCellPlan): ActualHourEntry | null {
     case 'absence_keep':
       if (take) return null;
       return cell.before ?? (cell.plan.absence ? { hours: 0, absenceType: cell.plan.absence } : null);
-    case 'conflict_absence': return take ? { hours: cell.fileHours } : cell.before;
+    case 'conflict_absence': return { hours: cell.fileHours }; // Stempeluhr hat immer Vorrang
     case 'conflict_diff':    return take ? { hours: cell.fileHours } : cell.before;
     default:                 return cell.before;
   }
@@ -162,8 +164,8 @@ function decisionForCell(cell: MirusCellPlan): MirusDayDecision {
   switch (cell.decision) {
     case 'silent_round':     return 'still_gerundet';
     case 'auto_take':        return take ? 'uebernommen' : 'abgelehnt';
+    case 'conflict_absence': return 'uebernommen'; // immer übernommen (Code entfernt)
     case 'conflict_zero':
-    case 'conflict_absence':
     case 'conflict_diff':    return take ? 'uebernommen' : 'behalten';
     case 'absence_keep':     return take ? 'uebernommen' : 'behalten';
     default:                 return 'unveraendert';
@@ -203,9 +205,10 @@ const PATTERN_META: Record<1 | 2 | 3 | 4 | 5, {
     mirusLabel: 'MIRUS (Code weg)', keepLabel: 'Absenz bestätigen', tone: 'text-teal-700',
   },
   4: {
-    title: 'Muster 4 — Absenz vs. MIRUS-Stunden',
-    hint: 'Absenzcode geplant/erfasst, aber MIRUS meldet Arbeitsstunden. Bitte entscheiden.',
-    mirusLabel: 'MIRUS-Stunden', keepLabel: 'Absenz behalten', tone: 'text-purple-700',
+    title: 'Muster 4 — Absenz durch MIRUS-Ist ersetzt (Info)',
+    hint: 'MIRUS (Stempeluhr) meldet echte Arbeitsstunden an Tagen mit Absenzcode (FE/FT/K/F …). Die Stunden werden IMMER übernommen, der Code wird entfernt — keine Entscheidung nötig.',
+    // Labels ungenutzt (Info-Gruppe ohne Buttons) — nur für den Record-Typ vorhanden.
+    mirusLabel: '', keepLabel: '', tone: 'text-purple-700',
   },
   5: {
     title: 'Muster 5 — Stunden-Abweichung über Schwelle',
@@ -526,6 +529,9 @@ export function MirusReconcileImportButton({
         planned[`${empId}-${date}`] = {
           hours: calculateDayNetHours(ds),
           absence: canonicalAbsence(ds.frühAbsence) ?? canonicalAbsence(ds.spätAbsence),
+          // Roher Code (auch F/FT): zählt nur für die Konflikterkennung bei MIRUS > 0.
+          // Erster NICHT-LEERER Code ('' darf Spätcode nicht verdecken).
+          absenceRaw: rawPlanAbsence(ds.frühAbsence, ds.spätAbsence),
         };
       }
     }
@@ -697,15 +703,27 @@ export function MirusReconcileImportButton({
         toast.info(`${autoResolved} geparkter Eintrag/Einträge («Offene Stunden») durch diesen Import aufgelöst.`);
       }
 
-      // 4) Report bauen: pro MA Tages-Detail (Plan/Ist/Entscheidung) + Totale
-      const after = expectedAfterTotals(plan);
+      // 4) Report bauen: pro MA Tages-Detail (Plan/Ist/Entscheidung) + Totale.
+      // Ehrlichkeit bei Sperr-Rennen: Zellen auf INZWISCHEN gesperrten Tagen
+      // wurden nicht geschrieben → im Report als «unverändert» behandeln,
+      // nie als übernommen zählen (weder in Totalen noch in assignedHours).
+      const reportPlan: MirusReconcilePlan = lockedAtCommit === 0 ? plan : {
+        ...plan,
+        employees: plan.employees.map(e => ({
+          ...e,
+          cells: e.cells.map(c => commitLocks.has(c.date)
+            ? { ...c, decision: 'unchanged_equal' as const, resolution: undefined }
+            : c),
+        })),
+      };
+      const after = expectedAfterTotals(reportPlan);
       const manuellCount = employees.filter(e => (e.erfassungsart ?? persisted[e.id]) === 'MANUELL').length;
       const rep: MirusImportReport = {
         timestamp: new Date().toISOString(),
         month: plan.month,
         fileName,
         roundingThreshold: plan.roundingThreshold,
-        perEmployee: plan.employees.map(e => {
+        perEmployee: reportPlan.employees.map(e => {
           const a = after[e.employeeId] ?? 0;
           const days: MirusReportDay[] = e.cells.map(c => {
             const fin = finalEntryForCell(c);
@@ -771,7 +789,11 @@ export function MirusReconcileImportButton({
       }
       toast.success(buildMirusSuccessMessage({
         assignedEmployeeCount: rep.perEmployee.length,
-        assignedHours: rep.perEmployee.reduce((s, p) => s + p.fileTotal, 0),
+        // Ehrlich: nur tatsächlich übernommene Datei-Stunden (nach Konfliktbehandlung),
+        // nicht die MIRUS-Rohsumme — behaltene/verworfene Konflikt-Stunden zählen nicht.
+        assignedHours: rep.perEmployee.reduce(
+          (s, p) => s + p.days.reduce(
+            (a, d) => a + ((d.decision === 'uebernommen' || d.decision === 'still_gerundet') ? (d.fileHours ?? 0) : 0), 0), 0),
         writtenCells: written,
         parkedCount: parkedNames.length,
         parkedHours,
@@ -1022,7 +1044,12 @@ export function MirusReconcileImportButton({
   // ── Render ────────────────────────────────────────────────────────────────
 
   const groups = plan ? groupPlanCells(plan) : null;
-  const questionCount = groups ? groups[2].length + groups[3].length + groups[4].length + groups[5].length : 0;
+  // Rückfragen = nur echte Entscheidungen (2/3/5) — Muster 4 ist reine Info (automatisch).
+  const questionCount = groups ? groups[2].length + groups[3].length + groups[5].length : 0;
+  // Muster 4 (Info): Absenzcodes, die durch echte MIRUS-Stunden ersetzt werden.
+  const overrides = plan ? absenceOverrides(plan) : [];
+  // Ehrliche Vorschau-Summen: was tatsächlich gespeichert wird.
+  const previewAfterTotals = plan ? expectedAfterTotals(plan) : {};
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -1094,6 +1121,11 @@ export function MirusReconcileImportButton({
                 <Badge variant="outline">{plan.dates.length} Tage ({plan.dates[0]?.slice(8)}.–{plan.dates[plan.dates.length - 1]?.slice(8)}.)</Badge>
                 <Badge variant="outline" className="text-green-700">{groups[1].length}× wird übernommen</Badge>
                 <Badge variant="outline" className={questionCount ? 'text-orange-700 border-orange-300' : ''}>{questionCount} Rückfragen</Badge>
+                {overrides.length > 0 && (
+                  <Badge variant="outline" className="text-purple-700 border-purple-400" data-testid="badge-absence-overrides">
+                    {overrides.length} Absenz(en) durch MIRUS-Ist ersetzt
+                  </Badge>
+                )}
                 {plan.silentRounds.length > 0 && <Badge variant="outline" className="text-muted-foreground">{plan.silentRounds.length} still gerundet</Badge>}
                 {plan.skippedManual.length > 0 && <Badge variant="outline" className="text-muted-foreground">{plan.skippedManual.length} MANUELL übersprungen</Badge>}
               </div>
@@ -1213,14 +1245,18 @@ export function MirusReconcileImportButton({
                         <span className={meta.tone}>{meta.title}</span>
                         <Badge variant="secondary">{cells.length}</Badge>
                       </button>
-                      <div className="flex gap-2">
-                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setGroupResolution(p, 'mirus')} data-testid={`button-group-${p}-mirus`}>
-                          Alle: {meta.mirusLabel}
-                        </Button>
-                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setGroupResolution(p, 'keep')} data-testid={`button-group-${p}-keep`}>
-                          Alle: {meta.keepLabel}
-                        </Button>
-                      </div>
+                      {p !== 4 ? (
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setGroupResolution(p, 'mirus')} data-testid={`button-group-${p}-mirus`}>
+                            Alle: {meta.mirusLabel}
+                          </Button>
+                          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setGroupResolution(p, 'keep')} data-testid={`button-group-${p}-keep`}>
+                            Alle: {meta.keepLabel}
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-purple-700">automatisch — Stempeluhr hat Vorrang</span>
+                      )}
                     </div>
                     {open && (
                       <>
@@ -1252,16 +1288,22 @@ export function MirusReconcileImportButton({
                                       {diff > 0 ? '+' : ''}{diff.toFixed(2)}
                                     </TableCell>
                                     <TableCell className="py-1.5">
-                                      <div className="flex gap-1">
-                                        <Button size="sm" variant={c.resolution === 'mirus' ? 'default' : 'outline'} className="h-7 px-2 text-xs"
-                                          onClick={() => setResolution(c, 'mirus')} data-testid={`button-p${p}-mirus-${i}`}>
-                                          <Check className="h-3 w-3 mr-1" /> {meta.mirusLabel}
-                                        </Button>
-                                        <Button size="sm" variant={c.resolution === 'keep' ? 'default' : 'outline'} className="h-7 px-2 text-xs"
-                                          onClick={() => setResolution(c, 'keep')} data-testid={`button-p${p}-keep-${i}`}>
-                                          <X className="h-3 w-3 mr-1" /> {meta.keepLabel}
-                                        </Button>
-                                      </div>
+                                      {p === 4 ? (
+                                        <span className="text-xs text-purple-700" data-testid={`text-p4-override-${i}`}>
+                                          Absenz {fmtEntry(c.before) !== 'leer' && c.before?.absenceType ? c.before.absenceType : (c.plan.absence ?? c.plan.absenceRaw ?? '')} durch MIRUS-Ist ersetzt
+                                        </span>
+                                      ) : (
+                                        <div className="flex gap-1">
+                                          <Button size="sm" variant={c.resolution === 'mirus' ? 'default' : 'outline'} className="h-7 px-2 text-xs"
+                                            onClick={() => setResolution(c, 'mirus')} data-testid={`button-p${p}-mirus-${i}`}>
+                                            <Check className="h-3 w-3 mr-1" /> {meta.mirusLabel}
+                                          </Button>
+                                          <Button size="sm" variant={c.resolution === 'keep' ? 'default' : 'outline'} className="h-7 px-2 text-xs"
+                                            onClick={() => setResolution(c, 'keep')} data-testid={`button-p${p}-keep-${i}`}>
+                                            <X className="h-3 w-3 mr-1" /> {meta.keepLabel}
+                                          </Button>
+                                        </div>
+                                      )}
                                     </TableCell>
                                   </TableRow>
                                 );
@@ -1283,6 +1325,7 @@ export function MirusReconcileImportButton({
                       <TableHead>Mitarbeiter</TableHead>
                       <TableHead className="text-right">MIRUS (Datei)</TableHead>
                       <TableHead className="text-right">Ist aktuell</TableHead>
+                      <TableHead className="text-right">Wird gespeichert</TableHead>
                       <TableHead className="text-right">Änderungen</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1291,6 +1334,7 @@ export function MirusReconcileImportButton({
                       const changes = e.cells.filter(c =>
                         c.decision === 'silent_round'
                         || (patternOf(c.decision) != null && c.resolution === 'mirus')).length;
+                      const afterTotal = previewAfterTotals[e.employeeId] ?? 0;
                       return (
                         <TableRow key={e.employeeId}>
                           <TableCell className="py-1.5 font-medium">
@@ -1303,6 +1347,7 @@ export function MirusReconcileImportButton({
                           </TableCell>
                           <TableCell className="py-1.5 text-right">{e.fileTotal.toFixed(2)}</TableCell>
                           <TableCell className="py-1.5 text-right">{e.beforeTotal.toFixed(2)}</TableCell>
+                          <TableCell className="py-1.5 text-right font-medium" data-testid={`text-after-total-${e.employeeId}`}>{afterTotal.toFixed(2)}</TableCell>
                           <TableCell className="py-1.5 text-right">{changes > 0 ? `${changes} Zellen` : '—'}</TableCell>
                         </TableRow>
                       );
@@ -1313,7 +1358,7 @@ export function MirusReconcileImportButton({
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="items-center gap-2">
             <Button variant="outline" onClick={() => { setPlanOpen(false); setPlan(null); }} data-testid="button-cancel-import">Abbrechen</Button>
             <Button onClick={handleConfirm} disabled={busy} className="bg-green-600 hover:bg-green-700" data-testid="button-confirm-import">
               {busy ? 'Importiere…' : 'Import bestätigen'}
