@@ -18,6 +18,8 @@ import {
   absencePlanHoursForEmployeeDate,
   absenceInfoHoursForEmployee,
   canonicalAbsenceCode,
+  absenzKreditHoursForEmployeeDate,
+  absenzKreditHoursForEmployee,
 } from '@/lib/bedarf-stunden-utils';
 import { defaultStaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
 
@@ -122,6 +124,42 @@ describe('istHoursForDate', () => {
   it('null (nie 0) ohne Einträge für den Tag — kein MIRUS-Import = leer', () => {
     expect(istHoursForDate({}, '2026-07-27')).toBeNull();
     expect(istHoursForDate({ 'e1-2026-07-27': { hours: 4, absenceType: 'ferien' } }, '2026-07-27')).toBeNull();
+  });
+});
+
+describe('Absenz-Kredit (angerechnete Stunden, Spec 08/2026 final, Fix/Flex)', () => {
+  const sched: Record<string, DaySchedule> = {
+    'e1-2026-07-27': { früh: { start: '10:00', end: '15:00' }, spät: null, frühAbsence: 'K', spätAbsence: null },
+    'e1-2026-07-28': { früh: { start: '10:00', end: '15:00' }, spät: null, frühAbsence: null, spätAbsence: null },
+  };
+  const at = (code: string) =>
+    ({ 'e1-2026-07-27': { hours: 0, absenceType: code } }) as unknown as Record<string, ActualHourEntry>;
+  const kredit = (code: string, isFix: boolean) =>
+    absenzKreditHoursForEmployeeDate({ actualHours: at(code), scheduleData: sched, employeeId: 'e1', dateStr: '2026-07-27', isFix });
+
+  it('Fix-MA: K/U/FE/FT → Plan-Stunden; F nie', () => {
+    for (const code of ['K', 'U', 'FE', 'FT']) expect(kredit(code, true)).toBe(5);
+    expect(kredit('F', true)).toBeNull();
+  });
+
+  it('Flex-MA: nur K/U; FE/FT/F keine Anrechnung', () => {
+    for (const code of ['K', 'U']) expect(kredit(code, false)).toBe(5);
+    for (const code of ['FE', 'FT', 'F']) expect(kredit(code, false)).toBeNull();
+  });
+
+  it('MIRUS > 0 überschreibt jeden Code (kein Kredit)', () => {
+    const withWork = { 'e1-2026-07-27': { hours: 7, absenceType: 'K' } } as unknown as Record<string, ActualHourEntry>;
+    expect(absenzKreditHoursForEmployeeDate({ actualHours: withWork, scheduleData: sched, employeeId: 'e1', dateStr: '2026-07-27', isFix: true })).toBeNull();
+  });
+
+  it('Legacy-Codes; ohne Plan-Basis null; Summe über Bereich (Fix)', () => {
+    const actual = {
+      'e1-2026-07-27': { hours: 0, absenceType: 'unfall' },
+      'e1-2026-07-28': { hours: 0, absenceType: 'ferien' },
+      'e1-2026-07-29': { hours: 0, absenceType: 'feiertag' }, // kein Plan → nichts
+    } as unknown as Record<string, ActualHourEntry>;
+    expect(absenzKreditHoursForEmployee({ actualHours: actual, scheduleData: sched, employeeId: 'e1', dates: ['2026-07-27', '2026-07-28', '2026-07-29'], isFix: true })).toBe(10);
+    expect(absenzKreditHoursForEmployee({ actualHours: actual, scheduleData: sched, employeeId: 'e1', dates: ['2026-07-27', '2026-07-28', '2026-07-29'], isFix: false })).toBe(5);
   });
 });
 

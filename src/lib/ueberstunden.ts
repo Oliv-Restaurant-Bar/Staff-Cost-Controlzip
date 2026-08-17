@@ -43,24 +43,25 @@ export const VOLLZEIT_WOCHE_H = 42;
 
 // ── Absenzen-Blob (manuelle Eingabe, je Mandant & Jahr) ───────────────────────
 
-export type UeAbsenzTyp = 'ferien' | 'krank' | 'unfall' | 'frei';
+export type UeAbsenzTyp = 'ferien' | 'krank' | 'unfall' | 'feiertag' | 'frei';
 
 export const UE_ABSENZ_LABELS: Record<UeAbsenzTyp, string> = {
-  ferien: 'Ferien', krank: 'Krank', unfall: 'Unfall', frei: 'Frei',
+  ferien: 'Ferien', krank: 'Krank', unfall: 'Unfall', feiertag: 'Feiertag', frei: 'Frei',
 };
 
-/** Absenz-Typen mit Stunden-Gutschrift (Frei = 0). */
-export const UE_GUTSCHRIFT_TYPEN: ReadonlySet<UeAbsenzTyp> = new Set(['ferien', 'krank', 'unfall']);
+/** Absenz-Typen mit Stunden-Gutschrift (Frei = 0). Spec 08/2026 final: inkl. Feiertag. */
+export const UE_GUTSCHRIFT_TYPEN: ReadonlySet<UeAbsenzTyp> = new Set(['ferien', 'krank', 'unfall', 'feiertag']);
 
 /**
- * Dienstplan-Absenzcode (FE/K/U/F …) → Überstunden-Absenztyp.
- * Unbekannte Codes (z. B. FT) ⇒ null (keine Gutschrift, kein «Frei»).
+ * Dienstplan-Absenzcode (FE/K/U/FT/F …) → Überstunden-Absenztyp.
+ * Unbekannte Codes ⇒ null (keine Gutschrift, kein «Frei»).
  */
 export function planCodeZuUeTyp(code: string | null | undefined): UeAbsenzTyp | null {
   if (!code) return null;
   if (VACATION_CODES.has(code)) return 'ferien';
   if (SICK_CODES.has(code)) return 'krank';
   if (ACCIDENT_CODES.has(code)) return 'unfall';
+  if (code === 'FT' || code === 'Feiertag') return 'feiertag';
   if (SKIP_CODES.has(code)) return 'frei';
   return null;
 }

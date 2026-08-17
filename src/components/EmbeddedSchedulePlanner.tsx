@@ -8,6 +8,9 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Settings, Loader2, RefreshCw
 } from 'lucide-react';
 import { Employee, Department } from '@/types/personnel';
+import { absenzKreditHoursForEmployeeDate } from '@/lib/bedarf-stunden-utils';
+import { pkHasFixedSalary } from '@/lib/personalkosten';
+import { applyEffectiveWagesForMonth, istFixAnDatum, type MonthWageSplit } from '@/lib/wage-history';
 import { ScheduleGrid, DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursGrid, ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHoursSummary';
@@ -351,7 +354,35 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     }
   };
 
-  // Calculate actual hours for an employee (from actualHoursData)
+  // Fix/Flex phasen-aufgelöst (wage-history, wie SchedulePlanner/Personalkosten):
+  // Split-Monate datumsgenau; Fallback bis zum Laden: Stammsatz (pkHasFixedSalary).
+  const [wagePhase, setWagePhase] = useState<{ loaded: boolean; fixIds: Set<string>; splits: Record<string, MonthWageSplit> }>(
+    { loaded: false, fixIds: new Set(), splits: {} });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { employees: eff, splits } = await applyEffectiveWagesForMonth(
+          employees, currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, tenantId);
+        if (!alive) return;
+        setWagePhase({ loaded: true, fixIds: new Set(eff.filter(pkHasFixedSalary).map(e => String(e.id))), splits });
+      } catch (err) {
+        console.error('[WAGE-PHASE] Monats-Phasenauflösung fehlgeschlagen — Fallback Stammsatz:', err);
+        if (alive) setWagePhase({ loaded: false, fixIds: new Set(), splits: {} });
+      }
+    })();
+    return () => { alive = false; };
+  }, [employees, currentMonthStart, tenantId]);
+  const isFixMa = (employeeId: string, dateStr: string): boolean => {
+    const split = wagePhase.splits[employeeId];
+    if (split) return istFixAnDatum(split, dateStr);
+    if (wagePhase.loaded) return wagePhase.fixIds.has(String(employeeId));
+    const emp = employees.find(e => e.id === employeeId);
+    return emp ? pkHasFixedSalary(emp) : false;
+  };
+
+  // Calculate credited hours for an employee: MIRUS-Ist + K/U-Plan-Kredit
+  // («angerechnete Stunden», Spec 08/2026 — Produktivität bleibt unberührt)
   const calculateEmployeeActualHours = (employeeId: string): number => {
     let totalHours = 0;
     daysInMonth.forEach(day => {
@@ -361,6 +392,10 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
       if (entry?.hours) {
         totalHours += entry.hours;
       }
+      totalHours += absenzKreditHoursForEmployeeDate({
+        actualHours: actualHoursData, scheduleData, employeeId, dateStr,
+        isFix: isFixMa(employeeId, dateStr),
+      }) ?? 0;
     });
     return totalHours;
   };

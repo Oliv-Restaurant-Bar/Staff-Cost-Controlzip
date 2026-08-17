@@ -17,7 +17,16 @@ import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon, Lock, LockOpen } from 'lucide-react';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import type { DaySchedule } from '@/lib/supabase-db';
-import { absencePlanHoursForEmployeeDate, absenceInfoHoursForEmployee, canonicalAbsenceCode } from '@/lib/bedarf-stunden-utils';
+import { absencePlanHoursForEmployeeDate, canonicalAbsenceCode, kreditAbsenzCodes } from '@/lib/bedarf-stunden-utils';
+import { pkHasFixedSalary } from '@/lib/personalkosten';
+
+/** Farbcodierung der angerechneten Absenzcodes (Spec 08/2026 final). */
+const ABSENZ_KREDIT_FARBEN: Record<string, string> = {
+  K:  'text-rose-600 dark:text-rose-400',
+  U:  'text-orange-600 dark:text-orange-400',
+  FE: 'text-sky-600 dark:text-sky-400',
+  FT: 'text-emerald-600 dark:text-emerald-400',
+};
 import { toast } from 'sonner';
 
 export type AbsenceCode = 'FE' | 'FT' | 'K' | 'U' | 'F';
@@ -62,6 +71,12 @@ interface ActualHoursGridProps {
    * als reine Info angezeigt — NIE zu den produktiven Ist-Stunden addiert.
    */
   scheduleData?: Record<string, DaySchedule>;
+  /**
+   * Datumsgenauer Fix/Flex-Resolver (wage-history-Phasen, Split-Monate):
+   * true = Fix-MA (Monatslohn) am Datum → Kredit-Codes K/U/FE/FT; false =
+   * Flex → nur K/U. Ohne Prop: Stammsatz via pkHasFixedSalary (Monatsebene).
+   */
+  isFixOnDate?: (employeeId: string, dateStr: string) => boolean;
 }
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -662,6 +677,7 @@ export const ActualHoursGrid = ({
   onToggleDayLock,
   canLock = false,
   scheduleData,
+  isFixOnDate,
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
   const lockedSet = lockedDates ?? new Set<string>();
@@ -1083,12 +1099,36 @@ export const ActualHoursGrid = ({
               const actualHours = getEmployeeActualHours(employee.id);
               // Absenz-Stunden (Info): Plan-Stunden der Absenztage ohne MIRUS-Ist —
               // strikt getrennt, zählt NIE zu den produktiven Ist-Stunden.
-              const absenceInfo = scheduleData ? absenceInfoHoursForEmployee({
-                actualHours: actualHoursData,
-                scheduleData,
-                employeeId: employee.id,
-                dates: days.map(d => format(d, 'yyyy-MM-dd')),
-              }) : null;
+              // ANGERECHNETE Stunden (in der Ist-Summe enthalten, Spec 08/2026
+              // final): Fix-MA K/U/FE/FT, Flex-MA nur K/U; Rest (F, bei Flex
+              // auch FE/FT) = reine Info, zählt nirgends. Klassierung PRO TAG
+              // (phasen-aufgelöst via isFixOnDate, Split-Monate datumsgenau) —
+              // identisch zur Kredit-Berechnung, damit Anzeige = Rechnung.
+              const creditByCode: Record<string, number> = {};
+              const infoByCode: Record<string, number> = {};
+              if (scheduleData) {
+                for (const d of days) {
+                  const dateStr = format(d, 'yyyy-MM-dd');
+                  const e = actualHoursData[`${employee.id}-${dateStr}`];
+                  const code = canonicalAbsenceCode(e?.absenceType);
+                  if (!code) continue;
+                  const ist = Number(e!.hours);
+                  if (!(Number.isFinite(ist) && ist === 0)) continue;
+                  const h = absencePlanHoursForEmployeeDate({
+                    scheduleData, employeeId: employee.id, dateStr,
+                  });
+                  if (h == null) continue;
+                  const isFix = isFixOnDate
+                    ? isFixOnDate(employee.id, dateStr)
+                    : pkHasFixedSalary(employee);
+                  const target = kreditAbsenzCodes(isFix).has(code) ? creditByCode : infoByCode;
+                  target[code] = Math.round(((target[code] ?? 0) + h) * 10) / 10;
+                }
+              }
+              const creditEntries = Object.entries(creditByCode);
+              const kuHours = creditEntries.reduce((s, [, h]) => s + h, 0);
+              const infoEntries = Object.entries(infoByCode);
+              const infoTotal = infoEntries.reduce((s, [, h]) => s + h, 0);
               const targetHours = getTargetHours(employee);
               const percentage = Math.min((actualHours / targetHours) * 100, 100);
               const isInRange = percentage >= 90 && percentage <= 110;
@@ -1150,12 +1190,24 @@ export const ActualHoursGrid = ({
                                 !isInRange && !isUnder && "[&>div]:bg-red-500"
                               )}
                             />
-                            {absenceInfo && (
+                            {creditEntries.map(([code, h]) => (
+                              <div
+                                key={code}
+                                className={cn(
+                                  "text-[8px] font-medium",
+                                  ABSENZ_KREDIT_FARBEN[code] ?? "text-teal-600 dark:text-teal-400",
+                                )}
+                                data-testid={`text-${code.toLowerCase()}-credit-sum-${employee.id}`}
+                              >
+                                {code} {h.toFixed(1)}
+                              </div>
+                            ))}
+                            {infoTotal > 0 && (
                               <div
                                 className="text-[8px] font-medium text-purple-600 dark:text-purple-400"
                                 data-testid={`text-absence-sum-${employee.id}`}
                               >
-                                A {absenceInfo.total.toFixed(1)}
+                                A {infoTotal.toFixed(1)}
                               </div>
                             )}
                           </div>
@@ -1165,10 +1217,19 @@ export const ActualHoursGrid = ({
                             <div>Ist: {actualHours.toFixed(1)}h</div>
                             <div>Soll: {targetHours.toFixed(1)}h</div>
                             <div>Diff: {(actualHours - targetHours).toFixed(1)}h</div>
-                            {absenceInfo && (
+                            {kuHours > 0 && (
+                              <div className="mt-1 pt-1 border-t border-border text-teal-500">
+                                <div>Angerechnet ({creditEntries.map(([c]) => c).join('/')}): {kuHours.toFixed(1)}h</div>
+                                {creditEntries.map(([code, h]) => (
+                                  <div key={code}>{code}: {h.toFixed(1)}h</div>
+                                ))}
+                                <div className="text-muted-foreground">in Ist enthalten — zählt nicht zur Produktivität</div>
+                              </div>
+                            )}
+                            {infoTotal > 0 && (
                               <div className="mt-1 pt-1 border-t border-border text-purple-500">
-                                <div>Absenz-Std. (Info): {absenceInfo.total.toFixed(1)}h</div>
-                                {Object.entries(absenceInfo.byCode).map(([code, h]) => (
+                                <div>Absenz-Std. (Info): {infoTotal.toFixed(1)}h</div>
+                                {infoEntries.map(([code, h]) => (
                                   <div key={code}>{code}: {h.toFixed(1)}h</div>
                                 ))}
                                 <div className="text-muted-foreground">zählt nicht zu Ist/Produktivität</div>

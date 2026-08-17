@@ -119,3 +119,19 @@ describe('applyEffectiveWagesForMonth', () => {
     expect(employees[0].monthlySalary).toBe(6000);
   });
 });
+
+describe('istFixAnDatum (Fix/Flex im Split-Monat, Spec 08/2026 final)', () => {
+  const split = {
+    monthly: {} as never, hourly: {} as never,
+    monthlyFrom: '2026-08-16', monthlyTo: '2026-08-31',
+    hourlyFrom: '2026-08-01', hourlyTo: '2026-08-15',
+    monthlyFraction: 0.516, hourlyFraction: 0.484,
+  };
+  it('Datum in der Monatslohn-Phase → FIX, sonst FLEX', async () => {
+    const { istFixAnDatum } = await import('@/lib/wage-history');
+    expect(istFixAnDatum(split, '2026-08-01')).toBe(false);
+    expect(istFixAnDatum(split, '2026-08-15')).toBe(false);
+    expect(istFixAnDatum(split, '2026-08-16')).toBe(true);
+    expect(istFixAnDatum(split, '2026-08-31')).toBe(true);
+  });
+});

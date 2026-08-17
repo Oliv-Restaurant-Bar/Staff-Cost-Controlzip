@@ -272,6 +272,14 @@ export interface MonthWageSplit {
   hourlyFraction:   number;  // Tage-Anteil Stundenlohn-Phase (0..1)
 }
 
+/**
+ * Datumsgenaue Fix/Flex-Klassierung in einem Split-Monat: true = Datum liegt
+ * in der Monatslohn-Phase (FIX), false = Stundenlohn-Phase (FLEX).
+ */
+export function istFixAnDatum(split: MonthWageSplit, dateStr: string): boolean {
+  return dateStr >= split.monthlyFrom && dateStr <= split.monthlyTo;
+}
+
 export interface MonthWageResolution {
   /** Massgebende Phase des Monats (bei Split: die Monatslohn-Phase). */
   wage:   EffectiveWage;

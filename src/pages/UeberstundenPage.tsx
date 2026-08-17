@@ -27,7 +27,7 @@ function fmtH(v: number | null | undefined): string {
   return `${v.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
 }
 /** Kurz-Codes für die Tages-Spalten des KW-Drilldowns. */
-const UE_ABSENZ_KURZ: Record<UeAbsenzTyp, string> = { ferien: 'FE', krank: 'K', unfall: 'U', frei: 'Frei' };
+const UE_ABSENZ_KURZ: Record<UeAbsenzTyp, string> = { ferien: 'FE', krank: 'K', unfall: 'U', feiertag: 'FT', frei: 'Frei' };
 
 function saldoClass(v: number | null | undefined): string {
   if (v === null || v === undefined) return 'text-muted-foreground';

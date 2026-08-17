@@ -23,6 +23,7 @@ import type { SocialCostRates } from '@/lib/social-costs';
 import { socialCostFactorFromRates } from '@/lib/social-costs';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import { canonicalAbsenceCode } from '@/lib/bedarf-stunden-utils';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
@@ -54,6 +55,12 @@ export interface PkFlexTagZelle {
    * fehlt → mit Plan gerechnet, aber als «Ist fehlt» markiert (nicht still 0).
    */
   istFehlt?: boolean;
+  /**
+   * true = K/U-Absenztag ohne MIRUS-Ist → Plan-Stunden als normale
+   * Arbeitsstunden ANGERECHNET (Spec 08/2026 final; FE/FT nur Fix-MA,
+   * erscheinen im Flex-Stapel gar nicht), kein «Ist fehlt».
+   */
+  absenzAngerechnet?: boolean;
 }
 
 export interface PersonalkostenDaten {
@@ -69,12 +76,20 @@ export interface PersonalkostenDaten {
   wageSplits?: Record<string, MonthWageSplit>;
   agFactor: number;
   rates: SocialCostRates;
-  /** Plan-Stunden je 'YYYY-MM-DD' je empId (Dienstplan, netto, ohne FE) */
+  /** Plan-Stunden je 'YYYY-MM-DD' je empId (Dienstplan, netto; Flex-Stapel:
+   *  ohne F/FE/FT-Einsätze — FE/FT-Anrechnung gilt nur Fix-MA) */
   planStdProTag: Record<string, Record<string, number>>;
   /** Ist-Stunden je 'YYYY-MM-DD' je empId (MIRUS, ohne FE/Absenzen/Zusatzkosten) */
   istStdProTag:  Record<string, Record<string, number>>;
   /** Tage (Set 'YYYY-MM-DD'), für die Ist-Stunden importiert sind → TAG-REGEL */
   istTage: Set<string>;
+  /**
+   * Absenz-Anrechnung (Spec 08/2026 final): 'YYYY-MM-DD|empId' der Tage mit
+   * Ist-Absenz K/U (Krank/Unfall) UND 0 Ist-Stunden → Plan-Stunden zählen als
+   * normale Arbeitsstunden in den Flex-Kosten. FE/FT werden hier bewusst
+   * NICHT erfasst (Anrechnung nur Fix-MA → Monatslohn, keine Flex-Kosten).
+   */
+  absenzKreditTageProMa?: Set<string>;
   /** Ist-NETTO-Umsatz je 'YYYY-MM-DD' aus der kanonischen Quelle umsatz.ts */
   umsatzIstProTag: Record<string, number>;
   /** Budgetierter Monatsumsatz aus dem Budget-Modul (0 = nicht vorhanden) */
@@ -297,6 +312,11 @@ export function flexKostenProTagDetail(daten: PersonalkostenDaten, opts?: { stic
         zelle.istStd = istStd;
         zelle.istKosten = r2(istStd * chfProStd);
       }
+      // Absenz-Anrechnung (Spec 08/2026 final): K/U ohne MIRUS-Ist → Plan gilt
+      // als normale Arbeit (kein «Ist fehlt»). Split-Pseudo-ids auf die
+      // Basis-id zurückführen (Ist-Absenzen sind unter der echten id erfasst).
+      const baseId = emp.id.endsWith('::flexsplit') ? emp.id.slice(0, -'::flexsplit'.length) : emp.id;
+      const istKuTag = daten.absenzKreditTageProMa?.has(`${date}|${baseId}`) === true;
       // Effektiver Ist-Wert des MA an diesem Tag (nur an vergangenen Tagen).
       let maIstKosten = 0;
       if (istTag) {
@@ -306,6 +326,10 @@ export function flexKostenProTagDetail(daten: PersonalkostenDaten, opts?: { stic
         } else if (hasIst) {
           // 'mirus'/'manuell' mit vorhandenem Ist.
           maIstKosten = zelle.istKosten!;
+        } else if (planStd > 0 && istKuTag) {
+          // K/U-Tag: Plan-Stunden als normale Arbeitsstunden angerechnet.
+          maIstKosten = zelle.planKosten;
+          zelle.absenzAngerechnet = true;
         } else if (planStd > 0) {
           // 'mirus'/'manuell', Ist fehlt trotz Plan → mit Plan rechnen, markieren.
           maIstKosten = zelle.planKosten;
@@ -573,10 +597,18 @@ export async function ladePersonalkostenDaten(
     if (!date.startsWith(prefix)) continue;
     const empId = cellKey.slice(0, cellKey.length - 11);
     if (typeof ds !== 'object' || ds == null) continue;
-    // FE (Ferien) zählt nicht als Arbeit; Zusatzkosten-Plan (Überstunden Fix-MA) ausgeschlossen
-    if (ds.frühAbsence === 'FE' || ds.spätAbsence === 'FE') continue;
+    // Spec 08/2026 (final, Fix/Flex): dieser Stundenstapel speist die
+    // FLEX-Kosten (Stundenlohn) → FE/FT-Einsätze zählen NICHT (Anrechnung
+    // FE/FT gilt nur für Fix-MA, die über den Monatslohn laufen); F immer 0.
+    // K/U bleiben drin (Anrechnung für Fix UND Flex). Pro Einsatz gefiltert.
     if (ds.isAdditionalCostPlan) continue;
-    const net = calculateDayNetHours(ds);
+    const NO_FLEX = new Set(['F', 'FE', 'FT']);
+    const dropF = NO_FLEX.has(canonicalAbsenceCode(ds.frühAbsence) ?? '');
+    const dropS = NO_FLEX.has(canonicalAbsenceCode(ds.spätAbsence) ?? '');
+    const dsEff = (dropF || dropS)
+      ? { ...ds, ...(dropF ? { früh: null } : {}), ...(dropS ? { spät: null } : {}) }
+      : ds;
+    const net = calculateDayNetHours(dsEff);
     if (net > 0) {
       (planStdProTag[date] ??= {})[empId] = r2(((planStdProTag[date]?.[empId]) ?? 0) + net);
     }
@@ -587,6 +619,7 @@ export async function ladePersonalkostenDaten(
   // Supabase gewinnt bei echten Stunden — identische Regel wie PersonalFix.
   const istStdProTag: Record<string, Record<string, number>> = {};
   const istTage = new Set<string>();
+  const absenzKreditTageProMa = new Set<string>();
   const localIst = readJson<Record<string, any>>(tenantKey(`actual-hours-${prefix}`), {});
   const supaIst  = (await loadActualHoursForMonth(monthDate, tenantId)) ?? {};
   const cellKeys = new Set([...Object.keys(localIst), ...Object.keys(supaIst)]);
@@ -596,6 +629,18 @@ export async function ladePersonalkostenDaten(
     const empId = cellKey.slice(0, cellKey.length - 11);
     const localVal = localIst[cellKey];
     const localObj = typeof localVal === 'object' && localVal != null ? localVal : null;
+    // Absenz-Anrechnung: K/U/FE/FT-Absenz OHNE Arbeits-Ist (hours exakt 0) —
+    // Supabase kanonisch, localStorage-Markierung gleichwertig.
+    const supaValRaw = supaIst[cellKey];
+    for (const src of [supaValRaw, localObj]) {
+      if (!src || typeof src !== 'object') continue;
+      const code = canonicalAbsenceCode((src as { absenceType?: string }).absenceType);
+      const h0 = Number((src as { hours?: unknown }).hours);
+      // Flex-Kredit nur K/U (FE/FT-Anrechnung gilt nur Fix-MA → Monatslohn)
+      if ((code === 'K' || code === 'U') && Number.isFinite(h0) && h0 === 0) {
+        absenzKreditTageProMa.add(`${date}|${empId}`);
+      }
+    }
     // Lokale Absenz-Markierung (FE/K/U) gewinnt → kein Arbeits-Ist
     if (localObj?.absenceType) continue;
     // Zusatzkosten (Überstunden Fix-MA) fliessen NICHT in diese Totale
@@ -648,7 +693,7 @@ export async function ladePersonalkostenDaten(
     wageSplits: splits,
     agFactor: socialCostFactorFromRates(rates),
     rates,
-    planStdProTag, istStdProTag, istTage,
+    planStdProTag, istStdProTag, istTage, absenzKreditTageProMa,
     umsatzIstProTag, umsatzBudgetMonat, zielQuotePct, pkBudgetMonat,
     gewichte: ladeWochentagsGewichte(tenantKey),
   };

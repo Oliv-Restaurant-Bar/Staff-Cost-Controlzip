@@ -210,6 +210,62 @@ export function absenceInfoHoursForEmployee(args: {
   return any ? { total: r1(total), byCode } : null;
 }
 
+/** Absenzcodes mit Stunden-Anrechnung für FIX-MA (Monatslohn). F = 0. */
+export const KREDIT_ABSENZ_CODES_FIX: ReadonlySet<string> = new Set(['K', 'U', 'FE', 'FT']);
+/** Absenzcodes mit Stunden-Anrechnung für FLEX-MA (Stundenlohn): nur K/U. */
+export const KREDIT_ABSENZ_CODES_FLEX: ReadonlySet<string> = new Set(['K', 'U']);
+
+/** Kredit-Codes je Mitarbeitertyp (Fix = Monatslohn, Flex = Stundenlohn). */
+export function kreditAbsenzCodes(isFix: boolean): ReadonlySet<string> {
+  return isFix ? KREDIT_ABSENZ_CODES_FIX : KREDIT_ABSENZ_CODES_FLEX;
+}
+
+/**
+ * ABSENZ-ANRECHNUNG (Spec 08/2026, final mit Fix/Flex-Unterscheidung):
+ * OHNE MIRUS-Ist (hours exakt 0) zählen die PLAN-Netto-Stunden des Tages als
+ * «angerechnete Stunden» (Pensum/Soll-Ist, Überstunden-Saldo, Personalkosten):
+ * - K (Krank), U (Unfall): für FIX UND FLEX.
+ * - FE (Ferien), FT (Feiertag): NUR für FIX-MA (Monatslohn); Flex/Stundenlohn
+ *   → keine Anrechnung, keine Stunden, keine Kosten.
+ * - F (Frei): immer 0.
+ * NIE in der Produktivität (Nenner bleibt istHoursForDate = nur echte Arbeit).
+ * MIRUS > 0 überschreibt den Code → echte Arbeitsstunden, kein Kredit.
+ */
+export function absenzKreditHoursForEmployeeDate(args: {
+  actualHours: Record<string, ActualHourEntry>;
+  scheduleData: Record<string, DaySchedule>;
+  employeeId: string;
+  dateStr: string;
+  /** true = Fix-MA (Monatslohn) → K/U/FE/FT; false = Flex → nur K/U. */
+  isFix: boolean;
+}): number | null {
+  const e = args.actualHours[`${args.employeeId}-${args.dateStr}`];
+  const code = canonicalAbsenceCode(e?.absenceType);
+  if (!code || !kreditAbsenzCodes(args.isFix).has(code)) return null;
+  const ist = Number(e!.hours);
+  if (!(Number.isFinite(ist) && ist === 0)) return null;
+  return absencePlanHoursForEmployeeDate({
+    scheduleData: args.scheduleData, employeeId: args.employeeId, dateStr: args.dateStr,
+  });
+}
+
+/** Σ Absenz-Kredit-Stunden (K/U/FE/FT) eines MA über einen Datumsbereich (0 = keine). */
+export function absenzKreditHoursForEmployee(args: {
+  actualHours: Record<string, ActualHourEntry>;
+  scheduleData: Record<string, DaySchedule>;
+  employeeId: string;
+  dates: string[];
+  /** true = Fix-MA (Monatslohn) → K/U/FE/FT; false = Flex → nur K/U. */
+  isFix: boolean;
+}): number {
+  let sum = 0;
+  for (const dateStr of args.dates) {
+    const h = absenzKreditHoursForEmployeeDate({ ...args, dateStr });
+    if (h != null) sum += h;
+  }
+  return r1(sum);
+}
+
 /**
  * IST-Stunden (gestempelt/MIRUS) für EIN Datum: Σ hours der actual-hours-
  * Einträge des Tages, OHNE Absenz-Einträge (absenceType) — analog zur

@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
+import { absenzKreditHoursForEmployeeDate, canonicalAbsenceCode, KREDIT_ABSENZ_CODES_FIX } from '@/lib/bedarf-stunden-utils';
+import { pkHasFixedSalary } from '@/lib/personalkosten';
+import { applyEffectiveWagesForMonth, istFixAnDatum, type MonthWageSplit } from '@/lib/wage-history';
 // defaultEmployeesBeaulieu wurde entfernt – auto-seed ist dauerhaft deaktiviert.
 // Mitarbeiter werden ausschliesslich über den Personalstamm erfasst.
 import { usePermissions } from '@/hooks/usePermissions';
@@ -862,6 +865,22 @@ const SchedulePlanner = () => {
           console.log(`[FE-STABLE] ${kvRestored} holiday entries restored from KV store for ${monthKey}`);
         }
 
+        // Absenz-Normalisierung (Spec 08/2026): alte plan-synchronisierte
+        // K/U/FE/FT-Einträge trugen z. T. konfigurierte Pauschal-Stunden;
+        // angerechnet wird jetzt über den Plan-Netto-Kredit → hours auf 0
+        // normalisieren und zurückschreiben (gesperrte Ist-Tage übersprungen).
+        for (const [key, v] of Object.entries(merged)) {
+          const kuCode = canonicalAbsenceCode(v.absenceType);
+          if (kuCode && kuCode !== 'F' && v.source === 'plan_sync' && v.hours > 0) {
+            const dateStr = key.slice(-10);
+            if (lockedIstDatesRef.current.has(dateStr)) continue;
+            const empId = key.slice(0, key.length - 11);
+            merged[key] = { ...v, hours: 0 };
+            saveQueueRef.current?.enqueue(istSaveKey(empId, dateStr), { kind: 'ist', entry: merged[key] });
+            console.log(`[KU-NORMALISIERT] ${key}: plan_sync ${kuCode} hours ${v.hours} → 0 (Anrechnung via Plan-Kredit)`);
+          }
+        }
+
         const feCount = Object.values(merged).filter(v => v.absenceType).length;
         console.log('[IST] state set (merged)', { gen, supabase: istKeys, local: Object.keys(localStored).length, merged: Object.keys(merged).length, feEntries: feCount });
         // Log every preserved FE/K/F entry so we can confirm reload survives
@@ -1481,7 +1500,9 @@ const SchedulePlanner = () => {
   //   Monthly-salary employees are already covered by their fixed salary —
   //   no double-counting possible (their cost path uses monthlySalary directly).
   const DAILY_ABSENCE_NO_COST    = new Set(['FE', 'K', 'U']);
-  const FORECAST_ABSENCE_NO_COST = new Set(['FE']);
+  // Spec 08/2026 (final): FE zählt wie K/U/FT als angerechnete (kostenpflichtige)
+  // Stunden → im Forecast nicht mehr ausgeschlossen; nur F (Frei) = 0.
+  const FORECAST_ABSENCE_NO_COST = new Set(['F', 'Frei']);
 
   // Returns the K/U absence hours for a single day for forecast purposes.
   // Returns 0 for FE (vacation) and for employees on monthly salary (no extra cost).
@@ -1490,6 +1511,11 @@ const SchedulePlanner = () => {
     const getH = (abbrev: string | null | undefined): number => {
       if (!abbrev) return 0;
       if (FORECAST_ABSENCE_NO_COST.has(abbrev)) return 0;
+      // Kanonische Codes (K/U/FE/FT/F, inkl. Legacy-Schreibweisen): NIE
+      // konfigurierte Pauschal-Stunden addieren — Kredit-Stunden stecken
+      // bereits einmal in den Zellzeiten (calculateDayHours), F ist immer 0;
+      // ohne Zeiten keine Plan-Basis → leer, nie geraten.
+      if (canonicalAbsenceCode(abbrev) != null) return 0;
       const shift = Object.keys(shiftMap).find(k => shiftMap[k].abbrev === abbrev);
       return shift && shiftMap[shift].hours > 0 ? shiftMap[shift].hours : 0;
     };
@@ -1521,21 +1547,21 @@ const SchedulePlanner = () => {
     return totalHours;
   };
 
-  // Used for Forecast / PersonalFIX / monthly plan totals.
-  // Includes K and U hours for HOURLY workers (they are paid absences).
-  // Monthly-salary employees never call this — their path uses monthlySalary directly.
-  const calculateCostableHoursForForecast = (employeeId: string): number => {
-    let totalHours = 0;
-    daysInMonth.forEach(day => {
-      const dateStr = format(day, 'yyyy-MM-dd');
-      const cellKey = `${employeeId}-${dateStr}`;
-      const daySchedule = scheduleData[cellKey];
-      if (!daySchedule) return;
-      totalHours += getDayAbsenceHoursForForecast(daySchedule);
-      totalHours += calculateDayHours(daySchedule);
-    });
-    return totalHours;
+  // FLEX-Forecast-Tagesstunden: FE/FT/F-markierte Einsätze zählen bei
+  // Stundenlohn-MA NICHT (Spec 08/2026 final: FE/FT-Anrechnung nur Fix-MA,
+  // F immer 0). K/U-Zeiten zählen einmal via Zellzeiten.
+  const flexForecastDayHours = (ds: DaySchedule): number => {
+    const cf = canonicalAbsenceCode(ds.frühAbsence ?? undefined);
+    const cs = canonicalAbsenceCode(ds.spätAbsence ?? undefined);
+    // FE/FT: keine Flex-Anrechnung; F (auch Legacy «frei»): immer 0.
+    const NO_FLEX = new Set(['FE', 'FT', 'F']);
+    const dropF = cf != null && NO_FLEX.has(cf);
+    const dropS = cs != null && NO_FLEX.has(cs);
+    if (!dropF && !dropS) return calculateDayHours(ds);
+    if (dropF && dropS) return 0;
+    return calculateDayHours({ ...ds, ...(dropF ? { früh: null } : { spät: null }) });
   };
+
 
   // Calculate weekly hours for an employee up to a specific week end date (Sunday)
   const calculateWeeklyHours = (employeeId: string, weekEndDate: Date): number => {
@@ -1734,7 +1760,7 @@ const SchedulePlanner = () => {
       : ACCIDENT_CODES.has(absenceType) ? 'U'
       : VACATION_CODES.has(absenceType) ? 'FE'
       : absenceType === 'F'             ? 'F'
-      : absenceType;
+      : (canonicalAbsenceCode(absenceType) ?? absenceType); // z. B. Feiertag → FT
 
     const writeIstEntry = (newEntry: ActualHoursEntry) => {
       setActualHoursData(prevActual => ({ ...prevActual, [cellKey]: newEntry }));
@@ -1756,20 +1782,20 @@ const SchedulePlanner = () => {
     };
 
     if (canonicalAbsence) {
-      const isFE = canonicalAbsence === 'FE';
-      const isKU = canonicalAbsence === 'K' || canonicalAbsence === 'U';
+      const isKredit = canonicalAbsence === 'FE' || canonicalAbsence === 'FT'
+        || canonicalAbsence === 'K' || canonicalAbsence === 'U';
       const isF  = canonicalAbsence === 'F';
       const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
       const absHours = absShiftCfg?.hours ?? 0;
-      // FE/K/U/F immer kopieren; andere Abwesenheiten nur wenn konfigurierte Stunden > 0
-      const shouldCopy = isFE || isKU || isF || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
+      // K/U/FE/FT/F immer kopieren; andere Abwesenheiten nur wenn konfigurierte Stunden > 0
+      const shouldCopy = isKredit || isF || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
       if (!shouldCopy) return;
 
-      // FE/F: 0h + absenceType; K/U: konfigurierte Stunden + absenceType; andere: nur Stunden
-      const newEntry: ActualHoursEntry = (isFE || isF)
-        ? { hours: 0, absenceType: canonicalAbsence as 'FE' | 'F', source: 'plan_sync' }
-        : isKU
-        ? { hours: absHours, absenceType: canonicalAbsence as 'K' | 'U', source: 'plan_sync' }
+      // K/U/FE/FT/F: 0h + absenceType (die Anrechnung läuft über den Plan-
+      // Netto-Kredit, Spec 08/2026 — nie konfigurierte Pauschal-Stunden
+      // erfinden; F = 0, keine Anrechnung); andere: nur konfigurierte Stunden
+      const newEntry: ActualHoursEntry = (isKredit || isF)
+        ? { hours: 0, absenceType: canonicalAbsence as 'FE' | 'FT' | 'F' | 'K' | 'U', source: 'plan_sync' }
         : { hours: absHours, source: 'plan_sync' };
 
       const existing = actualHoursRef.current[cellKey];
@@ -2214,16 +2240,90 @@ const SchedulePlanner = () => {
     }
   };
 
-  // Calculate actual hours for an employee (monthly total)
+  // ── Absenz-Anrechnung (Spec 08/2026 final, Fix/Flex): ohne MIRUS-Ist →
+  // Plan-Stunden zählen als ANGERECHNETE Stunden (Pensum/Soll-Ist, Kosten) —
+  // NIE in der Produktivität. Fix-MA: K/U/FE/FT; Flex-MA (Stundenlohn): nur
+  // K/U (FE/FT bei Flex = keine Anrechnung, keine Kosten). F immer 0.
+  // Fix/Flex phasen-aufgelöst (wage-history, wie ladePersonalkostenDaten):
+  // reiner Stundenlohn-Monat = Flex; Split-Monat = datumsgenau je Phase.
+  // Fallback bis zum Laden (oder bei Fehler): Stammsatz via pkHasFixedSalary.
+  const [wagePhase, setWagePhase] = useState<{ loaded: boolean; fixIds: Set<string>; splits: Record<string, MonthWageSplit>; effById: Map<string, Employee> }>(
+    { loaded: false, fixIds: new Set(), splits: {}, effById: new Map() });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { employees: eff, splits } = await applyEffectiveWagesForMonth(
+          employees, currentMonth.getFullYear(), currentMonth.getMonth() + 1, tenantId);
+        if (!alive) return;
+        setWagePhase({
+          loaded: true,
+          fixIds: new Set(eff.filter(pkHasFixedSalary).map(e => String(e.id))),
+          splits,
+          effById: new Map(eff.map(e => [String(e.id), e])),
+        });
+      } catch (err) {
+        console.error('[WAGE-PHASE] Monats-Phasenauflösung fehlgeschlagen — Fallback Stammsatz:', err);
+        if (alive) setWagePhase({ loaded: false, fixIds: new Set(), splits: {}, effById: new Map() });
+      }
+    })();
+    return () => { alive = false; };
+  }, [employees, currentMonth, tenantId]);
+  const isFixMa = (employeeId: string, dateStr?: string): boolean => {
+    const split = wagePhase.splits[employeeId];
+    if (split && dateStr) return istFixAnDatum(split, dateStr);
+    if (wagePhase.loaded) return wagePhase.fixIds.has(String(employeeId));
+    const emp = employees.find(e => e.id === employeeId);
+    return emp ? pkHasFixedSalary(emp) : false;
+  };
+  const absenzKredit = (employeeId: string, dateStr: string): number =>
+    absenzKreditHoursForEmployeeDate({ actualHours: actualHoursData, scheduleData, employeeId, dateStr, isFix: isFixMa(employeeId, dateStr) }) ?? 0;
+  /** Angerechnete Stunden einer Zelle = MIRUS-Ist + K/U-Plan-Kredit. */
+  const istPlusAbsenzKredit = (employeeId: string, dateStr: string): number => {
+    const entry = actualHoursData[`${employeeId}-${dateStr}`];
+    return (entry?.hours || 0) + absenzKredit(employeeId, dateStr);
+  };
+
+  // ── Geplante AG-Kosten eines MA über eine Tagesliste, phasen-aufgelöst ────
+  // (Spec 08/2026 final): Fix-Phase = Monatslohn pro rata (Tage/Monatstage),
+  // Flex-Phase = Forecast-Stunden × Stundensatz (FE/FT/F-Einsätze zählen 0).
+  // Split-Monate datumsgenau; ohne Split entscheidet die Monats-Phase
+  // (Fallback bis zum Laden: Stammsatz via pkHasFixedSalary).
+  const plannedLaborCostForEmp = (emp: Employee, dayList: Date[]): number => {
+    const id = String(emp.id);
+    const eff = wagePhase.effById.get(id) ?? emp;
+    const monthDays = daysInMonth.length;
+    const flexHours = (dates: string[]) => dates.reduce((h, dateStr) => {
+      const ds = scheduleData[`${emp.id}-${dateStr}`];
+      return h + (ds ? flexForecastDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
+    }, 0);
+    const dates = dayList.map(d => format(d, 'yyyy-MM-dd'));
+    const split = wagePhase.splits[emp.id];
+    if (split) {
+      const fixDates  = dates.filter(d => istFixAnDatum(split, d));
+      const flexDates = dates.filter(d => !istFixAnDatum(split, d));
+      // eff trägt bei Split die Monatslohn-Phase; Stundenlohn-Phase separat.
+      const hourlyEmp: Employee = {
+        ...emp,
+        contractType: 'hourly',
+        hourlyWage: split.hourly.hourlyWage,
+        monthlySalary: 0,
+        monthlySalaryWith13th: 0,
+        has13thSalary: split.hourly.salary13,
+      };
+      return agMonthly(eff) * (fixDates.length / monthDays)
+        + flexHours(flexDates) * agRate(hourlyEmp);
+    }
+    if (isFixMa(emp.id)) return agMonthly(eff) * (dates.length / monthDays);
+    return flexHours(dates) * agRate(eff);
+  };
+
+  // Calculate credited hours for an employee (monthly total):
+  // MIRUS-Ist + K/U-Plan-Kredit («angerechnete Stunden»)
   const calculateEmployeeActualHours = (employeeId: string): number => {
     let totalHours = 0;
     daysInMonth.forEach(day => {
-      const dateStr = format(day, 'yyyy-MM-dd');
-      const cellKey = `${employeeId}-${dateStr}`;
-      const entry = actualHoursData[cellKey];
-      if (entry?.hours) {
-        totalHours += entry.hours;
-      }
+      totalHours += istPlusAbsenzKredit(employeeId, format(day, 'yyyy-MM-dd'));
     });
     return totalHours;
   };
@@ -2934,14 +3034,9 @@ const SchedulePlanner = () => {
   // Ein Manager sieht nur die Zahlen seiner eigenen Abteilung.
   const visibleEmployees = filteredEmployees; // enthält schon die Rollen-Filterung
 
-  const totalPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
-    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + agMonthly(emp);
-    }
-    // K + U included for hourly workers (paid absences in monthly forecast)
-    const hrs = calculateCostableHoursForForecast(emp.id);
-    return sum + hrs * agRate(emp);
-  }, 0);
+  // Phasen-aufgelöst (wage-history): Fix pro rata Monatslohn, Flex Stunden×Satz
+  const totalPlannedLaborCost = visibleEmployees.reduce(
+    (sum, emp) => sum + plannedLaborCostForEmp(emp, daysInMonth), 0);
 
   const visibleEmployeeIds = new Set(visibleEmployees.map(e => e.id));
 
@@ -2959,17 +3054,8 @@ const SchedulePlanner = () => {
 
 
   // ── Geplante Personalkosten (Total AG): Monat / Woche / Tag ────────────────
-  const weeklyPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
-    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + agMonthly(emp) * (displayDays.length / daysInMonth.length);
-    }
-    // K + U absence hours included for hourly workers (paid absences in weekly forecast)
-    const hrs = displayDays.reduce((h, day) => {
-      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-      return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
-    }, 0);
-    return sum + hrs * agRate(emp);
-  }, 0);
+  const weeklyPlannedLaborCost = visibleEmployees.reduce(
+    (sum, emp) => sum + plannedLaborCostForEmp(emp, displayDays), 0);
 
   // ── Kueche-Manager: per-day manager-safe header totals (Plan-PKQ) ──────────
   // Computed ONLY for the kitchen manager; admin/service get an empty map so the
@@ -2989,11 +3075,31 @@ const SchedulePlanner = () => {
         // AG-Basis: Lohnfelder tragen Total Arbeitgeberkosten (Monat bzw. /h),
         // damit die Manager-PKQ dieselbe Basis hat wie die Wochen-/Monats-Karten.
         // CHF bleibt intern — toDailyTotalsDisplay strippt personnelCost weiterhin.
+        // Fix/Flex pro TAG phasen-aufgelöst (wage-history, Split-Monate
+        // datumsgenau) und WECHSELSEITIG AUSSCHLIESSEND — identisch zu
+        // plannedLaborCostForEmp: Fix-Tag → Monatskosten pro rata (kein
+        // Stundensatz); Flex-Tag → Stunden × Satz der Stundenlohn-Phase,
+        // FE/FT/F-Einsätze zählen 0 (Spec 08/2026 final).
+        const eff = wagePhase.effById.get(String(emp.id)) ?? emp;
+        const split = wagePhase.splits[emp.id];
+        if (isFixMa(emp.id, dateStr)) {
+          return {
+            employmentType: 'vollzeit',
+            monthlySalary: agMonthly(eff),
+            hourlyWage: 0,
+            dayHours: ds ? calculateDayHours(ds) : 0,
+            dayAbsenceHours: ds ? getDayAbsenceHoursForForecast(ds) : 0,
+          };
+        }
+        const hourlyEmp: Employee = split
+          ? { ...emp, contractType: 'hourly', hourlyWage: split.hourly.hourlyWage,
+              monthlySalary: 0, monthlySalaryWith13th: 0, has13thSalary: split.hourly.salary13 }
+          : eff;
         return {
-          employmentType: emp.employmentType,
-          monthlySalary: (emp.monthlySalary ?? 0) > 0 ? agMonthly(emp) : emp.monthlySalary,
-          hourlyWage: agRate(emp),
-          dayHours: ds ? calculateDayHours(ds) : 0,
+          employmentType: 'stundenlohn',
+          monthlySalary: 0,
+          hourlyWage: agRate(hourlyEmp),
+          dayHours: ds ? flexForecastDayHours(ds) : 0,
           dayAbsenceHours: ds ? getDayAbsenceHoursForForecast(ds) : 0,
         };
       });
@@ -3004,62 +3110,37 @@ const SchedulePlanner = () => {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isKuecheManager, visibleEmployees, displayDays, scheduleData, dailyBudgets, laborCostThreshold, daysInMonth, agMonthly, agRate]);
+  }, [isKuecheManager, visibleEmployees, displayDays, scheduleData, dailyBudgets, laborCostThreshold, daysInMonth, agMonthly, agRate, wagePhase]);
 
   // ── Ist-Personalkosten (Total AG): aus tatsächlich erfassten Stunden ───────
   const weeklyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
-    const hrs = displayDays.reduce((h, day) => {
-      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
-      const entry = actualHoursData[cellKey];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = displayDays.reduce((h, day) =>
+      h + istPlusAbsenzKredit(emp.id, format(day, 'yyyy-MM-dd')), 0);
     return sum + hrs * agRate(emp);
   }, 0);
 
   const monthlyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
-    const hrs = daysInMonth.reduce((h, day) => {
-      const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
-      const entry = actualHoursData[cellKey];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = daysInMonth.reduce((h, day) =>
+      h + istPlusAbsenzKredit(emp.id, format(day, 'yyyy-MM-dd')), 0);
     return sum + hrs * agRate(emp);
   }, 0);
 
   // ── Gesamt-Personalkosten Total AG (immer Küche + Service, unabhängig vom Dept-Filter) ──────
-  const gesamtMonthlyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
-    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + agMonthly(emp);
-    }
-    // K + U included for hourly workers in the monthly forecast total
-    const hrs = calculateCostableHoursForForecast(emp.id);
-    return sum + hrs * agRate(emp);
-  }, 0);
+  const gesamtMonthlyPlannedLaborCost = activeEmployees.reduce(
+    (sum, emp) => sum + plannedLaborCostForEmp(emp, daysInMonth), 0);
 
-  const gesamtWeeklyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
-    if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + agMonthly(emp) * (displayDays.length / daysInMonth.length);
-    }
-    // K + U absence hours included for hourly workers in the weekly forecast total
-    const hrs = displayDays.reduce((h, day) => {
-      const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-      return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
-    }, 0);
-    return sum + hrs * agRate(emp);
-  }, 0);
+  const gesamtWeeklyPlannedLaborCost = activeEmployees.reduce(
+    (sum, emp) => sum + plannedLaborCostForEmp(emp, displayDays), 0);
 
   const gesamtWeeklyIstLaborCost = activeEmployees.reduce((sum, emp) => {
-    const hrs = displayDays.reduce((h, day) => {
-      const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = displayDays.reduce((h, day) =>
+      h + istPlusAbsenzKredit(emp.id, format(day, 'yyyy-MM-dd')), 0);
     return sum + hrs * agRate(emp);
   }, 0);
 
   const gesamtMonthlyIstLaborCost = activeEmployees.reduce((sum, emp) => {
-    const hrs = daysInMonth.reduce((h, day) => {
-      const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = daysInMonth.reduce((h, day) =>
+      h + istPlusAbsenzKredit(emp.id, format(day, 'yyyy-MM-dd')), 0);
     return sum + hrs * agRate(emp);
   }, 0);
 
@@ -3097,10 +3178,8 @@ const SchedulePlanner = () => {
       .map(([date]) => date),
   );
   const istLaborCostOnRevenueDays = activeEmployees.reduce((sum, emp) => {
-    const hrs = Array.from(revenueDateSet).reduce((h, date) => {
-      const entry = actualHoursData[`${emp.id}-${date}`];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = Array.from(revenueDateSet).reduce((h, date) =>
+      h + istPlusAbsenzKredit(emp.id, date), 0);
     return sum + hrs * agRate(emp);
   }, 0);
 
@@ -3259,7 +3338,9 @@ const SchedulePlanner = () => {
       const empId   = key.slice(0, key.length - 11); // format: "empId-yyyy-MM-dd"
       return monthDateSet.has(dateStr) && visibleEmployeeIds.has(empId);
     })
-    .reduce((sum, [, e]) => sum + e.hours, 0);
+    // angerechnete Stunden = MIRUS-Ist + K/U-Plan-Kredit (Zellen mit K/U
+    // haben hours=0 — der Kredit kommt über absenzKredit dazu)
+    .reduce((sum, [key, e]) => sum + e.hours + absenzKredit(key.slice(0, key.length - 11), key.slice(-10)), 0);
   const hoursVariance = totalActualHoursAll - totalPlannedHoursAll;
 
   const totalActualRevenue = Object.entries(dailyBudgets)
@@ -3268,7 +3349,7 @@ const SchedulePlanner = () => {
   const totalActualLaborCost = visibleEmployees.reduce((sum, emp) => {
     const actualHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
-      .reduce((s, [, e]) => s + e.hours, 0);
+      .reduce((s, [key, e]) => s + e.hours + absenzKredit(emp.id, key.slice(-10)), 0);
     return sum + actualHrs * agRate(emp);
   }, 0);
 
@@ -3278,10 +3359,16 @@ const SchedulePlanner = () => {
   const totalKrankUnfallLaborCost = useMemo(() => visibleEmployees.reduce((sum, emp) => {
     const kuHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
-      .filter(([, e]) => e.absenceType === 'K' || e.absenceType === 'U')
-      .reduce((s, [, e]) => s + e.hours, 0);
+      .filter(([, e]) => {
+        const c = canonicalAbsenceCode(e.absenceType);
+        return c === 'K' || c === 'U';
+      })
+      // angerechnete K/U-Stunden = erfasste Stunden + Plan-Kredit (K/U ohne
+      // MIRUS-Ist zählen mit ihren Plan-Stunden → Versicherungsregel greift)
+      .reduce((s, [key, e]) => s + e.hours + absenzKredit(emp.id, key.slice(-10)), 0);
     return sum + kuHrs * agRate(emp);
-  }, 0), [actualHoursData, visibleEmployees, monthDateSet, agRate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, 0), [actualHoursData, scheduleData, visibleEmployees, monthDateSet, agRate]);
 
   // 20% Versicherungsersatz (der Anteil den die Versicherung übernimmt)
   const insuranceCostOffset = totalKrankUnfallLaborCost * 0.20;
@@ -3296,10 +3383,8 @@ const SchedulePlanner = () => {
       .map(([date]) => date),
   );
   const actualLaborCostOnRevenueDays = visibleEmployees.reduce((sum, emp) => {
-    const hrs = Array.from(monthRevenueDateSet).reduce((h, date) => {
-      const entry = actualHoursData[`${emp.id}-${date}`];
-      return h + (entry?.hours || 0);
-    }, 0);
+    const hrs = Array.from(monthRevenueDateSet).reduce((h, date) =>
+      h + istPlusAbsenzKredit(emp.id, date), 0);
     return sum + hrs * agRate(emp);
   }, 0);
   const actualCostRatio = totalActualRevenue > 0 && actualLaborCostOnRevenueDays > 0
@@ -4723,6 +4808,7 @@ const SchedulePlanner = () => {
                     canLock={canEditEmployees}
                     onToggleDayLock={(dates, lock) => { void toggleIstDayLocks(dates, lock); }}
                     scheduleData={scheduleData}
+                    isFixOnDate={isFixMa}
                   />
                 </>
               )}

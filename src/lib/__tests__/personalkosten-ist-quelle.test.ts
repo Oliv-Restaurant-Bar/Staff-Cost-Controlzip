@@ -147,6 +147,59 @@ describe('flexKostenProTagDetail — Ist-Quelle-Regel', () => {
   });
 });
 
+describe('K/U-Anrechnung (Spec 08/2026)', () => {
+  const D = (d: number) => `2026-01-0${d}`;
+
+  it("'mirus' ohne Ist am K/U-Tag → Plan angerechnet, KEIN «Ist fehlt»", () => {
+    const emp = flexEmp('m', 'mirus');
+    const daten = makeDaten([emp], { plan: { [D(2)]: { m: 8 } }, ist: {} });
+    daten.absenzKreditTageProMa = new Set([`${D(2)}|m`]);
+    const { tage, istFehltTage } = flexKostenProTagDetail(daten, { stichtag: 3 });
+    const tag = tage.find(t => t.date === D(2))!;
+    expect(tag.proMa.m.absenzAngerechnet).toBe(true);
+    expect(tag.proMa.m.istFehlt).toBeUndefined();
+    expect(tag.istKosten).toBeCloseTo(8 * tag.proMa.m.chfProStd, 0);
+    expect(istFehltTage).toHaveLength(0);
+  });
+
+  it('FE/FT bei Flex-MA: KEINE Anrechnung — Tag fällt aus dem Flex-Stapel (Spec final)', () => {
+    // Loader nimmt FE/FT-Einsätze gar nicht in planStdProTag auf und erfasst
+    // sie nicht in absenzKreditTageProMa → Zelle existiert nicht, keine Kosten.
+    const emp = flexEmp('m', 'mirus');
+    const daten = makeDaten([emp], { plan: { [D(2)]: { m: 6 } }, ist: {} });
+    const { tage, istFehltTage } = flexKostenProTagDetail(daten, { stichtag: 3 });
+    expect(tage.find(t => t.date === D(1))!.proMa.m).toBeUndefined();
+    expect(istFehltTage).toEqual([`${D(2)}|m`]); // normaler Arbeitstag ohne Ist bleibt markiert
+  });
+
+  it('MIRUS-Ist > 0 überschreibt: kein K/U-Kredit, echtes Ist zählt', () => {
+    const emp = flexEmp('m', 'mirus');
+    const daten = makeDaten([emp], { plan: { [D(2)]: { m: 8 } }, ist: { [D(2)]: { m: 7 } } });
+    daten.absenzKreditTageProMa = new Set([`${D(2)}|m`]);
+    const { tage } = flexKostenProTagDetail(daten, { stichtag: 3 });
+    const tag = tage.find(t => t.date === D(2))!;
+    expect(tag.proMa.m.absenzAngerechnet).toBeUndefined();
+    expect(tag.istKosten).toBeCloseTo(7 * tag.proMa.m.chfProStd, 0);
+  });
+
+  it('Split-Pseudo-id ::flexsplit findet den K/U-Tag der Basis-id', () => {
+    const emp = flexEmp('x::flexsplit', 'mirus');
+    const daten = makeDaten([emp], { plan: { [D(1)]: { 'x::flexsplit': 5 } }, ist: {} });
+    daten.absenzKreditTageProMa = new Set([`${D(1)}|x`]);
+    const { tage, istFehltTage } = flexKostenProTagDetail(daten, { stichtag: 3 });
+    expect(tage.find(t => t.date === D(1))!.proMa['x::flexsplit'].absenzAngerechnet).toBe(true);
+    expect(istFehltTage).toHaveLength(0);
+  });
+
+  it('K/U-Tag ohne Plan-Basis → nichts angerechnet (leer, nie geraten)', () => {
+    const emp = flexEmp('m', 'mirus');
+    const daten = makeDaten([emp], { plan: {}, ist: {} });
+    daten.absenzKreditTageProMa = new Set([`${D(1)}|m`]);
+    const { tage } = flexKostenProTagDetail(daten, { stichtag: 3 });
+    expect(tage.find(t => t.date === D(1))!.istKosten).toBe(0);
+  });
+});
+
 describe('personalkosten — Modi + istFehltTage durchgereicht', () => {
   const D = (d: number) => `2026-01-0${d}`;
 
