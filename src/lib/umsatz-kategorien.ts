@@ -309,12 +309,18 @@ export interface KatAuswertung {
 }
 
 /** Summiert je Gruppe/Kategorie über alle Tage des Jahres. Leer statt 0. */
-export function berechneKatAuswertung(blob: UmsatzKategorienBlob, jahr: number): KatAuswertung {
+export function berechneKatAuswertung(
+  blob: UmsatzKategorienBlob,
+  jahr: number,
+  /** Optionaler Datumsbereich (ISO, inkl.) — z.B. aus der Zeitraum-Steuerung.
+   *  Ist er gesetzt, gilt NUR er (er kann auch Jahresgrenzen überspannen). */
+  bereich?: { from: string; to: string },
+): KatAuswertung {
   const proGruppe: Record<KatGruppe, Map<string, number>> = { food: new Map(), beverage: new Map() };
   let von: string | null = null, bis: string | null = null;
   for (const [key, umsatz] of Object.entries(blob.werte)) {
     const [datum, gruppe, ...rest] = key.split('|');
-    if (!datum.startsWith(`${jahr}-`)) continue;
+    if (bereich ? (datum < bereich.from || datum > bereich.to) : !datum.startsWith(`${jahr}-`)) continue;
     if (gruppe !== 'food' && gruppe !== 'beverage') continue;
     const kategorie = rest.join('|');
     if (!kategorie) continue;

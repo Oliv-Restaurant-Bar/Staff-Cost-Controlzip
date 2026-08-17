@@ -138,6 +138,16 @@ describe('berechneKatAuswertung', () => {
     expect(a.beverage.zeilen[0].anteilPct).toBe(100);
   });
 
+  it('bereich-Filter (Woche/Monat): nur Werte innerhalb from..to', () => {
+    const a = berechneKatAuswertung(blob, 2026, { from: '2026-01-01', to: '2026-01-31' });
+    expect(a.zeitraum).toEqual({ von: '2026-01-01', bis: '2026-01-01' });
+    expect(a.food.total).toBe(400); // Pasta 100 + Pizza 300, ohne 24.08.
+    expect(a.beverage.zeilen).toEqual([]);
+    // Bereich kann Jahresgrenzen überspannen (jahr-Parameter greift dann nicht)
+    const b = berechneKatAuswertung(blob, 2026, { from: '2025-12-01', to: '2026-01-31' });
+    expect(b.food.total).toBe(400 + 999);
+  });
+
   it('leer statt 0: keine Daten → total null, zeilen leer, zeitraum null', () => {
     const a = berechneKatAuswertung({ werte: {} }, 2026);
     expect(a.zeitraum).toBeNull();

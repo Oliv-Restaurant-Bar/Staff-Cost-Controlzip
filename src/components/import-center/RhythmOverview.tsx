@@ -51,6 +51,7 @@ const WEEKLY_ACTIONS: Record<WeeklySourceId, RowAction> = {
   mirus:         { anchor: 'ist-stunden' },
   reservationen: { route: '/foratable-import' },
   rezensionen:   { route: '/rezensionen' },
+  umsatzkategorien: { route: '/produkt-analyse?tab=umsatzkategorien' },
 };
 
 function ActionButton({ action, label = 'Import' }: { action: RowAction; label?: string }) {

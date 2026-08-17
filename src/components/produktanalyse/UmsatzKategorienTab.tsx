@@ -22,10 +22,10 @@ import {
   loadUmsatzKategorien, loadUmsatzKategorienUndoInfo, undoUmsatzKategorienImport,
   berechneKatAuswertung,
   UMSATZ_KATEGORIEN_UPDATED_EVENT,
-  type KatParseErgebnis, type KatAuswertung, type KatGruppe,
+  type KatParseErgebnis, type KatGruppe, type UmsatzKategorienBlob,
 } from '@/lib/umsatz-kategorien';
-
-const JAHR = 2026;
+import { ZeitraumSteuerung } from '@/components/ZeitraumSteuerung';
+import { initialZeitraum, zeitraumGrenzen, type Zeitraum } from '@/lib/zeitraum';
 
 const fmtChf = (n: number) => n.toLocaleString('de-CH', { maximumFractionDigits: 0 });
 const fmtDatum = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
@@ -40,7 +40,9 @@ export default function UmsatzKategorienTab() {
   const tenantRef = useRef(tenantId);
   tenantRef.current = tenantId;
 
-  const [auswertung, setAuswertung] = useState<KatAuswertung | null>(null);
+  const [blob, setBlob] = useState<UmsatzKategorienBlob | null>(null);
+  // Zeitraum-Steuerung: Woche/Monat/Jahr, Standard = aktueller Monat.
+  const [zeitraum, setZeitraum] = useState<Zeitraum>(() => initialZeitraum('monat'));
   const [ladeFehler, setLadeFehler] = useState<string | null>(null);
   const [vorschau, setVorschau] = useState<{ parse: KatParseErgebnis; fileName: string; tenantId: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,21 +52,21 @@ export default function UmsatzKategorienTab() {
     const tid = tenantId;
     setLadeFehler(null);
     try {
-      const blob = await loadUmsatzKategorien(tid);
+      const geladen = await loadUmsatzKategorien(tid);
       const undo = await loadUmsatzKategorienUndoInfo(tid).catch(() => null);
       if (tenantRef.current !== tid) return; // Mandant gewechselt → verwerfen
-      setAuswertung(berechneKatAuswertung(blob, JAHR));
+      setBlob(geladen);
       setUndoInfo(undo);
     } catch (e) {
       if (tenantRef.current !== tid) return;
-      setAuswertung(null);
+      setBlob(null);
       setLadeFehler(e instanceof Error ? e.message : 'Daten konnten nicht geladen werden.');
     }
   }, [tenantId]);
 
   useEffect(() => {
     // Mandantenwechsel: nichts «mitnehmen»
-    setAuswertung(null); setVorschau(null); setUndoInfo(null); setLadeFehler(null);
+    setBlob(null); setVorschau(null); setUndoInfo(null); setLadeFehler(null);
     void laden();
     const h = () => { void laden(); };
     window.addEventListener(UMSATZ_KATEGORIEN_UPDATED_EVENT, h);
@@ -120,6 +122,13 @@ export default function UmsatzKategorienTab() {
     } finally { setBusy(false); }
   }, [tenantId, toast, laden]);
 
+  // Auswertung für den gewählten Zeitraum (Woche/Monat/Jahr).
+  const grenzen = useMemo(() => zeitraumGrenzen(zeitraum), [zeitraum]);
+  const auswertung = useMemo(
+    () => (blob ? berechneKatAuswertung(blob, zeitraum.year, { from: grenzen.from, to: grenzen.to }) : null),
+    [blob, zeitraum.year, grenzen],
+  );
+
   const pdfExport = useCallback(async () => {
     if (!auswertung) return;
     const [{ jsPDF }, mod, branding] = await Promise.all([
@@ -127,8 +136,8 @@ export default function UmsatzKategorienTab() {
     ]);
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     mod.zeichneUmsatzKategorienSeite(pdf, auswertung, branding.getBranding(tenantId).displayName, false);
-    pdf.save(`umsatzanalyse-kategorien-${JAHR}.pdf`);
-  }, [auswertung, tenantId]);
+    pdf.save(`umsatzanalyse-kategorien-${grenzen.from}-${grenzen.to}.pdf`);
+  }, [auswertung, tenantId, grenzen]);
 
   return (
     <div className="space-y-4">
@@ -209,14 +218,21 @@ export default function UmsatzKategorienTab() {
               <div className="font-semibold">Umsatzanalyse Food & Beverage Kategorien</div>
               <div className="text-xs text-muted-foreground" data-testid="text-umsatzkategorien-zeitraum">
                 {auswertung?.zeitraum
-                  ? `Zeitraum: ${fmtDatum(auswertung.zeitraum.von)} bis ${fmtDatum(auswertung.zeitraum.bis)} · Werte ${JAHR}`
-                  : `Noch keine Daten für ${JAHR} importiert.`}
+                  ? `Daten: ${fmtDatum(auswertung.zeitraum.von)} bis ${fmtDatum(auswertung.zeitraum.bis)}`
+                  : 'Keine Daten im gewählten Zeitraum.'}
               </div>
             </div>
-            <Button size="sm" variant="outline" className="gap-1.5" disabled={!auswertung?.zeitraum}
-              data-testid="button-umsatzkategorien-pdf" onClick={() => void pdfExport()}>
-              <FileDown className="h-3.5 w-3.5" /> PDF
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <ZeitraumSteuerung
+                value={zeitraum}
+                onChange={setZeitraum}
+                granularitaeten={['woche', 'monat', 'jahr']}
+              />
+              <Button size="sm" variant="outline" className="gap-1.5" disabled={!auswertung?.zeitraum}
+                data-testid="button-umsatzkategorien-pdf" onClick={() => void pdfExport()}>
+                <FileDown className="h-3.5 w-3.5" /> PDF
+              </Button>
+            </div>
           </div>
 
           {(['food', 'beverage'] as KatGruppe[]).map(k => {
@@ -225,7 +241,7 @@ export default function UmsatzKategorienTab() {
             if (!g || g.zeilen.length === 0) {
               return (
                 <div key={k} className="text-sm text-muted-foreground py-4 text-center border rounded-md">
-                  Keine {label}-Daten für {JAHR} vorhanden — Excel oben importieren.
+                  Keine {label}-Daten im gewählten Zeitraum — ggf. Excel oben importieren.
                 </div>
               );
             }

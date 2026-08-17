@@ -34,7 +34,8 @@ import type { TenantId } from '@/contexts/TenantContext';
 // ── Typen ──────────────────────────────────────────────────────────────────
 
 export type WeeklySourceId =
-  | 'umsatz' | 'gaeste' | 'avgcheck' | 'verkauf' | 'mirus' | 'reservationen' | 'rezensionen';
+  | 'umsatz' | 'gaeste' | 'avgcheck' | 'verkauf' | 'mirus' | 'reservationen' | 'rezensionen'
+  | 'umsatzkategorien';
 
 export interface WeeklySourceMeta {
   id: WeeklySourceId;
@@ -54,6 +55,8 @@ export const WEEKLY_SOURCES: WeeklySourceMeta[] = [
   { id: 'mirus',         label: 'MIRUS Ist-Stunden',          toleranceDays: 1 },
   { id: 'reservationen', label: 'Reservationen (Foratable)',  toleranceDays: 1 },
   { id: 'rezensionen',   label: 'Rezensionen (Lunchgate/Google)', toleranceDays: 7 },
+  // Wochenrhythmus wie Rezensionen: Upload 1×/Woche gilt als aktuell.
+  { id: 'umsatzkategorien', label: 'Umsatzanalyse Kategorien (F&B)', toleranceDays: 7 },
 ];
 
 export type AmpelStatus = 'green' | 'orange' | 'gray';
@@ -247,12 +250,26 @@ async function loadRezensionenUntil(tenantId: TenantId, todayIso: string): Promi
   } catch { return null; }
 }
 
+/** Letzter Tag mit Werten im «Umsatzanalyse Kategorien»-Blob (Produkteanalyse-Upload). */
+async function loadUmsatzKategorienUntil(tenantId: TenantId): Promise<string | null> {
+  try {
+    const { loadUmsatzKategorien } = await import('@/lib/umsatz-kategorien');
+    const blob = await loadUmsatzKategorien(tenantId);
+    let max: string | null = null;
+    for (const key of Object.keys(blob.werte)) {
+      const datum = key.slice(0, 10);
+      if (!max || datum > max) max = datum;
+    }
+    return max;
+  } catch { return null; }
+}
+
 /** Lädt alle Wochenquellen parallel und berechnet die Ampeln. */
 export async function loadWeeklyFreshness(
   tenantId: TenantId,
   todayIso: string,
 ): Promise<SourceFreshness[]> {
-  const [umsatz, gaeste, avg, verkauf, mirus, res, rez] = await Promise.all([
+  const [umsatz, gaeste, avg, verkauf, mirus, res, rez, kat] = await Promise.all([
     loadUmsatzUntil(tenantId),
     loadGaesteUntil(tenantId),
     loadAvgCheckUntil(tenantId),
@@ -260,9 +277,11 @@ export async function loadWeeklyFreshness(
     loadMirusUntil(tenantId, todayIso),
     loadReservationenUntil(tenantId, todayIso),
     loadRezensionenUntil(tenantId, todayIso),
+    loadUmsatzKategorienUntil(tenantId),
   ]);
   const values: Record<WeeklySourceId, string | null> = {
     umsatz, gaeste, avgcheck: avg, verkauf, mirus, reservationen: res, rezensionen: rez,
+    umsatzkategorien: kat,
   };
   return WEEKLY_SOURCES.map(meta => {
     const completeUntil = values[meta.id];
