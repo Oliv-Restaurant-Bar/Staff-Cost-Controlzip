@@ -1,0 +1,22 @@
+Problem: Der MIRUS-Import schreibt Ist-Stunden nur in Tageszellen, die bereits eine geplante Schicht haben. Tage, an denen ein Mitarbeiter laut MIRUS gearbeitet hat, aber NICHT geplant war, werden verworfen. Dadurch fehlen z.B. bei OLIV KW33: Domi Sadete Mi12/Do13 (7.10h), Kolev Miroslav Mi12/Do13 (16.97h), Ouisroutane Do13 (5.95h).
+
+Neue verbindliche Regel (SSOT):
+1) MIRUS ist die ALLEINIGE Quelle der Ist-Stunden. Für JEDEN Mitarbeiter, der im MIRUS-Export vorkommt, wird für JEDEN Tag im Importzeitraum der Ist-Wert exakt aus MIRUS gesetzt — auch an Tagen OHNE geplante Schicht. Fehlt die Tageszelle im Dienstplan, wird sie angelegt.
+2) MIRUS > 0 überschreibt jeden Abwesenheitscode (K, U, FE, FT, F) — wie bereits definiert. MIRUS = 0 bzw. kein MIRUS-Eintrag => Ist bleibt LEER (nicht 0).
+3) AUSNAHMEN — diese werden NIE aus MIRUS überschrieben, App-Werte bleiben stehen:
+   - Mitarbeiter "Lokaj Mendim"
+   - Mitarbeiter "Ramadani Mejdi"
+   - alle Mitarbeiter, die im MIRUS-Export NICHT vorkommen (App-eigene Aushilfen/Teilzeit)
+4) Dublettensicher: pro Schlüssel (Mitarbeiter + Datum + Mandant) ERSETZEN statt addieren. Mehrfach-Import darf Werte nie summieren.
+5) Mandantengetrennt: OLIV schreibt nur OLIV-Keys, Beaulieu nur beaulieu:-Keys. Kein Übergriff.
+6) Personalkosten, Produktivität, Soll/Ist und Überstunden folgen automatisch aus den korrigierten Ist-Stunden — nicht separat anfassen.
+
+Reparatur-Lauf: Gleiche die bereits importierte KW33 (10.–16.08.2026) für BEIDE Mandanten erneut gegen die vorhandenen MIRUS-Werte ab, sodass alle aktuell fehlenden Zellen gefüllt werden (Domi Mi12/Do13, Kolev Mi12/Do13, Ouisroutane Do13 und alle weiteren gleichartigen Fälle).
+
+Neue Kontroll-Ansicht "MIRUS ↔ App Ist-Abgleich" (mandantengetrennt, mit Woche/Monat/Jahr-Steuerung):
+- Tabelle: Mitarbeiter | Tag | MIRUS-Std | App-Ist-Std | Δ
+- Zeigt nur Zeilen mit |Δ| > 0.05h (echte Abweichungen), leer statt 0.
+- Ausnahme-Mitarbeiter (Lokaj Mendim, Ramadani Mejdi, Nicht-MIRUS-Aushilfen) werden ausgegraut/als "Ausnahme" markiert, nicht als Fehler.
+- Summe der fehlenden Stunden im Kopf.
+
+Sicherheit: Vorschau ("Was wird geändert?") VOR dem Anwenden, plus Undo. Nichts anderes verändern. Tests grün inkl. Mandantentrennung Oliv/Beaulieu und Fall "gearbeitet ohne geplante Schicht".

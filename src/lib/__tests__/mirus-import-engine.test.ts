@@ -127,7 +127,7 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     expect(writes[0].entry?.hours).toBe(8.04);
   });
 
-  it('Muster 5: beide Stunden, Diff > Schwelle → Rückfrage (kein Auto-Überschreiben mehr)', () => {
+  it('Muster 5: beide Stunden, Diff > Schwelle → MIRUS wird IMMER übernommen (SSOT)', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 9.85)],
       existing: { 'a-2026-07-01': { hours: 8.43 } },
@@ -137,14 +137,14 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     const cell = plan.employees[0].cells[0];
     expect(cell.decision).toBe('conflict_diff');
     expect(groupPlanCells(plan)[5]).toHaveLength(1);
-    // Default mirus → überschreiben; keep → nichts
+    // SSOT: MIRUS wird immer übernommen — auch wenn resolution 'keep' gesetzt würde
     expect(resolvePlanToWrites(plan)[0].entry?.hours).toBe(9.85);
     cell.resolution = 'keep';
-    expect(resolvePlanToWrites(plan)).toHaveLength(0);
-    expect(expectedAfterTotals(plan).a).toBe(8.43);
+    expect(resolvePlanToWrites(plan)[0].entry?.hours).toBe(9.85);
+    expect(expectedAfterTotals(plan).a).toBe(9.85);
   });
 
-  it('Muster 2: MIRUS 0 vs. Ist-Stunden → Rückfrage; mirus = Zelle leeren', () => {
+  it('Muster 2: MIRUS 0 vs. Ist-Stunden → Zelle wird IMMER geleert (SSOT)', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 0)],
       existing: { 'a-2026-07-01': { hours: 8 } },
@@ -155,8 +155,8 @@ describe('buildMirusReconcilePlan — Muster-Logik', () => {
     expect(cell.decision).toBe('conflict_zero');
     expect(resolvePlanToWrites(plan)).toEqual([{ employeeId: 'a', date: '2026-07-01', entry: null }]);
     cell.resolution = 'keep';
-    expect(resolvePlanToWrites(plan)).toHaveLength(0);
-    expect(expectedAfterTotals(plan).a).toBe(8);
+    expect(resolvePlanToWrites(plan)).toEqual([{ employeeId: 'a', date: '2026-07-01', entry: null }]);
+    expect(expectedAfterTotals(plan).a).toBe(0);
   });
 
   it('Muster 2 (Plan-Variante): MIRUS 0, Ist leer, PLAN hat Stunden → Rückfrage ohne Write', () => {

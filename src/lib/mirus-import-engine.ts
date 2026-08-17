@@ -119,6 +119,12 @@ export interface MirusEmployeePlan {
 }
 
 export interface MirusReconcilePlan {
+  /**
+   * MIRUS-Roh-Tageswerte des Datei-Scopes (Key `empId|date`), inkl. expliziter
+   * 0-Werte (= Löschung beim Merge). Vom Button beim Planbau angehängt und beim
+   * Commit UNVERÄNDERT persistiert — nie aus separatem State lesen.
+   */
+  rawMirusValues?: Record<string, number>;
   month: string;
   dates: string[];
   employees: MirusEmployeePlan[];
@@ -495,11 +501,11 @@ export function resolvePlanToWrites(plan: MirusReconcilePlan): MirusWriteOp[] {
         case 'silent_round': // Rundung: immer still übernehmen
           ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
           break;
-        case 'auto_take': // Muster 1 (Gruppe kann abgelehnt werden → keep = nichts)
-          if (take) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
+        case 'auto_take': // Muster 1: MIRUS ist SSOT — immer übernehmen
+          ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
           break;
-        case 'conflict_zero': // Muster 2: MIRUS 0 übernehmen = Zelle leeren
-          if (take && cell.before) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: null });
+        case 'conflict_zero': // Muster 2: MIRUS 0 = Zelle leeren (SSOT, immer)
+          if (cell.before) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: null });
           break;
         case 'absence_keep': // Muster 3: bestätigt = Code bleibt, Ist-Stunden 0
           if (take) {
@@ -514,8 +520,8 @@ export function resolvePlanToWrites(plan: MirusReconcilePlan): MirusWriteOp[] {
         case 'conflict_absence': // Muster 4: Stempeluhr hat IMMER Vorrang — Marke wird entfernt
           ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
           break;
-        case 'conflict_diff': // Muster 5
-          if (take) ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
+        case 'conflict_diff': // Muster 5: MIRUS ist SSOT — immer übernehmen
+          ops.push({ employeeId: cell.employeeId, date: cell.date, entry: { hours: cell.fileHours, source: 'mirus_import' } });
           break;
         default:
           break; // unchanged_*
@@ -597,12 +603,12 @@ export function expectedAfterTotals(plan: MirusReconcilePlan): Record<string, nu
       const take = cell.resolution === 'mirus';
       switch (cell.decision) {
         case 'silent_round':     total += cell.fileHours; break;
-        case 'auto_take':        total += take ? cell.fileHours : (cell.before?.hours ?? 0); break;
+        case 'auto_take':        total += cell.fileHours; break; // SSOT: immer MIRUS
         case 'unchanged_equal':  total += cell.before?.hours ?? 0; break;
         case 'absence_keep':     total += take ? 0 : (cell.before?.hours ?? 0); break;
-        case 'conflict_zero':    total += take ? 0 : (cell.before?.hours ?? 0); break;
+        case 'conflict_zero':    total += 0; break; // SSOT: Zelle wird geleert
         case 'conflict_absence': total += cell.fileHours; break; // immer übernommen
-        case 'conflict_diff':    total += take ? cell.fileHours : (cell.before?.hours ?? 0); break;
+        case 'conflict_diff':    total += cell.fileHours; break; // SSOT: immer MIRUS
         default: break;
       }
     }

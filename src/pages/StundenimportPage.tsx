@@ -30,6 +30,7 @@ import {
 import { loadEmployees, saveActualHourEntry } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import { MONTH_NAMES_DE } from '@/lib/timesheet-store';
+import { MirusAbgleichView } from '@/components/import-center/MirusAbgleichView';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -262,6 +263,14 @@ export default function StundenimportPage() {
         continue;
       }
 
+      // Ausnahme-Wache: MANUELL-klassierte MA (z.B. Lokaj Mendim, Ramadani
+      // Mejdi) werden von MIRUS NIE überschrieben — auch auf diesem Pfad.
+      if (row.employee.erfassungsart === 'MANUELL') {
+        res.skipped += row.days.length;
+        res.unmapped.push(`${row.employee.name} (Ausnahme MANUELL — nicht überschrieben)`);
+        continue;
+      }
+
       for (const day of row.days) {
         if (!day.date || (day.totalHours ?? 0) <= 0) { res.skipped++; continue; }
         // Gesperrter Tag: «gesperrt — nicht überschrieben», kein Fehler.
@@ -310,42 +319,33 @@ export default function StundenimportPage() {
     return (
       <PageShell title="Stundenimport" subtitle="Mirus-Export → actual_hours">
         <div className="max-w-xl mx-auto mt-8 space-y-6">
-          <div
-            onDrop={handleDrop}
-            onDragOver={e => e.preventDefault()}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-border rounded-xl p-10 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
-          >
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
-            {parsing ? (
-              <div className="flex flex-col items-center gap-3">
-                <RefreshCw className="h-10 w-10 text-primary animate-spin" />
-                <p className="text-sm font-medium">Datei wird verarbeitet…</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <FileSpreadsheet className="h-12 w-12 text-muted-foreground/50" />
-                <div>
-                  <p className="font-semibold">Mirus-Excel hier ablegen</p>
-                  <p className="text-sm text-muted-foreground mt-1">oder klicken zum Auswählen</p>
-                </div>
-                <p className="text-xs text-muted-foreground">Unterstützt: .xlsx, .xls</p>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+          {/* Legacy-Direktimport deaktiviert: MIRUS-Ist läuft ausschliesslich
+              über den Dienstplan-Import (Vorschau, Ausnahmen, Rohwerte, Undo). */}
+          <div className="rounded-lg border border-border bg-muted/20 p-6 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Info className="h-4 w-4 text-blue-500" />
-              Voraussetzungen
+              MIRUS-Import läuft über den Dienstplan
             </div>
-            <ul className="text-xs text-muted-foreground space-y-1 ml-6 list-disc">
-              <li>Mirus-Monatsblatt (Excel-Drucklayout)</li>
-              <li>Die Datei muss Mitarbeiternamen und Tageszeiten enthalten</li>
-              <li>Importiert wird in die <code className="bg-muted px-1 rounded">actual_hours</code>-Tabelle</li>
-              <li>Bestehende Einträge (gleicher MA + Tag) werden aktualisiert</li>
-            </ul>
+            <p className="text-xs text-muted-foreground">
+              Der direkte Stundenimport auf dieser Seite ist deaktiviert, damit alle
+              MIRUS-Regeln greifen (Vorschau, Ausnahmen wie Lokaj Mendim / Ramadani
+              Mejdi, gespeicherte Rohwerte für den Abgleich, Rückgängig-Funktion).
+              Bitte den MIRUS-Export im <strong>Dienstplan → MIRUS-Import</strong> hochladen.
+            </p>
+            <Button size="sm" onClick={() => navigate('/dienstplan')} data-testid="button-goto-dienstplan">
+              Zum Dienstplan
+            </Button>
           </div>
+        </div>
+
+        {/* Kontroll-Ansicht: persistierte MIRUS-Rohwerte vs. App-Ist */}
+        <div className="max-w-4xl mx-auto mt-10">
+          <h2 className="text-sm font-semibold mb-1">MIRUS ↔ App Ist-Abgleich</h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Vergleicht die beim MIRUS-Import gespeicherten Rohwerte mit den
+            Ist-Stunden der App — nur Abweichungen &gt; 0.05 h.
+          </p>
+          <MirusAbgleichView tenantId={tenantId} />
         </div>
       </PageShell>
     );

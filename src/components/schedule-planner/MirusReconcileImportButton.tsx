@@ -59,6 +59,7 @@ import {
 import { recordImportRun, markMirusRunUndoneByBackup } from '@/lib/import-undo-store';
 import { loadMonthAbsences, saveMonthAbsences } from '@/lib/supabase-kv';
 import { loadIstDayLocksStrict, loadIstDayLocksForMonths } from '@/lib/ist-day-locks';
+import { mergeMirusIstWerte, mirusWertKey } from '@/lib/mirus-ist-werte';
 import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
@@ -148,13 +149,13 @@ function finalEntryForCell(cell: MirusCellPlan): ActualHourEntry | null {
   const take = cell.resolution === 'mirus';
   switch (cell.decision) {
     case 'silent_round':     return { hours: cell.fileHours };
-    case 'auto_take':        return take ? { hours: cell.fileHours } : cell.before;
-    case 'conflict_zero':    return take ? null : cell.before;
+    case 'auto_take':        return { hours: cell.fileHours }; // SSOT: immer MIRUS
+    case 'conflict_zero':    return null; // SSOT: MIRUS 0 = leer
     case 'absence_keep':
       if (take) return null;
       return cell.before ?? (cell.plan.absence ? { hours: 0, absenceType: cell.plan.absence } : null);
     case 'conflict_absence': return { hours: cell.fileHours }; // Stempeluhr hat immer Vorrang
-    case 'conflict_diff':    return take ? { hours: cell.fileHours } : cell.before;
+    case 'conflict_diff':    return { hours: cell.fileHours }; // SSOT: immer MIRUS
     default:                 return cell.before;
   }
 }
@@ -163,10 +164,10 @@ function decisionForCell(cell: MirusCellPlan): MirusDayDecision {
   const take = cell.resolution === 'mirus';
   switch (cell.decision) {
     case 'silent_round':     return 'still_gerundet';
-    case 'auto_take':        return take ? 'uebernommen' : 'abgelehnt';
+    case 'auto_take':        return 'uebernommen'; // SSOT: immer MIRUS
     case 'conflict_absence': return 'uebernommen'; // immer übernommen (Code entfernt)
     case 'conflict_zero':
-    case 'conflict_diff':    return take ? 'uebernommen' : 'behalten';
+    case 'conflict_diff':    return 'uebernommen'; // SSOT: immer MIRUS
     case 'absence_keep':     return take ? 'uebernommen' : 'behalten';
     default:                 return 'unveraendert';
   }
@@ -191,13 +192,13 @@ const PATTERN_META: Record<1 | 2 | 3 | 4 | 5, {
 }> = {
   1: {
     title: 'Muster 1 — wird übernommen (MIRUS-Stunden, kein Widerspruch)',
-    hint: 'MIRUS hat Stunden, im Ist-Plan steht nichts Gegenteiliges. Standard: übernehmen.',
-    mirusLabel: 'Übernehmen', keepLabel: 'Nicht übernehmen', tone: 'text-green-700',
+    hint: 'MIRUS hat Stunden, im Ist-Plan steht nichts Gegenteiliges. MIRUS ist die alleinige Ist-Quelle — wird IMMER übernommen (Info).',
+    mirusLabel: '', keepLabel: '', tone: 'text-green-700',
   },
   2: {
-    title: 'Muster 2 — MIRUS 0, aber Plan/Ist hat Stunden',
-    hint: 'MIRUS meldet 0 Stunden, obwohl Stunden geplant oder erfasst sind. Bitte entscheiden.',
-    mirusLabel: 'MIRUS (leeren)', keepLabel: 'Stunden behalten', tone: 'text-blue-700',
+    title: 'Muster 2 — MIRUS 0, Ist wird geleert (Info)',
+    hint: 'MIRUS meldet 0 Stunden — die Ist-Zelle wird geleert (leer, nicht 0). MIRUS ist die alleinige Ist-Quelle.',
+    mirusLabel: '', keepLabel: '', tone: 'text-blue-700',
   },
   3: {
     title: 'Muster 3 — Absenz (FE/K/U) behalten',
@@ -211,9 +212,9 @@ const PATTERN_META: Record<1 | 2 | 3 | 4 | 5, {
     mirusLabel: '', keepLabel: '', tone: 'text-purple-700',
   },
   5: {
-    title: 'Muster 5 — Stunden-Abweichung über Schwelle',
-    hint: 'Beide Quellen haben Stunden, die Differenz liegt über der Rundungsschwelle. Bitte entscheiden.',
-    mirusLabel: 'MIRUS', keepLabel: 'Ist behalten', tone: 'text-orange-700',
+    title: 'Muster 5 — Stunden-Abweichung über Schwelle (Info)',
+    hint: 'Beide Quellen haben Stunden, die Differenz liegt über der Rundungsschwelle. Der MIRUS-Wert wird IMMER übernommen (alleinige Ist-Quelle).',
+    mirusLabel: '', keepLabel: '', tone: 'text-orange-700',
   },
 };
 
@@ -259,6 +260,7 @@ export function MirusReconcileImportButton({
   // Mitarbeiter, deren Datei-Stunden aus MEHREREN Kostenstellen-Sektionen
   // summiert wurden (z.B. Küche + Hilfsarbeiter) — für die Vorschau-Zeile.
   const [mergedSections, setMergedSections] = useState<Record<string, string[]>>({});
+
   /** Offene geparkte Einträge des Monats (Sichtbarkeit in der Abdeckung). */
   const [openParkedCount, setOpenParkedCount] = useState(0);
 
@@ -513,6 +515,19 @@ export function MirusReconcileImportButton({
     // Effektive Erfassungsart: expliziter Wert gewinnt; Default: in Datei = MIRUS.
     const erfassungsart: Record<string, 'MIRUS' | 'MANUELL'> = {};
     const fileEmpIds = new Set(resolved.map(r => r.employeeId));
+
+    // MIRUS-Roh-Snapshot: VOLLSTÄNDIG über (Datei-MA × Scope-Tag) — Tage ohne
+    // Datei-Zeile werden als 0 übergeben (= Key-Löschung beim Merge), damit
+    // ein Re-Import stale Werte im Blob verlässlich entfernt. Wird als
+    // rawMirusValues IMMUTABLE an den Plan gehängt (kein separater State).
+    const roh: Record<string, number> = {};
+    const scopeSet = new Set(dates);
+    for (const empId of fileEmpIds) for (const d of dates) roh[mirusWertKey(empId, d)] = 0;
+    for (const r of resolved) {
+      if (!scopeSet.has(r.date)) continue;
+      const k = mirusWertKey(r.employeeId, r.date);
+      roh[k] = Math.round((roh[k] + r.hours) * 100) / 100;
+    }
     for (const emp of employees) {
       erfassungsart[emp.id] = emp.erfassungsart ?? (fileEmpIds.has(emp.id) ? 'MIRUS' : 'MANUELL');
     }
@@ -554,7 +569,7 @@ export function MirusReconcileImportButton({
       entries: resolved, existing: actualHoursData, planned, erfassungsart, month, dates,
       roundingThreshold: MIRUS_ROUNDING_THRESHOLD_H, exitDates, lockedDates,
     });
-    setPlan(p);
+    setPlan({ ...p, rawMirusValues: roh });
     // Rückfrage-Gruppen (2,4,5) standardmässig offen, Sammelgruppen 1+3 zu.
     setOpenGroups({ 1: false, 2: true, 3: false, 4: true, 5: true });
     setPlanOpen(true);
@@ -657,6 +672,16 @@ export function MirusReconcileImportButton({
         setPlanOpen(false);
         setPlan(null);
         return;
+      }
+
+      // 2a) MIRUS-Roh-Tageswerte persistieren (Kontroll-Ansicht «MIRUS ↔ App
+      // Ist-Abgleich»): pro Schlüssel ERSETZEN, nie addieren; auch Werte von
+      // Ausnahme-/MANUELL-MA (MIRUS-Wahrheit). Best-effort, bricht nie ab.
+      try {
+        const ok = await mergeMirusIstWerte(tenantId, plan.month, plan.rawMirusValues ?? {});
+        if (!ok) toast.warning('MIRUS-Rohwerte konnten nicht gespeichert werden — Kontroll-Ansicht zeigt diesen Lauf evtl. nicht.');
+      } catch (e) {
+        console.warn('[MIRUS] Rohwerte-Persistierung fehlgeschlagen:', e);
       }
 
       // 2b) KV-Absenz-Marken (absence-ist-*) für Zellen mit importierten
@@ -1045,7 +1070,7 @@ export function MirusReconcileImportButton({
 
   const groups = plan ? groupPlanCells(plan) : null;
   // Rückfragen = nur echte Entscheidungen (2/3/5) — Muster 4 ist reine Info (automatisch).
-  const questionCount = groups ? groups[2].length + groups[3].length + groups[5].length : 0;
+  const questionCount = groups ? groups[3].length : 0;
   // Muster 4 (Info): Absenzcodes, die durch echte MIRUS-Stunden ersetzt werden.
   const overrides = plan ? absenceOverrides(plan) : [];
   // Ehrliche Vorschau-Summen: was tatsächlich gespeichert wird.
@@ -1245,7 +1270,7 @@ export function MirusReconcileImportButton({
                         <span className={meta.tone}>{meta.title}</span>
                         <Badge variant="secondary">{cells.length}</Badge>
                       </button>
-                      {p !== 4 ? (
+                      {p === 3 ? (
                         <div className="flex gap-2">
                           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setGroupResolution(p, 'mirus')} data-testid={`button-group-${p}-mirus`}>
                             Alle: {meta.mirusLabel}
@@ -1288,10 +1313,16 @@ export function MirusReconcileImportButton({
                                       {diff > 0 ? '+' : ''}{diff.toFixed(2)}
                                     </TableCell>
                                     <TableCell className="py-1.5">
-                                      {p === 4 ? (
-                                        <span className="text-xs text-purple-700" data-testid={`text-p4-override-${i}`}>
-                                          Absenz {fmtEntry(c.before) !== 'leer' && c.before?.absenceType ? c.before.absenceType : (c.plan.absence ?? c.plan.absenceRaw ?? '')} durch MIRUS-Ist ersetzt
-                                        </span>
+                                      {p !== 3 ? (
+                                        p === 4 ? (
+                                          <span className="text-xs text-purple-700" data-testid={`text-p4-override-${i}`}>
+                                            Absenz {fmtEntry(c.before) !== 'leer' && c.before?.absenceType ? c.before.absenceType : (c.plan.absence ?? c.plan.absenceRaw ?? '')} durch MIRUS-Ist ersetzt
+                                          </span>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground" data-testid={`text-p${p}-ssot-${i}`}>
+                                            {p === 2 ? 'Ist wird geleert (MIRUS 0)' : 'MIRUS wird übernommen'}
+                                          </span>
+                                        )
                                       ) : (
                                         <div className="flex gap-1">
                                           <Button size="sm" variant={c.resolution === 'mirus' ? 'default' : 'outline'} className="h-7 px-2 text-xs"

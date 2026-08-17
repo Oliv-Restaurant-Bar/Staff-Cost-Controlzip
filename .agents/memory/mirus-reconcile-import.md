@@ -78,3 +78,11 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Vorschau: Muster-4-Gruppe reine Info («Absenz X durch MIRUS-Ist ersetzt»), Badge mit Anzahl (absenceOverrides-Helper); «Wird gespeichert»-Spalte = expectedAfterTotals.
 - `absenceRaw` via rawPlanAbsence(früh, spät) — truthy-Fallback, '' darf Spätcode nicht verdecken.
 - Sperr-Rennen: Report/Totale/assignedHours aus reportPlan (Zellen auf inzwischen gesperrten Tagen als unchanged_equal neutralisiert), nie aus dem Roh-Plan; assignedHours = nur uebernommen/still_gerundet-Tage.
+
+## SSOT-Update (08/2026)
+- MIRUS ist alleinige Ist-Quelle: Muster 1/2/5 (auto_take/conflict_zero/conflict_diff) sind UNCONDITIONAL — `resolution:'keep'` hat keine Wirkung mehr; Fallmatrix an allen 4 Stellen (resolvePlanToWrites, expectedAfterTotals, finalEntryForCell, decisionForCell) synchron. Nur Muster 3 (Absenz bestätigen) bleibt Rückfrage.
+- Ausnahme-SSOT = `employees.erfassungsart='MANUELL'` (Lokaj Mendim 103, Ramadani Mejdi 14). Nie über Namen hardcoden; Flag-Fixes per Mgmt-API.
+- MIRUS-Rohwerte werden pro Import persistiert: `mirus_ist_werte:<tenant>:<YYYY-MM>` (app_settings), Key `empId|date`, merge = ERSETZEN, 0 ⇒ Key löschen. Snapshot = fileEmpIds × Scope-Tage inkl. expliziter 0, hängt IMMUTABLE als `plan.rawMirusValues` am Plan (nie separater State — Stale-Race).
+- Kontroll-Ansicht «MIRUS ↔ App Ist-Abgleich» (mirus-abgleich.ts + MirusAbgleichView auf StundenimportPage): nur |Δ|>0.05h, leer statt 0, MANUELL-MA grau als Ausnahme; read-only.
+- Legacy-Direktimport auf StundenimportPage ist DEAKTIVIERT (Upload ersetzt durch Hinweis auf Dienstplan-Import); runImport-Code hat zusätzlich MANUELL-Wache. Nicht reaktivieren ohne Rohwerte/Undo/Ausnahmen.
+- Wichtig: Für alte Zeiträume existieren keine Rohwerte — Abgleich füllt sich erst ab künftigen Imports; Reparatur = Datei erneut importieren (Upsert ersetzt, addiert nie).
