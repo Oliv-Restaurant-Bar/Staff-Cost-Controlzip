@@ -105,7 +105,12 @@ export function parseTagKopf(raw: unknown, date1904 = false): string | null {
 function zahl(raw: unknown): number | null {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
   if (raw == null || raw === '') return null;
-  const s = String(raw).replace(/['\u2019\u00A0\s]/g, '').replace(',', '.');
+  // «CHF 5'027.50» (auch mit NBSP) → 5027.50: Währungspräfix + Trennzeichen weg.
+  const s = String(raw)
+    .replace(/CHF/giu, '')
+    .replace(/['\u2019\u00A0\s]/g, '')
+    .replace(',', '.');
+  if (s === '') return null;
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : null;
 }
