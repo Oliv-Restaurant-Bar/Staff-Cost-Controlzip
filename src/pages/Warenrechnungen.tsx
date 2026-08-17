@@ -72,6 +72,7 @@ import { klassifiziereWarenDateien, type UploadRouting } from '@/components/ware
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
+import { PreisAenderungenTab } from '@/components/waren/PreisAenderungenTab';
 import { kontoSplitsAusPositionen, erzwingeRegelPosition, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
@@ -205,7 +206,7 @@ const VAT_RATES = ['8.1', '2.6', '3.8', '0'];
 const MONTHS     = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 const MONTHS_LONG = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 
-type Tab         = 'erfassung' | 'analyse' | 'abgleich' | 'cockpit';
+type Tab         = 'erfassung' | 'analyse' | 'abgleich' | 'cockpit' | 'preise';
 
 /** Status der PDF-Erkennung für die Bestätigungs-Vorschau im Formular. */
 interface PdfErkennungState {
@@ -2956,6 +2957,22 @@ export default function WarenrechnungenPage() {
     ? `KW ${String(getIsoWeek(wochenStart).week).padStart(2, '0')} · ${fmtKurzDatum(wochenStart)}–${fmtKurzDatum(wochenEnde)}${wochenEnde.slice(0, 4)}`
     : granular === 'jahr' ? `Jahr ${year}`
     : monthLabel;
+
+  // Preisänderungen-Tab: Monats-Keys + inklusive Grenzen des Zeitraums.
+  const preisZeitraum = useMemo(() => {
+    if (granular === 'woche') return { von: wochenStart, bis: wochenEnde };
+    if (granular === 'jahr') return { von: `${year}-01-01`, bis: `${year}-12-31` };
+    const last = new Date(year, month, 0).getDate();
+    return { von: `${monthKey}-01`, bis: `${monthKey}-${String(last).padStart(2, '0')}` };
+  }, [granular, wochenStart, wochenEnde, year, month, monthKey]);
+  const preisMonthKeys = useMemo(() => {
+    if (granular === 'jahr') return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
+    if (granular === 'woche') {
+      const m1 = wochenStart.slice(0, 7), m2 = wochenEnde.slice(0, 7);
+      return m1 === m2 ? [m1] : [m1, m2];
+    }
+    return [monthKey];
+  }, [granular, wochenStart, wochenEnde, year, monthKey]);
   const periodenWort = granular === 'woche' ? 'Woche' : granular === 'jahr' ? 'Jahr' : 'Monat';
   const periodenChip = granular === 'woche' ? 'WOCHE' : granular === 'jahr' ? 'JAHR' : 'MONAT';
   /** Wochenliste eines Jahres fürs Perioden-Dropdown. */
@@ -3069,6 +3086,7 @@ export default function WarenrechnungenPage() {
             { id: 'analyse',   label: 'Analyse',    Icon: BarChart3     },
             { id: 'abgleich',  label: 'FIBU-Abgleich', Icon: Scale      },
             { id: 'cockpit',   label: 'Lieferanten-Cockpit', Icon: FileSearch },
+            { id: 'preise',    label: 'Preisänderungen', Icon: TrendingUp },
           ] as { id: Tab; label: string; Icon: React.FC<{ className?: string }> }[]).map(t => (
             <button
               key={t.id}
@@ -5728,6 +5746,28 @@ export default function WarenrechnungenPage() {
                     )}
                   </>
                 )}
+              </div>
+            )}
+
+            {/* ── Tab: Preisänderungen (persistente Preishistorie) ─────────── */}
+            {tab === 'preise' && (
+              <div className="space-y-5">
+                <section className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4" style={{ color: tenant.color }} />
+                    <h2 className="text-sm font-semibold">Preisänderungen · {periodenLabel}</h2>
+                    <InfoTip text={<span>Beim Import erkannte Einzelpreis-Änderungen werden <b>dauerhaft gespeichert</b> (gleiche Erkennung wie die Import-Vorschau) und sind hier je Produkt/Lieferant über die Zeit einsehbar. <b>Mehraufwand</b> = Δ CHF × bezogene Menge seit der Änderung im Zeitraum. Klick auf eine Zeile zeigt den Preisverlauf des Produkts.</span>} />
+                  </div>
+                  <div className="p-5">
+                    <PreisAenderungenTab
+                      tenantId={tenantId}
+                      monthKeys={preisMonthKeys}
+                      von={preisZeitraum.von}
+                      bis={preisZeitraum.bis}
+                      canExport={canExport}
+                    />
+                  </div>
+                </section>
               </div>
             )}
 

@@ -120,4 +120,5 @@
 - [FIBU-Abgleich Zeilen ignorieren](abgleich-buchhaltung-ignorieren.md) — Buchhaltung nie löschen, nur bewusst ignorieren; Schlüssel Nr+Datum+Betrag+Lieferant (fail-open); Kopf-Differenz bereinigt+offengelegt, Drilldown bleibt Kontrollsicht.
 - [FIBU-Abgrenzungen & Jahres-Übernahme](fibu-abgrenzungen-jahresuebernahme.md) — TP/RB nie Kandidaten (auch degradiert aus Total); Jahres-Übernahme monats-gekeyt routen, nie Jahres-Keyspace.
 - [Einheitliche Zeitraum-Steuerung](zeitraum-steuerung.md) — EINE ZeitraumSteuerung-Komponente für alle Auswertungs-Seiten; Wochenmodus muss year/month aus dem ISO-Montag ableiten, Zusatz-Modi via extraModes.
+- [Preisänderungen-Tab](preisaenderungen-tab.md) — Auswertung liest NUR persistierte waren_preishinweise_* (nie neu erkennen); Mehraufwand zeitraum-gekappt, Export hinter canExport.
 - [Abgrenzung → Rechnung umdatieren](abgrenzung-umdatieren.md) — Cross-Monats-Move: Ziel zuerst, Read-back-Verify für Move UND Rollback, Undo erst nach Erfolg, fibu-matches bereinigen.
