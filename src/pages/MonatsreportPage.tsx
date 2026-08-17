@@ -949,23 +949,24 @@ function RowOrderControls({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2 ml-2">
+    <div className="flex items-center gap-1.5">
       {editMode ? (
         <Button
-          variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
+          variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground"
           onClick={onReset} disabled={disabled}
           data-testid="button-reset-order"
         >
-          <RotateCcw className="h-4 w-4" /> Standard
+          <RotateCcw className="h-3.5 w-3.5" /> Standard
         </Button>
       ) : null}
       <Button
-        variant={editMode ? 'default' : 'outline'} size="sm" className="h-8 gap-1.5"
+        variant={editMode ? 'default' : 'ghost'} size="sm" className="h-7 gap-1 px-2 text-xs"
         onClick={onToggle} disabled={disabled}
+        title="Zeilen anordnen"
         data-testid="button-toggle-order"
       >
-        {editMode ? <Check className="h-4 w-4" /> : <ListOrdered className="h-4 w-4" />}
-        {editMode ? 'Fertig' : 'Zeilen anordnen'}
+        {editMode ? <Check className="h-3.5 w-3.5" /> : <ListOrdered className="h-3.5 w-3.5" />}
+        {editMode ? 'Fertig' : 'Zeilen'}
       </Button>
     </div>
   );
@@ -1630,27 +1631,21 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
   return (
     <PageShell>
       <div className="space-y-4 max-w-5xl">
-        {/* Kopf: Titel links, kompakter KPI-Streifen (Monat + letzte
-            abgeschlossene Woche) daneben — dezent, nur Ampelpunkte/Δ farbig. */}
-        <div className="flex flex-wrap items-start gap-3">
-          <div className="flex items-center gap-3">
-            <CalendarDays className="h-6 w-6 text-muted-foreground" />
-            <div>
-              <h1 className="text-xl font-bold tracking-tight">Cockpit</h1>
-              <p className="text-xs text-muted-foreground">fehlende Quellen bleiben leer</p>
-            </div>
-          </div>
-          {!loading && daten && (activeTab === 'monat' || activeTab === 'woche') && (
-            <div className="min-w-[320px] flex-1">
-              <CockpitKpiBoxenReihen
-                monatRows={daten.rows}
-                monatLabel={kpiMonatLabel}
-                wocheRows={kpiWocheQuelle?.rows ?? null}
-                wocheLabel={kpiWocheLabel}
-              />
-            </div>
-          )}
+        {/* Kopf: Titelzeile, darunter der KPI-Streifen (Monat + letzte
+            abgeschlossene Woche) über die GANZE Breite — dezent, nur
+            Ampelpunkte/Δ farbig, alle Werte ausgeschrieben. */}
+        <div className="flex items-center gap-3">
+          <CalendarDays className="h-6 w-6 text-muted-foreground" />
+          <h1 className="text-xl font-bold tracking-tight">Cockpit</h1>
         </div>
+        {!loading && daten && (activeTab === 'monat' || activeTab === 'woche') && (
+          <CockpitKpiBoxenReihen
+            monatRows={daten.rows}
+            monatLabel={kpiMonatLabel}
+            wocheRows={kpiWocheQuelle?.rows ?? null}
+            wocheLabel={kpiWocheLabel}
+          />
+        )}
 
         <Tabs value={activeTab} onValueChange={onTabChange}>
           <div className="flex items-center justify-between gap-2">
@@ -1741,11 +1736,12 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   : ` · Stand bis ${fmtDate(daten.standBis)}`)
                 : ''}
             </div>
-            <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month">
+            <div className="pdf-hide flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+              <div className="flex items-center gap-1.5">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prev} data-testid="button-prev-month">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="min-w-[130px] text-center text-sm font-semibold" data-testid="text-month-label">
+              <span className="min-w-[110px] text-center text-sm font-semibold" data-testid="text-month-label">
                 {MONATE[month - 1]} {year}
               </span>
               {daten?.standBis ? (
@@ -1794,18 +1790,21 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   </span>
                 )
               ) : null}
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={next} data-testid="button-next-month">
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
               <Button
-                variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
+                variant={showVj ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2 text-xs"
                 onClick={() => setShowVj(v => !v)}
+                title={showVj ? 'Vorjahr-Spalten ausblenden' : 'Vorjahr-Spalten einblenden'}
                 data-testid="button-toggle-vj-monat"
               >
-                Vorjahr {showVj ? 'ein' : 'aus'}
+                Vorjahr
               </Button>
               <Button
-                variant={budgetModus === 'monat' ? 'default' : 'outline'} size="sm" className="h-8"
+                variant={budgetModus === 'monat' ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2 text-xs"
                 onClick={toggleBudgetModus}
                 title="Budget-Spalte umschalten: anteilig bis Stichtag oder volles Monatsbudget (Ist bleibt immer bis Stichtag)"
                 data-testid="button-toggle-budget-modus"
@@ -1813,21 +1812,22 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 Budget: {budgetModus === 'monat' ? 'voller Monat' : 'bis Stichtag'}
               </Button>
               <Button
-                variant={budgetEdit ? 'default' : 'outline'} size="sm" className="h-8 gap-1.5"
+                variant={budgetEdit ? 'default' : 'ghost'} size="sm" className="h-7 gap-1 px-2 text-xs"
                 onClick={() => setBudgetEdit(v => !v)}
                 disabled={!daten || loading || budgetBusy}
+                title={budgetEdit ? 'Budget-Bearbeitung abschliessen' : 'Budget bearbeiten'}
                 data-testid="button-toggle-budget-edit"
               >
-                {budgetEdit ? <Check className="h-4 w-4" /> : <PencilLine className="h-4 w-4" />}
-                {budgetEdit ? 'Fertig' : 'Budget bearbeiten'}
+                {budgetEdit ? <Check className="h-3.5 w-3.5" /> : <PencilLine className="h-3.5 w-3.5" />}
+                {budgetEdit ? 'Fertig' : 'Budget'}
               </Button>
               {budgetUndo && (
                 <Button
-                  variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
+                  variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground"
                   onClick={budgetUndoAusfuehren} disabled={budgetBusy}
                   data-testid="button-budget-undo"
                 >
-                  <Undo2 className="h-4 w-4" /> Rückgängig
+                  <Undo2 className="h-3.5 w-3.5" /> Rückgängig
                 </Button>
               )}
               <RowOrderControls
@@ -1837,13 +1837,15 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 disabled={!daten || loading}
               />
               <Button
-                size="sm" className="gap-1.5 ml-2"
+                variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
                 disabled={!daten || loading}
                 onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'monat', daten.waren)}
+                title="Als Excel exportieren"
                 data-testid="button-export-excel-monat"
               >
-                <FileSpreadsheet className="h-4 w-4" /> Export Excel
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
               </Button>
+              </div>
             </div>
 
             {fehler && (
@@ -1912,28 +1914,29 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 />
               </div>
             )}
-            <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month-woche">
+            <div className="pdf-hide flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prev} data-testid="button-prev-month-woche">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="min-w-[130px] text-center text-sm font-semibold" data-testid="text-month-label-woche">
+              <span className="min-w-[110px] text-center text-sm font-semibold" data-testid="text-month-label-woche">
                 {MONATE[month - 1]} {year}
               </span>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month-woche">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={next} data-testid="button-next-month-woche">
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8 ml-2"
+              <Button variant="ghost" size="icon" className="h-7 w-7 ml-1"
                 onClick={() => shiftWeek(-1)} title="Eine Woche zurück"
                 data-testid="button-prev-week">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8"
+              <Button variant="ghost" size="icon" className="h-7 w-7"
                 onClick={() => shiftWeek(1)} title="Eine Woche vor"
                 data-testid="button-next-week">
                 <ChevronRight className="h-4 w-4" />
               </Button>
               <Select value={weekValue} onValueChange={setWeekValue}>
-                <SelectTrigger className="h-8 w-[210px] text-xs" data-testid="select-week">
+                <SelectTrigger className="h-7 w-[200px] text-xs" data-testid="select-week">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1945,13 +1948,16 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   ))}
                 </SelectContent>
               </Select>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
               {editRows && (
                 <Button
-                  variant={showVj ? 'default' : 'outline'} size="sm" className="h-8 ml-2"
+                  variant={showVj ? 'secondary' : 'ghost'} size="sm" className="h-7 px-2 text-xs"
                   onClick={() => setShowVj(v => !v)}
+                  title={showVj ? 'Vorjahr-Spalten ausblenden' : 'Vorjahr-Spalten einblenden'}
                   data-testid="button-toggle-vj-woche"
                 >
-                  Vorjahr {showVj ? 'ein' : 'aus'}
+                  Vorjahr
                 </Button>
               )}
               <RowOrderControls
@@ -1961,13 +1967,15 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 disabled={!daten || loading}
               />
               <Button
-                size="sm" className="gap-1.5 ml-2"
+                variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
                 disabled={!daten || loading}
                 onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'woche', daten.waren)}
+                title="Als Excel exportieren"
                 data-testid="button-export-excel"
               >
-                <FileSpreadsheet className="h-4 w-4" /> Export Excel
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
               </Button>
+              </div>
             </div>
 
             {fehler && (
