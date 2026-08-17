@@ -59,21 +59,24 @@ import UebersichtTab from '@/components/produktanalyse/UebersichtTab';
 import KategorienTab from '@/components/produktanalyse/KategorienTab';
 import LunchTab from '@/components/produktanalyse/LunchTab';
 import TakeAwayTab from '@/components/produktanalyse/TakeAwayTab';
+import UmsatzKategorienTab from '@/components/produktanalyse/UmsatzKategorienTab';
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-type TabKey = 'uebersicht' | 'produkte' | 'kategorien' | 'lunch' | 'takeaway';
+type TabKey = 'uebersicht' | 'produkte' | 'kategorien' | 'umsatzkategorien' | 'lunch' | 'takeaway';
 
 const TAB_LABEL: Record<TabKey, string> = {
   uebersicht: 'Übersicht',
   produkte:   'Produkte',
   kategorien: 'Kategorien',
+  umsatzkategorien: 'Umsatzanalyse',
   lunch:      'Lunch',
   takeaway:   'Take-away',
 };
 
 function isTabKey(v: string | null): v is TabKey {
-  return v === 'uebersicht' || v === 'produkte' || v === 'kategorien' || v === 'lunch' || v === 'takeaway';
+  return v === 'uebersicht' || v === 'produkte' || v === 'kategorien'
+    || v === 'umsatzkategorien' || v === 'lunch' || v === 'takeaway';
 }
 
 function isCompareMode(v: string | null): v is CompareMode {
@@ -344,7 +347,8 @@ export default function ProduktAnalyse() {
         ))}
       </div>
 
-      {/* Gemeinsame Filterleiste */}
+      {/* Gemeinsame Filterleiste (Umsatzanalyse Kategorien hat keinen Perioden-Filter — Werte fix Jahr 2026) */}
+      {tab !== 'umsatzkategorien' && (
       <Card>
         <CardContent className="pt-4 pb-3 flex flex-wrap gap-3 items-end">
 
@@ -505,6 +509,7 @@ export default function ProduktAnalyse() {
 
         </CardContent>
       </Card>
+      )}
 
       {/* Datenquellen-Hinweis (Quellenpriorität: erweiterter Z-Bericht zuerst) */}
       {isSharedFilterTab && !loading && (quellenBadge || quellen.periodSumOnlyReports.length > 0 || extError) && (
@@ -576,6 +581,10 @@ export default function ProduktAnalyse() {
 
       {tab === 'takeaway' && (
         <TakeAwayTab year={lunchTaYear} month={lunchTaMonth} />
+      )}
+
+      {tab === 'umsatzkategorien' && (
+        <UmsatzKategorienTab />
       )}
 
     </div>

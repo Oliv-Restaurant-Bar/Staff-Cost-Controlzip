@@ -1,0 +1,27 @@
+Neue Auswertung in der Produkteanalyse und im Cockpit-PDF-Export: „Umsatzanalyse Kategorien" — im Design der gelieferten PDF-Vorlage (Umsatzanalyse Food Kategorien).
+
+1) IMPORT (neuer Kanal auf der Produkteanalyse-Seite), mandantengetrennt (Oliv unpräfixiert / Beaulieu beaulieu:):
+   - Excel im breiten Format: Spalte A = "Bezeichnung", Spalte B = "Gesamtbetrag im Anzeigezeitraum" (ignorieren, wird neu berechnet), danach Tagesspalten mit Datum (TT.MM.JJJJ).
+   - Zeilen-Typen:
+     • Gruppen-Kopf: "Food (Speisen)" und "Beverage (Getränke)" (ohne "> ").
+     • Unterkategorie: beginnt mit "> " (z. B. "> Pasta") → gehört zur zuletzt gelesenen Gruppe.
+     • Sonderzeilen: Rabatte, Aufladung Kundenkarten, Rundungsdifferenzen, Non-Foods, Trinkgeld, Gesamt → NICHT ins Kategorien-Ranking (separat/ignorieren).
+   - Gespeichert werden Tageswerte je Schlüssel (Mandant + Datum + Gruppe + Kategorie).
+   - DUBLETTENSICHER: Ersetzen statt Addieren. Ein erneuter Upload überschreibt die Werte der enthaltenen Tage/Kategorien (kein Aufsummieren bei Überschneidung). Vorschau + Undo.
+
+2) BERECHNUNG:
+   - Auswertungszeitraum = Jahr 2026 (nur Tagesspalten mit Jahr 2026 summieren). Zeitraum-Label dynamisch aus min–max der vorhandenen 2026-Daten (aktuell 01.01.2026–24.08.2026).
+   - Je Gruppe (Food, Beverage): Umsatz je Unterkategorie = Summe 2026. Total Gruppe = Summe der Unterkategorien. Anteil % = Kategorie / Total Gruppe. "leer statt 0", "nie durch 0 teilen".
+
+3) DARSTELLUNG — exakt im PDF-Design, je Gruppe eine eigene Seite (Food-Seite, Beverage-Seite):
+   - Kopf (dunkelblau): Titel "Umsatzanalyse {Food|Beverage} Kategorien", darunter "Zeitraum: {von} bis {bis}", rechts Box "TOTAL {FOOD|BEVERAGE} UMSATZ" mit CHF-Betrag.
+   - Links "Ranking nach Umsatz": Tabelle Rang | Kategorie | Umsatz (CHF) | Anteil %, absteigend sortiert, Top 3 fett, Abschlusszeile "TOTAL {…}" 100.0 %.
+   - Rechts "Umsatzanteil je Kategorie": horizontales Balkendiagramm (Teal), Top 14 nach Anteil, Prozent-Label.
+   - Unten "Kernaussage": automatisch — Top-2-Kategorien zusammen X %, Top-4 zusammen Y %.
+   - Fusszeile: "Quelle: Upload Produkteanalyse | Werte 2026" und rechts "Umsatzanalyse {Food|Beverage}".
+
+4) INTEGRATION:
+   - In der Produkteanalyse als neue Auswertung sichtbar (Umschalter Food/Beverage), mandantengetrennt.
+   - Im Cockpit-PDF-Export als die LETZTEN Seiten anhängen (Food-Seite, dann Beverage-Seite) — je Mandant dessen eigene Werte.
+
+5) SICHERHEIT: Nichts an bestehenden Auswertungen/Daten ändern. Mandantentrennung testen. Vorschau vor Anwenden + Undo. Tests grün.

@@ -1491,6 +1491,17 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       const parts: CockpitExportPart[] = [teil];
       if (mitWaren) parts.push(await ladeWarenTeil());
       if (mitPersonal) parts.push(await ladePersonalTeil());
+      // «Umsatzanalyse Kategorien» (Produkteanalyse-Upload) als GENAU EINE
+      // letzte Seite (Food + Beverage untereinander) — nur mit Mandanten-Daten.
+      try {
+        const kat = await import('@/lib/umsatz-kategorien');
+        const blob = await kat.loadUmsatzKategorien(tenantId);
+        const auswertung = kat.berechneKatAuswertung(blob, 2026);
+        if (auswertung.zeitraum) {
+          const pdfMod = await import('@/lib/umsatzanalyse-kategorien-pdf');
+          parts.push({ kind: 'zeichner', zeichne: pdf => pdfMod.zeichneUmsatzKategorienSeite(pdf, auswertung, branding.displayName, true) });
+        }
+      } catch { /* Kategorien-Daten nicht ladbar → Export ohne die Zusatzseite */ }
       await naechsterFrame();
       await exportCockpitMixedPDF(parts, branding, fileName, heute);
     } catch (e) {

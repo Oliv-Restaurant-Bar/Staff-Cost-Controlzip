@@ -1,0 +1,24 @@
+Neue Auswertung „Umsatzanalyse Kategorien" in der Produkteanalyse und als LETZTE Seite im Cockpit-PDF-Export. Design gemäss gelieferter PDF-Vorlage, aber Food UND Beverage auf EINER Seite (zwei Blöcke untereinander). Mandantengetrennt (Oliv unpräfixiert / Beaulieu beaulieu:).
+
+1) IMPORT (neuer Upload-Kanal auf der Produkteanalyse-Seite, je Mandant):
+   - Excel breit: Spalte A "Bezeichnung", Spalte B "Gesamtbetrag" (ignorieren, wird neu gerechnet), danach Tagesspalten (TT.MM.JJJJ).
+   - Zeilentypen: Gruppenkopf "Food (Speisen)" / "Beverage (Getränke)" (ohne "> "); Unterkategorie beginnt mit "> " (gehört zur zuletzt gelesenen Gruppe); Sonderzeilen (Rabatte, Aufladung Kundenkarten, Rundungsdifferenzen, Non-Foods, Trinkgeld, Gesamt) NICHT ins Ranking.
+   - Speichern je Schlüssel Mandant + Datum + Gruppe + Kategorie.
+   - DUBLETTENSICHER: Ersetzen statt Addieren — erneuter Upload überschreibt die enthaltenen Tage/Kategorien, kein Aufsummieren bei Überschneidung. Vorschau + Undo.
+
+2) BERECHNUNG (nur Jahr 2026):
+   - Nur Tagesspalten mit Jahr 2026 summieren. Zeitraum-Label dynamisch aus min–max der 2026-Daten (aktuell 01.01.2026–24.08.2026).
+   - Je Gruppe: Umsatz je Unterkategorie = Summe 2026; Total Gruppe = Summe der Unterkategorien; Anteil % = Kategorie / Total Gruppe. "leer statt 0", nie durch 0 teilen.
+
+3) DARSTELLUNG — EINE Seite, Design der PDF-Vorlage, zwei Blöcke:
+   - Kopf (dunkelblau): Titel "Umsatzanalyse Food & Beverage Kategorien", darunter "Zeitraum: {von} bis {bis}", rechts zwei Boxen "TOTAL FOOD UMSATZ" und "TOTAL BEVERAGE UMSATZ" mit CHF-Beträgen.
+   - Block A "Food": links Ranking-Tabelle Rang | Kategorie | Umsatz | Anteil % (Top 12, absteigend, Top 3 fett, Abschlusszeile TOTAL FOOD 100 %), rechts horizontales Balkendiagramm (Teal) der Top-Kategorien.
+   - Block B "Beverage": gleicher Aufbau (Top 12, TOTAL BEVERAGE).
+   - Kernaussage (eine Zeile je Block): Top-2 zusammen X %, Top-4 zusammen Y %.
+   - Fusszeile: "Quelle: Upload Produkteanalyse | Werte 2026 | {Mandant}".
+
+4) INTEGRATION:
+   - In der Produkteanalyse als neue Auswertung sichtbar (volles Ranking beider Gruppen), mandantengetrennt.
+   - Im Cockpit-PDF-Export genau EINE zusätzliche Seite ganz am Schluss, mit den Werten des jeweiligen Mandanten.
+
+5) SICHERHEIT: Bestehende Auswertungen/Daten unverändert. Mandantentrennung testen. Vorschau + Undo. Tests grün.
