@@ -1,0 +1,83 @@
+/* ============================================================================
+   Cockpit — Mobile-Lesbarkeit (NUR kleine Bildschirme)
+   ----------------------------------------------------------------------------
+   Geltungsbereich: AUSSCHLIESSLICH die Cockpit-Seite (Scope-Klasse
+   `.cockpit-page`, additiv gesetzt in MonatsreportPage.tsx) und
+   AUSSCHLIESSLICH innerhalb von @media (max-width: 768px).
+   Oberhalb 768px ändert diese Datei NICHTS.
+
+   Rückrollen: diese Datei löschen bzw. den Import
+   `import '@/styles/cockpit-mobile.css';` in MonatsreportPage.tsx entfernen.
+
+   Keine Logik-/Struktur-/Wert-Änderungen — nur Anordnung, Grösse,
+   Scrollverhalten.
+   ========================================================================== */
+
+@media (max-width: 768px) {
+
+  /* ── 1) Kennzahlen-Tabellen: horizontal scrollbar + begrenzte Höhe, damit
+        Kopfzeile (sticky top) und erste Spalte (sticky left) greifen.
+        Der bestehende Container hat bereits overflow-x-auto; hier zusätzlich
+        vertikales Scrollen im Container statt der ganzen Seite. */
+  .cockpit-page .rounded-xl.overflow-x-auto {
+    max-height: 72vh;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Kopfzeile oben fixieren (KW / Budget / Δ …) */
+  .cockpit-page table[data-testid^="table-"] thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: hsl(var(--card));
+  }
+
+  /* Erste Spalte (Kennzahl-Name) links fixieren */
+  .cockpit-page table[data-testid^="table-"] th:first-child,
+  .cockpit-page table[data-testid^="table-"] td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: hsl(var(--card));
+  }
+  /* Schnittpunkt Kopfzeile × erste Spalte: über beidem halten */
+  .cockpit-page table[data-testid^="table-"] thead th:first-child {
+    z-index: 4;
+  }
+
+  /* ── 2) Zell-Padding & Schrift leicht reduzieren (nur Lesbarkeit/Platz) */
+  .cockpit-page table[data-testid^="table-"] {
+    font-size: 12px;
+  }
+  .cockpit-page table[data-testid^="table-"] th,
+  .cockpit-page table[data-testid^="table-"] td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  /* ── 3) Tab-Leiste: umbrechen statt abschneiden, grössere Touch-Flächen */
+  .cockpit-page [data-testid="tabs-cockpit"] {
+    display: flex;
+    flex-wrap: wrap;
+    height: auto;
+    max-width: 100%;
+    gap: 2px;
+  }
+  .cockpit-page [data-testid="tabs-cockpit"] [role="tab"] {
+    min-height: 40px;
+  }
+
+  /* ── 4) Bedien-Buttons: ausreichende Tap-Grösse (min. 40px Höhe).
+        Nur die kompakten Steuerleisten (pdf-hide-Zeilen) der Cockpit-Seite. */
+  .cockpit-page .pdf-hide button {
+    min-height: 40px;
+  }
+
+  /* KPI-Kopf-Streifen: auf Handy 2 Kennzahlen pro Zeile lesbar lassen —
+     kein Struktur-Eingriff, nur Abstände etwas enger. */
+  .cockpit-page [data-testid^="kpi-reihe-"] {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}

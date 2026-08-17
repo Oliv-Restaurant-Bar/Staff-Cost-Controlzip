@@ -58,6 +58,8 @@ import {
 } from '@/lib/reservation-cockpit-settings';
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
 import { CockpitKpiBoxenReihen } from '@/components/CockpitKpiBoxenReihen';
+// Mobile-Only-CSS (≤768px), rein additiv — Rückrollen: diese Zeile entfernen.
+import '@/styles/cockpit-mobile.css';
 
 /** Metadaten fürs PDF (Titel/Zeitraum/Dateiname/Fussnote), von jedem Tab gemeldet. */
 export interface CockpitPdfMeta {
@@ -1630,7 +1632,9 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
 
   return (
     <PageShell>
-      <div className="space-y-4 max-w-5xl">
+      {/* «cockpit-page» = reiner CSS-Scope für Mobile-Regeln
+          (src/styles/cockpit-mobile.css) — keine Desktop-Wirkung. */}
+      <div className="cockpit-page space-y-4 max-w-5xl">
         {/* Kopf: Titelzeile, darunter der KPI-Streifen (Monat + letzte
             abgeschlossene Woche) über die GANZE Breite — dezent, nur
             Ampelpunkte/Δ farbig, alle Werte ausgeschrieben. */}
