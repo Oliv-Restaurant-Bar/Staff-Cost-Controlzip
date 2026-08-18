@@ -46,6 +46,12 @@ describe('parseFeedbackDate / roundToStars', () => {
     expect(roundToStars(4.5)).toBe(5);
     expect(roundToStars(3.8)).toBe(4);
     expect(roundToStars(2.3)).toBe(2);
+    // halbeAbrunden (Beaulieu): exakte Halbwerte werden ABgerundet
+    expect(roundToStars(4.5, true)).toBe(4);
+    expect(roundToStars(3.5, true)).toBe(3);
+    expect(roundToStars(0.5, true)).toBe(1); // Klemme auf 1
+    expect(roundToStars(3.8, true)).toBe(4); // nur .5 betroffen
+    expect(roundToStars(4, true)).toBe(4);
     expect(roundToStars(0)).toBeNull();
     expect(roundToStars(6)).toBeNull();
   });

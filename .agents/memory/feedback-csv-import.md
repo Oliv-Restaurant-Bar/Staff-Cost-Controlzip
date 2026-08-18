@@ -16,3 +16,8 @@ description: Rezensions-Import in reviews_data — Upsert-Schlüssel, Idempotenz
 - Der reale Export liefert «31 Jul 2026 09:47» (Tag Monatsname EN/DE Jahr Uhrzeit), NICHT dd.MM.yyyy — parseFeedbackDate muss den Monatsnamen VOR dem Space-Split matchen, sonst werden alle Zeilen übersprungen («Keine gültigen Zeilen»).
 - Alle Datums-Pfade kalender-validieren (Date.UTC-Rückvergleich): 31 Feb/29 Feb im Nicht-Schaltjahr ⇒ null, nie stillschweigend verschobene Daten.
 - Eine «Kein Inhalt»-Meldung beim Nutzer kann in Wahrheit ein Parser-Fehler sein — Browser-Console-Logs ([Feedback-Import]-Diagnose) zuerst prüfen, bevor man die UI verdächtigt.
+
+## Sterne-Rundung pro Mandant
+Beaulieu: exakte Halbwerte (x.5) werden ABgerundet (4.5→4) via `roundToStars(avg, halbeAbrunden)`; Oliv bleibt kaufmännisch.
+**Why:** User-Vorgabe 08/2026; Bestandsdaten (307 Halbwert-Reviews) wurden einmalig im Blob korrigiert.
+**How to apply:** `parseFeedbackCsv(text, { halbeAbrunden: tenantId === 'beaulieu' })` — jeder neue Import-Pfad muss das Flag mitgeben, sonst driften Neuimporte wieder auf Aufrundung.

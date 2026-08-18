@@ -131,10 +131,17 @@ function parseNum(raw: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Kaufmännische Rundung auf Sterne 1–5 (Average 0 → keine gültige Bewertung). */
-export function roundToStars(avg: number): number | null {
+/**
+ * Rundung auf Sterne 1–5 (Average 0 → keine gültige Bewertung).
+ * `halbeAbrunden`: exakte Halbwerte (x.5) werden ABgerundet (4.5 → 4)
+ * statt kaufmännisch aufgerundet — z.B. für Mandant Beaulieu gewünscht.
+ */
+export function roundToStars(avg: number, halbeAbrunden = false): number | null {
   if (!Number.isFinite(avg) || avg <= 0 || avg > 5) return null;
-  return Math.min(5, Math.max(1, Math.round(avg)));
+  const gerundet = halbeAbrunden && Math.abs(avg % 1 - 0.5) < 1e-9
+    ? Math.floor(avg)
+    : Math.round(avg);
+  return Math.min(5, Math.max(1, gerundet));
 }
 
 /** Stabiler Zeilen-Hash (djb2, hex) als Schlüssel-Fallback. */
@@ -161,7 +168,10 @@ export function feedbackImportKey(
 
 const REQUIRED_HEADERS = ['publish date', 'average'];
 
-export function parseFeedbackCsv(text: string): FeedbackParseResult {
+export function parseFeedbackCsv(
+  text: string,
+  opts?: { halbeAbrunden?: boolean },
+): FeedbackParseResult {
   const empty = (reason: string, headers: string[] = [], total = 0): FeedbackParseResult => ({
     rows: [], skipped: [], failureReason: reason,
     debug: { headers, totalRecords: total, delimiter: ';' },
@@ -196,7 +206,7 @@ export function parseFeedbackCsv(text: string): FeedbackParseResult {
     const publishDate = parseFeedbackDate(col('publish date', rec));
     if (!publishDate) { skipped.push({ line: li, reason: `Ungültiges Publish Date «${col('publish date', rec)}»` }); continue; }
     const average = parseNum(col('average', rec));
-    const stars = average != null ? roundToStars(average) : null;
+    const stars = average != null ? roundToStars(average, opts?.halbeAbrunden === true) : null;
     if (average == null || stars == null) {
       skipped.push({ line: li, reason: `Ungültiger Average «${col('average', rec)}»` }); continue;
     }

@@ -208,7 +208,8 @@ export default function Rezensionen() {
       return;
     }
     console.info('[Feedback-Import] Quelle:', sourceLabel, `${text.length} Zeichen`);
-    const parse = parseFeedbackCsv(text);
+    // Beaulieu: exakte Halbwerte (z.B. 4.5) werden ABgerundet → zählen als 4.
+    const parse = parseFeedbackCsv(text, { halbeAbrunden: tenantId === 'beaulieu' });
     if (parse.failureReason) {
       console.error('[Feedback-Import] Parser-Fehler:', parse.failureReason, parse.debug);
       toast({ variant: 'destructive', title: 'CSV konnte nicht gelesen werden', description: parse.failureReason });
