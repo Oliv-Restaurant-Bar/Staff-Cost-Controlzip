@@ -33,8 +33,9 @@ describe('parseManuelleBuchungen', () => {
     expect(summen.beaulieu).toMatchObject({ netto: 646.88, anzahl: 2 });
   });
 
-  it('toleriert Tab/Komma als Trenner, Leerzeilen und #-Kommentare', () => {
-    const tab = [KOPF.replace(/;/g, '\t'), '', '# Kommentar',
+  it('toleriert BOM, führende Leerzeilen, Tab/Komma und #-Kommentare vor Kopfzeile', () => {
+    const tab = ['\uFEFF', '', '  # Kommentar vor der Kopfzeile',
+      KOPF.replace(/;/g, '\t'), '', '# Kommentar',
       'Oliv\tSpahni\t05.08.26\tQ-1\tFood\t4060\t1\'234.50\t2.6\tTest'].join('\n');
     const t = parseManuelleBuchungen(tab);
     expect(t.zeilen).toHaveLength(1);
@@ -43,6 +44,31 @@ describe('parseManuelleBuchungen', () => {
     const komma = [KOPF.replace(/;/g, ','),
       'Beaulieu,Fideco,07.08.2026,774,Food,4060,10.00,2.6,x'].join('\n');
     expect(parseManuelleBuchungen(komma).zeilen[0].mandant).toBe('beaulieu');
+  });
+
+  it('akzeptiert Kopfzeile mit anderer Gross-/Kleinschreibung, Leerzeichen und MwSt-Varianten', () => {
+    const input = [
+      '# Export-Kommentar',
+      ' mandant ; LIEFERANT ; datum ; BelegNr ; kategorie ; KONTO ; netto ; MwSt-% ; bemerkung ',
+      'BEAULIEU;Pistor;08.08.2026;R-77;Food;4701;1234,50;8,1;Test',
+    ].join('\n');
+    const r = parseManuelleBuchungen(input);
+    expect(r.fehler).toEqual([]);
+    expect(r.zeilen).toHaveLength(1);
+    expect(r.zeilen[0]).toMatchObject({ mandant: 'beaulieu', netto: 1234.5, mwstSatz: 8.1 });
+  });
+
+  it('akzeptiert eine gültige erste Datenzeile auch ohne Kopfzeile', () => {
+    const r = parseManuelleBuchungen([
+      '# kein Header in diesem Export',
+      'Oliv;Pistor;08.08.2026;R-77;Food;4701;1234,50;8,1;Direktimport',
+      '# Kommentar zwischen den Daten',
+      '',
+      'Beaulieu;Fideco;09.08.2026;R-78;Food;4060;10.00;2.6;Zweite Zeile',
+    ].join('\n'));
+    expect(r.fehler).toEqual([]);
+    expect(r.zeilen).toHaveLength(2);
+    expect(r.zeilen[0]).toMatchObject({ mandant: 'oliv', netto: 1234.5, mwstSatz: 8.1 });
   });
 
   it('fremder/unbekannter Mandant, ungültiges Datum und falscher MwSt-Satz werden markiert (nie still gebucht/geraten)', () => {
@@ -62,8 +88,8 @@ describe('parseManuelleBuchungen', () => {
     expect(summenJeMandant(zeilen)).toEqual({});
   });
 
-  it('fehlende/falsche Kopfzeile ⇒ Struktur-Fehler, keine Zeilen', () => {
-    const r = parseManuelleBuchungen('Oliv;X;05.08.2026;1;Food;4060;10;2.6;');
+  it('falsche Kopfzeile ⇒ Struktur-Fehler, keine Zeilen', () => {
+    const r = parseManuelleBuchungen('Falscher;Header');
     expect(r.fehler[0]).toMatch(/Kopfzeile/);
     expect(r.zeilen).toEqual([]);
   });

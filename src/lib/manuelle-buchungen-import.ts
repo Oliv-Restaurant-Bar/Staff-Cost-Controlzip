@@ -1,7 +1,7 @@
 /**
  * Import «Manuelle Buchungen (CSV/Text)» — reiner Parser (testbar, kein IO)
  * =========================================================================
- * Festes, semikolon-getrenntes Schema mit Pflicht-Kopfzeile:
+ * Festes, semikolon-getrenntes Schema mit optionaler Kopfzeile:
  *   Mandant;Lieferant;Datum;BelegNr;Kategorie;Konto;Netto;MwSt%;Bemerkung
  *
  * Regeln (siehe Auftrag):
@@ -134,7 +134,10 @@ function erkenneTrenner(kopf: string): string {
 export function parseManuelleBuchungen(input: string): ManuelleBuchungenErgebnis {
   const fehler: string[] = [];
   const zeilen: ManuelleBuchungZeile[] = [];
-  const roheZeilen = input.split(/\r?\n/);
+  // BOM und Zeilen-Whitespace vor jeder weiteren Prüfung entfernen. Dadurch
+  // werden Kommentare/Leerzeilen auch dann sicher erkannt, wenn der Export
+  // mit BOM, Leerzeilen oder eingerückten «#»-Zeilen beginnt.
+  const roheZeilen = input.replace(/^\uFEFF/, '').split(/\r?\n/).map(zeile => zeile.trim());
 
   // Kopfzeile suchen: erste nicht-leere, nicht-#-Zeile.
   let kopfIdx = -1;
@@ -147,17 +150,33 @@ export function parseManuelleBuchungen(input: string): ManuelleBuchungenErgebnis
   if (kopfIdx === -1) return { zeilen, fehler: ['Keine Daten gefunden.'] };
 
   const trenner = erkenneTrenner(roheZeilen[kopfIdx]);
-  const kopf = roheZeilen[kopfIdx].split(trenner).map(s => s.trim().toLowerCase());
-  const erwartet = MANUELLE_BUCHUNGEN_SPALTEN.map(s => s.toLowerCase());
-  const kopfOk = erwartet.every((sp, i) => kopf[i] === sp);
-  if (!kopfOk) {
+  const normalisiereKopfFeld = (feld: string): string =>
+    feld.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[\s-]+/g, '');
+  const kopf = roheZeilen[kopfIdx].split(trenner).map(normalisiereKopfFeld);
+  const erwartet = MANUELLE_BUCHUNGEN_SPALTEN.map(normalisiereKopfFeld);
+  const kopfOk = kopf.length === erwartet.length && erwartet.every((sp, i) => kopf[i] === sp);
+
+  // Die Kopfzeile ist optional: Eine erste Nutzzeile mit exakt 9 gültigen
+  // Feldern darf direkt verarbeitet werden. Ist die erste Nutzzeile weder ein
+  // gültiger Header noch eine gültige Datenzeile, bleibt der Strukturfehler.
+  const ersteFelder = roheZeilen[kopfIdx].split(trenner).map(s => s.trim());
+  const ersteDatenzeileOk = ersteFelder.length === MANUELLE_BUCHUNGEN_SPALTEN.length
+    && parseMandant(ersteFelder[0]) !== null
+    && ersteFelder[1] !== ''
+    && parseManuellesDatum(ersteFelder[2]) !== null
+    && ersteFelder[3] !== ''
+    && parseManuellerBetrag(ersteFelder[6]) !== null
+    && ERLAUBTE_SAETZE.includes(parseManuellerBetrag(ersteFelder[7].replace('%', '')) ?? NaN);
+
+  if (!kopfOk && !ersteDatenzeileOk) {
     return {
       zeilen,
       fehler: [`Kopfzeile fehlt oder stimmt nicht. Erwartet: ${MANUELLE_BUCHUNGEN_SPALTEN.join(';')}`],
     };
   }
 
-  for (let i = kopfIdx + 1; i < roheZeilen.length; i++) {
+  const ersteDatenzeile = kopfOk ? kopfIdx + 1 : kopfIdx;
+  for (let i = ersteDatenzeile; i < roheZeilen.length; i++) {
     const roh = roheZeilen[i];
     const t = roh.trim();
     if (t === '' || t.startsWith('#')) continue;

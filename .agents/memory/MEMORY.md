@@ -122,3 +122,4 @@
 - [Einheitliche Zeitraum-Steuerung](zeitraum-steuerung.md) — EINE ZeitraumSteuerung-Komponente für alle Auswertungs-Seiten; Wochenmodus muss year/month aus dem ISO-Montag ableiten, Zusatz-Modi via extraModes.
 - [Preisänderungen-Tab](preisaenderungen-tab.md) — Auswertung liest NUR persistierte waren_preishinweise_* (nie neu erkennen); Mehraufwand zeitraum-gekappt, Export hinter canExport.
 - [Abgrenzung → Rechnung umdatieren](abgrenzung-umdatieren.md) — Cross-Monats-Move: Ziel zuerst, Read-back-Verify für Move UND Rollback, Undo erst nach Erfolg, fibu-matches bereinigen.
+- [Manueller Buchungsimport](manuelle-buchungen-import.md) — BOM/Kommentare vor Header prüfen; toleranter optionaler Header für CSV/Text-Exporte.
