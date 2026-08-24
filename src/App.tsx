@@ -195,7 +195,7 @@ const AppContent = () => {
       console.log('[AUTH] tenant locked: beaulieu');
       console.log('[AUTH] module budget: blocked');
       console.log('[AUTH] module erfolgsrechnung: blocked');
-      console.log('[AUTH] allowed modules: dashboard, tagesansicht, tages-controlling, verkauf-dashboard, produkt-analyse, dienstplanung, personal-fix, personalstamm, produkt-stamm, warenrechnungen, wes-analyse, lieferanten, lieferanten-vergleich, import, sales-upload, settings');
+      console.log('[AUTH] allowed modules: cockpit (ohne Export), umsatz operativ, personal operativ, waren operativ, gäste, import; Finanzen/Systemverwaltung gesperrt');
     }
   }, [isBeaulieuManager]);
 
@@ -325,17 +325,17 @@ const AppContent = () => {
               element={<RequireAdmin path="/betriebe"><Betriebe /></RequireAdmin>}
             />
 
-            {/* Positionsverwaltung: nur Admin */}
+            {/* Positionsverwaltung: Admin + Beaulieu-Geschäftsführer */}
             <Route path="/positionen"
               element={canAccessModule('positionen') ? <Positionen /> : <Navigate to="/personal" replace />}
             />
 
-            {/* Personalbedarf (SOLL-Besetzung je Saison × Wochentag): nur Admin */}
+            {/* Personalbedarf: Admin + Beaulieu-Geschäftsführer */}
             <Route path="/personalbedarf"
               element={canAccessModule('personalbedarf') ? <Personalbedarf /> : <Navigate to="/personal" replace />}
             />
 
-            {/* Einstellungen: Admin + beaulieu_manager (nur Beaulieu-relevante Settings) */}
+            {/* Einstellungen/Systemverwaltung: ausschliesslich Admin */}
             <Route
               path="/settings"
               element={canAccessSettings ? <Settings /> : <Navigate to="/personal" replace />}
@@ -396,13 +396,13 @@ const AppContent = () => {
               element={<RequireAdmin path="/employee-integrity" redirectTo="/personal"><EmployeeIntegrityPanel /></RequireAdmin>}
             />
             <Route path="/umsatzabstimmung"
-              element={<RequireAdmin path="/umsatzabstimmung"><UmsatzAbstimmungPage /></RequireAdmin>}
+              element={<RequireAdmin path="/umsatzabstimmung" allowBeaulieu><UmsatzAbstimmungPage /></RequireAdmin>}
             />
             <Route path="/tagesabschluesse"
-              element={<RequireAdmin path="/tagesabschluesse"><TagesabschluessePage /></RequireAdmin>}
+              element={<RequireAdmin path="/tagesabschluesse" allowBeaulieu><TagesabschluessePage /></RequireAdmin>}
             />
             <Route path="/op-liste"
-              element={<RequireAdmin path="/op-liste"><OpListePage /></RequireAdmin>}
+              element={<RequireAdmin path="/op-liste" allowBeaulieu><OpListePage /></RequireAdmin>}
             />
             <Route path="/gastronovi-import"
               element={<RequireAdmin path="/gastronovi-import"><GastronoviZBerichtPage /></RequireAdmin>}
@@ -416,25 +416,25 @@ const AppContent = () => {
             {/* Gäste-CRM (PII): nur Admin UND keine Gast-Session — spiegelt die
                 seiteninternen Gates (isAdmin) als Route-Guard */}
             <Route path="/gaeste"
-              element={<RequireAdmin path="/gaeste"><GaesteCrmPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste" allowBeaulieu><GaesteCrmPage /></RequireAdmin>}
             />
             <Route path="/gaeste/auswertung"
-              element={<RequireAdmin path="/gaeste/auswertung"><CrmAuswertungPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/auswertung" allowBeaulieu><CrmAuswertungPage /></RequireAdmin>}
             />
             <Route path="/gaeste/analyse"
-              element={<RequireAdmin path="/gaeste/analyse"><ReservationAnalysePage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/analyse" allowBeaulieu><ReservationAnalysePage /></RequireAdmin>}
             />
             <Route path="/gaeste/wochentag"
-              element={<RequireAdmin path="/gaeste/wochentag"><ReservationWochentagPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/wochentag" allowBeaulieu><ReservationWochentagPage /></RequireAdmin>}
             />
             <Route path="/gaeste/vorjahr"
-              element={<RequireAdmin path="/gaeste/vorjahr"><ReservationVorjahrPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/vorjahr" allowBeaulieu><ReservationVorjahrPage /></RequireAdmin>}
             />
             <Route path="/gaeste/duplikate"
               element={<RequireAdmin path="/gaeste/duplikate"><GaesteDuplikatePage /></RequireAdmin>}
             />
             <Route path="/gaeste/:guestId"
-              element={<RequireAdmin path="/gaeste/:guestId"><GaesteDetailPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/:guestId" allowBeaulieu><GaesteDetailPage /></RequireAdmin>}
             />
             <Route path="/produkte"
               element={<ProdukteSeite />}
@@ -459,11 +459,13 @@ const AppContent = () => {
             <Route path="/tages-controlling"
               element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
             />
-            {/* Kennzahlen-Bericht: Admin (inkl. Gast) + beaulieu_manager (wie Nav) */}
+            {/* FINANZEN: ausschliesslich Admin, Geschäftsführer wird umgeleitet. */}
             <Route path="/kennzahlen-bericht"
-              element={<RequireAdmin path="/kennzahlen-bericht" allowBeaulieu><KennzahlenBerichtPage /></RequireAdmin>}
+              element={<RequireAdmin path="/kennzahlen-bericht"><KennzahlenBerichtPage /></RequireAdmin>}
             />
-            <Route path="/forecast" element={<ForecastPlanung />} />
+            <Route path="/forecast"
+              element={<RequireAdmin path="/forecast"><ForecastPlanung /></RequireAdmin>}
+            />
             <Route path="/verkauf-dashboard"
               element={<VerkaufsDashboard />}
             />

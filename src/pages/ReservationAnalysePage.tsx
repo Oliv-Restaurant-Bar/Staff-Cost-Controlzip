@@ -461,7 +461,7 @@ const OCCURRENCE_NOTE = 'Hinweis: Die Anzahl Vorkommen eines Wochentags kann zwi
 
 export default function ReservationAnalysePage() {
   const { tenantId } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { canManageGuests } = usePermissions();
   const navigate = useNavigate();
 
   const today = useMemo(() => new Date(), []);
@@ -511,15 +511,15 @@ export default function ReservationAnalysePage() {
 
   // Tabellen-Existenz EINMALIG prüfen (nur Admin).
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canManageGuests) return;
     let alive = true;
     void checkReservationTablesExist().then((ok) => { if (alive) setTablesOk(ok); });
     return () => { alive = false; };
-  }, [isAdmin]);
+  }, [canManageGuests]);
 
   // Ist- UND Vorjahres-Zeitraum laden (mandantengefiltert, read-only).
   useEffect(() => {
-    if (!isAdmin) { setLoading(false); return; }
+    if (!canManageGuests) { setLoading(false); return; }
     if (tablesOk === null) return;
     if (tablesOk === false || !currentRange || !priorRange) {
       setCurrentRows([]); setPriorRows([]); setLoading(false);
@@ -537,7 +537,7 @@ export default function ReservationAnalysePage() {
       if (alive) { setCurrentRows([]); setPriorRows([]); setLoading(false); }
     });
     return () => { alive = false; };
-  }, [tenantId, isAdmin, tablesOk, currentRange, priorRange]);
+  }, [tenantId, canManageGuests, tablesOk, currentRange, priorRange]);
 
   // ── Berechnungen (rein, getestet) ──────────────────────────────────────────
 
@@ -675,7 +675,7 @@ export default function ReservationAnalysePage() {
     ? `${monthLabel(monthKeys[0])}${monthKeys.length > 1 ? `–${monthLabel(monthKeys[monthKeys.length - 1])}` : ''}`
     : '';
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!canManageGuests) return <Navigate to="/" replace />;
 
   return (
     <PageShell

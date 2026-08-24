@@ -19,7 +19,7 @@ const YEAR_OPTIONS = [currentYear, currentYear - 1, currentYear - 2];
  * Die monatliche Umsatzabstimmung bleibt eine eigene Seite (/umsatzabstimmung).
  */
 export default function TagesabschluessePage() {
-  const { isAdmin, isBeaulieuManager } = usePermissions();
+  const { canManageOperationalData } = usePermissions();
   const { tenantId } = useTenant();
   // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM ⇒ Jahresauswahl)
   const [searchParams] = useSearchParams();
@@ -28,7 +28,7 @@ export default function TagesabschluessePage() {
     monatParam && YEAR_OPTIONS.includes(monatParam.year) ? monatParam.year : currentYear,
   );
 
-  if (isBeaulieuManager || !isAdmin) return <Navigate to="/" replace />;
+  if (!canManageOperationalData) return <Navigate to="/" replace />;
 
   return (
     <div className="min-h-screen bg-background">

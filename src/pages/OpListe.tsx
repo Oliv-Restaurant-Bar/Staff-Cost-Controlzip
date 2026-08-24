@@ -46,7 +46,7 @@ function toCompareItems(items: OpItemRecord[]): OpCompareItem[] {
 }
 
 export default function OpListe() {
-  const { isAdmin, isBeaulieuManager } = usePermissions();
+  const { canAccessModule } = usePermissions();
   const { tenantId } = useTenant();
 
   const [imports, setImports] = useState<OpImportRecord[]>([]);
@@ -59,7 +59,7 @@ export default function OpListe() {
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
-  const allowed = isAdmin && !isBeaulieuManager;
+  const allowed = canAccessModule('op_liste');
 
   const reload = useCallback(async () => {
     // Guard VOR dem Fetch (Effekt feuert vor <Navigate>)
@@ -112,7 +112,7 @@ export default function OpListe() {
     return buildAuthoritySummary(baseItems && comparison ? toCompareItems(baseItems) : [], toCompareItems(selectedItems));
   }, [selectedItems, baseItems, comparison]);
 
-  if (isBeaulieuManager || !isAdmin) return <Navigate to="/" replace />;
+  if (!allowed) return <Navigate to="/" replace />;
 
   return (
     <div className="min-h-screen bg-background">

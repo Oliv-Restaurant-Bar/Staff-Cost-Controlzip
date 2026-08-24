@@ -119,6 +119,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Tagesabschl.',
         icon: ClipboardCheck,
         adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'tagesabschluesse',
       },
       {
         path: '/umsatzabstimmung',
@@ -126,6 +128,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Abstimmung',
         icon: Scale,
         adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'umsatzabstimmung',
       },
       {
         path: '/produkt-analyse',
@@ -174,6 +178,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Bedarf',
         icon: ClipboardList,
         adminOnly: true,
+        beaulieuAllowed: true,
         module: 'personalbedarf' as import('@/hooks/usePermissions').AppModule,
       },
       {
@@ -182,6 +187,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Position',
         icon: Tags,
         adminOnly: true,
+        beaulieuAllowed: true,
         module: 'positionen' as import('@/hooks/usePermissions').AppModule,
       },
       {
@@ -226,7 +232,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'OP-Liste',
         icon: FileText,
         adminOnly: true,
-        // beaulieuAllowed bewusst absent: beaulieu_manager sieht die OP-Liste nicht
+        beaulieuAllowed: true,
+        module: 'op_liste',
       },
     ],
   },
@@ -256,7 +263,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Forecast',
         icon: TrendingUp,
         adminOnly: true,
-        beaulieuAllowed: true,
       },
       {
         path: '/kennzahlen-bericht',
@@ -264,7 +270,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'KPI',
         icon: BarChart2,
         adminOnly: true,
-        beaulieuAllowed: true,
       },
     ],
   },
@@ -278,6 +283,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Gäste',
         icon: Contact,
         adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'gaeste',
       },
       {
         path: '/gaeste/auswertung',
@@ -285,6 +292,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Reserv.',
         icon: BarChart3,
         adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'gaeste',
       },
       {
         path: '/gaeste/analyse',
@@ -292,6 +301,8 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Analyse',
         icon: TrendingUp,
         adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'gaeste',
       },
       {
         path: '/rezensionen',
@@ -367,7 +378,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Settings',
         icon: Settings,
         adminOnly: true,
-        beaulieuAllowed: true,
       },
     ],
   },

@@ -95,11 +95,11 @@ interface TagesabschlussSectionProps {
 }
 
 export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionProps) {
-  const { isAdmin } = usePermissions();
+  const { canManageOperationalData } = usePermissions();
   const { user } = useAuth();
   const readOnly = false;
   /** Wiederöffnen abgeschlossener Tage/Monate: NUR echte Admins. */
-  const canReopen = isAdmin;
+  const canReopen = canManageOperationalData;
   /** Benutzer für Abschluss-Historie/Audit (E-Mail). */
   const currentUser = user?.email ?? 'unbekannt';
 

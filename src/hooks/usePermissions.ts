@@ -9,7 +9,8 @@
  *   admin              → Inhaber / Admin: sieht alles
  *   service_manager    → Service-Manager: Dienstplanung (Service) + Soll/Ist-Analyse
  *   kueche_manager     → Küchen-Manager:  Dienstplanung (Küche)  + Soll/Ist-Analyse
- *   beaulieu_manager   → Beaulieu GF: alle Module ausser Budget + Erfolgsrechnung
+ *   beaulieu_manager   → Beaulieu GF: operative Module + Gäste, aber keine
+ *                        Finanzen, Cockpit-Exporte oder Systemverwaltung
  *                        Fest auf Mandant Beaulieu gesperrt, kein Tenant-Wechsel
  *
  * Modul-Zugriff im Überblick:
@@ -50,6 +51,7 @@
 
 import { useAuth } from './useAuth';
 import type { UserRole } from '@/contexts/AuthContext';
+import { roleCan } from '@/lib/role-authorization';
 
 // ─── Konfigurations-Konstante ─────────────────────────────────────────────────
 // Darf beaulieu_viewer Daten exportieren?
@@ -65,7 +67,11 @@ export type AppModule =
   | 'personal_fix'
   | 'tagesansicht'
   | 'tages_controlling'
+  | 'tagesabschluesse'
+  | 'umsatzabstimmung'
   | 'warenrechnungen'
+  | 'op_liste'
+  | 'gaeste'
   | 'positionen'
   | 'personalbedarf';
 
@@ -127,6 +133,14 @@ export interface Permissions {
   canEditEmployees: boolean;
   /** Darf der User Einstellungen ändern? (nur Admin) */
   canAccessSettings: boolean;
+  /** Operative Admin-Aktionen, die der Beaulieu-GF ebenfalls ausführen darf. */
+  canManageOperationalData: boolean;
+  /** Gäste-/Reservationsdaten lesen und bearbeiten. */
+  canManageGuests: boolean;
+  /** Kompletter Bereich FINANZEN. */
+  canAccessFinances: boolean;
+  /** PDF-/Excel-Download aus dem Cockpit. */
+  canExportCockpit: boolean;
 
   // ── Dienstplan ───────────────────────────────────────────
   /** Darf der User den Dienstplan bearbeiten? (alle, aber nur ihre Abt.) */
@@ -149,6 +163,11 @@ export const usePermissions = (): Permissions => {
   const isManager = isServiceManager || isKuecheManager;
   const isBeaulieuManager = isBeaulieuMgr;
   const isBeaulieuViewer  = isBeaulieuViewerRaw;
+  const canManageOperationalData = roleCan(role, 'operational_management');
+  const canManageGuests = roleCan(role, 'guest_management');
+  const canAccessFinances = roleCan(role, 'finance');
+  const canExportCockpit = roleCan(role, 'cockpit_export');
+  const canAccessSettings = roleCan(role, 'admin_system');
 
   // Welche Abteilung darf dieser User sehen?
   const allowedDepartment: Department = isAdmin
@@ -186,12 +205,18 @@ export const usePermissions = (): Permissions => {
         return isAdmin || isBeaulieuManager;
       case 'tages_controlling':
         return isAdmin || isBeaulieuManager;
+      case 'tagesabschluesse':
+      case 'umsatzabstimmung':
+      case 'op_liste':
+        return canManageOperationalData;
+      case 'gaeste':
+        return canManageGuests;
       case 'warenrechnungen':
         return isAdmin || isBeaulieuManager || isBeaulieuViewer;
       case 'positionen':
-        return isAdmin; // Positionsstammdaten: nur Admin (inkl. Gast-Lesezugriff)
+        return canManageOperationalData;
       case 'personalbedarf':
-        return isAdmin; // Personalbedarf/SOLL-Besetzung: nur Admin (inkl. Gast-Lesezugriff)
+        return canManageOperationalData;
       default:
         return isAdmin;
     }
@@ -244,8 +269,11 @@ export const usePermissions = (): Permissions => {
     // Personal — Beaulieu GF darf Lohn/Stammdaten eigener Mitarbeiter pflegen;
     // Küchen-Manager darf Küchen-Mitarbeiter anlegen/bearbeiten (ohne Lohnfelder)
     canEditEmployees:  isAdmin || isBeaulieuManager || isKuecheManager,
-    // Beaulieu GF darf Einstellungen für seinen Mandanten ändern
-    canAccessSettings: isAdmin || isBeaulieuManager,
+    canAccessSettings,
+    canManageOperationalData,
+    canManageGuests,
+    canAccessFinances,
+    canExportCockpit,
 
     // Dienstplan
     canEditSchedule: true,

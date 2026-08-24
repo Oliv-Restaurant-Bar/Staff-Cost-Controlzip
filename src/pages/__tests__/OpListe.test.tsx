@@ -13,7 +13,11 @@ import { render, cleanup, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { OpImportRecord, OpItemRecord } from '@/types/op-liste';
 
-const mockPerms = { isAdmin: true, isBeaulieuManager: false };
+const mockPerms = {
+  isAdmin: true,
+  isBeaulieuManager: false,
+  canAccessModule: (_module: string) => mockPerms.isAdmin || mockPerms.isBeaulieuManager,
+};
 const mockDb = {
   loadOpImports: vi.fn(),
   loadOpItems: vi.fn(),

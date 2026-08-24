@@ -123,3 +123,4 @@
 - [Preisänderungen-Tab](preisaenderungen-tab.md) — Auswertung liest NUR persistierte waren_preishinweise_* (nie neu erkennen); Mehraufwand zeitraum-gekappt, Export hinter canExport.
 - [Abgrenzung → Rechnung umdatieren](abgrenzung-umdatieren.md) — Cross-Monats-Move: Ziel zuerst, Read-back-Verify für Move UND Rollback, Undo erst nach Erfolg, fibu-matches bereinigen.
 - [Manueller Buchungsimport](manuelle-buchungen-import.md) — BOM/Kommentare vor Header prüfen; toleranter optionaler Header für CSV/Text-Exporte.
+- [Beaulieu-Geschäftsführer Rechte](beaulieu-manager-permissions.md) — operativ+Gäste+Cockpit-Budget; nie Finanzen, Cockpit-Exporte oder Systemverwaltung.

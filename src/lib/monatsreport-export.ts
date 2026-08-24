@@ -8,6 +8,7 @@
  * Δ%-Färbung invertiert bei Kosten (deltaInverted); Ist-Wert rot bei warnAbove.
  */
 import ExcelJS from 'exceljs';
+import { requireServerCapability } from '@/lib/server-authorization';
 import type { MrRow, MonatsreportDaten, WarenExportPeriod } from '@/lib/monatsreport';
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -288,6 +289,7 @@ export async function exportMonatsreportXlsx(
   rows: MrRow[], year: number, month: number, granularity: ExportGranularity = 'woche',
   waren?: MonatsreportDaten['waren'],
 ): Promise<void> {
+  await requireServerCapability('cockpit-export');
   const wb = buildMonatsreportWorkbook(rows, month, granularity, year);
   // Zweites Blatt «Warenkosten» (Lieferanten-Aufstellung der Periode).
   const periode = granularity === 'monat' ? waren?.monat : waren?.woche;

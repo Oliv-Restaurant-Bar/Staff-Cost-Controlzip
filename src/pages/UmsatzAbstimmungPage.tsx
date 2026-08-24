@@ -13,7 +13,7 @@ import { buildUmsatzYearOptions, parseUmsatzYearParam } from '@/lib/umsatzabstim
 const currentYear = new Date().getFullYear();
 
 export default function UmsatzAbstimmungPage() {
-  const { isAdmin, isBeaulieuManager } = usePermissions();
+  const { canManageOperationalData } = usePermissions();
   const { tenantKey } = useTenant();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -48,7 +48,7 @@ export default function UmsatzAbstimmungPage() {
     setMonths(loadYear(year, tenantKey('reporting_v1')));
   }, [year, tenantKey]);
 
-  if (isBeaulieuManager || !isAdmin) return <Navigate to="/" replace />;
+  if (!canManageOperationalData) return <Navigate to="/" replace />;
 
   // Jahresfenster: zentrale reine Logik (2024 auch ohne Daten wählbar, T506);
   // leere Jahre zeigen den sichtbaren Leerzustand statt gar nicht zu erscheinen.

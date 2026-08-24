@@ -3,10 +3,12 @@ import { createServer } from 'http';
 import { createReadStream, statSync } from 'fs';
 import { join, extname } from 'path';
 import { fileURLToPath } from 'url';
+import { createAuthorizationHandler } from './server/authorization.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const DIST = join(__dirname, 'dist');
 const PORT = parseInt(process.env.PORT || '3000', 10);
+const handleAuthorization = createAuthorizationHandler();
 
 const MIME = {
   '.html':  'text/html; charset=utf-8',
@@ -35,7 +37,8 @@ const cache = {
     : 'public, max-age=31536000, immutable',
 };
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
+  if (await handleAuthorization(req, res)) return;
   const urlPath = req.url.split('?')[0];
   const filePath = join(DIST, urlPath);
 

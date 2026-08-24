@@ -57,6 +57,7 @@ import {
   loadReservationCounting, DEFAULT_RESERVATION_COUNTING,
 } from '@/lib/reservation-cockpit-settings';
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
+import { usePermissions } from '@/hooks/usePermissions';
 import { CockpitKpiBoxenReihen } from '@/components/CockpitKpiBoxenReihen';
 // Mobile-Only-CSS (≤768px), rein additiv — Rückrollen: diese Zeile entfernen.
 import '@/styles/cockpit-mobile.css';
@@ -979,6 +980,7 @@ export default function MonatsreportPage() {
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
   const { toast } = useToast();
+  const { canExportCockpit } = usePermissions();
 
   // Aktiver Tab (kontrolliert), damit der PDF-Button die richtige Ansicht erfasst.
   // Reihenfolge gross → klein: Jahr · Monat · Woche · Verlauf.
@@ -1670,7 +1672,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
               <TabsTrigger value="woche" data-testid="tab-woche">Wochenübersicht</TabsTrigger>
               <TabsTrigger value="verlauf" data-testid="tab-verlauf">Wochenverlauf</TabsTrigger>
             </TabsList>
-            {(activeTab === 'monat' || activeTab === 'woche') ? (
+            {canExportCockpit && ((activeTab === 'monat' || activeTab === 'woche') ? (
               <Popover open={exportMenuOpen} onOpenChange={setExportMenuOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -1732,7 +1734,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                   : <FileDown className="h-4 w-4" />}
                 PDF
               </Button>
-            )}
+            ))}
           </div>
 
           {/* ── 1) Jahresübersicht (YTD) ── */}
@@ -1851,15 +1853,21 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 onReset={() => { resetOrder(); }}
                 disabled={!daten || loading}
               />
-              <Button
-                variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
-                disabled={!daten || loading}
-                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'monat', daten.waren)}
-                title="Als Excel exportieren"
-                data-testid="button-export-excel-monat"
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
-              </Button>
+              {canExportCockpit && (
+                <Button
+                  variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
+                  disabled={!daten || loading}
+                  onClick={() => {
+                    if (!daten) return;
+                    void exportMonatsreportXlsx(orderedRows, year, month, 'monat', daten.waren)
+                      .catch(() => toast({ title: 'Export nicht erlaubt', variant: 'destructive' }));
+                  }}
+                  title="Als Excel exportieren"
+                  data-testid="button-export-excel-monat"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+                </Button>
+              )}
               </div>
             </div>
 
@@ -1981,15 +1989,21 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
                 onReset={() => { resetOrder(); }}
                 disabled={!daten || loading}
               />
-              <Button
-                variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
-                disabled={!daten || loading}
-                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'woche', daten.waren)}
-                title="Als Excel exportieren"
-                data-testid="button-export-excel"
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
-              </Button>
+              {canExportCockpit && (
+                <Button
+                  variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs"
+                  disabled={!daten || loading}
+                  onClick={() => {
+                    if (!daten) return;
+                    void exportMonatsreportXlsx(orderedRows, year, month, 'woche', daten.waren)
+                      .catch(() => toast({ title: 'Export nicht erlaubt', variant: 'destructive' }));
+                  }}
+                  title="Als Excel exportieren"
+                  data-testid="button-export-excel"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
+                </Button>
+              )}
               </div>
             </div>
 

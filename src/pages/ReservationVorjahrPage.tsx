@@ -133,7 +133,7 @@ function KpiTile({ label, value, trend, sub }: {
 
 export default function ReservationVorjahrPage() {
   const { tenantId } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { canManageGuests } = usePermissions();
   const navigate = useNavigate();
 
   const today = useMemo(() => new Date(), []);
@@ -178,15 +178,15 @@ export default function ReservationVorjahrPage() {
 
   // Tabellen-Existenz EINMALIG prüfen (nur Admin).
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canManageGuests) return;
     let alive = true;
     void checkReservationTablesExist().then((ok) => { if (alive) setTablesOk(ok); });
     return () => { alive = false; };
-  }, [isAdmin]);
+  }, [canManageGuests]);
 
   // Ist- UND Vorjahres-Zeitraum laden (mandantengefiltert, read-only).
   useEffect(() => {
-    if (!isAdmin) { setLoading(false); return; }
+    if (!canManageGuests) { setLoading(false); return; }
     if (tablesOk === null) return;
     if (tablesOk === false || !currentRange || !priorRange) {
       setCurrentRows([]); setPriorRows([]); setLoading(false);
@@ -204,7 +204,7 @@ export default function ReservationVorjahrPage() {
       if (alive) { setCurrentRows([]); setPriorRows([]); setLoading(false); }
     });
     return () => { alive = false; };
-  }, [tenantId, isAdmin, tablesOk, currentRange, priorRange]);
+  }, [tenantId, canManageGuests, tablesOk, currentRange, priorRange]);
 
   // ── Berechnungen ────────────────────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ export default function ReservationVorjahrPage() {
     return ys;
   }, [currentYear]);
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!canManageGuests) return <Navigate to="/" replace />;
 
   return (
     <div className="container mx-auto max-w-5xl space-y-4 p-4 pb-24 md:pb-8">

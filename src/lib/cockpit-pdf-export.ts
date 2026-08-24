@@ -1,3 +1,4 @@
+import { requireServerCapability } from '@/lib/server-authorization';
 /**
  * Cockpit-PDF-Export: erzeugt aus einem gerenderten DOM-Panel (Monatsübersicht,
  * Wochenverlauf oder Jahresvergleich) ein einseitiges A4-PDF «genau so wie
@@ -242,6 +243,7 @@ export async function exportCockpitMixedPDF(
   heute: Date = new Date(),
 ): Promise<void> {
   if (parts.length === 0) return;
+  await requireServerCapability('cockpit-export');
   const brauchtRaster = parts.some(p => p.kind === 'raster');
   const [{ default: jsPDF }, reportMod, brandMod, html2canvas] = await Promise.all([
     import('jspdf'),
@@ -287,6 +289,7 @@ export async function exportCockpitPagesPDF(
   heute: Date = new Date(),
 ): Promise<void> {
   if (pages.length === 0) return;
+  await requireServerCapability('cockpit-export');
   const [html2canvas, { default: jsPDF }] = await Promise.all([
     import('html2canvas').then(m => m.default),
     import('jspdf'),

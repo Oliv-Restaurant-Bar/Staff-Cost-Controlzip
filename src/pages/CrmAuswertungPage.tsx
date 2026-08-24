@@ -13,8 +13,9 @@
  *  F) CRM-Reiter: Überblick (Gäste-Kennzahlen) / Rückkehrpotenzial / Kampagnen.
  *  G) Klassischer Report (einklappbar): Kennzahlen, Status, beste Zeiten.
  *
- * Datenschutz: Reservationen enthalten PII — Zugriff nur für eingeloggte Admins
- * (`isAdmin`), gegatet auf Route-Guard UND in beiden Lade-Effekten.
+ * Datenschutz: Reservationen enthalten PII — Zugriff nur für Admins und den
+ * mandantengebundenen Beaulieu-Geschäftsführer
+ * (`canManageGuests`), gegatet auf Route-Guard UND in beiden Lade-Effekten.
  * Liest ausschliesslich aus bestehenden Tabellen — keine Migration, keine
  * Schreibzugriffe, keine Änderung an Import-/CRM-Logik. Zahlen aus der zentralen
  * Logik (reservation-dashboard.ts / foratable-future.ts) — Single Source of Truth.
@@ -151,11 +152,11 @@ function todayIso(): string {
 
 export default function CrmAuswertungPage() {
   const { tenantId, tenant } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { canManageGuests } = usePermissions();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const canView = isAdmin;
+  const canView = canManageGuests;
 
   const [today] = useState(todayIso);
 
@@ -452,7 +453,7 @@ export default function CrmAuswertungPage() {
         <PageHeader
           icon={<Users />}
           title="Gäste & Reservationen"
-          info="Gäste-Kennzahlen und Reservationen (vergangen wie zukünftig) für einen frei wählbaren Zeitraum — berechnet aus den importierten Reservationen. Zeigt Aggregate; personenbezogene Detaillisten nur für Admins."
+          info="Gäste-Kennzahlen und Reservationen (vergangen wie zukünftig) für einen frei wählbaren Zeitraum — berechnet aus den importierten Reservationen. Zeigt Aggregate; personenbezogene Detaillisten nur für berechtigte Geschäftsführungsrollen."
           meta={`${tenant.name} · ${fdate(applied.from)} – ${fdate(applied.to)}`}
           actions={
             <>
