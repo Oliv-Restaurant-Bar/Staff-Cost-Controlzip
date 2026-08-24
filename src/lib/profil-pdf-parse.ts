@@ -95,7 +95,7 @@ export function erkenneDokumenttyp(
   if (belegart !== 'rechnung') return 'lieferschein';
   // «Lieferschein» als eigenständige Überschrift (Zeilenanfang, kein «LS-Nr.»
   // und keine Kombis wie «Liefersch./Kd.-Nr.» aus Positionszeilen).
-  if (/(?:^|\n)\s*Lieferschein\b(?!\s*[\/.])/i.test(kopf) && !/\bRechnung\b/i.test(kopf)) return 'lieferschein';
+  if (/(?:^|\n)\s*Lieferschein\b(?!\s*[/.])/i.test(kopf) && !/\bRechnung\b/i.test(kopf)) return 'lieferschein';
   return null;
 }
 
@@ -467,13 +467,18 @@ function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstS
         && c.slice(-4).every(istBetragZelle) && istBetragZelle(c[c.length - 6]);
       if (!ok) { if (/[A-Za-zÄÖÜäöü]{3}/.test(z) && !header.test(z)) vorherige = z.trim(); continue; }
       const bezInline = c.length === 9 ? c[2] : '';
+      const preis = parseBetrag(c[c.length - 2]) ?? 0;
+      const positionspreis = parseBetrag(c[c.length - 1]) ?? 0;
+      // Voll rabattierte Gratiszeilen sind keine belastbare Preisbeobachtung
+      // und tragen 0.00 zur Rechnung bei.
+      if (preis <= 0 || positionspreis === 0) { vorherige = ''; continue; }
       positionen.push(position(profil.kategorie, mwstSatz, {
         artNr: c[1],
         bezeichnung: bezInline || vorherige || c[1],
         menge: parseBetrag(c[c.length - 6]) ?? 0,
         einheit: c[c.length - 5].toUpperCase(),
-        preis: parseBetrag(c[c.length - 2]) ?? 0,           // Nettopreis nach Rabatt
-        positionspreis: parseBetrag(c[c.length - 1]) ?? 0,  // Zeilenbetrag
+        preis,           // Nettopreis nach Rabatt
+        positionspreis, // Zeilenbetrag
       }));
       vorherige = '';
     }
@@ -501,7 +506,7 @@ function parseAmbroLieferungen(lines: string[], profil: LieferantenProfil, mwstS
   // Kopfzone — eine Monatsrechnung mit unlesbaren Blöcken darf NIE als eine
   // einzelne provisorische Lieferung durchrutschen (lieber Kopf-Buchung).
   const kopfzone = lines.slice(0, 30);
-  const istLieferschein = kopfzone.some(z => /^\s*Lieferschein\b(?!\s*[\/.])/i.test(z))
+  const istLieferschein = kopfzone.some(z => /^\s*Lieferschein\b(?!\s*[/.])/i.test(z))
     && !lines.some(z => /\b(?:Sammel|Monats)-?rechnung\b/i.test(z));
   if (!istLieferschein) return [];
   const kopfRe = /(\d{7,9})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}(\d{1,2}\.\d{1,2}\.\d{2,4})\s{2,}\d+\s*\/\s*\d+/;
@@ -1011,31 +1016,116 @@ export function caporasoMwstBasen(text: string): Array<{ satz: number; basis: nu
   return [...proSatz.values()];
 }
 
-/** Caporaso: EINE Lieferung, Konto-Split als zwei synthetische Positionen
- *  (Warengruppen «Küche» 2.6 % / «Betriebsmaterial» 8.1 % → CAPORASO_KONTEN). */
+interface CaporasoVergleich {
+  menge: number;
+  einheit: string;
+  preis: number;
+}
+
+/**
+ * Caporaso druckt unter vielen Verpackungsartikeln einen aussagekräftigeren
+ * Vergleichspreis («Sack à 25 kg  1.70 / Kg.» bzw. «Karton à 6 Beutel …
+ * 4.00 / Stück»). Für die Preisüberwachung wird diese Basis verwendet; Menge
+ * und Einheit werden dazu auf kg/Stück normalisiert. Der Positionsbetrag
+ * bleibt stets die autoritative Rechnungszeile.
+ */
+function caporasoVergleich(
+  folgezeilen: string[],
+  hauptMenge: number,
+  hauptEinheit: string,
+  hauptPreis: number,
+): CaporasoVergleich {
+  for (const zeile of folgezeilen) {
+    const vergleich = /([\d’'.,]+)\s*\/\s*(Kg|St(?:ü|ue)ck)\.?\s*$/i.exec(zeile);
+    if (!vergleich) continue;
+    const preis = parseBetrag(vergleich[1]);
+    if (preis === null || preis <= 0) continue;
+    const einheit = /^kg$/i.test(vergleich[2]) ? 'KG' : 'STK';
+    let menge = hauptMenge;
+    if (einheit === 'KG') {
+      // «Stück à 500 g» / «Sack à 25 kg» — die letzte Gewichtsangabe vor
+      // dem Vergleichspreis beschreibt die Basis pro Haupt-Einheit.
+      const gewichte = [...zeile.matchAll(/(?:à|x)\s*([\d.,]+)\s*(kg|g)\b/gi)];
+      const gewicht = gewichte.at(-1);
+      if (gewicht) {
+        const n = parseBetrag(gewicht[1]);
+        if (n !== null && n > 0) menge = rundung2(hauptMenge * (gewicht[2].toLowerCase() === 'g' ? n / 1000 : n));
+      }
+    } else {
+      // «Karton à 4 Schale» / «Karton à 100 Stück» / «Karton à 6 Beutel».
+      const pack = /\bKarton\s+à\s+([\d.,]+)\b/i.exec(zeile);
+      const faktor = pack ? parseBetrag(pack[1]) : null;
+      if (faktor !== null && faktor > 0) menge = rundung2(hauptMenge * faktor);
+    }
+    return { menge, einheit, preis };
+  }
+  return { menge: hauptMenge, einheit: hauptEinheit.replace(/\.$/, '').toUpperCase(), preis: hauptPreis };
+}
+
+/**
+ * Caporaso: EINE Lieferung mit echten Artikelzeilen. Die MwSt-Klasse der
+ * Position steuert weiterhin unverändert den Konto-Split:
+ * 2.6 % → «Küche», 8.1 % → «Betriebsmaterial».
+ */
 function parseCaporasoLieferungen(lines: string[], p: LieferantenProfil): ParsedCsvRechnung[] {
   const text = lines.join('\n');
   const nr = suche(text, [/LIEFERSCHEIN-?RECHNUNG\s*:?\s*(\d{4,12})/i]);
   const datum = parseDatumCH(suche(text, [CAPORASO_LS_RE]) ?? '');
-  const basen = caporasoMwstBasen(text);
-  if (!nr || !datum || basen.length === 0) return [];
-  const positionen = basen
-    .sort((a, b) => a.satz - b.satz)
-    .map(b => ({
-      artNr: '',
-      bezeichnung: b.satz === 8.1 ? 'Verpackung/Betriebsmaterial (8.1 % MwSt)' : 'Lebensmittel (2.6 % MwSt)',
-      warengruppe: b.satz === 8.1 ? 'Betriebsmaterial' : 'Küche',
-      menge: 0, einheit: '', preis: 0,
-      positionspreis: b.basis, mwstBetrag: b.betrag, mwstCode: 1,
+  if (!nr || !datum) return [];
+  // pos, Art-Nr, Menge, Einheit, Bezeichnung, PE, Einzelpreis, MwSt-Satz,
+  // optional Rabatt-%, Positionsbetrag. Art-Nr ist das harte Struktursignal;
+  // Summen-, Rabatt- und QR-Zeilen können deshalb nicht als Artikel matchen.
+  const zeileRe = /^\s*(?:TK\s+)?\d{1,3}\.\d{1,3}\s+([A-Z0-9.-]{4,20})\s+(-?[\d’'.,]+)\s+([A-Za-zÄÖÜäöü.]+)\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s+(-?[\d’'.,]+)\s+(2[.,]60?|8[.,]10?)\s*%\s+(?:(-?[\d’'.,]+)\s*%\s+)?(-?[\d’'.,]+)\s*$/i;
+  const positionen: WarenPosition[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = zeileRe.exec(lines[i]);
+    if (!m) continue;
+    const hauptMenge = parseBetrag(m[2]);
+    const hauptPreis = parseBetrag(m[6]);
+    const satz = parseBetrag(m[7].replace(',', '.'));
+    const positionspreis = parseBetrag(m[9]);
+    // Gratis-/Abverkaufszeilen mit 0.00 sind keine belastbare Preisbeobachtung
+    // und verändern die Rechnungssumme nicht.
+    if (hauptMenge === null || hauptPreis === null || satz === null || positionspreis === null || positionspreis === 0) continue;
+    const folgezeilen: string[] = [];
+    for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+      if (zeileRe.test(lines[j]) || /^Lieferschein:|^Netto-Betrag|^\s*\d[\d’'.,]*\s*$/i.test(lines[j])) break;
+      folgezeilen.push(lines[j]);
+    }
+    const vergleich = caporasoVergleich(folgezeilen, hauptMenge, m[3], hauptPreis);
+    positionen.push(position(satz === 8.1 ? 'Betriebsmaterial' : 'Küche', satz, {
+      artNr: m[1],
+      bezeichnung: m[4].trim(),
+      menge: vergleich.menge,
+      einheit: vergleich.einheit,
+      preis: vergleich.preis,
+      positionspreis,
     }));
-  const netto = rundung2(basen.reduce((s, b) => s + b.basis, 0));
-  const mwst = rundung2(basen.reduce((s, b) => s + b.betrag, 0));
-  return [{
-    docKey: `${nr}|${datum}|${p.name}`,
-    rechnungsNr: nr, datum, markt: p.name,
-    positionen,
-    nettoTotal: netto, mwstTotal: mwst, bruttoTotal: rundung2(netto + mwst),
-  }];
+  }
+  if (positionen.length === 0) return [];
+
+  // Caporaso rundet die MwSt im Summenblock pro Steuerklasse. Die Summe der
+  // einzeln auf Rappen gerundeten Artikelsteuern kann deshalb je Klasse um
+  // wenige Rappen abweichen. Der gedruckte Klassenbetrag ist autoritativ; die
+  // Differenz wird deterministisch auf die letzte Position derselben Klasse
+  // gelegt, damit Positions-, Konto- und Rechnungs-Brutto deckungsgleich sind.
+  const basen = caporasoMwstBasen(text);
+  for (const basis of basen) {
+    const warengruppe = basis.satz === 8.1 ? 'Betriebsmaterial' : 'Küche';
+    const indices = positionen.map((pos, index) => pos.warengruppe === warengruppe ? index : -1).filter(index => index >= 0);
+    if (indices.length === 0) continue;
+    const nettoKlasse = rundung2(indices.reduce((summe, index) => summe + positionen[index].positionspreis, 0));
+    if (Math.abs(nettoKlasse - basis.basis) > 0.05) {
+      throw new Error(`Caporaso MwSt-Basis ${basis.satz}% nicht durch Artikel gedeckt`);
+    }
+    const mwstKlasse = rundung2(indices.reduce((summe, index) => summe + positionen[index].mwstBetrag, 0));
+    const delta = rundung2(basis.betrag - mwstKlasse);
+    if (delta !== 0) {
+      const index = indices[indices.length - 1];
+      positionen[index] = { ...positionen[index], mwstBetrag: rundung2(positionen[index].mwstBetrag + delta) };
+    }
+  }
+  return [baueLieferung(p.name, nr, datum, positionen, p.mwstSatz ?? 2.6)];
 }
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
@@ -1048,7 +1138,7 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   const kopfFn = profil ? KOPF_PARSER[profil.id] : undefined;
   const kopf = kopfFn ? kopfFn(text, lines) : generischerKopf(text);
   let { netto, mwst } = kopf;
-  let mwstSatz = kopf.mwstSatz ?? satzAusBetraegen(netto, mwst) ?? profil?.mwstSatz ?? null;
+  const mwstSatz = kopf.mwstSatz ?? satzAusBetraegen(netto, mwst) ?? profil?.mwstSatz ?? null;
   if (netto !== null && mwst === null && mwstSatz !== null) mwst = rundung2(netto * mwstSatz / 100);
   if (netto === null && mwst !== null && mwstSatz) netto = rundung2(mwst / (mwstSatz / 100));
 
@@ -1056,15 +1146,27 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   let lieferungen: ParsedCsvRechnung[] = [];
   if (profil?.parser && mwstSatz !== null) {
     try { lieferungen = LIEFERUNG_PARSER[profil.parser](lines, profil, mwstSatz); }
-    catch { hinweise.push('Positionen konnten nicht gelesen werden — Kopf-Buchung als Ganzes.'); }
-  }
-  const positionenErkannt = lieferungen.length > 0;
-  if (positionenErkannt && netto !== null) {
-    const summe = rundung2(lieferungen.reduce((s, l) => s + l.nettoTotal, 0));
-    if (Math.abs(summe - netto) > 0.05) {
-      hinweise.push(`Positionssumme ${summe.toFixed(2)} ≠ Rechnungs-Netto ${netto.toFixed(2)} — bitte prüfen.`);
+    catch {
+      hinweise.push(profil.id === 'ambro' || profil.id === 'caporaso'
+        ? 'Artikeldetails verworfen — Positionen konnten nicht vollständig mit den Rechnungswerten abgeglichen werden; Rechnung wird über die Kopfwerte gebucht.'
+        : 'Positionen konnten nicht gelesen werden — Kopf-Buchung als Ganzes.');
     }
   }
+  if (lieferungen.length > 0 && netto !== null) {
+    const summe = rundung2(lieferungen.reduce((s, l) => s + l.nettoTotal, 0));
+    if (Math.abs(summe - netto) > 0.05) {
+      if (profil?.id === 'ambro' || profil?.id === 'caporaso') {
+        // Für diese beiden Detailprofile nie teilweise Artikel persistieren:
+        // Kopfwerte bleiben autoritativ, Artikeldetails werden fail-closed
+        // verworfen, bis das Layout sicher vollständig gelesen werden kann.
+        lieferungen = [];
+        hinweise.push(`Positionssumme ${summe.toFixed(2)} ≠ Rechnungs-Netto ${netto.toFixed(2)} — Artikeldetails verworfen; Rechnung wird über die Kopfwerte gebucht.`);
+      } else {
+        hinweise.push(`Positionssumme ${summe.toFixed(2)} ≠ Rechnungs-Netto ${netto.toFixed(2)} — bitte prüfen.`);
+      }
+    }
+  }
+  const positionenErkannt = lieferungen.length > 0;
 
   // Eindeutiges Lieferdatum (Einzellieferung): genau EIN LS-Datum im PDF.
   let lieferdatum = kopf.lieferdatum;

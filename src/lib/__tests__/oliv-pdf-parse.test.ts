@@ -16,6 +16,7 @@ vi.mock('@/lib/supabase-kv', () => ({
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseProfilPdf } from '@/lib/profil-pdf-parse';
+import { aktualisierePreisHistorie, berechnePreisAenderungen, positionenAusRechnung } from '@/lib/waren-positionen';
 import { DEFAULT_PROFILE_BEAULIEU, erkenneMandantImText } from '@/lib/lieferanten-profile';
 
 const fx = (name: string) =>
@@ -137,6 +138,17 @@ describe('Ambro Monatsrechnungen', () => {
     // Lieferdatum je Block (Bsp: LS 26110129 vom 18.05., LIEFERDATUM 19.05.)
     const l = e.lieferungen.find(x => x.rechnungsNr === '26110129');
     expect(l?.datum).toBe('2026-05-19');
+    const alle = e.lieferungen.flatMap(x => x.positionen);
+    expect(alle.find(p => p.artNr === '540.402')).toMatchObject({
+      bezeichnung: 'Pelati San Marzano DOP Casa Marrazzo',
+      menge: 24,
+      einheit: 'SCA',
+      preis: 10.54,
+      positionspreis: 252.96,
+      mwstBetrag: 6.58,
+    });
+    // 100%-Rabatt/Gratisposition ist keine Preisbeobachtung.
+    expect(alle.some(p => p.artNr === '111.009' || p.preis === 0)).toBe(false);
   });
   it('26212344: Brutto 6874.35', () => {
     const e = parse('ambro-26212344.txt');
@@ -209,6 +221,16 @@ describe('Ambro EINZEL-LIEFERSCHEINE (provisorisch, Positionen + Belegnummer)', 
     expect(e.profil?.id).toBe('ambro');
     expect(e.positionenErkannt).toBe(false);   // keine Lieferungen — Fallback gesperrt
     expect(e.lieferungen).toHaveLength(0);
+  });
+  it('unvollständige Positionssumme wird fail-closed verworfen, Kopf-Netto bleibt erhalten', () => {
+    const roh = fx('ambro-ls-26117033.txt').replace(
+      '2  120.296  Burrata 120gr vaschetta (crtx8pz)  104.000  PZ  2.85  22.81  2.20  228.80',
+      '');
+    const e = parseProfilPdf(roh, P);
+    expect(e.netto).toBe(560.8);
+    expect(e.positionenErkannt).toBe(false);
+    expect(e.lieferungen).toHaveLength(0);
+    expect(e.hinweise.join(' ')).toContain('Artikeldetails verworfen');
   });
 });
 
@@ -284,7 +306,7 @@ describe('Blaser Rechnung 1091031', () => {
   });
 });
 
-describe('Caporaso LIEFERSCHEIN-RECHNUNG (Konto-Split via MwSt-Basis)', () => {
+describe('Caporaso LIEFERSCHEIN-RECHNUNG (echte Artikel + Konto-Split via MwSt)', () => {
   it('2144841: 4060 1199.40 / 4701 240.00 · netto 1439.40 · Lieferdatum 04.08.', () => {
     const e = parse('caporaso-2144841.txt');
     expect(e.profil?.id).toBe('caporaso');
@@ -301,11 +323,41 @@ describe('Caporaso LIEFERSCHEIN-RECHNUNG (Konto-Split via MwSt-Basis)', () => {
     const l = e.lieferungen[0];
     expect(l.rechnungsNr).toBe('2144841');
     expect(l.datum).toBe('2026-08-04');
-    const kueche = l.positionen.find(p => p.warengruppe === 'Küche')!;
-    const betrieb = l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!;
-    expect(kueche.positionspreis).toBe(1199.4);
-    expect(betrieb.positionspreis).toBe(240.0);
+    expect(l.positionen).toHaveLength(6); // Gratis-Abverkaufsartikel (0.00) ausgeschlossen
+    const kueche = R2(l.positionen.filter(p => p.warengruppe === 'Küche').reduce((s, p) => s + p.positionspreis, 0));
+    const betrieb = R2(l.positionen.filter(p => p.warengruppe === 'Betriebsmaterial').reduce((s, p) => s + p.positionspreis, 0));
+    expect(kueche).toBe(1199.4);
+    expect(betrieb).toBe(240.0);
     expect(R2(l.nettoTotal)).toBe(1439.4);
+    expect(l.mwstTotal).toBe(50.65);
+    expect(l.bruttoTotal).toBe(1490.05);
+    const gespeichert = positionenAusRechnung(l, []);
+    expect(R2(gespeichert.reduce((s, p) => s + p.positionspreis + p.mwstBetrag, 0))).toBe(e.brutto);
+    expect(l.positionen.some(p => p.preis === 0 || !p.artNr)).toBe(false);
+    expect(l.positionen.find(p => p.artNr === '020266')).toMatchObject({
+      bezeichnung: 'Parmaschinken DOP Block 14 Mt.',
+      menge: 2.98,
+      einheit: 'KG',
+      preis: 33,
+      positionspreis: 98.4,
+      mwstBetrag: 2.56,
+    });
+    // Sack à 25 kg: Preisverlauf auf kg-Basis, nicht CHF 42.50/Sack oder CHF 425 Position.
+    expect(l.positionen.find(p => p.artNr === '090022')).toMatchObject({
+      menge: 250,
+      einheit: 'KG',
+      preis: 1.7,
+      positionspreis: 425,
+    });
+    // Karton à 100 Stück: gedruckter Vergleichspreis bleibt erhalten.
+    expect(l.positionen.find(p => p.artNr === '140040')).toMatchObject({
+      menge: 1000,
+      einheit: 'STK',
+      preis: 0.25,
+      positionspreis: 240,
+      warengruppe: 'Betriebsmaterial',
+    });
+    expect(e.hinweise).toHaveLength(0);
   });
 
   it('2144990: 4060 566.40 / 4701 120.00 · netto 686.40', () => {
@@ -315,8 +367,49 @@ describe('Caporaso LIEFERSCHEIN-RECHNUNG (Konto-Split via MwSt-Basis)', () => {
     expect(e.lieferdatum).toBe('2026-08-06');
     expect(e.netto).toBe(686.4);
     const l = e.lieferungen[0];
-    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(566.4);
-    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(120.0);
+    expect(l.mwstTotal).toBe(24.45);
+    expect(l.bruttoTotal).toBe(710.85);
+    expect(R2(positionenAusRechnung(l, []).reduce((s, p) => s + p.positionspreis + p.mwstBetrag, 0))).toBe(e.brutto);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Küche').reduce((s, p) => s + p.positionspreis, 0))).toBe(566.4);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Betriebsmaterial').reduce((s, p) => s + p.positionspreis, 0))).toBe(120.0);
+    expect(l.positionen.find(p => p.artNr === '010467')).toMatchObject({
+      menge: 6,
+      einheit: 'KG',
+      preis: 6.4,
+      positionspreis: 38.4,
+    });
+  });
+
+  it('fehlende Artikelzeile verwirft Details statt eine Sammelposition zu erzeugen', () => {
+    const roh = fx('caporaso-2144990.txt').replace(
+      '1.2  010461  8.00  Karton  Mozzarella Julienne Fior di Latte Antica Napoli  1  60.00  2.60 %  480.00',
+      '');
+    const e = parseProfilPdf(roh, P);
+    expect(e.netto).toBe(686.4);
+    expect(e.positionenErkannt).toBe(false);
+    expect(e.lieferungen).toHaveLength(0);
+    expect(e.hinweise.join(' ')).toContain('Artikeldetails verworfen');
+  });
+
+  it('Artikelnummer bleibt über Belege stabil; Preisänderung wird erkannt, Re-Import nicht doppelt gemeldet', () => {
+    const alt = parse('caporaso-2144841.txt').lieferungen[0];
+    const neuBasis = parse('caporaso-2144990.txt').lieferungen[0];
+    const historie = aktualisierePreisHistorie({}, [alt], 'Caporaso');
+    const neu = {
+      ...neuBasis,
+      positionen: neuBasis.positionen.map(p => p.artNr === '010461' ? { ...p, preis: 16 } : p),
+    };
+    const aenderungen = berechnePreisAenderungen(neu, 'Caporaso', historie);
+    expect(aenderungen).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: 'caporaso|nr:010461',
+        artNr: '010461',
+        alt: 15,
+        neu: 16,
+      }),
+    ]));
+    const nachImport = aktualisierePreisHistorie(historie, [neu], 'Caporaso');
+    expect(berechnePreisAenderungen(neu, 'Caporaso', nachImport)).toHaveLength(0);
   });
 
   it('Selbstvalidierung: Positionszeilen mit zufälligen %-Angaben zählen nicht', async () => {
@@ -361,14 +454,16 @@ const itemsFx = (name: string): GnPdfPageItems[] =>
   (JSON.parse(fx(name)) as { pages: GnPdfPageItems[] }).pages;
 
 describe('Caporaso: echte PDF-Items durch die produktive Pipeline', () => {
-  it('2144841: Zeilenrekonstruktion → Parser liefert den Konto-Split', () => {
+  it('2144841: Zeilenrekonstruktion → Parser liefert echte Artikel und den Konto-Split', () => {
     const text = reconstructGnPdfLines(itemsFx('caporaso-2144841.items.json')).map(l => l.text).join('\n');
     const e = parseProfilPdf(text, P);
     expect(e.profil?.id).toBe('caporaso');
     expect(e.netto).toBe(1439.4);
     const l = e.lieferungen[0];
-    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(1199.4);
-    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(240.0);
+    expect(l.positionen).toHaveLength(6);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Küche').reduce((s, p) => s + p.positionspreis, 0))).toBe(1199.4);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Betriebsmaterial').reduce((s, p) => s + p.positionspreis, 0))).toBe(240.0);
+    expect(l.positionen.find(p => p.artNr === '090022')?.preis).toBe(1.7);
   });
   it('2144990: Zeilenrekonstruktion → Parser liefert den Konto-Split', () => {
     const text = reconstructGnPdfLines(itemsFx('caporaso-2144990.items.json')).map(l => l.text).join('\n');
@@ -376,8 +471,9 @@ describe('Caporaso: echte PDF-Items durch die produktive Pipeline', () => {
     expect(e.profil?.id).toBe('caporaso');
     expect(e.netto).toBe(686.4);
     const l = e.lieferungen[0];
-    expect(l.positionen.find(p => p.warengruppe === 'Küche')!.positionspreis).toBe(566.4);
-    expect(l.positionen.find(p => p.warengruppe === 'Betriebsmaterial')!.positionspreis).toBe(120.0);
+    expect(l.positionen).toHaveLength(4);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Küche').reduce((s, p) => s + p.positionspreis, 0))).toBe(566.4);
+    expect(R2(l.positionen.filter(p => p.warengruppe === 'Betriebsmaterial').reduce((s, p) => s + p.positionspreis, 0))).toBe(120.0);
   });
   it('Schnellerfassungs-Text (Items stumpf mit Spaces gejoint) erkennt Caporaso — Kunden-MWST-Nr zählt nicht', () => {
     for (const name of ['caporaso-2144841.items.json', 'caporaso-2144990.items.json']) {
