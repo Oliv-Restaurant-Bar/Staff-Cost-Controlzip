@@ -1,0 +1,22 @@
+BUILD-BEFEHL — Preisänderungs-Erkennung auf alle Lieferanten mit Artikeldetail ausweiten
+
+Beobachtung: Im Tab „Preisänderungen" erscheinen nur Transgourmet, Prodega, Terravigna. Andere Lieferanten mit mehreren erfassten Rechnungen und Artikelnummern fehlen — insbesondere Caporaso (6 Rechnungen), Ambro Food (3), Feldschlösschen (3), Metzgerei Spahni.
+
+Analyse-Auftrag (zuerst diagnostizieren, dann fixen):
+
+Zeig pro Lieferant, ob die erfassten Positionen einen stabilen Artikel-Schlüssel (Artikel-/Material-Nr. oder EAN) tragen, den die Preisänderungs-Engine als Matching-Key nutzt. Erwartetes Ergebnis pro Lieferant: „hat Artikel-Key: ja/nein" + Anzahl eindeutiger Artikel + Anzahl Artikel mit ≥2 Einkäufen im Vergleichszeitraum.
+Für die Engine gilt: eine Preisänderung entsteht nur bei gleichem Artikel-Key + ≥2 Einkäufen + Preisdifferenz. Prüf, warum Caporaso/Ambro/Feldschlösschen trotz mehrerer Rechnungen 0 Paare bilden.
+
+Fix:
+
+Sorge dafür, dass jedes Import-Profil (PDF-Lieferantenprofile Terravigna/Spahni/Fideco/Ambro/Gourmador/Bohnenblust/Caporaso, Feldschlösschen-PDF, Manuelle Buchungen) die vorhandene Artikel-/Material-Nr. als konstanten Preis-Tracking-Schlüssel ablegt — identisch wie bei Transgourmet/Prodega. Wo keine Artikelnummer existiert, als Fallback eine normalisierte Produktbezeichnung (getrimmt, ohne Mengen-/Gewichtssuffixe wie „ca. 1,5 kg") verwenden, damit derselbe Artikel über Rechnungen hinweg matcht.
+Gewichtsartikel (Einheit kg, variables Gewicht): den Preis pro Einheit (CHF/kg = Positionspreis ÷ Gewicht) vergleichen, nicht den Positionspreis — sonst wird jede Gewichtsschwankung fälschlich als Preisänderung erkannt.
+Der Lieferanten-Filter im Dropdown soll danach alle Lieferanten anzeigen, für die mind. eine echte Preisänderung gefunden wurde.
+
+NICHT ändern: Bestehende korrekte Änderungen (Transgourmet/Prodega/Terravigna), die Ist-Warenkosten, WKQ. Sammel-/Barbelege ohne Artikeldetail (Coop, Migros, Lidl) dürfen weiterhin leer bleiben.
+
+Abnahme:
+
+Für Caporaso, Ambro, Feldschlösschen erscheinen Preisänderungen, sofern derselbe Artikel im Zeitraum ≥2× zu unterschiedlichem (Einheits-)Preis eingekauft wurde — andernfalls Ausgabe der Diagnose „stabile Preise / keine Wiederholkäufe" (damit du weisst: es ist keine Lücke, sondern echt keine Änderung).
+Kein Fehl-Alarm bei Gewichtsartikeln (Metzgerei) durch reine Gewichtsunterschiede.
+Mandantenübergreifend (Oliv + Beaulieu) gegengeprüft.

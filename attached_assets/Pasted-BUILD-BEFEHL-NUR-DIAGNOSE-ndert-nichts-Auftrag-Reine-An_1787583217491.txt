@@ -1,0 +1,27 @@
+BUILD-BEFEHL — NUR DIAGNOSE (ändert nichts)
+
+Auftrag: Reine Analyse, keine Code- oder Datenänderung. Nur ausgeben, warum im Tab „Preisänderungen" nur Transgourmet, Prodega und Terravigna erscheinen.
+
+Erstelle eine read-only Diagnose-Tabelle pro Lieferant (für Oliv, Monat 08/2026, plus Vergleichshistorie der Vormonate) mit folgenden Spalten:
+
+Lieferant
+Anzahl erfasste Rechnungen (im Auswertungszeitraum inkl. Vormonate)
+Import-Kanal (CSV Transgourmet/Prodega · Feldschlösschen-PDF · Lieferanten-PDF-Profil · Manuelle Buchung · Barbeleg)
+Hat stabilen Artikel-Schlüssel? — ja/nein: trägt jede Position eine konstante Artikel-/Material-Nr. oder EAN, die die Preisänderungs-Engine als Matching-Key nutzt?
+Schlüssel-Feld — welches Feld aktuell als Key dient (z. B. artikelnummer, ean, oder „nur Freitext-Bezeichnung", oder „kein Key")
+Anz. eindeutiger Artikel
+Anz. Artikel mit ≥2 Einkäufen (= überhaupt vergleichbar)
+Anz. gefundener Preisänderungen
+Warengruppe/Einheit-Hinweis — enthält der Lieferant Gewichtsartikel (Einheit kg, variables Gewicht), bei denen der Positionspreis schwankt?
+
+Zusätzlich pro Lieferant eine Klartext-Einordnung in genau eine dieser Kategorien:
+
+A – Kein stabiler Artikel-Schlüssel (mehrere Rechnungen + Artikelnummern vorhanden, aber Engine paart nicht) → echte Lücke
+B – Nur eine Rechnung / keine Wiederholkäufe → keine Vergleichsbasis, korrekt leer
+C – Preise stabil (Wiederholkäufe vorhanden, aber Preis unverändert) → korrekt leer
+D – Gewichtsartikel (Preis pro kg wäre vergleichbar, Positionspreis nicht) → Sonderfall
+E – Sammel-/Barbeleg ohne Artikeldetail (Coop, Migros, Lidl) → korrekt leer
+
+Erwartete Prüf-Kandidaten, die die Diagnose einordnen soll: Transgourmet, Prodega, Terravigna (sollten „funktioniert"), sowie Caporaso (6 Rechnungen), Ambro Food (3), Feldschlösschen (3), Metzgerei Spahni (1), Coop, Migros, Lidl.
+
+Ausgabe: nur diese Tabelle + die Kategorie-Einordnung, als Text/Log. Keine Änderung an Import-Profilen, Preis-Engine, Warenkosten oder WKQ. Kein Schreiben in die Datenbank.
