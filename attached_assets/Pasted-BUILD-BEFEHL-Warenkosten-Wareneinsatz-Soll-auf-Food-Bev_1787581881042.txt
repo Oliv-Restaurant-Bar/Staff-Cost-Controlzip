@@ -1,0 +1,36 @@
+BUILD-BEFEHL — Warenkosten: Wareneinsatz-Soll auf Food & Beverage aufteilen
+
+Problem: Im Warenkosten-Block (Cockpit → Warenkosten, „netto · nur Wareneinsatz · Monat 08/2026") wird der gesamte Wareneinsatz-Soll fälschlich nur der Zeile Beverage (Bar) zugewiesen, Food (Küche) hat keinen Soll:
+
+Warenkosten total: Ist 40'188.14 / Soll 62'500.00
+davon Food (Küche): Ist 27'432.18 / Soll — (fehlt)
+davon Beverage (Bar): Ist 12'755.96 / Soll 62'500.00 → Δ −49'744.04 (−79.6 %)
+
+Dadurch ist der Δ- und WKQ-Soll-Vergleich pro Kategorie unbrauchbar (Beverage −79.6 % ist ein reines Anzeige-Artefakt).
+
+Wichtig: Die Wochenübersicht macht es bereits richtig — dort haben Food und Beverage je einen eigenen Soll (Food-Soll = Food-Netto-Umsatz × Ziel-WKQ, Beverage-Soll = Beverage-Netto-Umsatz × Ziel-WKQ, beide mit Ziel 24.0 %). Der Monats-Warenkosten-Block soll exakt dieselbe Kategorie-Logik verwenden.
+
+Soll-Verhalten:
+
+Der Wareneinsatz-Soll im Monats-Block wird pro Kategorie berechnet, nicht mehr komplett auf Beverage gelegt:
+Food-Soll = Food-Netto-Umsatz (Monat) × Ziel-WKQ
+Beverage-Soll = Beverage-Netto-Umsatz (Monat) × Ziel-WKQ
+Verwende denselben Ziel-WKQ und dieselbe Kategorie-Umsatz-Quelle wie die Wochenübersicht bereits nutzt (Ziel aktuell 24.0 %).
+Invariante: Food-Soll + Beverage-Soll muss exakt dem Total-Soll entsprechen (Rundung: max. 0.01 Abweichung).
+Falls im Budget kein getrennter Food-/Beverage-Umsatz-Budget existiert, teile den vorhandenen Gesamt-Soll (62'500) proportional zum Netto-Umsatz-Anteil von Food bzw. Beverage des Monats auf — und zeige diese Herleitung nicht als „Beverage = alles".
+Δ und WKQ pro Zeile neu gegen den jeweiligen Kategorie-Soll rechnen.
+
+NICHT ändern (sind korrekt):
+
+Alle Ist-Werte (Total 40'188.14 / Food 27'432.18 / Beverage 12'755.96).
+Der Total-Soll (62'500) und die Gesamt-WKQ (19.4 %).
+Die Wochenübersicht (Food/Beverage-Soll dort stimmen bereits) — nur zur Referenz nehmen.
+Die Lieferanten-Tabelle und der Abgleich „Warenrechnungen erfasst / Buchhaltung / Differenz".
+
+Abnahmekriterien:
+
+Food (Küche) zeigt einen eigenen Soll (nicht mehr „—") und einen sinnvollen Δ/WKQ-Soll.
+Beverage (Bar) zeigt nicht mehr den gesamten 62'500-Soll; der unrealistische Δ −49'744 / −79.6 % verschwindet.
+Food-Soll + Beverage-Soll = Total-Soll (62'500), Differenz ≤ 0.01.
+Monats- und Wochenübersicht verwenden dieselbe Kategorie-Soll-Logik (keine Widersprüche mehr zwischen den beiden Ansichten).
+Beaulieu (und alle anderen Mandanten) mit derselben Logik gegenprüfen — der Fix darf mandantenübergreifend gelten, ohne bestehende korrekte Werte zu verändern.
