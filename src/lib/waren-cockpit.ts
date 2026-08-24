@@ -28,6 +28,65 @@ export const KATEGORIE_WEQ_DEFAULT: Record<TenantId, { food: number; beverage: n
   beaulieu: { food: 27.0, beverage: 19.0 },
 };
 
+export interface KategorieWarenSollInput {
+  /** Vorhandenes Wareneinsatz-Gesamtbudget; bleibt bei der Aufteilung autoritativ. */
+  totalSoll: number | null;
+  /** Kanonischer Food-Netto-Umsatz der Periode (foodBeverageSplit). */
+  foodUmsatz: number | null;
+  /** Kanonischer Beverage-Netto-Umsatz der Periode (foodBeverageSplit). */
+  beverageUmsatz: number | null;
+  /** Fallback-Zielquote in Prozent, falls kein absolutes Gesamt-Soll vorhanden ist. */
+  zielPct: number | null;
+}
+
+export interface KategorieWarenSoll {
+  total: number | null;
+  food: number | null;
+  beverage: number | null;
+}
+
+const roundChf = (v: number): number => Math.round(v * 100) / 100;
+const positiveOrNull = (v: number | null): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+const nonNegativeOrNull = (v: number | null): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+
+/**
+ * Teilt den Wareneinsatz-Soll nach derselben Umsatzbasis wie die Wochenansicht:
+ * Food/Beverage aus `foodBeverageSplit`, in beiden Kategorien mit derselben
+ * wirksamen Quote. Ein vorhandenes Gesamt-Soll bleibt unverändert; fehlt es,
+ * wird es aus Ziel-WKQ × Kategorie-Netto-Umsatz abgeleitet.
+ *
+ * Die Rest-Rundung wird Beverage zugewiesen, damit immer exakt gilt:
+ * Food-Soll + Beverage-Soll = Total-Soll (auf Rappen gerundet).
+ */
+export function resolveKategorieWarenSoll(input: KategorieWarenSollInput): KategorieWarenSoll {
+  // 0 ist ein gültiger Kategorie-Umsatz und darf nicht mit «nicht geladen»
+  // (null) vermischt werden.
+  const foodUmsatz = nonNegativeOrNull(input.foodUmsatz);
+  const beverageUmsatz = nonNegativeOrNull(input.beverageUmsatz);
+  const umsatzTotal = (foodUmsatz ?? 0) + (beverageUmsatz ?? 0);
+
+  const vorgegebenesTotal = positiveOrNull(input.totalSoll);
+  const zielPct = positiveOrNull(input.zielPct);
+  const total = vorgegebenesTotal != null
+    ? roundChf(vorgegebenesTotal)
+    : zielPct != null && umsatzTotal > 0
+      ? roundChf(umsatzTotal * (zielPct / 100))
+      : null;
+
+  if (total == null || umsatzTotal <= 0) {
+    return { total, food: null, beverage: null };
+  }
+
+  if (foodUmsatz == null) return { total, food: null, beverage: total };
+  if (beverageUmsatz == null) return { total, food: total, beverage: null };
+
+  const food = roundChf(total * (foodUmsatz / umsatzTotal));
+  const beverage = roundChf(total - food);
+  return { total, food, beverage };
+}
+
 /**
  * Effektive Kategorie-Anteile einer Rechnung (netto):
  * - Split-Rechnung: je Split-Konto dessen Konto-Kategorie (explizit vor Heuristik).

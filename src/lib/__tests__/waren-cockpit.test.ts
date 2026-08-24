@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange, kategorieShares, sumNetByKategorie } from '@/lib/waren-cockpit';
+import {
+  aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange,
+  kategorieShares, sumNetByKategorie, resolveKategorieWarenSoll,
+} from '@/lib/waren-cockpit';
 import type { InvoiceEntry, Warenkonto } from '@/lib/waren-db';
 
 function inv(supplierName: string, amountNet: number, date = '2026-07-10'): InvoiceEntry {
@@ -97,6 +100,83 @@ describe('waren-cockpit', () => {
     expect(wkqAmpel(30, 30)).toBe('green');
     expect(wkqAmpel(30.1, 30)).toBe('red');
     expect(wkqAmpel(null, 30)).toBeNull();
+  });
+});
+
+describe('resolveKategorieWarenSoll', () => {
+  it('teilt Beaulieu-Gesamt-Soll proportional auf Food/Beverage auf', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: 62_500,
+      foodUmsatz: 165_885.42,
+      beverageUmsatz: 94_531.25,
+      zielPct: 24,
+    });
+    expect(soll.total).toBe(62_500);
+    expect(soll.food).toBeCloseTo(39_812.50, 2);
+    expect(soll.beverage).toBeCloseTo(22_687.50, 2);
+    expect(soll.food! + soll.beverage!).toBe(soll.total);
+  });
+
+  it('wendet dieselbe Ziel-WKQ auf beide Kategorien an, wenn kein Budget existiert', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: null,
+      foodUmsatz: 100_000,
+      beverageUmsatz: 50_000,
+      zielPct: 24,
+    });
+    expect(soll).toEqual({ total: 36_000, food: 24_000, beverage: 12_000 });
+  });
+
+  it('gleicht Rappenrundung deterministisch in Beverage aus', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: 100,
+      foodUmsatz: 2,
+      beverageUmsatz: 1,
+      zielPct: 24,
+    });
+    expect(soll).toEqual({ total: 100, food: 66.67, beverage: 33.33 });
+    expect(soll.food! + soll.beverage!).toBe(soll.total);
+  });
+
+  it('bewahrt das Gesamt-Soll ohne Umsatzbasis, erfindet aber keine Kategorie-Werte', () => {
+    expect(resolveKategorieWarenSoll({
+      totalSoll: 62_500,
+      foodUmsatz: null,
+      beverageUmsatz: null,
+      zielPct: 24,
+    })).toEqual({ total: 62_500, food: null, beverage: null });
+  });
+
+  it('weist bei Beverage-Umsatz 0 den ganzen Soll Food und Beverage exakt 0 zu', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: 24_000,
+      foodUmsatz: 100_000,
+      beverageUmsatz: 0,
+      zielPct: 24,
+    });
+    expect(soll).toEqual({ total: 24_000, food: 24_000, beverage: 0 });
+    expect(soll.food! + soll.beverage!).toBe(soll.total);
+  });
+
+  it('weist bei Food-Umsatz 0 den ganzen Soll Beverage und Food exakt 0 zu', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: 24_000,
+      foodUmsatz: 0,
+      beverageUmsatz: 100_000,
+      zielPct: 24,
+    });
+    expect(soll).toEqual({ total: 24_000, food: 0, beverage: 24_000 });
+    expect(soll.food! + soll.beverage!).toBe(soll.total);
+  });
+
+  it('funktioniert mandantenneutral auch mit Oliv-Umsatzanteilen', () => {
+    const soll = resolveKategorieWarenSoll({
+      totalSoll: 24_000,
+      foodUmsatz: 65_600,
+      beverageUmsatz: 34_400,
+      zielPct: 24,
+    });
+    expect(soll).toEqual({ total: 24_000, food: 15_744, beverage: 8_256 });
   });
 });
 

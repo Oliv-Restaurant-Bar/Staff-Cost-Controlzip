@@ -1,4 +1,4 @@
-// @vitest-environment node
+// @vitest-environment happy-dom
 /**
  * Cockpit Warenkosten-Zeilen: Δ% = (Ist − Soll) ÷ Ist-Netto-Umsatz (PP-Abweichung
  * der WKQ zum Ziel), NICHT ÷ Soll — via MrRow.deltaPctBasis in mapRowForExport

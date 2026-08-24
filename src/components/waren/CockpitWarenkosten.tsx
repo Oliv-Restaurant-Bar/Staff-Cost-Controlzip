@@ -25,7 +25,10 @@ import { zaehleUnkontierte, computeWarenkostenTotals, expandKontoSplits, warenko
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import { lieferantStatus, type LieferantAbgleichStatus } from '@/lib/waren-monatsabgleich';
-import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, monthDateRange } from '@/lib/waren-cockpit';
+import {
+  aggregateBySupplier, sumInvoicesNet, warenkostenquote, monthDateRange,
+  resolveKategorieWarenSoll,
+} from '@/lib/waren-cockpit';
 import {
   loadZielWarenquote, saveZielWarenquote, normalizeZielWarenquotePct,
   DEFAULT_ZIEL_WARENQUOTE_PCT,
@@ -128,6 +131,8 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
   const [invoices, setInvoices] = useState<InvoiceEntry[] | null>(null);
   const [umsatzNet, setUmsatzNet] = useState<number | null>(null);
+  const [umsatzFood, setUmsatzFood] = useState<number | null>(null);
+  const [umsatzBev, setUmsatzBev] = useState<number | null>(null);
   const [zielPct, setZielPct] = useState<number>(DEFAULT_ZIEL_WARENQUOTE_PCT);
   const [zielEdit, setZielEdit] = useState<string | null>(null); // Eingabe-String im Edit-Modus
   const [openSupplier, setOpenSupplier] = useState<string | null>(null);
@@ -135,14 +140,28 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
   // Rechnungen + Umsatz des Cockpit-Monats laden (Tenant-Reset inklusive).
   useEffect(() => {
     let alive = true;
-    setInvoices(null); setUmsatzNet(null); setOpenSupplier(null);
+    setInvoices(null); setUmsatzNet(null); setUmsatzFood(null); setUmsatzBev(null); setOpenSupplier(null);
     const { from, to } = monthDateRange(year, month);
     loadMonthInvoices(tenantId, monthKey)
       .then(list => { if (alive) setInvoices(list); })
       .catch(() => { if (alive) setInvoices([]); });
     ladeUmsatzTage(tenantId, from, to)
-      .then(map => { if (alive) setUmsatzNet(map.size > 0 ? summiereUmsatz(map.values()).netto : null); })
-      .catch(() => { if (alive) setUmsatzNet(null); });
+      .then(map => {
+        if (!alive) return;
+        if (map.size === 0) {
+          setUmsatzNet(null); setUmsatzFood(null); setUmsatzBev(null);
+          return;
+        }
+        // Dieselbe kanonische Kategorie-Umsatzquelle wie Monatsreport und
+        // Wochenübersicht (summiereUmsatz → foodBeverageSplit).
+        const summe = summiereUmsatz(map.values());
+        setUmsatzNet(summe.netto);
+        setUmsatzFood(summe.food);
+        setUmsatzBev(summe.beverage);
+      })
+      .catch(() => {
+        if (alive) { setUmsatzNet(null); setUmsatzFood(null); setUmsatzBev(null); }
+      });
     return () => { alive = false; };
   }, [tenantId, monthKey]);
 
@@ -191,11 +210,19 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     () => (invoices ? sumBetriebNet(invoices, warenGrenze) + (totals?.sonstigeNet ?? 0) : 0),
     [invoices, warenGrenze, totals],
   );
-  // Soll = Wareneinsatz-Budget (Budget-Eingabe, CHF aufgelöst); 0 = nicht erfasst → leer.
+  // Das bestehende Wareneinsatz-Gesamtbudget bleibt autoritativ. Food/Beverage
+  // werden auf derselben kanonischen Kategorie-Umsatzbasis wie die Wochenansicht
+  // proportional aufgeteilt; ohne absolutes Budget greift Ziel-WKQ × Umsatz.
   const budget = useBudgetMonth(year, month);
-  const sollFood = budget.foodCostBudget > 0 ? budget.foodCostBudget : null;
-  const sollBev = budget.beverageCostBudget > 0 ? budget.beverageCostBudget : null;
-  const sollTotal = sollFood == null && sollBev == null ? null : (sollFood ?? 0) + (sollBev ?? 0);
+  const budgetTotal = budget.foodCostBudget > 0 || budget.beverageCostBudget > 0
+    ? Math.round((Math.max(0, budget.foodCostBudget) + Math.max(0, budget.beverageCostBudget)) * 100) / 100
+    : null;
+  const soll = useMemo(() => resolveKategorieWarenSoll({
+    totalSoll: budgetTotal,
+    foodUmsatz: umsatzFood,
+    beverageUmsatz: umsatzBev,
+    zielPct,
+  }), [budgetTotal, umsatzFood, umsatzBev, zielPct]);
   // Transparenz: unkontierte Einträge/Splits zählen als Warenkosten mit —
   // solange N > 0 ist die WKQ unscharf und wird sichtbar gekennzeichnet.
   const unkontiert = useMemo(() => (invoices ? zaehleUnkontierte(invoices) : 0), [invoices]);
@@ -272,7 +299,7 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
         )}
       </div>
 
-      {/* Ist vs. Wareneinsatz-Soll (Budget-Eingabe), Food/Beverage getrennt */}
+      {/* Ist vs. Wareneinsatz-Soll, Food/Beverage nach Kategorie-Umsatz getrennt */}
       <div className="px-4 py-3 border-b border-border" data-testid="wk-ist-soll-block">
         {invoices == null || totals == null ? (
           <p className="text-sm text-muted-foreground">…</p>
@@ -283,18 +310,18 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
                 <tr className="text-muted-foreground border-b border-border">
                   <th className="text-left py-1.5 font-medium"></th>
                   <th className="text-right py-1.5 font-medium">Ist (CHF)</th>
-                  <th className="text-right py-1.5 font-medium" title="Wareneinsatz-Budget aus der Budget-Eingabe (Umsatz-Budget × Ziel-WKQ)">Soll (CHF)</th>
+                  <th className="text-right py-1.5 font-medium" title="Gesamt-Soll aus der Budget-Eingabe; Food/Beverage proportional zum jeweiligen Netto-Umsatz (Fallback: Ziel-WKQ × Umsatz)">Soll (CHF)</th>
                   <th className="text-right py-1.5 font-medium">Δ</th>
                   <th className="text-right py-1.5 font-medium" title="Ist ÷ Netto-Umsatz · ≤30 % grün, 30–35 % gelb, >35 % rot">WKQ</th>
                 </tr>
               </thead>
               <tbody>
-                <IstSollZeile label="Warenkosten total" ist={totals.relevantNet} soll={sollTotal}
+                <IstSollZeile label="Warenkosten total" ist={totals.relevantNet} soll={soll.total}
                   umsatzNet={umsatzNet} testId="wk-zeile-total" />
-                <IstSollZeile label="davon Food (Küche)" ist={totals.foodNet} soll={sollFood}
-                  umsatzNet={umsatzNet} testId="wk-zeile-food" indent />
-                <IstSollZeile label="davon Beverage (Bar)" ist={totals.beverageNet} soll={sollBev}
-                  umsatzNet={umsatzNet} testId="wk-zeile-beverage" indent />
+                <IstSollZeile label="davon Food (Küche)" ist={totals.foodNet} soll={soll.food}
+                  umsatzNet={umsatzFood} testId="wk-zeile-food" indent />
+                <IstSollZeile label="davon Beverage (Bar)" ist={totals.beverageNet} soll={soll.beverage}
+                  umsatzNet={umsatzBev} testId="wk-zeile-beverage" indent />
               </tbody>
             </table>
             {betriebsNet > 0.005 && (
