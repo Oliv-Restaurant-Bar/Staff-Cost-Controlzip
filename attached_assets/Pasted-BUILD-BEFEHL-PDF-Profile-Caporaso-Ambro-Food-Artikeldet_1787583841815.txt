@@ -1,0 +1,21 @@
+BUILD-BEFEHL — PDF-Profile Caporaso & Ambro Food: Artikeldetail extrahieren
+
+Kontext (aus der Diagnose bestätigt): Die PDF-Import-Profile für Caporaso und Ambro Food speichern keine verwertbaren Artikelpositionen. Caporaso legt nur aggregierte MwSt-Sammelzeilen („Lebensmittel") mit Preis = 0 ab; Ambro Food persistiert gar keine Positionen. Dadurch entstehen kein Artikel-Key, keine Preis-Historie und keine Produktanalyse — obwohl der Gesamtbetrag korrekt gebucht ist.
+
+Ziel: Beide Profile sollen pro Artikelzeile speichern: Artikelnummer (falls vorhanden), Bezeichnung, Menge, Einheit, Einzelpreis, Positionspreis, MwSt — und die Artikelnummer als stabilen Preis-Tracking-Schlüssel ablegen (Fallback: normalisierte Bezeichnung), identisch zur Logik bei Transgourmet/Terravigna.
+
+Vorgehen:
+
+Zuerst analysieren, nicht raten: Öffne je eine bestehende Caporaso- und Ambro-Rechnung (PDF bzw. gespeicherte Rohtext-Extraktion) und zeig mir die tatsächliche Zeilenstruktur. Wenn kein verwertbares Muster im System liegt, melde genau, welches Muster-PDF du brauchst — dann liefere ich es nach, bevor du am Parser etwas änderst.
+Baue/erweitere das Parsing so, dass die Artikelzeilen sauber erkannt werden (Trennung von Kopf-, Positions- und Summenzeilen; Sammel-/MwSt-Zeilen dürfen nicht mehr als Artikel mit Preis = 0 gespeichert werden).
+Kontroll-Invariante: Die Summe der extrahierten Positionspreise muss dem bereits gebuchten Rechnungs-Gesamtbetrag entsprechen (Differenz ≤ 0.05). Weiche Zeilen (Rabatte, Gebinde) korrekt zuordnen.
+Gewichtsartikel (Einheit kg): Kilopreis als Vergleichswert ablegen, nicht den Positionsbetrag.
+
+NICHT ändern: Bereits korrekte Profile (Transgourmet, Prodega, Terravigna, Feldschlösschen, Spahni), die gebuchten Gesamtbeträge, WKQ/Warenkosten-Totale, FIBU-Abgleich. Bar-/Sammelbelege (Coop/Migros/Lidl) bleiben ohne Artikeldetail.
+
+Abnahme:
+
+Nach einem Re-Import einer Caporaso- und einer Ambro-Rechnung erscheinen die einzelnen Artikel mit Menge/Einzelpreis; der Rechnungs-Gesamtbetrag bleibt unverändert (≤ 0.05 Abweichung).
+Bei ≥2 Einkäufen desselben Artikels zu unterschiedlichem Preis erscheint eine Preisänderung; sonst korrekt leer.
+Keine „Preis = 0"-Sammelzeilen mehr in der Artikel-/Preis-Engine.
+Mandantenübergreifend (Oliv + Beaulieu) gegengeprüft.
