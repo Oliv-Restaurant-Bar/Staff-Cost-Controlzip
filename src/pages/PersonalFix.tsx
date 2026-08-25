@@ -23,7 +23,7 @@ import {
   loadExtraCostPeople, upsertExtraCostPerson, extraCostPersonToEmployee,
   type ExtraCostPerson,
 } from '@/lib/extra-cost-people-db';
-import type { ActualHourEntry } from '@/lib/supabase-db';
+import type { ActualHourEntry, DaySchedule } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
@@ -2111,6 +2111,8 @@ export default function PersonalFixPage() {
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [supabaseActualHoursLoaded, setSupabaseActualHoursLoaded] = useState(false);
+  const [supabasePlanSchedule, setSupabasePlanSchedule] = useState<Record<string, DaySchedule>>({});
+  const [supabasePlanScheduleLoaded, setSupabasePlanScheduleLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours(tenantKey));
@@ -2379,12 +2381,16 @@ export default function PersonalFixPage() {
     // noch laufende Requests verworfen (sonst könnte ein out-of-order Response
     // den frischeren Spiegel/State wieder mit alten Daten überschreiben).
     let stale = false;
+    setSupabasePlanSchedule({});
+    setSupabasePlanScheduleLoaded(false);
     setSupabaseActualHours({});
     setSupabaseActualHoursLoaded(false);
     const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadScheduleForMonth(scheduleMonthDate, tenantId).then(supabaseSchedule => {
       if (stale) return; // veralteter Request – verwerfen
       if (!supabaseSchedule) return; // Supabase error – keep local result
+      setSupabasePlanSchedule(supabaseSchedule);
+      setSupabasePlanScheduleLoaded(true);
       const totalEntries = Object.keys(supabaseSchedule).length;
       console.log(`[PLAN] personal-fix schedule loaded from Supabase: ${totalEntries} Einträge für ${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
       const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
@@ -4126,6 +4132,7 @@ export default function PersonalFixPage() {
       month: selectedMonth,
       keyFn: tenantKey,
       todayIso: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
+      planSchedule: supabasePlanScheduleLoaded ? supabasePlanSchedule : undefined,
       actualHours: supabaseActualHoursLoaded ? supabaseActualHours : undefined,
       employees: variableEmployees.map(emp => {
         const id = String(emp.id);
@@ -4199,7 +4206,7 @@ export default function PersonalFixPage() {
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff, bisIst };
-  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey, wageSplits, supabaseActualHours, supabaseActualHoursLoaded]);
+  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey, wageSplits, supabasePlanSchedule, supabasePlanScheduleLoaded, supabaseActualHours, supabaseActualHoursLoaded]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus

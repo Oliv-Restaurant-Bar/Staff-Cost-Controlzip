@@ -263,4 +263,60 @@ describe('Flex weekly SSOT', () => {
       istCost: 0,
     });
   });
+
+  it('uses the authoritative Dienstplan without changing authoritative actuals', () => {
+    localStorage.setItem(tenantKey('schedule-v2-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-23')]: shift('08:00', '09:00'),
+    }));
+
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      planSchedule: {
+        [cell('goi', '2026-08-23')]: shift('08:00', '16:00'),
+        [cell('goi', '2026-08-22')]: {
+          ...shift('08:00', '18:00'),
+          isAdditionalCostPlan: true,
+        },
+      },
+      actualHours: {
+        [cell('goi', '2026-08-23')]: { hours: 9, source: 'mirus' },
+      },
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      planH: 8,
+      planCost: 240,
+      istH: 9,
+      istCost: 270,
+    });
+  });
+
+  it('treats a successful empty Dienstplan result as authoritative over stale local plan', () => {
+    localStorage.setItem(tenantKey('schedule-v2-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-23')]: shift('08:00', '16:00'),
+    }));
+
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      planSchedule: {},
+      actualHours: {
+        [cell('goi', '2026-08-23')]: { hours: 9, source: 'mirus' },
+      },
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      planH: 0,
+      planCost: 0,
+      istH: 9,
+      istCost: 270,
+    });
+  });
 });

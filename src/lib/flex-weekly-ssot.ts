@@ -3,15 +3,17 @@ import { getLastCompletedWeekRange } from '@/lib/completed-week';
 
 type KeyFn = (key: string) => string;
 interface StoredEntry extends DayNetFields {
-  frühAbsence?: string;
-  spätAbsence?: string;
-  absenceType?: string;
+  frühAbsence?: string | null;
+  spätAbsence?: string | null;
+  absenceType?: string | null;
   hours?: number;
-  source?: string;
+  source?: string | null;
   isAdditionalCost?: boolean;
+  isAdditionalCostPlan?: boolean;
 }
 type StoredValue = number | StoredEntry;
 type ActualHoursRecord = Record<string, StoredValue>;
+type PlanScheduleRecord = Record<string, StoredValue>;
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export interface FlexDayEntry {
@@ -111,9 +113,10 @@ export function loadDailyPlanDetails(
   cutoffDay: number | null,
   wage: number,
   keyFn: KeyFn = key => key,
+  planSchedule?: PlanScheduleRecord,
 ): FlexDayEntry[] {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  const data = readRecord(keyFn(`schedule-v2-${prefix}`));
+  const data = planSchedule ?? readRecord(keyFn(`schedule-v2-${prefix}`));
   const entries: FlexDayEntry[] = [];
   for (const [cellKey, ds] of Object.entries(data)) {
     const date = cellKey.slice(-10);
@@ -121,6 +124,7 @@ export function loadDailyPlanDetails(
     if (typeof ds !== 'object' || ds === null) continue;
     const day = Number(date.slice(-2));
     if (cutoffDay !== null && day > cutoffDay) continue;
+    if (ds.isAdditionalCostPlan) continue;
     if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
     const net = calculateDayNetHours(ds);
     if (net > 0) {
@@ -220,6 +224,7 @@ export function buildFlexWeeklyEvaluation(params: {
   cutoffDay?: number | null;
   todayIso?: string;
   actualHours?: ActualHoursRecord;
+  planSchedule?: PlanScheduleRecord;
 }): FlexWeeklyEvaluation {
   const { year, month, employees } = params;
   const keyFn = params.keyFn ?? (key => key);
@@ -253,7 +258,9 @@ export function buildFlexWeeklyEvaluation(params: {
     const isActiveDate = (date: string) =>
       (!employee.activeFrom || date >= employee.activeFrom)
       && (!employee.activeTo || date <= employee.activeTo);
-    for (const entry of loadDailyPlanDetails(sourceId, year, month, cutoffDay, employee.wage, keyFn)) {
+    for (const entry of loadDailyPlanDetails(
+      sourceId, year, month, cutoffDay, employee.wage, keyFn, params.planSchedule,
+    )) {
       if (!isActiveDate(entry.date)) continue;
       const value = cell(entry.date, employee.id);
       value.planH += entry.hours;

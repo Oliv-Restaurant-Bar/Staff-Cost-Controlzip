@@ -26,7 +26,7 @@ import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { canonicalAbsenceCode } from '@/lib/bedarf-stunden-utils';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
-import type { ActualHourEntry } from '@/lib/supabase-db';
+import type { ActualHourEntry, DaySchedule } from '@/lib/supabase-db';
 import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
@@ -84,6 +84,8 @@ export interface PersonalkostenDaten {
   istStdProTag:  Record<string, Record<string, number>>;
   /** Rohe, tenant-gefilterte Supabase-Istwerte für gemeinsame Detailauswertungen. */
   actualHoursRaw?: Record<string, ActualHourEntry>;
+  /** Roher tenant-gefilterter Dienstplan; leer bleibt nach erfolgreichem Load autoritativ leer. */
+  planScheduleRaw?: Record<string, DaySchedule>;
   /** Tage (Set 'YYYY-MM-DD'), für die Ist-Stunden importiert sind → TAG-REGEL */
   istTage: Set<string>;
   /**
@@ -589,11 +591,11 @@ export async function ladePersonalkostenDaten(
   }
 
   // ── Plan-Stunden (Dienstplan) ────────────────────────────────────────────
-  // Supabase ist kanonisch; leeres Resultat → localStorage-Cache als Fallback.
+  // Supabase ist kanonisch; nur ein echter Ladefehler (null) fällt auf den Cache zurück.
   const planStdProTag: Record<string, Record<string, number>> = {};
-  let scheduleRaw: Record<string, any> | null = await loadScheduleForMonth(monthDate, tenantId);
-  if (!scheduleRaw || Object.keys(scheduleRaw).length === 0) {
-    scheduleRaw = readJson<Record<string, any>>(tenantKey(`schedule-v2-${prefix}`), {});
+  let scheduleRaw = await loadScheduleForMonth(monthDate, tenantId);
+  if (!scheduleRaw) {
+    scheduleRaw = readJson<Record<string, DaySchedule>>(tenantKey(`schedule-v2-${prefix}`), {});
   }
   for (const [cellKey, ds] of Object.entries(scheduleRaw)) {
     const date = cellKey.slice(-10);
@@ -696,7 +698,7 @@ export async function ladePersonalkostenDaten(
     wageSplits: splits,
     agFactor: socialCostFactorFromRates(rates),
     rates,
-    planStdProTag, istStdProTag, actualHoursRaw: supaIst, istTage, absenzKreditTageProMa,
+    planStdProTag, istStdProTag, planScheduleRaw: scheduleRaw, actualHoursRaw: supaIst, istTage, absenzKreditTageProMa,
     umsatzIstProTag, umsatzBudgetMonat, zielQuotePct, pkBudgetMonat,
     gewichte: ladeWochentagsGewichte(tenantKey),
   };
