@@ -66,6 +66,12 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
+import {
+  buildFlexWeeklyEvaluation,
+  loadDailyIstDetails,
+  loadDailyPlanDetails,
+  type FlexDayEntry as DayEntry,
+} from '@/lib/flex-weekly-ssot';
 import { aggregatePlanHours, mirrorPlanMonthToLocalStorage, debugPlanHours } from '@/lib/plan-stunden-sync';
 import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
@@ -1147,7 +1153,6 @@ interface BreakdownTarget {
   agOff?:      boolean;
 }
 
-interface DayEntry  { date: string; hours: number; cost: number; }
 interface FerienDay { date: string; dailyH: number; cost: number; }
 
 /** Zusatzkosten plan-tagged days for a fixed-salary employee (isAdditionalCostPlan) */
@@ -1172,61 +1177,6 @@ function loadZusatzPlanDetails(
       // Netto via SSoT (Pause pro Einsatz abgezogen)
       const net = calculateDayNetHours(ds);
       if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
-    }
-    return entries.sort((a, b) => a.date.localeCompare(b.date));
-  } catch { return []; }
-}
-
-/** Daily plan hours for one employee from schedule-v2-YYYY-MM */
-function loadDailyPlanDetails(
-  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
-  keyFn: (k: string) => string = k => k,
-): DayEntry[] {
-  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const data: Record<string, any> = JSON.parse(raw);
-    const prefix = `${year}-${String(month).padStart(2, '0')}`;
-    const entries: DayEntry[] = [];
-    for (const [cellKey, ds] of Object.entries(data)) {
-      const date  = cellKey.slice(-10);
-      if (!date.startsWith(prefix)) continue;
-      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
-      const day = parseInt(date.slice(-2), 10);
-      if (cutoffDay !== null && day > cutoffDay) continue;
-      // Skip vacation-tagged entries — these are counted in ferien, not work
-      if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
-      // Netto via SSoT (Pause pro Einsatz abgezogen)
-      const net   = calculateDayNetHours(ds);
-      if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
-    }
-    return entries.sort((a, b) => a.date.localeCompare(b.date));
-  } catch { return []; }
-}
-
-/** Daily ist hours for one employee from actual-hours-YYYY-MM */
-function loadDailyIstDetails(
-  empId: string, year: number, month: number, cutoffDay: number | null, wage: number,
-  keyFn: (k: string) => string = k => k,
-): DayEntry[] {
-  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
-  const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const data: Record<string, any> = JSON.parse(raw);
-    const entries: DayEntry[] = [];
-    for (const [cellKey, val] of Object.entries(data)) {
-      const date = cellKey.slice(-10);
-      if (!date.startsWith(prefix)) continue;
-      if (cellKey.slice(0, cellKey.length - 11) !== empId) continue;
-      const day = parseInt(date.slice(-2), 10);
-      if (cutoffDay !== null && day > cutoffDay) continue;
-      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
-      if (absenceType === 'FE') continue; // FE is vacation, not work
-      const h = typeof val === 'number' ? val : (val?.hours ?? 0);
-      if (h > 0) entries.push({ date, hours: Math.round(h * 100) / 100, cost: Math.round(h * wage * 100) / 100 });
     }
     return entries.sort((a, b) => a.date.localeCompare(b.date));
   } catch { return []; }
@@ -1355,48 +1305,9 @@ interface FlexPeriodTarget {
   month:     number;
 }
 
-/**
- * Ist-Stichtag = letzter Tag mit importierten Mirus-Ist-Stunden (pro Mandant via keyFn).
- * plan_sync-Einträge (automatischer Plan→Ist-Spiegel) zählen NICHT — sonst rutscht der
- * Stichtag in die Zukunft und Teilwochen vergleichen Plan ganze Woche vs. Ist 2 Tage.
- * Legacy-Einträge ohne source (alte Mirus-Importe) und 'manual'/'import' zählen.
- */
-function loadMirusIstStichtag(
-  year: number, month: number,
-  keyFn: (k: string) => string = k => k,
-): string {
-  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
-  const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return '';
-    const data: Record<string, any> = JSON.parse(raw);
-    let max = '';
-    for (const [cellKey, val] of Object.entries(data)) {
-      const date = cellKey.slice(-10);
-      if (!date.startsWith(prefix)) continue;
-      const source = typeof val === 'object' ? val?.source : undefined;
-      if (source === 'plan_sync') continue;
-      const h = typeof val === 'number' ? val : (val?.hours ?? 0);
-      if (h > 0 && date > max) max = date;
-    }
-    return max;
-  } catch { return ''; }
-}
-
 /** '2026-08-11' → '11.08.' (für das Teilwochen-Badge) */
 function fmtStichtagKurz(iso: string): string {
   return iso.length === 10 ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : iso;
-}
-
-function isoWeekLabel(iso: string): string {
-  const d = new Date(iso + 'T00:00:00');
-  d.setHours(0, 0, 0, 0);
-  const day = d.getDay() === 0 ? 7 : d.getDay();
-  d.setDate(d.getDate() + 4 - day);
-  const yearStart = new Date(d.getFullYear(), 0, 1);
-  const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `KW ${String(weekNo).padStart(2, '0')} / ${d.getFullYear()}`;
 }
 
 // ── Ampel-Logik ────────────────────────────────────────────────────────────────
@@ -4206,38 +4117,35 @@ export default function PersonalFixPage() {
     /** Totals NUR über den Zeitraum bis zum letzten Ist-Tag (Zukunft zählt nicht). */
     bisIst:    { plan: number; ist: number; diff: number; lastIstDate: string };
   } => {
-    const cutoff = proRataDay;
-    // Only Flex Arbeit (work hours × wage) — no ferien in this view
-    const dayMap = new Map<string, { pw: number; iw: number }>();
-
-    for (const emp of variableEmployees) {
-      // Flag wird zentral in getEffectiveHourlyRate aufgelöst
-      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
-      if (!wage) continue;
-
-      const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
-      const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
-
-      for (const r of planW) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0 };
-        e.pw += r.cost; dayMap.set(r.date, e);
-      }
-      for (const r of istW) {
-        const e = dayMap.get(r.date) ?? { pw: 0, iw: 0 };
-        e.iw += r.cost; dayMap.set(r.date, e);
-      }
-    }
-
-    const days: AbwDay[] = Array.from(dayMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, v]) => {
-        const planTotal = v.pw;
-        const istTotal  = v.iw;
+    const evaluation = buildFlexWeeklyEvaluation({
+      year: selectedYear,
+      month: selectedMonth,
+      keyFn: tenantKey,
+      employees: variableEmployees.map(emp => {
+        const id = String(emp.id);
+        const baseId = splitBaseId(id);
+        const split = wageSplits[baseId];
+        const isSplit = id.endsWith(FLEX_SPLIT_SUFFIX) && split != null;
+        return {
+          id,
+          sourceId: isSplit ? baseId : id,
+          name: emp.name,
+          wage: getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+          agOff: getEmployerCostRate(emp, socialCostRates)?.agOff === true,
+          activeFrom: isSplit ? split.hourlyFrom : undefined,
+          activeTo: isSplit ? split.hourlyTo : undefined,
+        };
+      }),
+    });
+    const lastIstDate = evaluation.lastIstDate;
+    const days: AbwDay[] = evaluation.days.map(day => {
+        const planTotal = day.planCost;
+        const istTotal = day.istCost;
         const diff      = istTotal - planTotal;
         return {
-          date,
-          planWork:   v.pw,
-          istWork:    v.iw,
+          date: day.date,
+          planWork:   planTotal,
+          istWork:    istTotal,
           planFerien: 0,
           istFerien:  0,
           planTotal,
@@ -4246,50 +4154,18 @@ export default function PersonalFixPage() {
           diffPct: planTotal > 0 ? (diff / planTotal) * 100 : null,
         };
       });
-
-    // Ist-Stichtag = letzter Tag mit importierten Mirus-Ist-Stunden (je Mandant).
-    // plan_sync-Spiegel zählen NICHT — sonst rutscht der Stichtag in die Zukunft
-    // und Teilwochen vergleichen fast eine ganze Plan-Woche gegen 2 Ist-Tage.
-    const lastIstDate = loadMirusIstStichtag(selectedYear, selectedMonth, tenantKey);
-
-    // Plan UND Ist je Woche NUR über Tage ≤ Ist-Stichtag vergleichen:
-    //  • Woche komplett ≤ Stichtag  → normale abgeschlossene Woche.
-    //  • Woche über den Stichtag hinaus → beide Seiten auf Tage ≤ Stichtag gekappt,
-    //    gekennzeichnet als «(teilweise, bis DD.MM.)».
-    //  • Woche komplett nach Stichtag → «noch offen · kein Ist» (voller Wochenplan).
-    const weekMap = new Map<string, { p: number; pBis: number; i: number; iBis: number; dates: string[] }>();
-    for (const d of days) {
-      const wk = isoWeekLabel(d.date);
-      const e  = weekMap.get(wk) ?? { p: 0, pBis: 0, i: 0, iBis: 0, dates: [] };
-      e.p += d.planTotal;
-      e.i += d.istTotal;
-      // Bewusste Hybrid-Regel: innerhalb ≤ Stichtag zählt das Ist ALLER Quellen
-      // (auch plan_sync-Absenzen K/U) — identisch zu allen anderen Ist-Ansichten.
-      // plan_sync ist nur für die STICHTAG-Bestimmung ausgeschlossen.
-      if (lastIstDate !== '' && d.date <= lastIstDate) { e.pBis += d.planTotal; e.iBis += d.istTotal; }
-      e.dates.push(d.date);
-      weekMap.set(wk, e);
-    }
-    const weeks: AbwRow[] = Array.from(weekMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([period, v]) => {
-        const offen     = lastIstDate === '' || v.dates.every(dt => dt > lastIstDate);
-        const teilweise = !offen && v.dates.some(dt => dt > lastIstDate);
-        // Offene Zukunftswochen zeigen weiterhin den vollen Wochenplan;
-        // alle anderen Wochen werden auf Plan+Ist der Tage ≤ Stichtag gekappt.
-        const plan = offen ? v.p : v.pBis;
-        const ist  = offen ? v.i : v.iBis;
+    const weeks: AbwRow[] = evaluation.weeks.map(week => {
+        const plan = week.planCost;
+        const ist = week.istCost;
         return {
-          period:    teilweise ? `${period} (teilweise, bis ${fmtStichtagKurz(lastIstDate)})` : period,
+          period:    week.teilweise ? `${week.label} (teilweise, bis ${fmtStichtagKurz(lastIstDate)})` : week.label,
           planTotal: plan,
           istTotal:  ist,
           diff:      ist - plan,
           diffPct:   plan > 0 ? ((ist - plan) / plan) * 100 : null,
-          // Nur die gezählten Tage weitergeben → MA-Popup zeigt denselben Zeitraum,
-          // MA ohne Plan in diesen Tagen fallen raus (kein Plan-ohne-Ist-Effekt).
-          dates:     offen ? v.dates : v.dates.filter(dt => dt <= lastIstDate),
-          offen,
-          teilweise,
+          dates:     week.dates,
+          offen:     week.offen,
+          teilweise: week.teilweise,
         };
       });
 
@@ -4318,7 +4194,7 @@ export default function PersonalFixPage() {
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff, bisIst };
-  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey]);
+  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey, wageSplits]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus

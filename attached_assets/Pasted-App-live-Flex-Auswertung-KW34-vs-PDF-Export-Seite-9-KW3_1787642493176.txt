@@ -1,0 +1,44 @@
+App (live) Flex-Auswertung KW34 vs PDF-Export (Seite 9) KW34:
+
+Mitarbeiter	App (live) Ist	PDF-Export Ist
+Dzhymsheleishvili	22.9 h · CHF 661	fehlt komplett (0)
+Goi Isabelle	41.0 h · CHF 1'412	32.1 h · CHF 1'106
+Ouisroutane	14.4 h · CHF 469	9.2 h · CHF 301
+Total Flex Ist	222.3 h · CHF 6'970 (+262, +3.9 % über Plan)	185.4 h · CHF 5'636.50 (−791.79, −12.3 % unter Plan)
+
+Und deine Einzel-Detailansicht bestätigt es: Dzhymsheleishvili hat in KW34 die Tage 17.08 (1.58 h), 18.08 (6.58 h), 19.08 (6.27 h), 20.08 (1.78 h), 21.08 (6.67 h) = 22.88 h — exakt wie MIRUS. Die Stunden und Kosten sind da. Der PDF-Export lässt sie einfach weg.
+
+Folge: Der PDF unterschlägt KW34 rund 37 h / CHF 1'334 Flex-Kosten und dreht die Aussage von „über Plan" (App, richtig) auf „unter Plan" (PDF, falsch). Das ist inhaltlich irreführend.
+
+Wichtig zur Beruhigung: Die Cockpit-Kopfzahlen stimmen (PKQ 44.8 %, Personalkosten 94'022.71) — die nutzen die korrekten App-Werte. Der Fehler steckt nur in der PDF-Flex-Detailseite (Seite 9), nicht in den KPI. Alle anderen PDF-Seiten (Umsatz, Waren, Gäste) waren ja sauber.
+
+Fix-Befehl zum Kopieren
+
+BUILD-BEFEHL — PDF-Export Flex-Auswertung: gleiche Datenquelle wie die On-Screen-Ansicht
+
+Problem: Der PDF-Export „Personal · Flex-Auswertung Plan vs. Ist" (Seite 9) weicht von der On-Screen-Flex-Auswertung ab. Für KW34 zeigt die App korrekt 222.3 h Ist / CHF 6'970 / +3.9 % über Plan, der PDF-Export aber nur 185.4 h / CHF 5'636.50 / −12.3 %. Konkret:
+
+Dzhymsheleishvili Yuliia fehlt im PDF für KW34 komplett (App: 22.9 h / CHF 661).
+Goi Isabelle PDF 32.1 h statt 41.0 h.
+Ouisroutane Wachi Kawtar PDF 9.2 h statt 14.4 h.
+
+Die Stunden sind in der Datenbank vorhanden (Einzel-Detailansicht bestätigt sie), werden also nur im Export falsch aggregiert.
+
+Diagnose zuerst (read-only): Ermittle, warum der PDF-Export für diese drei Mitarbeiter in KW34 andere Ist-Stunden liefert als die On-Screen-Flex-Auswertung. Prüfe insbesondere:
+
+Nutzt der Export eine andere Datenquelle/Query als die On-Screen-Komponente (z. B. eine gecachte oder vorab aggregierte Tabelle statt der Live-Berechnung)?
+Gibt es im Export einen Filter, der Mitarbeiter ohne Plan-Stunden (Plan „–", wie Dzhymsheleishvili) oder mit bestimmten Tagesmustern fälschlich ausschliesst?
+Werden Tage mit Absenz-/Ferien-Handling im Export anders behandelt als on-screen?
+
+Fix: Der PDF-Export der Flex-Auswertung muss exakt dieselbe Berechnung und Datenquelle verwenden wie die On-Screen-Flex-Auswertung (eine einzige Source of Truth). Nach dem Fix müssen PDF und Bildschirm identische Zahlen zeigen:
+
+KW34 Total Ist 222.3 h, Flex Ist CHF 6'970, +CHF 262 (+3.9 %).
+Dzhymsheleishvili in KW34 mit 22.9 h / CHF 661 enthalten.
+Goi 41.0 h / CHF 1'412, Ouisroutane 14.4 h / CHF 469.
+
+Abnahme:
+
+Für jede Woche (KW31–KW34) stimmen die PDF-Flex-Totale (Std, Plan-CHF, Ist-CHF, Diff) auf den Rappen mit der On-Screen-Flex-Auswertung überein.
+Kein Mitarbeiter, der on-screen erscheint, fehlt im PDF (und umgekehrt).
+Mandantenübergreifend (Oliv + Beaulieu) gegengeprüft.
+Keine Änderung an den Daten selbst oder an den bereits korrekten Cockpit-KPIs (PKQ, Personalkosten).

@@ -9,4 +9,4 @@ description: Wochenvergleich Plan vs. Ist nur bis zum letzten echten Mirus-Ist-T
 
 **Hybrid-Regel (bewusst):** Innerhalb ≤ Stichtag zählt das Ist ALLER Quellen (auch plan_sync-Absenzen) — identisch zu allen anderen Ist-Ansichten. plan_sync ist nur für die STICHTAG-Bestimmung ausgeschlossen.
 
-**How to apply:** Jede Ansicht, die «bis zum letzten Ist-Tag» vergleicht, muss den Stichtag quellen-gefiltert bestimmen (source ≠ plan_sync) und Teilperioden auf beiden Seiten kappen; Export-Kopf/Total müssen dieselben «bis Ist»-Werte verwenden wie die Seite, sonst widersprechen sich Zeilen und Total.
+**How to apply:** Jede Ansicht und jeder Export, die «bis zum letzten Ist-Tag» vergleichen, müssen denselben gemeinsamen Tagesfakten-Builder verwenden: tenant-gekeyte Plan-/Ist-Caches, externe Aushilfen, effektive AG-Stundensätze und Split-Phasen über Basis-ID plus Stundenlohn-Datumsgrenzen. Der Stichtag wird quellen-gefiltert bestimmt (`source !== 'plan_sync'`), Teilperioden werden auf beiden Seiten gekappt. Ein manueller Pro-rata-Tag darf diese Flex-Abweichungsanalyse nicht zusätzlich beschneiden.

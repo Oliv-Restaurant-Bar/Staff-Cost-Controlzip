@@ -21,9 +21,8 @@
  *     NUR Wochen MIT hochgeladenem Mirus-Ist (offene Wochen weggelassen,
  *     nicht als 0); je MA nur bis zum abgerechneten Stand. KEINE AG/h-Spalte.
  *     Die MA-Zeilen einer Woche summieren exakt aufs Wochentotal (Totale =
- *     Summe der gerundeten MA-Werte). Quelle: personalkosten.ts
- *     (ladePersonalkostenDaten, Lohn-SSOT inkl. ::flexsplit und «ohne AG»-
- *     Flags via employee-rate.ts).
+ *     Summe der gerundeten MA-Werte). Quelle: flex-weekly-ssot.ts — identisch
+ *     zur Live-Flex-Auswertung, inkl. externer Aushilfen und MIRUS-Stichtag.
  */
 import type { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -35,6 +34,8 @@ import {
 import { ladePersonalkostenDaten, type PersonalkostenDaten } from '@/lib/personalkosten';
 import { loadSocialCostRates } from '@/lib/social-costs-db';
 import { getEmployerCostRate } from '@/lib/employee-rate';
+import { loadExtraCostPeople, extraCostPersonToEmployee } from '@/lib/extra-cost-people-db';
+import { buildFlexWeeklyEvaluation } from '@/lib/flex-weekly-ssot';
 import {
   M, INK2, MUTED, GRUEN_INK, AMBER_INK, ROT_INK, type Rgb,
   kopfband, folgeKopf, kpiZeileBoxen, abschnitt, tabellenStil,
@@ -301,82 +302,59 @@ export async function ladePersonalBlockDaten(
   const daten: PersonalkostenDaten = await ladePersonalkostenDaten(
     year, month, tenantId, tenantKey, ratesBlob.rates,
   );
-
-  const flexIds = new Set(daten.flexEmployees.map(e => String(e.id)));
-  const infoVonId = new Map<string, { name: string; agOff: boolean; satz: number }>();
-  for (const emp of daten.flexEmployees) {
-    const br = getEmployerCostRate(emp, daten.rates);
-    const istSplit = String(emp.id).endsWith('::flexsplit');
-    infoVonId.set(String(emp.id), {
-      name: istSplit ? `${emp.name} (Stundenlohn-Phase)` : (emp.name ?? String(emp.id)),
-      agOff: br?.agOff === true,
-      satz: br?.totalHourly ?? 0,
-    });
-  }
-
-  interface WMa { planH: number; istH: number; hatIst: boolean }
-  interface W { von: string; bis: string; label: string; hatIst: boolean; ma: Map<string, WMa> }
-  const wochenMap = new Map<string, W>();
-  const wocheFuer = (date: string): W => {
-    const mo = mondayOf(date);
-    let w = wochenMap.get(mo);
-    if (!w) {
-      const { kw } = isoWeekOf(mo);
-      w = { von: date, bis: date, label: `KW ${kw}`, hatIst: false, ma: new Map() };
-      wochenMap.set(mo, w);
-    }
-    if (date < w.von) w.von = date;
-    if (date > w.bis) w.bis = date;
-    return w;
-  };
-  const maFuer = (w: W, id: string): WMa => {
-    let m = w.ma.get(id);
-    if (!m) { m = { planH: 0, istH: 0, hatIst: false }; w.ma.set(id, m); }
-    return m;
-  };
-  for (const [date, perEmp] of Object.entries(daten.planStdProTag)) {
-    const w = wocheFuer(date);
-    for (const [id, h] of Object.entries(perEmp)) {
-      if (flexIds.has(id)) maFuer(w, id).planH += h;
-    }
-  }
-  for (const [date, perEmp] of Object.entries(daten.istStdProTag)) {
-    if (date > heuteIso) continue;
-    const w = wocheFuer(date);
-    for (const [id, h] of Object.entries(perEmp)) {
-      if (!flexIds.has(id)) continue;
-      const m = maFuer(w, id);
-      m.istH += h;
-      m.hatIst = true;
-      w.hatIst = true;
-    }
-  }
+  const extraEmployees = (await loadExtraCostPeople(tenantId)).map(extraCostPersonToEmployee);
+  const existingIds = new Set(daten.flexEmployees.map(emp => String(emp.id)));
+  const flexEmployees = [
+    ...daten.flexEmployees,
+    ...extraEmployees.filter(emp => !existingIds.has(String(emp.id))),
+  ];
+  const evaluation = buildFlexWeeklyEvaluation({
+    year,
+    month,
+    keyFn: tenantKey,
+    employees: flexEmployees.map(emp => {
+      const rate = getEmployerCostRate(emp, daten.rates);
+      const id = String(emp.id);
+      const isSplit = id.endsWith('::flexsplit');
+      const baseId = isSplit ? id.slice(0, -'::flexsplit'.length) : id;
+      const split = isSplit ? daten.wageSplits[baseId] : undefined;
+      return {
+        id,
+        sourceId: isSplit ? baseId : id,
+        name: isSplit ? `${emp.name} (Stundenlohn-Phase)` : (emp.name ?? String(emp.id)),
+        wage: rate?.totalHourly ?? 0,
+        agOff: rate?.agOff === true,
+        activeFrom: split?.hourlyFrom,
+        activeTo: split?.hourlyTo,
+      };
+    }),
+  });
 
   const wochen: PbWochenZeile[] = [];
   const rohProWoche: Array<{ planH: number; istH: number }> = [];
   const agOffMitEinsatz = new Set<string>();
-  for (const [mo, w] of [...wochenMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    void mo;
-    if (!w.hatIst) continue; // «noch offen / kein Ist» — weglassen, nicht 0
-    const maZeilen: PbWocheMaZeile[] = [];
-    let planHRoh = 0, istHRoh = 0;
-    for (const [id, m] of w.ma.entries()) {
-      if (m.planH <= 0 && m.istH <= 0) continue; // leer statt 0
-      const info = infoVonId.get(id);
-      if (!info) continue;
-      const planChf = r2(m.planH * info.satz);
-      const istChf = r2(m.istH * info.satz);
-      if (info.agOff) agOffMitEinsatz.add(id);
-      planHRoh += m.planH; istHRoh += m.istH;
-      maZeilen.push({
-        name: info.name, agOff: info.agOff,
-        planH: r1(m.planH), istH: r1(m.istH),
-        planChf, istChf, diffChf: r2(istChf - planChf),
-      });
+  for (const week of evaluation.weeks) {
+    if (week.offen) continue;
+    const maZeilen: PbWocheMaZeile[] = week.employees.map(row => {
+      const planChf = r2(row.planCost);
+      const istChf = r2(row.istCost);
+      if (row.agOff) agOffMitEinsatz.add(row.id);
+      return {
+        name: row.name,
+        agOff: row.agOff,
+        planH: r1(row.planH),
+        istH: r1(row.istH),
+        planChf,
+        istChf,
+        diffChf: r2(istChf - planChf),
+      };
+    });
+    const planHRoh = week.planH;
+    const istHRoh = week.istH;
+    for (const row of week.employees) {
+      if (row.agOff) agOffMitEinsatz.add(row.id);
     }
     maZeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
-    // CHF-Wochentotal = Summe der GERUNDETEN MA-Zeilen → Zeilen summieren exakt
-    // auf. Stunden-Totale aus den ROH-Summen (wie die Personal-Ansichten).
     const planH = r1(planHRoh);
     const istH = r1(istHRoh);
     rohProWoche.push({ planH: planHRoh, istH: istHRoh });
@@ -384,8 +362,14 @@ export async function ladePersonalBlockDaten(
     const istChf = r2(maZeilen.reduce((s, z) => s + z.istChf, 0));
     const diffChf = r2(istChf - planChf);
     wochen.push({
-      label: w.label, von: w.von, bis: w.bis,
-      planH, istH, planChf, istChf, diffChf,
+      label: week.label,
+      von: week.von,
+      bis: week.bis,
+      planH,
+      istH,
+      planChf,
+      istChf,
+      diffChf,
       diffPct: planChf > 0 ? r1((diffChf / planChf) * 100) : null,
       mitarbeiter: maZeilen,
     });
