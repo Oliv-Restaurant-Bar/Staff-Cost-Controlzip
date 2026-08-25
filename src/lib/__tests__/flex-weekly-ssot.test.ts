@@ -152,4 +152,115 @@ describe('Flex weekly SSOT', () => {
       offen: true,
     });
   });
+
+  it('fills the last completed week from authoritative MIRUS rows when the local cache is stale', () => {
+    localStorage.setItem(tenantKey('actual-hours-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-16')]: { hours: 5, source: 'mirus' },
+      [cell('goi', '2026-08-31')]: { hours: 99, source: 'mirus' },
+    }));
+    localStorage.setItem(tenantKey('schedule-v2-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-17')]: shift('08:00', '16:00'),
+      [cell('goi', '2026-08-23')]: shift('08:00', '16:00'),
+    }));
+
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      actualHours: {
+        [cell('goi', '2026-08-17')]: { hours: 7, source: 'mirus' },
+        [cell('goi', '2026-08-23')]: { hours: 9, source: 'mirus' },
+        [cell('goi', '2026-08-24')]: { hours: 10, source: 'mirus' },
+      },
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.lastIstDate).toBe('2026-08-24');
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      offen: false,
+      planH: 16,
+      istH: 16,
+      planCost: 480,
+      istCost: 480,
+    });
+    expect(result.weeks.find(week => week.label === 'KW 35')).toMatchObject({
+      offen: true,
+    });
+    expect(result.weeks.find(week => week.label === 'KW 36')).toMatchObject({
+      offen: true,
+      istH: 0,
+    });
+  });
+
+  it('keeps local absence and additional-cost overrides over remote MIRUS rows', () => {
+    localStorage.setItem(tenantKey('actual-hours-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-17')]: { hours: 0, absenceType: 'FE' },
+      [cell('goi', '2026-08-18')]: { hours: 4, isAdditionalCost: true },
+    }));
+
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      actualHours: {
+        [cell('goi', '2026-08-17')]: { hours: 8, source: 'mirus' },
+        [cell('goi', '2026-08-18')]: { hours: 8, source: 'mirus' },
+        [cell('goi', '2026-08-23')]: { hours: 6, source: 'mirus' },
+      },
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      istH: 6,
+      istCost: 180,
+    });
+  });
+
+  it('does not let additional-cost rows advance the real MIRUS cutoff', () => {
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      actualHours: {
+        [cell('goi', '2026-08-23')]: { hours: 6, source: 'mirus' },
+        [cell('goi', '2026-08-24')]: { hours: 12, source: 'mirus', isAdditionalCost: true },
+      },
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.lastIstDate).toBe('2026-08-23');
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      istH: 6,
+      istCost: 180,
+    });
+    expect(result.weeks.find(week => week.label === 'KW 35')).toMatchObject({
+      offen: true,
+      istH: 0,
+    });
+  });
+
+  it('treats a successful empty remote result as authoritative over stale local hours', () => {
+    localStorage.setItem(tenantKey('actual-hours-2026-08'), JSON.stringify({
+      [cell('goi', '2026-08-23')]: { hours: 99, source: 'mirus' },
+    }));
+
+    const result = buildFlexWeeklyEvaluation({
+      year: 2026,
+      month: 8,
+      todayIso: '2026-08-25',
+      keyFn: tenantKey,
+      actualHours: {},
+      employees: [{ id: 'goi', name: 'Goi Isabelle', wage: 30 }],
+    });
+
+    expect(result.lastIstDate).toBe('');
+    expect(result.weeks.find(week => week.label === 'KW 34')).toMatchObject({
+      offen: false,
+      istH: 0,
+      istCost: 0,
+    });
+  });
 });

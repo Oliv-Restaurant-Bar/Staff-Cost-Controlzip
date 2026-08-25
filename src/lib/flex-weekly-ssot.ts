@@ -8,8 +8,10 @@ interface StoredEntry extends DayNetFields {
   absenceType?: string;
   hours?: number;
   source?: string;
+  isAdditionalCost?: boolean;
 }
 type StoredValue = number | StoredEntry;
+type ActualHoursRecord = Record<string, StoredValue>;
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export interface FlexDayEntry {
@@ -77,6 +79,30 @@ function readRecord(key: string): Record<string, StoredValue> {
   }
 }
 
+/**
+ * Supabase is authoritative for imported MIRUS hours. Local absence/additional-
+ * cost markings remain protected because they are browser-only overrides.
+ */
+function resolveActualHoursRecord(
+  year: number,
+  month: number,
+  keyFn: KeyFn,
+  remote?: ActualHoursRecord,
+): ActualHoursRecord {
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  const local = readRecord(keyFn(`actual-hours-${prefix}`));
+  if (!remote) return local;
+
+  const merged: ActualHoursRecord = { ...remote };
+  for (const [key, localValue] of Object.entries(local)) {
+    const localEntry = typeof localValue === 'object' && localValue !== null ? localValue : null;
+    if (localEntry?.absenceType || localEntry?.isAdditionalCost) {
+      merged[key] = localValue;
+    }
+  }
+  return merged;
+}
+
 /** Daily plan hours for one employee from the same schedule cache used on PersonalFix. */
 export function loadDailyPlanDetails(
   empId: string,
@@ -116,9 +142,10 @@ export function loadDailyIstDetails(
   cutoffDay: number | null,
   wage: number,
   keyFn: KeyFn = key => key,
+  actualHours?: ActualHoursRecord,
 ): FlexDayEntry[] {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  const data = readRecord(keyFn(`actual-hours-${prefix}`));
+  const data = actualHours ?? readRecord(keyFn(`actual-hours-${prefix}`));
   const entries: FlexDayEntry[] = [];
   for (const [cellKey, val] of Object.entries(data)) {
     const date = cellKey.slice(-10);
@@ -127,6 +154,7 @@ export function loadDailyIstDetails(
     if (cutoffDay !== null && day > cutoffDay) continue;
     const absenceType = typeof val === 'object' ? val.absenceType : undefined;
     if (absenceType === 'FE') continue;
+    if (typeof val === 'object' && val.isAdditionalCost) continue;
     const hours = typeof val === 'number' ? val : (val.hours ?? 0);
     if (hours > 0) {
       entries.push({
@@ -147,15 +175,17 @@ export function loadMirusIstStichtag(
   year: number,
   month: number,
   keyFn: KeyFn = key => key,
+  actualHours?: ActualHoursRecord,
 ): string {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
-  const data = readRecord(keyFn(`actual-hours-${prefix}`));
+  const data = actualHours ?? readRecord(keyFn(`actual-hours-${prefix}`));
   let max = '';
   for (const [cellKey, val] of Object.entries(data)) {
     const date = cellKey.slice(-10);
     if (!date.startsWith(prefix)) continue;
     const source = typeof val === 'object' ? val.source : undefined;
     if (source === 'plan_sync') continue;
+    if (typeof val === 'object' && val.isAdditionalCost) continue;
     const hours = typeof val === 'number' ? val : (val.hours ?? 0);
     if (hours > 0 && date > max) max = date;
   }
@@ -189,6 +219,7 @@ export function buildFlexWeeklyEvaluation(params: {
   keyFn?: KeyFn;
   cutoffDay?: number | null;
   todayIso?: string;
+  actualHours?: ActualHoursRecord;
 }): FlexWeeklyEvaluation {
   const { year, month, employees } = params;
   const keyFn = params.keyFn ?? (key => key);
@@ -196,7 +227,8 @@ export function buildFlexWeeklyEvaluation(params: {
   const now = new Date();
   const todayIso = params.todayIso
     ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const lastIstDate = loadMirusIstStichtag(year, month, keyFn);
+  const actualHours = resolveActualHoursRecord(year, month, keyFn, params.actualHours);
+  const lastIstDate = loadMirusIstStichtag(year, month, keyFn, actualHours);
   type EmployeeDay = { planH: number; istH: number; planCost: number; istCost: number };
   const byDate = new Map<string, Map<string, EmployeeDay>>();
   const employeeInfo = new Map(employees.map(emp => [emp.id, emp]));
@@ -227,7 +259,7 @@ export function buildFlexWeeklyEvaluation(params: {
       value.planH += entry.hours;
       value.planCost += entry.cost;
     }
-    for (const entry of loadDailyIstDetails(sourceId, year, month, cutoffDay, employee.wage, keyFn)) {
+    for (const entry of loadDailyIstDetails(sourceId, year, month, cutoffDay, employee.wage, keyFn, actualHours)) {
       if (!isActiveDate(entry.date)) continue;
       const value = cell(entry.date, employee.id);
       value.istH += entry.hours;

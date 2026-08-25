@@ -2110,6 +2110,7 @@ export default function PersonalFixPage() {
   const [pkDaten, setPkDaten] = useState<PersonalkostenDaten | null>(null);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
+  const [supabaseActualHoursLoaded, setSupabaseActualHoursLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [varHours, setVarHours] = useState<Record<string, number>>(() => loadVarHours(tenantKey));
@@ -2378,6 +2379,8 @@ export default function PersonalFixPage() {
     // noch laufende Requests verworfen (sonst könnte ein out-of-order Response
     // den frischeren Spiegel/State wieder mit alten Daten überschreiben).
     let stale = false;
+    setSupabaseActualHours({});
+    setSupabaseActualHoursLoaded(false);
     const scheduleMonthDate = new Date(selectedYear, selectedMonth - 1, 1);
     loadScheduleForMonth(scheduleMonthDate, tenantId).then(supabaseSchedule => {
       if (stale) return; // veralteter Request – verwerfen
@@ -2422,6 +2425,7 @@ export default function PersonalFixPage() {
       if (!supabaseRaw) return; // Supabase error – keep local result
       // Vollständige Einträge speichern (inkl. isAdditionalCost für Zusatzkosten-Berechnung)
       setSupabaseActualHours(supabaseRaw);
+      setSupabaseActualHoursLoaded(true);
 
       // Read localStorage now — needed for FE absence check and write-back
       const monthKey = tenantKey(`actual-hours-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
@@ -4122,6 +4126,7 @@ export default function PersonalFixPage() {
       month: selectedMonth,
       keyFn: tenantKey,
       todayIso: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
+      actualHours: supabaseActualHoursLoaded ? supabaseActualHours : undefined,
       employees: variableEmployees.map(emp => {
         const id = String(emp.id);
         const baseId = splitBaseId(id);
@@ -4194,7 +4199,7 @@ export default function PersonalFixPage() {
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff, bisIst };
-  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey, wageSplits]);
+  }, [variableEmployees, selectedYear, selectedMonth, planHours, istHours, abwMode, socialCostRates, agSozOff, tenantKey, wageSplits, supabaseActualHours, supabaseActualHoursLoaded]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus

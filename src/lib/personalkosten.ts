@@ -26,6 +26,7 @@ import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { canonicalAbsenceCode } from '@/lib/bedarf-stunden-utils';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
+import type { ActualHourEntry } from '@/lib/supabase-db';
 import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
@@ -81,6 +82,8 @@ export interface PersonalkostenDaten {
   planStdProTag: Record<string, Record<string, number>>;
   /** Ist-Stunden je 'YYYY-MM-DD' je empId (MIRUS, ohne FE/Absenzen/Zusatzkosten) */
   istStdProTag:  Record<string, Record<string, number>>;
+  /** Rohe, tenant-gefilterte Supabase-Istwerte für gemeinsame Detailauswertungen. */
+  actualHoursRaw?: Record<string, ActualHourEntry>;
   /** Tage (Set 'YYYY-MM-DD'), für die Ist-Stunden importiert sind → TAG-REGEL */
   istTage: Set<string>;
   /**
@@ -693,7 +696,7 @@ export async function ladePersonalkostenDaten(
     wageSplits: splits,
     agFactor: socialCostFactorFromRates(rates),
     rates,
-    planStdProTag, istStdProTag, istTage, absenzKreditTageProMa,
+    planStdProTag, istStdProTag, actualHoursRaw: supaIst, istTage, absenzKreditTageProMa,
     umsatzIstProTag, umsatzBudgetMonat, zielQuotePct, pkBudgetMonat,
     gewichte: ladeWochentagsGewichte(tenantKey),
   };
