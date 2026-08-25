@@ -4121,6 +4121,7 @@ export default function PersonalFixPage() {
       year: selectedYear,
       month: selectedMonth,
       keyFn: tenantKey,
+      todayIso: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
       employees: variableEmployees.map(emp => {
         const id = String(emp.id);
         const baseId = splitBaseId(id);
@@ -4154,7 +4155,7 @@ export default function PersonalFixPage() {
           diffPct: planTotal > 0 ? (diff / planTotal) * 100 : null,
         };
       });
-    const weeks: AbwRow[] = evaluation.weeks.map(week => {
+    const weeks: AbwRow[] = evaluation.weeks.filter(week => !week.offen).map(week => {
         const plan = week.planCost;
         const ist = week.istCost;
         return {
@@ -4173,11 +4174,10 @@ export default function PersonalFixPage() {
     const monthIst  = days.reduce((s, d) => s + d.istTotal,  0);
     const monthDiff = monthIst - monthPlan;
 
-    // Nur-bis-Ist-Sicht: Plan/Ist/Diff ausschliesslich über Tage bis zum
-    // Ist-Stichtag (Total/Kumulation der Flex-Auswertung; Zukunft zählt nicht).
-    const bisIstDays = lastIstDate ? days.filter(d => d.date <= lastIstDate) : [];
-    const bisIstPlan = bisIstDays.reduce((s, d) => s + d.planTotal, 0);
-    const bisIstIst  = bisIstDays.reduce((s, d) => s + d.istTotal,  0);
+    // «Total (abgerechnete Wochen)» exakt über dieselbe abgeschlossene
+    // Kalenderwochen-Liste wie das Cockpit und der Cockpit-PDF.
+    const bisIstPlan = weeks.reduce((sum, week) => sum + week.planTotal, 0);
+    const bisIstIst  = weeks.reduce((sum, week) => sum + week.istTotal, 0);
     const bisIst = { plan: bisIstPlan, ist: bisIstIst, diff: bisIstIst - bisIstPlan, lastIstDate };
 
     const monthStatus = ampelStatus(monthDiff, monthPlan);

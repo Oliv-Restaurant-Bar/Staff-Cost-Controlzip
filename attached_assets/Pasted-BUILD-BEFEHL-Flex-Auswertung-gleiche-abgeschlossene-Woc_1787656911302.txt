@@ -1,0 +1,20 @@
+BUILD-BEFEHL — Flex-Auswertung: gleiche abgeschlossene Wochen wie das Cockpit anzeigen
+
+Problem: Die „Personal · Flex-Auswertung Plan vs. Ist" (im Cockpit-PDF und in der Live-Ansicht) zeigt nicht dieselben Wochen wie die Cockpit-Wochenübersicht. Im Oliv-Report (Stand 25.8.) endet die Flex-Auswertung bei KW33, obwohl die Cockpit-Kopfzeile „letzte abgeschlossene Woche = KW34 (17.08.–23.08.)" ausweist und KW34 überall sonst im Report erscheint (Kopf-KPI, Wochentabelle, Waren-Anomalie). KW34 hat gültige Ist-Stunden (MIRUS importiert, 794 h) und darf nicht als „offene Woche ohne hochgeladenes Ist" weggelassen werden.
+
+Ziel: Die Flex-Auswertung soll exakt dieselben abgeschlossenen Kalenderwochen verwenden wie die Cockpit-Wochenübersicht — d. h. dieselbe „abgeschlossene Woche"-Definition. Wenn das Cockpit KW34 als letzte abgeschlossene Woche führt, muss KW34 auch in der Flex-Auswertung erscheinen (mit allen Mitarbeitern), sowohl on-screen als auch im PDF.
+
+Vorgehen:
+
+Finde die Wochen-Einschlusslogik der Flex-Auswertung (Kriterium „abgerechnete Woche" / „offene Woche ohne hochgeladenes Ist") und die Wochen-Definition der Cockpit-Wochenübersicht („letzte abgeschlossene Woche").
+Ersetze das Flex-eigene Kriterium durch dieselbe abgeschlossene-Wochen-Quelle wie das Cockpit (eine gemeinsame Funktion / Source of Truth). Eine Woche, die das Cockpit als abgeschlossen zeigt, muss auch die Flex-Auswertung zeigen.
+Die bereits korrigierte tägliche Berechnung (Kappung am letzten echten MIRUS-Ist-Tag) beibehalten — nur die Wochen-Auswahl angleichen.
+
+Erwartetes Ergebnis (Oliv KW34): KW34 erscheint in der Flex-Auswertung mit den Live-Werten — Total Ist 222.3 h, Flex Ist CHF 6'970, +CHF 262 (+3.9 %), inkl. Dzhymsheleishvili (22.9 h / CHF 661), Goi (41.0 h), Ouisroutane (14.4 h). Das „Total (abgerechnete Wochen)" erhöht sich entsprechend um die KW34-Werte.
+
+Abnahme:
+
+Die Wochenliste der Flex-Auswertung ist identisch mit den abgeschlossenen Wochen der Cockpit-Wochenübersicht (aktuell bis KW34) — keine Woche fehlt, keine zu viel.
+PDF und On-Screen zeigen dieselben Wochen und dieselben Zahlen.
+Gilt für Oliv und Beaulieu (bei Beaulieu fehlte KW34 in der Flex-Auswertung ebenfalls).
+Keine Änderung an Cockpit-KPIs oder gespeicherten Daten.

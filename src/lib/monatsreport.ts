@@ -19,6 +19,7 @@
  *  - Stunden Ist/Plan:        ladePersonalkostenDaten (MIRUS actual_hours / Dienstplan)
  */
 import { supabase } from '@/integrations/supabase/client';
+import { getLastCompletedWeekRange } from '@/lib/completed-week';
 import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, vjTagWerte } from '@/lib/umsatz';
 import { mwstDivisorTakeaway } from '@/lib/mwst';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
@@ -219,27 +220,10 @@ export function computeWeekRange(
     }
     case 'lastComplete':
     default: {
-      const todayIso = iso(today);
-      if (todayIso >= fromIso && todayIso <= toIso) {
-        // Aktueller Monat: letzte vollständig abgeschlossene Woche Mo–So vor
-        // der laufenden Woche (wie bisher).
-        const thisMonday = mondayOf(today);
-        rawFrom = new Date(thisMonday);
-        rawFrom.setDate(rawFrom.getDate() - 7);
-        rawTo = new Date(thisMonday);
-        rawTo.setDate(rawTo.getDate() - 1);
-      } else {
-        // Anderer Monat gewählt: letzte abgeschlossene Woche INNERHALB des
-        // Monats — sonst fiele die reale letzte Woche aus dem Monat und die
-        // Woche-Spalte bliebe leer. Sonntag = letzter Sonntag ≤ Monatsende.
-        const [ty, tm, td] = toIso.split('-').map(Number);
-        const monthEnd = new Date(ty, tm - 1, td);
-        const lastSunday = new Date(monthEnd);
-        lastSunday.setDate(lastSunday.getDate() - (monthEnd.getDay() % 7));
-        rawTo = lastSunday;
-        rawFrom = new Date(lastSunday);
-        rawFrom.setDate(rawFrom.getDate() - 6);
-      }
+      const range = getLastCompletedWeekRange(fromIso, toIso, iso(today));
+      if (!range) return { weekFrom: null, weekTo: null };
+      rawFrom = new Date(`${range.from}T12:00:00`);
+      rawTo = new Date(`${range.to}T12:00:00`);
       break;
     }
   }

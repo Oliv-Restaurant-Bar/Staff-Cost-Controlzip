@@ -1,4 +1,5 @@
 import { calculateDayNetHours, type DayNetFields } from '@/hooks/useShiftConfig';
+import { getLastCompletedWeekRange } from '@/lib/completed-week';
 
 type KeyFn = (key: string) => string;
 interface StoredEntry extends DayNetFields {
@@ -187,10 +188,14 @@ export function buildFlexWeeklyEvaluation(params: {
   employees: FlexWeeklyEmployeeInput[];
   keyFn?: KeyFn;
   cutoffDay?: number | null;
+  todayIso?: string;
 }): FlexWeeklyEvaluation {
   const { year, month, employees } = params;
   const keyFn = params.keyFn ?? (key => key);
   const cutoffDay = params.cutoffDay ?? null;
+  const now = new Date();
+  const todayIso = params.todayIso
+    ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const lastIstDate = loadMirusIstStichtag(year, month, keyFn);
   type EmployeeDay = { planH: number; istH: number; planCost: number; istCost: number };
   const byDate = new Map<string, Map<string, EmployeeDay>>();
@@ -240,18 +245,28 @@ export function buildFlexWeeklyEvaluation(params: {
       istCost: [...perEmployee.values()].reduce((sum, value) => sum + value.istCost, 0),
     }));
 
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  const daysInMonth = new Date(year, month, 0).getDate();
   const weekDates = new Map<string, string[]>();
-  for (const day of days) {
-    const monday = mondayOf(day.date);
-    (weekDates.get(monday) ?? weekDates.set(monday, []).get(monday)!).push(day.date);
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = `${monthPrefix}-${String(day).padStart(2, '0')}`;
+    const monday = mondayOf(date);
+    (weekDates.get(monday) ?? weekDates.set(monday, []).get(monday)!).push(date);
   }
+  const completedRange = getLastCompletedWeekRange(
+    `${monthPrefix}-01`,
+    `${monthPrefix}-${String(daysInMonth).padStart(2, '0')}`,
+    todayIso,
+  );
 
   const weeks: FlexWeeklyWeek[] = [...weekDates.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([monday, allDates]) => {
-      const offen = lastIstDate === '' || allDates.every(date => date > lastIstDate);
-      const teilweise = !offen && allDates.some(date => date > lastIstDate);
-      const dates = offen ? allDates : allDates.filter(date => date <= lastIstDate);
+      const offen = completedRange === null || monday > completedRange.from;
+      const teilweise = !offen && (lastIstDate === '' || allDates.some(date => date > lastIstDate));
+      const dates = offen
+        ? allDates
+        : (lastIstDate ? allDates.filter(date => date <= lastIstDate) : []);
       const dateSet = new Set(dates);
       const employeesForWeek: FlexWeeklyEmployeeRow[] = [];
       for (const [id, employee] of employeeInfo) {

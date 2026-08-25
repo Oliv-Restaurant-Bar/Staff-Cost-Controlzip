@@ -312,6 +312,7 @@ export async function ladePersonalBlockDaten(
     year,
     month,
     keyFn: tenantKey,
+    todayIso: heuteIso,
     employees: flexEmployees.map(emp => {
       const rate = getEmployerCostRate(emp, daten.rates);
       const id = String(emp.id);
