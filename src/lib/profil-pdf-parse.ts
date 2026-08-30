@@ -781,7 +781,7 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       mwstSatz: 2.6,
     };
   },
-  fideco: (text) => {
+  fideco: (text, lines) => {
     const g = generischerKopf(text);
     // «MwSt.-Kz. 1: Netto 2.60% 3.416,45 CHF MwSt. 2.60% 88,85 CHF» — Kz-Zeilen summieren.
     let netto = 0, mwst = 0, gefunden = false;
@@ -802,11 +802,35 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       /\bLS[\s-]*Nr\.?\s*:?\s*(\d{6,10})/i,
     ]);
     const lsDatum = parseDatumCH(suche(text, [/LS[\s-]*Datum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
-    const lsBetrag = gefunden ? null
+    // Neuer Fideco-Lieferschein:
+    // 1) Autoritativ ist die Zeile, die mit «Gesamt» beginnt und mit dem
+    //    letzten «CHF <Betrag>» endet. Die CHILLED-Zwischensumme ist wegen
+    //    Rundungsdifferenzen ausdrücklich keine Primärquelle.
+    let gesamtBetrag: number | null = null;
+    for (const line of lines) {
+      if (!/^\s*Gesamt\b/i.test(line)) continue;
+      const match = new RegExp(`CHF\\s*(${BETRAG_RE.source})\\s*$`, 'i').exec(line);
+      const betrag = match ? parseBetrag(match[1]) : null;
+      if (betrag !== null) gesamtBetrag = betrag;
+    }
+    // 2) Fallback: echte Artikelzeilen beginnen mit einer Artikelnummer und
+    //    enden mit «CHF <Betrag>». Damit sind «CHILLED»-/«Gesamt»-Summenzeilen
+    //    ausgeschlossen. Der jeweils letzte CHF-Wert ist der Positionsbetrag.
+    const positionsBetraege = lines.flatMap(line => {
+      if (!/^\s*[A-Z]?\d{3,8}\b/i.test(line)) return [];
+      const match = new RegExp(`CHF\\s*(${BETRAG_RE.source})\\s*$`, 'i').exec(line);
+      const betrag = match ? parseBetrag(match[1]) : null;
+      return betrag === null ? [] : [betrag];
+    });
+    const positionsNetto = positionsBetraege.length > 0
+      ? rundung2(positionsBetraege.reduce((summe, betrag) => summe + betrag, 0))
+      : null;
+    const legacyLsBetrag = gefunden ? null
       : sucheBetrag(text, [new RegExp(
         `(?:Gesamt[\\s-]*Betrag|CHF\\s*\\/\\s*CHILLED(?:\\s+(?:Gesamt[\\s-]*Betrag|Total))?|Total\\s+CHF\\s*\\/\\s*CHILLED)\\s*:?\\s*(?:CHF\\s*)?(${BETRAG_RE.source})`,
         'i',
       )]);
+    const lsBetrag = gesamtBetrag ?? positionsNetto ?? legacyLsBetrag;
     // Scan-Lieferschein erkannt (LS-Nr oder LS-Datum vorhanden): der Betrag
     // kommt AUSSCHLIESSLICH aus «Gesamt-Betrag» — generische Labels
     // («Warenwert» u.ä.) dürfen im Scan-Pfad KEINEN Betrag liefern (kein

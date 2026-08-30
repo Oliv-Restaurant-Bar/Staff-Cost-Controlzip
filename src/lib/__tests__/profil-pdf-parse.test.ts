@@ -204,19 +204,27 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.netto).toBe(164.5);
     expect(r.mwstSatz).toBe(2.6);
   });
-  it('Fideco Einzel-Lieferschein 7750842: Positionen und gedruckter CHF/CHILLED-Betrag stimmen überein', () => {
+  it('Fideco Einzel-Lieferschein 7750842: Gesamt ist Netto, MwSt 2.6 %, Brutto automatisch', () => {
     const r = parse('fideco-ls-7750842.txt');
     expect(r.profil?.id).toBe('fideco');
     expect(r.profil?.konto).toBe('4060');
     expect(r.profil?.kategorie).toBe('Food/Fleisch');
     expect(r.rechnungsNr).toBe('7750842');
     expect(r.lieferdatum).toBe('2026-08-24');
-    expect(r.netto).toBe(164.5);
+    expect(r.netto).toBe(813.84);
+    expect(r.mwstSatz).toBe(2.6);
+    expect(r.mwst).toBe(21.16);
+    expect(r.brutto).toBe(835);
     expect(r.dokumenttyp).toBe('lieferschein');
-    expect(r.lieferungen).toHaveLength(1);
-    expect(r.lieferungen[0].positionen).toHaveLength(2);
-    expect(r.lieferungen[0].nettoTotal).toBe(164.5);
-    expect(r.hinweise.join(' ')).not.toContain('Positionssumme');
+    expect(r.hinweise.join(' ')).not.toContain('Netto-Betrag nicht erkannt');
+  });
+  it('Fideco 7750842: ohne Gesamt-Zeile summiert der Fallback nur Artikelpositionen, nie CHILLED', () => {
+    const text = fx('fideco-ls-7750842.txt')
+      .replace(/^Gesamt\b.*$/m, '');
+    const r = parseProfilPdf(text, P);
+    expect(r.netto).toBe(813.84);
+    expect(r.mwst).toBe(21.16);
+    expect(r.brutto).toBe(835);
   });
   it('Fideco Scan ohne LS-Datum/Gesamt-Betrag: Felder bleiben leer (nie raten)', () => {
     const text = fx('fideco-ls-7746026-ocr.txt')

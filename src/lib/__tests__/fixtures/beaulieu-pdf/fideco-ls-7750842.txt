@@ -7,7 +7,9 @@ LS-Datum 24.08.26
 Kundennummer 27135
 
 Artikel Bezeichnung Menge Einheit Preis Betrag M
-4851 Rindsentrecôte 2.350 KG 43.10 101.29 1
-4903 Kalbsgeschnetzeltes 1.800 KG 35.12 63.21 1
+4851 Rindsentrecôte 5.550 KG 43.11 0.00 CHF 239.26
+4903 Kalbsgeschnetzeltes 2.780 KG 35.13 0.00 CHF 97.65
+4921 Rindsfilet 9.000 KG 52.99 0.00 CHF 476.93
 
-CHF / CHILLED Gesamt-Betrag 164.50
+CHILLED Gesamt-Betrag CHF 813.83
+Gesamt   3   18   18   18.00   0.00   19.530   CHF 813.84
