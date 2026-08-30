@@ -75,7 +75,8 @@ import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } f
 import { PreisAenderungenTab } from '@/components/waren/PreisAenderungenTab';
 import { kontoSplitsAusPositionen, erzwingeRegelPosition, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
-import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN } from '@/lib/waren-analyse';
+import { direkterWarenaufwand, direktAnteilNet, kontoShares, buildDirektKontoVergleich, buildKontoDrilldown, buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, DIREKTE_WARENKONTEN, berechneWarenrechnungsWkq } from '@/lib/waren-analyse';
+import { zaehlendeEintraege } from '@/lib/waren-monatsabgleich';
 import {
   buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
   type UebernahmeDraft, type UebernahmeKandidat,
@@ -231,14 +232,11 @@ function fmtPct(val: number): string {
   return val.toFixed(1) + ' %';
 }
 /**
- * Relevante Warenkosten (Food + Beverage) einer Eintragsliste – Basis JEDER
- * Warenkostenquote. Sonstiges ist bewusst AUSGESCHLOSSEN. Zusätzlich zählt
- * seit der Kontoklassen-Trennung NUR der Anteil auf Warenkosten-Konten
- * (4000–Grenze): Betriebskosten-Anteile (> Grenze) fliessen NIE in die WKQ.
- * Single Source of Truth: `nurWarenAnteil` + `computeWarenkostenTotals`.
+ * Kompatibilitätshelfer für bestehende Chart-/Vorschau-Pfade. Die WKQ-Basis
+ * ist heute ausschliesslich direkter Warenaufwand netto (4020–4070).
  */
-function relevantNetOf(list: InvoiceEntry[], grenze: number): number {
-  return computeWarenkostenTotals(nurWarenAnteil(list, grenze), grenze).relevantNet;
+function relevantNetOf(list: InvoiceEntry[], _grenze: number): number {
+  return direkterWarenaufwand(list).direktNet;
 }
 function generateId(): string {
   return `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -647,7 +645,7 @@ export default function WarenrechnungenPage() {
     const istWoche = granular === 'woche';
     const istJahr = granular === 'jahr';
     return buildWarenAbgleich({
-      invoices: istJahr ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      invoices: zaehlendeEintraege(istJahr ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries),
       journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
       warenkontoNummern: warenkonten.map(k => k.value),
       supplierNames: suppliers.map(s => s.name),
@@ -660,9 +658,9 @@ export default function WarenrechnungenPage() {
 
   /** FIBU-/Drilldown-Basis: Wochenansicht nur Wochen-Anteil, Jahresansicht das Jahr. */
   const fibuEntries = useMemo(
-    () => granular === 'jahr' ? jahrEntries
+    () => zaehlendeEintraege(granular === 'jahr' ? jahrEntries
       : granular === 'woche' ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde)
-      : entries,
+      : entries),
     [granular, entries, jahrEntries, wochenStart, wochenEnde],
   );
 
@@ -835,7 +833,7 @@ export default function WarenrechnungenPage() {
       const mk = `${year}-${String(m).padStart(2, '0')}`;
       const jr = jahrJournalMonate[m - 1] ?? [];
       if (jr.length === 0) continue;
-      const inv = jahrEntries.filter(e => e.date.startsWith(mk));
+      const inv = zaehlendeEintraege(jahrEntries.filter(e => e.date.startsWith(mk)));
       const ab = buildWarenAbgleich({
         invoices: inv,
         journal: jr,
@@ -856,7 +854,7 @@ export default function WarenrechnungenPage() {
   }, [tab, granular, jahrJournalMonate, jahrFibuStates, jahrEntries, warenkonten, suppliers, aliases, aliasGruppen, warenGrenze, year]);
   const uebernahmeKandidatenAlle = useMemo(
     () => granular === 'monat'
-      ? (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, entries) : [])
+      ? (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState, zaehlendeEintraege(entries)) : [])
       : granular === 'jahr'
         ? (jahrKandidaten?.kandidaten ?? [])
         : [],
@@ -874,7 +872,7 @@ export default function WarenrechnungenPage() {
     if (granular !== 'monat' || abgrenzungenAnzeige.offen.length === 0) return [];
     return baueAbgrenzungVorschlaege({
       offen: abgrenzungenAnzeige.offen, journalMonat: monthKey,
-      invoices: entries, resolve: abgleichResolver,
+       invoices: zaehlendeEintraege(entries), resolve: abgleichResolver,
     });
   }, [granular, abgrenzungenAnzeige, monthKey, entries, abgleichResolver]);
   /** Bestätigungs-Dialog «auf Leistungsmonat umdatieren» (+ WKQ-Vorschau). */
@@ -1089,7 +1087,7 @@ export default function WarenrechnungenPage() {
     // Wochen-/Jahresansicht: gleiche Basis wie der Lieferanten-Abgleich.
     const istWoche = granular === 'woche';
     return buildKontoAbgleich({
-      invoices: granular === 'jahr' ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries,
+      invoices: zaehlendeEintraege(granular === 'jahr' ? jahrEntries : istWoche ? entries.filter(e => e.date >= wochenStart && e.date <= wochenEnde) : entries),
       journal: istWoche && journal ? journal.filter(j => j.date >= wochenStart && j.date <= wochenEnde) : journal,
       kontoNamen, relevanteKonten: warenkonten.map(k => k.value),
       // Feldschlösschen: FIBU bucht pauschal (grob 4030), Erfassung splittet nach
@@ -1245,12 +1243,14 @@ export default function WarenrechnungenPage() {
   }, [granular, year, tenantId, ignoreListe, jahrFibuNonce]);
 
   /** Sicht-Periode der Seite: ganzer Monat (wie bisher), gewählte Woche oder Jahr. */
-  const viewEntries = useMemo(() => {
+  const rawViewEntries = useMemo(() => {
     if (granular === 'monat') return entries;
     if (granular === 'jahr') return jahrEntries;
     const extra = wocheExtra?.key === `${tenantId}|${wochenEnde.slice(0, 7)}` ? wocheExtra.entries : [];
     return [...entries, ...extra].filter(e => e.date >= wochenStart && e.date <= wochenEnde);
   }, [granular, entries, jahrEntries, wocheExtra, wochenStart, wochenEnde, tenantId]);
+  /** Alle betraglichen Sichten verwenden ausschliesslich zählende Belege. */
+  const viewEntries = useMemo(() => zaehlendeEintraege(rawViewEntries), [rawViewEntries]);
   const viewRevenueByDate = useMemo(() => {
     if (granular === 'monat') return revenueByDate;
     if (granular === 'jahr') return jahrRevenue;
@@ -1460,7 +1460,7 @@ export default function WarenrechnungenPage() {
     if (analyseMode === 'week') {
       const { from, to } = isoWeekRange(aYear, aWeekNum);
       const seen = new Set<string>();
-      let d = new Date(from + 'T12:00:00');
+      const d = new Date(from + 'T12:00:00');
       const toD = new Date(to + 'T12:00:00');
       while (d <= toD) {
         seen.add(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
@@ -1547,28 +1547,33 @@ export default function WarenrechnungenPage() {
     void ladeUmsatzTage(tenantId, von, bis).then(setUmsatzTage).catch(() => setUmsatzTage(new Map()));
   }, [kpiDialog, umsatzTage, tenantId, monthKey, granular, wochenStart, wochenEnde, year]);
 
-  const stats = useMemo(() => computeMonthStats(viewEntries, viewRevenueByDate), [viewEntries, viewRevenueByDate]);
+  const countingViewEntries = viewEntries;
+  const stats = useMemo(() => computeMonthStats(countingViewEntries, viewRevenueByDate), [countingViewEntries, viewRevenueByDate]);
   // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
   // Kontoklassen: nur Warenkosten-Anteile (4000–Grenze); Betriebskosten separat.
-  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(viewEntries, warenGrenze), warenGrenze), [viewEntries, warenGrenze]);
-  const monthBetrieb = useMemo(() => sumBetriebNet(viewEntries, warenGrenze), [viewEntries, warenGrenze]);
+  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(countingViewEntries, warenGrenze), warenGrenze), [countingViewEntries, warenGrenze]);
+  const monthBetrieb = useMemo(() => sumBetriebNet(countingViewEntries, warenGrenze), [countingViewEntries, warenGrenze]);
 
   const totalRevenue = useMemo(
     () => Object.values(viewRevenueByDate).reduce((s, v) => s + v, 0),
     [viewRevenueByDate],
   );
   // Quote = relevante Warenkosten (Food+Beverage) / Umsatz; Sonstiges ausgeschlossen.
-  const monthPct     = warenkostenQuote(monthTotals.relevantNet, totalRevenue);
+  const monthWkq = useMemo(
+    () => berechneWarenrechnungsWkq(countingViewEntries, totalRevenue),
+    [countingViewEntries, totalRevenue],
+  );
+  const monthPct = monthWkq.pct;
   // «Warenkosten heute» bleibt in JEDER Granularität «heute» — in der Jahres-
   // ansicht liefert der Jahresbestand die Basis (der geladene Monat kann dort
   // vom heutigen Monat abweichen).
   const todayEntries = useMemo(
-    () => (granular === 'jahr' ? jahrEntries : entries).filter(e => e.date === todayStr),
+    () => zaehlendeEintraege(granular === 'jahr' ? jahrEntries : entries).filter(e => e.date === todayStr),
     [granular, jahrEntries, entries, todayStr],
   );
   const todayNet     = useMemo(() => todayEntries.reduce((s, e) => s + e.amountNet, 0), [todayEntries]);
   const todayRevenue = (granular === 'jahr' ? jahrRevenue : revenueByDate)[todayStr] ?? 0;
-  const todayPct     = warenkostenQuote(relevantNetOf(todayEntries, warenGrenze), todayRevenue);
+  const todayPct = berechneWarenrechnungsWkq(todayEntries, todayRevenue).pct;
 
   const datesWithEntries = useMemo(() => Array.from(new Set(viewEntries.map(e => e.date))).sort(), [viewEntries]);
 
@@ -1602,8 +1607,8 @@ export default function WarenrechnungenPage() {
     const basisUmsatz = erfassungDatumFilter
       ? (viewRevenueByDate[erfassungDatumFilter] ?? 0)
       : totalRevenue;
-    return warenkostenQuote(relevantNetOf(filteredEntries, warenGrenze), basisUmsatz);
-  }, [filteredEntries, warenGrenze, totalRevenue, erfassungDatumFilter, viewRevenueByDate]);
+    return berechneWarenrechnungsWkq(filteredEntries, basisUmsatz).pct;
+  }, [filteredEntries, totalRevenue, erfassungDatumFilter, viewRevenueByDate]);
   /** In der Liste sichtbare Einträge (direkt-Ansicht blendet reine 4090/4701/4800-Einträge aus). */
   const anzeigeEntries = useMemo(
     () => listeAnsicht === 'direkt' ? filteredEntries.filter(e => Math.abs(direktAnteilNet(e)) > 0.004) : filteredEntries,
@@ -1666,7 +1671,7 @@ export default function WarenrechnungenPage() {
   const erfassungTotalSplit = useMemo(() => {
     // EXAKT dieselbe Basis wie die angezeigte Total-Zahl der Zeile:
     // die gefilterten Einträge (ohne Filter = ganzer Monat).
-    const basis = filteredEntries;
+    const basis = zaehlendeEintraege(filteredEntries);
     const total = basis.reduce((sum, e) => sum + (Number.isFinite(e.amountNet) ? e.amountNet : 0), 0);
     const direkt = direkterWarenaufwand(basis).direktNet;
     const depot = basis.reduce((sum, e) => sum + depotAnteilNet(e), 0);
@@ -1675,7 +1680,7 @@ export default function WarenrechnungenPage() {
   }, [filteredEntries]);
 
   /** Obere Kennzahl: direkter Warenaufwand 4020–4070 des Monats (WKQ-Basis). */
-  const monthDirektNet = useMemo(() => direkterWarenaufwand(viewEntries).direktNet, [viewEntries]);
+  const monthDirektNet = monthWkq.directNet;
 
   // Alle Lieferanten die im aktuellen Monat Einträge haben (für Dropdown)
   const entrySupplierNames = useMemo(() =>
@@ -1785,6 +1790,7 @@ export default function WarenrechnungenPage() {
   }
 
   const weeklyData = useMemo((): WeekData[] => {
+    const activeEntries = zaehlendeEintraege(entries);
     const allDays = getDaysInMonth(year, month);
     // Nur vergangene oder heutige Tage
     const pastDays = allDays.filter(d => d <= todayStr);
@@ -1802,9 +1808,9 @@ export default function WarenrechnungenPage() {
     let runCumRel = 0;
     const cumByDate: Record<string, { cumNet: number; cumRev: number; cumRel: number }> = {};
     for (const d of allDays.filter(d2 => d2 <= todayStr)) {
-      const dayEntries = entries.filter(e => e.date === d);
+      const dayEntries = activeEntries.filter(e => e.date === d);
       runCumNet += dayEntries.reduce((s, e) => s + e.amountNet, 0);
-      runCumRel += relevantNetOf(dayEntries, warenGrenze);
+      runCumRel += direkterWarenaufwand(dayEntries).direktNet;
       runCumRev += revenueByDate[d] ?? 0;
       cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev, cumRel: runCumRel };
     }
@@ -1822,14 +1828,15 @@ export default function WarenrechnungenPage() {
       const weekDays = pastDays.filter(d => d >= from && d <= to);
 
       const revenue = weekDays.reduce((s, d) => s + (revenueByDate[d] ?? 0), 0);
-      const costNet = weekDays.reduce((s, d) => s + entries.filter(e => e.date === d).reduce((s2, e) => s2 + e.amountNet, 0), 0);
-      const costRel = weekDays.reduce((s, d) => s + relevantNetOf(entries.filter(e => e.date === d), warenGrenze), 0);
-      const pct     = warenkostenQuote(costRel, revenue);
+      const weekEntries = activeEntries.filter(e => weekDays.includes(e.date));
+      const costNet = weekEntries.reduce((s, e) => s + e.amountNet, 0);
+      const costRel = direkterWarenaufwand(weekEntries).direktNet;
+      const pct = berechneWarenrechnungsWkq(weekEntries, revenue).pct;
 
       // Kumuliert bis Ende der Woche (letzter bekannter Tag)
       const lastDay    = weekDays[weekDays.length - 1] ?? to;
       const cum        = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0, cumRel: 0 };
-      const cumPct     = warenkostenQuote(cum.cumRel, cum.cumRev);
+      const cumPct = cum.cumRev > 0 ? (cum.cumRel / cum.cumRev) * 100 : null;
       const isComplete = to <= todayStr;
       const isCurrent  = wk === currentWeekKey;
 
@@ -1864,15 +1871,16 @@ export default function WarenrechnungenPage() {
   }, [entries, revenueByDate, year, month, todayStr, targetPct, tenantId, warenGrenze]);
 
   const chartData = useMemo((): ChartPoint[] => {
+    const activeEntries = zaehlendeEintraege(entries);
     const allDays = getDaysInMonth(year, month);
     const past = allDays.filter(d => d <= todayStr);
     let cumNet = 0;
     let cumRev = 0;
     let cumRel = 0;
     const points = past.map(d => {
-      const dayEntries = entries.filter(e => e.date === d);
+      const dayEntries = activeEntries.filter(e => e.date === d);
       const dayNet = dayEntries.reduce((s, e) => s + e.amountNet, 0);
-      const dayRel = relevantNetOf(dayEntries, warenGrenze);
+      const dayRel = direkterWarenaufwand(dayEntries).direktNet;
       const dayRev = revenueByDate[d] ?? 0;
       cumNet += dayNet;
       cumRel += dayRel;
@@ -1926,14 +1934,15 @@ export default function WarenrechnungenPage() {
   const analyseKPIs = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
     const totalRev  = Object.entries(analysisRevenue).filter(([k]) => k <= effectiveTo).reduce((s, [, v]) => s + v, 0);
-    const periodEntries = analysisEntries.filter(e => e.date <= effectiveTo);
+    const periodEntries = zaehlendeEintraege(analysisEntries.filter(e => e.date <= effectiveTo));
     // EINE Definition für ALLE Analyse-Zahlen (Befehl 08/2026): direkter
     // Warenaufwand = Konten 4020–4070 (= ER-Position). Übrige Konten
     // (4090/4701/48xx …) und Unkontiertes NIE in Hauptzahl/WKQ — nur Hinweis.
     const d = direkterWarenaufwand(periodEntries);
     const totalCost    = d.direktNet;   // Hauptzahl = direkter Warenaufwand
     const relevantCost = d.direktNet;   // WKQ-Basis = dieselbe Zahl
-    const pct = warenkostenQuote(relevantCost, totalRev);
+    const wkq = berechneWarenrechnungsWkq(periodEntries, totalRev);
+    const pct = wkq.pct;
     console.log(`[WAREN-ANALYSE] mode: ${analyseMode}`);
     console.log(`[WAREN-ANALYSE] range: ${analyseDates.from} – ${effectiveTo}`);
     console.log(`[WAREN-ANALYSE] revenue total: CHF ${totalRev.toFixed(0)}`);
@@ -1945,6 +1954,8 @@ export default function WarenrechnungenPage() {
       sonstigeCost: d.uebrigNet + d.unkontiertNet,
       unkontiertNet: d.unkontiertNet, unkontiertCount: d.unkontiertCount,
       periodEntries,
+      provisionalNet: wkq.provisionalNet,
+      provisionalCount: wkq.provisionalCount,
     };
   }, [analysisEntries, analysisRevenue, analyseDates, analyseMode, todayStr]);
 
@@ -2215,7 +2226,7 @@ export default function WarenrechnungenPage() {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
     // Alias-Gruppen: gleiche Zusammenführung wie im FIBU-Abgleich (nur Namen,
     // Beträge/Totale unverändert).
-    const list = applyAliasGruppen(analysisEntries.filter(x => x.date <= effectiveTo), aliasGruppen);
+    const list = applyAliasGruppen(zaehlendeEintraege(analysisEntries.filter(x => x.date <= effectiveTo)), aliasGruppen);
     const grossByName: Record<string, number> = {};
     for (const e of list) {
       grossByName[(e.supplierName || '—').trim() || '—'] =
@@ -2233,7 +2244,7 @@ export default function WarenrechnungenPage() {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
     // Filter über den kanonischen Namen — bei Alias-Gruppen zählen alle
     // Original-Namen der Gruppe zum gefilterten Lieferanten.
-    return analysisEntries
+    return zaehlendeEintraege(analysisEntries)
       .filter(e => aliasResolver(e.supplierName) === supplierFilter && e.date <= effectiveTo)
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [analysisEntries, supplierFilter, analyseDates, todayStr, aliasResolver]);
@@ -2264,9 +2275,9 @@ export default function WarenrechnungenPage() {
     const past = allDays.filter(d => d <= todayStr);
     let cumNet = 0, cumRev = 0, cumRel = 0;
     return past.map(d => {
-      const dayEntries = analysisEntries.filter(e => e.date === d);
+      const dayEntries = zaehlendeEintraege(analysisEntries.filter(e => e.date === d));
       const dayNet = dayEntries.reduce((s, e) => s + e.amountNet, 0);
-      const dayRel = relevantNetOf(dayEntries, warenGrenze);
+      const dayRel = direkterWarenaufwand(dayEntries).direktNet;
       const dayRev = analysisRevenue[d] ?? 0;
       cumNet += dayNet; cumRel += dayRel; cumRev += dayRev;
       const dayPct = warenkostenQuote(dayRel, dayRev);
@@ -2300,7 +2311,7 @@ export default function WarenrechnungenPage() {
       const days   = getDaysInMonth(y, m);
       const pastDs = days.filter(d => d <= todayStr && d <= analyseDates.to);
       const revenue = pastDs.reduce((s, d) => s + (rangeRevenue[d] ?? 0), 0);
-      const monthEntries = rangeEntries.filter(e => e.date >= days[0] && e.date <= days[days.length-1] && e.date <= todayStr);
+      const monthEntries = zaehlendeEintraege(rangeEntries.filter(e => e.date >= days[0] && e.date <= days[days.length-1] && e.date <= todayStr));
       const costNet = monthEntries.reduce((s, e) => s + e.amountNet, 0);
       const costRel = relevantNetOf(monthEntries, warenGrenze);
       cumNet += costNet; cumRel += costRel; cumRev += revenue;
@@ -2329,7 +2340,7 @@ export default function WarenrechnungenPage() {
     let runCumNet = 0, runCumRev = 0, runCumRel = 0;
     const cumByDate: Record<string, { cumNet: number; cumRev: number; cumRel: number }> = {};
     for (const d of pastDays) {
-      const dayEntries = analysisEntries.filter(e => e.date === d);
+      const dayEntries = zaehlendeEintraege(analysisEntries.filter(e => e.date === d));
       runCumNet += dayEntries.reduce((s, e) => s + e.amountNet, 0);
       runCumRel += relevantNetOf(dayEntries, warenGrenze);
       runCumRev += analysisRevenue[d] ?? 0;
@@ -2343,8 +2354,9 @@ export default function WarenrechnungenPage() {
       const { from, to } = isoWeekRange(isoYear2, week2);
       const weekDays = pastDays.filter(d => d >= from && d <= to);
       const revenue = weekDays.reduce((s, d) => s + (analysisRevenue[d] ?? 0), 0);
-      const costNet = weekDays.reduce((s, d) => s + analysisEntries.filter(e => e.date === d).reduce((s2, e) => s2 + e.amountNet, 0), 0);
-      const costRel = weekDays.reduce((s, d) => s + relevantNetOf(analysisEntries.filter(e => e.date === d), warenGrenze), 0);
+      const weekEntries = zaehlendeEintraege(analysisEntries.filter(e => weekDays.includes(e.date)));
+      const costNet = weekEntries.reduce((s, e) => s + e.amountNet, 0);
+      const costRel = direkterWarenaufwand(weekEntries).direktNet;
       const pct = warenkostenQuote(costRel, revenue);
       const lastDay = weekDays[weekDays.length - 1] ?? to;
       const cum = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0, cumRel: 0 };
@@ -3147,8 +3159,12 @@ export default function WarenrechnungenPage() {
                 label={`WKQ ${periodenWort}`}
                 chip={periodenChip}
                 value={monthPct !== null ? fmtPct(monthPct) : '–'}
-                sub={monthPct !== null ? 'Ziel ≤ 30 % · Klick für Rechenweg' : 'Kein Umsatz'}
-                sub2={monthPct !== null && monthPct <= 30 ? '✓ Im Zielbereich' : monthPct !== null ? '↑ Über Ziel' : undefined}
+                sub={monthWkq.provisionalCount > 0
+                  ? `inkl. CHF ${fmtChf(monthWkq.provisionalNet)} provisorisch (${monthWkq.provisionalCount} Belege)`
+                  : (monthPct !== null ? 'Ziel ≤ 30 % · Klick für Rechenweg' : 'Kein Umsatz')}
+                sub2={monthWkq.provisionalCount > 0
+                  ? (monthPct !== null ? 'Ziel ≤ 30 % · Klick für Rechenweg' : 'Kein Umsatz')
+                  : (monthPct !== null && monthPct <= 30 ? '✓ Im Zielbereich' : monthPct !== null ? '↑ Über Ziel' : undefined)}
                 icon={TrendingUp}
                 variant={kpiVariant(monthPct)}
                 onClick={() => setKpiDialog('wkq')}
@@ -4485,8 +4501,12 @@ export default function WarenrechnungenPage() {
                       label="Warenkosten % · Stand aktuell" icon={BarChart3}
                       value={analyseKPIs.pct !== null ? fmtPct(analyseKPIs.pct) : '–'}
                       variant={analyseKPIs.pct === null ? 'muted' : analyseKPIs.pct > targetPct + 2 ? 'alert' : analyseKPIs.pct > targetPct ? 'warn' : 'ok'}
-                      sub={analyseKPIs.pct !== null ? `Ziel: ${targetPct} %` : 'Kein Umsatz'}
-                      sub2={forecastPct !== null ? `Forecast Endwert: ${fmtPct(forecastPct)}` : undefined}
+                      sub={analyseKPIs.provisionalCount > 0
+                        ? `inkl. CHF ${fmtChf(analyseKPIs.provisionalNet)} provisorisch (${analyseKPIs.provisionalCount} Belege)`
+                        : (analyseKPIs.pct !== null ? `Ziel: ${targetPct} %` : 'Kein Umsatz')}
+                      sub2={analyseKPIs.provisionalCount > 0
+                        ? (analyseKPIs.pct !== null ? `Ziel: ${targetPct} %` : 'Kein Umsatz')
+                        : (forecastPct !== null ? `Forecast Endwert: ${fmtPct(forecastPct)}` : undefined)}
                     />
                     <KpiBox
                       label="Lieferanten aktiv" icon={Package}

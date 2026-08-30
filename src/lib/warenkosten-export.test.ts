@@ -29,7 +29,7 @@ describe('warenkostenExportFileName', () => {
 });
 
 describe('buildWarenkostenExport – Summenblock', () => {
-  it('trennt Food/Beverage/Sonstiges und schliesst Sonstiges aus der Quote aus', () => {
+  it('trennt Kategorien, verwendet für die WKQ aber strikt Konten 4020–4070', () => {
     const data = buildWarenkostenExport({
       periodLabel: 'Juli 2026',
       from: '2026-07-01',
@@ -47,11 +47,11 @@ describe('buildWarenkostenExport – Summenblock', () => {
     expect(data.summary.foodNet).toBe(1200);
     expect(data.summary.beverageNet).toBe(500);
     expect(data.summary.sonstigeNet).toBe(300);
-    expect(data.summary.relevantNet).toBe(1700);
+    expect(data.summary.relevantNet).toBe(500);
     expect(data.summary.totalNet).toBe(2000);
     expect(data.summary.revenue).toBe(10000);
-    // Quote = relevant (1700) / 10000 = 17 %, Sonstiges NICHT enthalten
-    expect(data.summary.quotePct).toBeCloseTo(17, 6);
+    // WKQ = direkter Warenaufwand 4020–4070 (500) / 10000 = 5 %
+    expect(data.summary.quotePct).toBeCloseTo(5, 6);
   });
 
   it('liefert quotePct=null bei fehlendem/0-Umsatz', () => {

@@ -7,23 +7,143 @@
  *  - Die Monatsrechnung ist MASSGEBLICH. Beim Erfassen wird Σ der
  *    provisorischen Lieferscheine des Lieferanten/Monats gegen das
  *    Monatsrechnungs-Total gestellt; der User entscheidet PRO LIEFERANT:
- *      · übernehmen → Lieferscheine werden ERSETZT (Monat = Monatsrechnung);
- *        die Differenz wahlweise aufs Rechnungsdatum gebucht ('rechnungsdatum')
- *        oder anteilig auf die Lieferschein-Daten verteilt ('anteilig').
- *        Die Monatsrechnung selbst wird NIE zusätzlich addiert (Ursache der
- *        früheren Verdopplungen: Terravigna 211363 = Monatsrechnung 7'036 +
- *        Lieferscheine 7'013 = 14'049).
+ *      · übernehmen → Original-Lieferscheine bleiben als unveränderte
+ *        Revisionshistorie erhalten, werden aber als ersetzt markiert. Genau
+ *        EINE autoritative Monatsrechnung zählt wirtschaftlich.
  *      · nicht übernehmen → Lieferscheine bleiben unverändert massgeblich,
  *        Status «Differenz offen»; die Monatsrechnung wird NICHT gespeichert.
+ *  - Die ältere skalierende Legacy-Funktion bleibt nur für kompatible
+ *    Aufrufer/Tests bestehen; produktive Kreditorenpfade verwenden das
+ *    historienerhaltende Modell.
  *
  * Pure Lib: keine IO, deterministisch, ÷0-sicher.
  */
 import type { InvoiceEntry } from './waren-db';
+import { istErsetzt } from './waren-supersession';
+export { istErsetzt } from './waren-supersession';
 
 export type DifferenzModus = 'rechnungsdatum' | 'anteilig';
 export type LieferantAbgleichStatus = 'provisorisch' | 'abgeglichen' | 'differenz_offen';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * Ein Lieferschein wird beim neuen, historienerhaltenden Monatsabgleich nicht
+ * gelöscht oder umdatiert. Stattdessen verweist er auf die Monatsrechnung.
+ * Das explizite Flag ist massgeblich; die ID-Prüfung unterstützt Einträge, die
+ * während einer frühen Einführung nur mit der Herkunftsreferenz gespeichert
+ * wurden.
+ */
+/** Englischer Alias für Import-/Auswertungs-Code ausserhalb der deutschen UI. */
+export const isSuperseded = istErsetzt;
+
+/** Alle und nur die wirtschaftlich massgeblichen Einträge. Alt-Daten zählen. */
+export function zaehlendeEintraege(entries: InvoiceEntry[]): InvoiceEntry[] {
+  return entries.filter(e => !istErsetzt(e));
+}
+
+/** Englischer Alias für Import-/Auswertungs-Code ausserhalb der deutschen UI. */
+export const countingEntries = zaehlendeEintraege;
+
+/**
+ * Stabile Namensbasis für die bekannte Firmenumbenennung WKQ → Fideco.
+ * Andere Lieferanten werden nur firmenform-/zeichenbereinigt zurückgegeben.
+ */
+export function kanonischerWarenLieferant(name: string): string {
+  const normal = name.toLowerCase()
+    .replace(/\b(ag|gmbh|sa|sagl|co|cie|kg)\b\.?/g, '')
+    .replace(/[^a-zäöüéèàç0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normal.includes('fideco') || normal === 'wkq' || normal.startsWith('wkq ')) return 'fideco';
+  return normal;
+}
+
+/** Gemeinsamer Gruppenschlüssel für alle Monatsrechnungs-Einstiegspfade. */
+export function kanonischerLieferantMonatKey(
+  monat: string,
+  supplierName: string,
+  canonicalize: (name: string) => string = kanonischerWarenLieferant,
+): string {
+  return `${monat}\u0000${canonicalize(supplierName)}`;
+}
+
+/**
+ * Referenz-Dublette für Import-Vorschauen. Revisionshistorie zählt nie als
+ * aktive Dublette; Firmenwechsel/Aliasse verwenden dieselbe Kanonisierung wie
+ * der Schreibkern.
+ */
+export function hatZaehlendeLieferantenReferenz(
+  entries: InvoiceEntry[],
+  supplierName: string,
+  refs: Set<string>,
+  canonicalize: (name: string) => string = kanonischerWarenLieferant,
+): boolean {
+  const supplier = canonicalize(supplierName);
+  return zaehlendeEintraege(entries).some(entry =>
+    canonicalize(entry.supplierName) === supplier
+    && Boolean(entry.reference)
+    && refs.has(entry.reference!.trim().toLowerCase()));
+}
+
+export interface LiefermonatAufloesung {
+  /** null = mehrere Monate enthalten passende provisorische Lieferscheine. */
+  monat: string | null;
+  hatLieferscheine: boolean;
+}
+
+/**
+ * Löst den Liefermonat einer Kreditoren-Monatsrechnung aus einem begrenzten,
+ * vom Aufrufer geladenen Monatsfenster. Nur genau ein passender Monat darf
+ * automatisch gewählt werden; mehrere Monate sind fail-closed.
+ */
+export function loeseEindeutigenLiefermonatAuf(input: {
+  buchungsmonat: string;
+  bestandByMonat: Map<string, InvoiceEntry[]>;
+  matcht: (supplierName: string) => boolean;
+}): LiefermonatAufloesung {
+  const trefferMonate = [...input.bestandByMonat.entries()]
+    .filter(([, entries]) => entries.some(entry =>
+      istProvisorischerLieferschein(entry) && input.matcht(entry.supplierName)))
+    .map(([monat]) => monat)
+    .sort();
+  if (trefferMonate.length > 1) return { monat: null, hatLieferscheine: true };
+  if (trefferMonate.length === 1) return { monat: trefferMonate[0], hatLieferscheine: true };
+  return { monat: input.buchungsmonat, hatLieferscheine: false };
+}
+
+export interface LieferantMonatsGruppe {
+  /** Vom Aufrufer bestimmte, stabile Lieferantenbezeichnung. */
+  lieferant: string;
+  /** Liefermonat aus dem Beleg-/Lieferdatum, nie aus dem Erfassungszeitpunkt. */
+  monat: string;
+  /** Ausschliesslich wirtschaftlich zählende Einträge dieser Gruppe. */
+  entries: InvoiceEntry[];
+}
+
+/**
+ * Gruppiert zählende Einträge nach kanonischem Lieferanten und Liefermonat.
+ * Die Kanonisierung wird bewusst injiziert: Alias-Regeln gehören zum
+ * Lieferantenprofil und nicht in dieses persistence-nahe, reine Modul.
+ */
+export function gruppiereNachKanonischemLieferantUndMonat(
+  entries: InvoiceEntry[],
+  canonicalize: (supplierName: string) => string,
+): Map<string, LieferantMonatsGruppe> {
+  const gruppen = new Map<string, LieferantMonatsGruppe>();
+  for (const entry of zaehlendeEintraege(entries)) {
+    const lieferant = canonicalize(entry.supplierName);
+    const monat = entry.date.slice(0, 7);
+    const key = `${lieferant}\u0000${monat}`;
+    const gruppe = gruppen.get(key);
+    if (gruppe) gruppe.entries.push(entry);
+    else gruppen.set(key, { lieferant, monat, entries: [entry] });
+  }
+  return gruppen;
+}
+
+/** Kürzerer Alias für Verbraucher, die die kanonische Eigenschaft kennen. */
+export const gruppiereLieferantMonat = gruppiereNachKanonischemLieferantUndMonat;
 
 /**
  * Provisorischer Lieferschein im Sinne des Abgleichs: regulär erfasst
@@ -32,7 +152,7 @@ const r2 = (v: number) => Math.round(v * 100) / 100;
  * bereits Buchhaltungs-Totale), finalisierte Einträge sind abgeschlossen.
  */
 export function istProvisorischerLieferschein(e: InvoiceEntry): boolean {
-  if (e.final === true) return false;
+  if (istErsetzt(e) || e.final === true) return false;
   return e.quelle == null || e.quelle === 'auftragsbestaetigung';
 }
 
@@ -85,6 +205,58 @@ export interface MonatsrechnungInfo {
   warenkonto?: string;
   vatRate?: number;
 }
+
+/**
+ * Akzeptiert eine Monatsrechnung im historienerhaltenden Modell.
+ *
+ * Anders als der ältere `wendeMonatsrechnungAn` werden Lieferbelege weder
+ * skaliert noch mit Korrekturen ergänzt: ihre ursprünglichen Daten und Beträge
+ * bleiben auditierbar. Sie werden bloss als ersetzt markiert; die angehängte
+ * Monatsrechnung ist damit der einzige zählende Betrag dieser
+ * Lieferant-/Liefermonat-Gruppe.
+ */
+export function akzeptiereMonatsrechnung(input: {
+  bestand: InvoiceEntry[];
+  /** Liefermonat (YYYY-MM), bewusst explizit, da Rechnungs- und Liefermonat abweichen können. */
+  liefermonat: string;
+  /** Die bereits vollständig gebaute, autoritative Monatsrechnung. */
+  monatsrechnung: InvoiceEntry;
+  canonicalize: (supplierName: string) => string;
+  now: string;
+}): InvoiceEntry[] {
+  const { bestand, liefermonat, monatsrechnung, canonicalize, now } = input;
+  const canonicalSupplier = canonicalize(monatsrechnung.supplierName);
+  const authoritative: InvoiceEntry = {
+    ...monatsrechnung,
+    quelle: 'monatsrechnung',
+    final: true,
+    superseded: false,
+    updatedAt: now,
+  };
+  let vorhanden = false;
+  const out = bestand.map(entry => {
+    if (entry.id === authoritative.id) {
+      vorhanden = true;
+      return authoritative;
+    }
+    const belongsToMonth = entry.date.slice(0, 7) === liefermonat;
+    const belongsToSupplier = canonicalize(entry.supplierName) === canonicalSupplier;
+    if (!belongsToMonth || !belongsToSupplier || !istProvisorischerLieferschein(entry)) return entry;
+    // Do not touch amount/date/note: the delivery note remains its original record.
+    return {
+      ...entry,
+      superseded: true,
+      supersededById: authoritative.id,
+      ...(authoritative.reference ? { supersededByReference: authoritative.reference } : {}),
+      updatedAt: now,
+    };
+  });
+  if (!vorhanden) out.push(authoritative);
+  return out;
+}
+
+/** Englischer Alias for persistence/import callers. */
+export const acceptMonthlyInvoice = akzeptiereMonatsrechnung;
 
 /**
  * Übernehmen: ersetzt die provisorischen Lieferscheine wirtschaftlich durch die

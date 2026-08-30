@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isoWeekKeyOf, weekLabelOf, groupTotals, flagAnomalies, topInvoices,
   wochenWkq, analyseKpis, direkterWarenaufwand, buildDirektKontoVergleich, nurDirektAnteil, buildKontoDrilldown,
-  buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText,
+  buildKorrekturVorschlaege, buildMwstBuendelungBefunde, fmtChfText, berechneWarenrechnungsWkq,
 } from '@/lib/waren-analyse';
 import { buildWarenkostenExport, warenkostenExportFileName } from '@/lib/warenkosten-export';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -24,6 +24,33 @@ describe('isoWeekKeyOf', () => {
     expect(isoWeekKeyOf('2025-12-29')).toBe('2026-W01'); // Mo derselben Woche
     expect(isoWeekKeyOf('2026-07-27')).toBe('2026-W31');
     expect(weekLabelOf('2026-W05')).toBe('KW 5');
+  });
+});
+
+describe('Warenrechnungs-WKQ SSoT', () => {
+  it('zählt provisorische Lieferscheine, schliesst ersetzte Historie sowie 4701/Pfand aus', () => {
+    const entries = [
+      inv({ date: '2026-07-01', amountNet: 100, warenkonto: '4060' }), // provisorisch
+      inv({ date: '2026-07-02', amountNet: 90, warenkonto: '4060', superseded: true }),
+      inv({ date: '2026-07-03', amountNet: 40, warenkonto: '4701', final: true }),
+      inv({ date: '2026-07-04', amountNet: 30, warenkonto: '4800', final: true }),
+      inv({ date: '2026-07-05', amountNet: 200, warenkonto: '4020', final: true, quelle: 'monatsrechnung' }),
+    ];
+    const wkq = berechneWarenrechnungsWkq(entries, 1_000);
+    expect(wkq).toEqual({
+      directNet: 300,
+      revenueNet: 1_000,
+      pct: 30,
+      provisionalNet: 100,
+      provisionalCount: 1,
+    });
+    expect(analyseKpis(entries).relevantNet).toBe(wkq.directNet);
+  });
+
+  it('liefert ohne kanonischen Netto-Umsatz keine künstliche Nullquote', () => {
+    expect(berechneWarenrechnungsWkq([
+      inv({ date: '2026-07-01', amountNet: 100, warenkonto: '4060' }),
+    ], 0).pct).toBeNull();
   });
 });
 

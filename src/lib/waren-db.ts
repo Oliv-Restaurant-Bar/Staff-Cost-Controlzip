@@ -106,6 +106,26 @@ export interface InvoiceEntry {
    * Fehlt das Feld: Status ergibt sich aus quelle/final (provisorisch).
    */
   abgleichStatus?: 'abgeglichen' | 'differenz_offen';
+  /**
+   * Dieser Eintrag bleibt als unveränderte Lieferhistorie erhalten, wird aber
+   * wirtschaftlich durch eine massgebliche Monatsrechnung ersetzt und darf
+   * deshalb in Auswertungen nicht mehr gezählt werden. Fehlendes Feld bei
+   * Alt-Daten bedeutet ausdrücklich: der Eintrag zählt weiterhin.
+   */
+  superseded?: boolean;
+  /** ID der massgeblichen Monatsrechnung, welche diesen Eintrag ersetzt. */
+  supersededById?: string;
+  /** Belegnummer der massgeblichen Monatsrechnung (für lesbare Historie). */
+  supersededByReference?: string;
+  /**
+   * Strukturierte Identitäten der Kreditorenbuchungen, aus denen eine
+   * autoritative Monatsrechnung gebildet wurde. So bleibt der Kreditorenimport
+   * auch bei Buchungsmonat ≠ Liefermonat und ohne Referenz idempotent.
+   */
+  sourceBookingKeys?: string[];
+  /** Betragsallokationen zu sourceBookingKeys; Duplikate sind als eigene
+   * Elemente erlaubt und werden beim Wiederabgleich einzeln verbraucht. */
+  sourceBookingAllocations?: Array<{ key: string; amountGross: number }>;
   createdAt: string;
   updatedAt: string;
 }

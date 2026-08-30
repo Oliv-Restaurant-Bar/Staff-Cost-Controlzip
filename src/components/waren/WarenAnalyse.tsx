@@ -16,6 +16,7 @@ import { listeUnkontierte, type UnkontiertePosition } from '@/lib/waren-unkontie
 import type { InvoiceEntry, Warenkonto } from '@/lib/waren-db';
 import {
   groupTotals, flagAnomalies, topInvoices, wochenWkq, analyseKpis, nurDirektAnteil,
+  berechneWarenrechnungsWkq,
   isoWeekKeyOf, kontoShares, supplierKeyOf,
   type AnalyseDim,
 } from '@/lib/waren-analyse';
@@ -78,7 +79,8 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
   );
   // WKQ auf dem DIREKTEN Warenaufwand (Konten 4020–4070 = Erfolgsrechnung) —
   // Betriebs-/übrige Konten und Unkontiertes zählen NIE in die Quote.
-  const gesamtWkq = totalRevenue > 0 && kpis.relevantNet > 0 ? (kpis.relevantNet / totalRevenue) * 100 : null;
+  const wkq = useMemo(() => berechneWarenrechnungsWkq(entries, totalRevenue), [entries, totalRevenue]);
+  const gesamtWkq = wkq.pct;
   const foodWkq = totalRevenue > 0 && kpis.foodNet > 0 ? (kpis.foodNet / totalRevenue) * 100 : null;
   const bevWkq = totalRevenue > 0 && kpis.beverageNet > 0 ? (kpis.beverageNet / totalRevenue) * 100 : null;
   /** Quote einer Zeile auf den Perioden-Umsatz (nie durch 0 teilen). */
@@ -149,6 +151,11 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
               : gesamtWkq > zielPct ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
             {gesamtWkq === null ? '–' : `${gesamtWkq.toFixed(1)} %`}
           </div>
+          {wkq.provisionalCount > 0 && (
+            <div className="text-[10px] text-muted-foreground" data-testid="wkq-provisorisch-hinweis">
+              inkl. CHF {fmtChf(wkq.provisionalNet)} provisorisch ({wkq.provisionalCount} Belege)
+            </div>
+          )}
           {kpis.unkontiert > 0 && (
             onAssignKonto ? (
               <button

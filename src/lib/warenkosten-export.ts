@@ -7,9 +7,8 @@
  *   2) `exportWarenkostenToExcel` – dünner exceljs-Builder (IO), lädt exceljs
  *      per dynamischem Import und stösst den Datei-Download an.
  *
- * SINGLE SOURCE OF TRUTH: Kategorie-Zuordnung, relevante Warenkosten und
- * Warenkostenquote stammen AUSSCHLIESSLICH aus `warenkosten-quote`
- * (Food+Beverage = relevant, Sonstiges separat, NIE in der Quote).
+ * SINGLE SOURCE OF TRUTH: Die WKQ stammt aus `berechneWarenrechnungsWkq`
+ * (zählende Belege, Netto 4020–4070 / kanonischer Netto-Umsatz).
  *
  * Zahlenformate: Schweizer Darstellung über exceljs-`numFmt`
  * (CHF `#,##0.00`, Prozent `0.0"%"`). Die reine Lib rundet NICHT.
@@ -21,11 +20,12 @@ import {
   computeWarenkostenTotals,
   kategorieOf,
   istInQuote,
-  warenkostenQuote,
   type WarenKategorie,
   type WarenkostenEntryInput,
 } from './warenkosten-quote';
-import { isoWeekKeyOf, weekLabelOf } from './waren-analyse';
+import { zaehlendeEintraege } from './waren-monatsabgleich';
+import { berechneWarenrechnungsWkq, isoWeekKeyOf, weekLabelOf } from './waren-analyse';
+import type { InvoiceEntry } from './waren-db';
 
 const MONTHS_LONG_DE = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -170,7 +170,8 @@ function sumBlock(
  * Sortierung: Datum aufsteigend, dann Lieferant alphabetisch.
  */
 export function buildWarenkostenExport(input: WarenkostenExportInput): WarenkostenExportData {
-  const rows: WarenkostenExportRow[] = input.invoices
+  const invoices = zaehlendeEintraege(input.invoices);
+  const rows: WarenkostenExportRow[] = invoices
     .map((inv): WarenkostenExportRow => {
       const kategorie = kategorieOf(inv);
       const net = inv.amountNet ?? 0;
@@ -193,25 +194,25 @@ export function buildWarenkostenExport(input: WarenkostenExportInput): Warenkost
       ? a.supplierName.localeCompare(b.supplierName, 'de-CH')
       : a.date.localeCompare(b.date)));
 
-  const totals = computeWarenkostenTotals(input.invoices);
-  const totalGross = input.invoices.reduce((s, e) => s + (e.amountGross ?? 0), 0);
-  const quotePct = warenkostenQuote(totals.relevantNet, input.revenue);
+  const totals = computeWarenkostenTotals(invoices);
+  const totalGross = invoices.reduce((s, e) => s + (e.amountGross ?? 0), 0);
+  const wkq = berechneWarenrechnungsWkq(invoices as unknown as InvoiceEntry[], input.revenue);
 
   const summary: WarenkostenExportSummary = {
     foodNet: totals.foodNet,
     beverageNet: totals.beverageNet,
-    relevantNet: totals.relevantNet,
+    relevantNet: wkq.directNet,
     sonstigeNet: totals.sonstigeNet,
     totalNet: totals.totalNet,
     totalGross,
     revenue: input.revenue,
-    quotePct,
+    quotePct: wkq.pct,
   };
 
   // Summenblöcke: pro Lieferant (Top-Betrag zuerst), pro Konto, pro Woche.
-  const bySupplier = sumBlock(input.invoices, inv => inv.supplierName.trim() || '—', 'desc');
-  const byKonto = sumBlock(input.invoices, inv => warenkontoDisplay(inv) || 'Ohne Konto', 'desc');
-  const byWeek = sumBlock(input.invoices, inv => isoWeekKeyOf(inv.date), 'chrono', weekLabelOf);
+  const bySupplier = sumBlock(invoices, inv => inv.supplierName.trim() || '—', 'desc');
+  const byKonto = sumBlock(invoices, inv => warenkontoDisplay(inv) || 'Ohne Konto', 'desc');
+  const byWeek = sumBlock(invoices, inv => isoWeekKeyOf(inv.date), 'chrono', weekLabelOf);
 
   return {
     rows,

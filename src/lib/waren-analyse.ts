@@ -14,6 +14,10 @@ import type { SageJournalEntry } from '@/types/reporting';
 import { barausgabenLieferant, barausgabenAliasGruppen, buchungsBetrag } from './waren-abgleich';
 import { findSupplierInText, type SupplierAliasMap } from './waren-pdf-erkennung';
 import { buildAliasResolver, type AliasGruppe } from './waren-alias-gruppen';
+import {
+  istProvisorischerLieferschein,
+  zaehlendeEintraege,
+} from './waren-monatsabgleich';
 
 export type AnalyseDim = 'supplier' | 'konto' | 'week' | 'month';
 
@@ -89,7 +93,7 @@ export function groupTotals(
     cur.count += 1;
     map.set(key, cur);
   };
-  for (const e of entries) {
+  for (const e of zaehlendeEintraege(entries)) {
     if (dim === 'supplier') add(supplierKeyOf(e), e.amountNet);
     else if (dim === 'konto') for (const s of kontoShares(e)) add(s.konto, s.net);
     else if (dim === 'week') add(isoWeekKeyOf(e.date), e.amountNet);
@@ -112,7 +116,7 @@ export function groupTotals(
 
 /** Grösste Einzelrechnungen (netto) des Zeitraums, Top zuerst. */
 export function topInvoices(entries: InvoiceEntry[], n = 10): InvoiceEntry[] {
-  return [...entries].sort((a, b) => b.amountNet - a.amountNet).slice(0, n);
+  return [...zaehlendeEintraege(entries)].sort((a, b) => b.amountNet - a.amountNet).slice(0, n);
 }
 
 // ─── Anomalie-Erkennung ───────────────────────────────────────────────────────
@@ -128,7 +132,7 @@ function perWeekTotals(entries: InvoiceEntry[], dim: AnalyseDim): Map<string, Ma
     m.set(week, (m.get(week) ?? 0) + net);
     out.set(entity, m);
   };
-  for (const e of entries) {
+  for (const e of zaehlendeEintraege(entries)) {
     const wk = isoWeekKeyOf(e.date);
     if (dim === 'konto') for (const s of kontoShares(e)) add(s.konto, wk, s.net);
     else if (dim === 'supplier') add(supplierKeyOf(e), wk, e.amountNet);
@@ -222,7 +226,7 @@ export interface DirekterAufwand {
 export function direkterWarenaufwand(entries: InvoiceEntry[]): DirekterAufwand {
   const jeKonto: Record<string, number> = {};
   let direkt = 0, food = 0, bev = 0, uebrig = 0, unkNet = 0, unkCount = 0;
-  for (const e of entries) {
+  for (const e of zaehlendeEintraege(entries)) {
     for (const s of kontoShares(e)) {
       const roh = (s.konto ?? '').trim();
       if (istPfandKonto(roh)) continue; // Depot/Pfand (auch 4800): neutral, nie «übrig»
@@ -248,6 +252,40 @@ export function direkterWarenaufwand(entries: InvoiceEntry[]): DirekterAufwand {
   };
 }
 
+export interface WarenrechnungsWkq {
+  /** Netto Konten 4020–4070 aus ausschliesslich zählenden Belegen. */
+  directNet: number;
+  /** Kanonischer Netto-Umsatz des übergebenen Zeitraums. */
+  revenueNet: number;
+  pct: number | null;
+  /** Im Zähler enthaltener direkter Anteil noch provisorischer Lieferscheine. */
+  provisionalNet: number;
+  provisionalCount: number;
+}
+
+/**
+ * EINE Warenrechnungs-WKQ für Monatskopf, Analyse, Wochen und Export:
+ * zählende Belege · Netto 4020–4070 / kanonischer Netto-Umsatz.
+ */
+export function berechneWarenrechnungsWkq(
+  entries: InvoiceEntry[],
+  revenueNet: number | null | undefined,
+): WarenrechnungsWkq {
+  const zaehlend = zaehlendeEintraege(entries);
+  const directNet = direkterWarenaufwand(zaehlend).direktNet;
+  const provisorisch = zaehlend.filter(istProvisorischerLieferschein);
+  const provisionalNet = direkterWarenaufwand(provisorisch).direktNet;
+  const provisionalCount = provisorisch.filter(e => Math.abs(direktAnteilNet(e)) > 0.004).length;
+  const revenue = revenueNet != null && Number.isFinite(revenueNet) ? revenueNet : 0;
+  return {
+    directNet,
+    revenueNet: revenue,
+    pct: revenue > 0 ? (directNet / revenue) * 100 : null,
+    provisionalNet,
+    provisionalCount,
+  };
+}
+
 /** Netto-Anteil einer einzelnen Rechnung am direkten Warenaufwand. */
 export function direktAnteilNet(e: InvoiceEntry): number {
   return direkterWarenaufwand([e]).direktNet;
@@ -269,7 +307,7 @@ function istDirektKonto(konto: string | undefined): boolean {
  */
 export function nurDirektAnteil(entries: InvoiceEntry[]): InvoiceEntry[] {
   const out: InvoiceEntry[] = [];
-  for (const e of entries) {
+  for (const e of zaehlendeEintraege(entries)) {
     if (e.kontoSplits && e.kontoSplits.length > 0) {
       const direkt = e.kontoSplits.filter(s => istDirektKonto(s.warenkonto));
       if (direkt.length === 0) continue;

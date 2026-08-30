@@ -204,6 +204,20 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.netto).toBe(164.5);
     expect(r.mwstSatz).toBe(2.6);
   });
+  it('Fideco Einzel-Lieferschein 7750842: Positionen und gedruckter CHF/CHILLED-Betrag stimmen überein', () => {
+    const r = parse('fideco-ls-7750842.txt');
+    expect(r.profil?.id).toBe('fideco');
+    expect(r.profil?.konto).toBe('4060');
+    expect(r.profil?.kategorie).toBe('Food/Fleisch');
+    expect(r.rechnungsNr).toBe('7750842');
+    expect(r.lieferdatum).toBe('2026-08-24');
+    expect(r.netto).toBe(164.5);
+    expect(r.dokumenttyp).toBe('lieferschein');
+    expect(r.lieferungen).toHaveLength(1);
+    expect(r.lieferungen[0].positionen).toHaveLength(2);
+    expect(r.lieferungen[0].nettoTotal).toBe(164.5);
+    expect(r.hinweise.join(' ')).not.toContain('Positionssumme');
+  });
   it('Fideco Scan ohne LS-Datum/Gesamt-Betrag: Felder bleiben leer (nie raten)', () => {
     const text = fx('fideco-ls-7746026-ocr.txt')
       .replace(/LS-Datum[^\n]*/, 'LS-Datum')
@@ -225,6 +239,10 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
       'Betrag 50.00'].join('\n');
     const { profil } = findeProfilImText(text, P);
     expect(profil).toBeNull();
+  });
+  it('Fideco wird ohne MWST-Nr über die explizit beschriftete Kundennummer erkannt', () => {
+    const { profil } = findeProfilImText('LIEFERSCHEIN\nKundennummer: 27135\nLS-Datum 24.08.26', P);
+    expect(profil?.id).toBe('fideco');
   });
   it('Fideco 5356149: netto 3416.45 / MwSt 88.85 (2.6%)', () => {
     const r = parse('fideco-5356149.txt');

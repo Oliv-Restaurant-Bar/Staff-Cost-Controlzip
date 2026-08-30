@@ -20,6 +20,7 @@ vi.mock('@/lib/supabase-kv', () => ({
 import { kernImportiereFsRechnungen } from '@/lib/fs-import';
 import type { InvoiceEntry } from '@/lib/waren-db';
 import type { ParsedCsvRechnung, WarenPosition } from '@/lib/waren-positionen';
+import { zaehlendeEintraege } from '@/lib/waren-monatsabgleich';
 
 const TENANT = 'oliv' as never;
 const LIEFERANT = 'Feldschlösschen';
@@ -131,8 +132,9 @@ describe('kernImportiereFsRechnungen', () => {
       [{ r: rechnung('M-1', '2026-07-05') }], { quelle: 'monatsrechnung', erlaubteNeu: [] });
     expect(res.neuUebersprungen).toBe(0);
     const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    expect(monat).toHaveLength(1);
-    expect(monat[0].final).toBe(true);
+    expect(monat).toHaveLength(2);
+    expect(zaehlendeEintraege(monat)).toHaveLength(1);
+    expect(zaehlendeEintraege(monat)[0].final).toBe(true);
   });
 
   it('fsKategorien (Zusammenfassung MwSt.) übersteuern die Positions-Kontierung', async () => {
@@ -207,13 +209,44 @@ describe('kernImportiereFsRechnungen', () => {
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-42', '2026-07-10', 99) }], { quelle: 'monatsrechnung' });
     expect(res.ueberschrieben).toBe(1);
     expect(res.ersetzt).toBe(1);
-    // final: neuer Betrag, gleiche ID, final-Flag gesetzt — nie doppelt
+    // Finaler Betrag zählt einmal; der ursprüngliche LS bleibt unverändert als Historie.
     const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    expect(nach).toHaveLength(1);
-    expect(nach[0].id).toBe(prov.id);
-    expect(nach[0].final).toBe(true);
-    expect(nach[0].quelle).toBe('monatsrechnung');
-    expect(nach[0].amountNet).toBe(990);
+    expect(nach).toHaveLength(2);
+    expect(nach.find(e => e.id === prov.id)).toMatchObject({
+      id: prov.id, amountNet: prov.amountNet, superseded: true,
+    });
+    const zaehlend = zaehlendeEintraege(nach);
+    expect(zaehlend).toHaveLength(1);
+    expect(zaehlend[0].final).toBe(true);
+    expect(zaehlend[0].quelle).toBe('monatsrechnung');
+    expect(zaehlend[0].amountNet).toBe(990);
+  });
+
+  it('vereinheitlicht WKQ AG und Fideco im produktiven Monatsrechnungs-Matching', async () => {
+    await kernImportiereFsRechnungen(TENANT, 'WKQ AG', [{ r: rechnung('LS-F-1', '2026-07-12', 30) }]);
+    const wkqLs = (kv.get('supplier_invoices_2026-07') as InvoiceEntry[])[0];
+
+    const res = await kernImportiereFsRechnungen(
+      TENANT,
+      'Fideco Schweiz',
+      [{ r: rechnung('LS-F-1', '2026-07-12', 35) }],
+      { quelle: 'monatsrechnung' },
+    );
+
+    expect(res.ueberschrieben).toBe(1);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat.find(e => e.id === wkqLs.id)).toMatchObject({
+      supplierName: 'WKQ AG',
+      amountNet: wkqLs.amountNet,
+      superseded: true,
+    });
+    expect(zaehlendeEintraege(monat)).toHaveLength(1);
+    expect(zaehlendeEintraege(monat)[0]).toMatchObject({
+      supplierName: 'Fideco Schweiz',
+      amountNet: 350,
+      quelle: 'monatsrechnung',
+      final: true,
+    });
   });
 
   it('Monatsrechnung übernimmt das Lieferdatum je EINZELNER Lieferung — nie das Belegdatum', async () => {
@@ -222,9 +255,10 @@ describe('kernImportiereFsRechnungen', () => {
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-50', '2026-07-11', 30) }], { quelle: 'monatsrechnung' });
     expect(res.ueberschrieben).toBe(1);
     const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    expect(monat).toHaveLength(1);
-    expect(monat[0].date).toBe('2026-07-11');
-    expect(monat[0].final).toBe(true);
+    expect(monat).toHaveLength(2);
+    expect(zaehlendeEintraege(monat)).toHaveLength(1);
+    expect(zaehlendeEintraege(monat)[0].date).toBe('2026-07-11');
+    expect(zaehlendeEintraege(monat)[0].final).toBe(true);
   });
 
   it('nach Finalisierung: erneuter Lieferschein-Upload verschlechtert die finalen Werte NICHT («bereits final»)', async () => {
@@ -318,9 +352,10 @@ describe('kernImportiereFsRechnungen', () => {
     expect(res1.ueberschrieben).toBe(1);
     expect(res1.neu).toBe(0);
     const aug = kv.get('supplier_invoices_2026-08') as InvoiceEntry[];
-    expect(aug).toHaveLength(1);
-    expect(aug[0].reference).toBe('L-9');
-    expect(aug[0].final).toBe(true);
+    expect(aug).toHaveLength(2);
+    expect(zaehlendeEintraege(aug)).toHaveLength(1);
+    expect(zaehlendeEintraege(aug)[0].reference).toBe('L-9');
+    expect(zaehlendeEintraege(aug)[0].final).toBe(true);
   });
 
   it('MR mit abweichendem Betrag UND Datum matcht nicht (Fenster 0) — bucht frisch, kein Löschen', async () => {
@@ -355,7 +390,8 @@ describe('Matcher-Reihenfolge: exakte Referenz VOR Datum+Betrag (zwei Pässe)', 
     expect(res.ueberschrieben).toBe(1);
     const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
     const final = nach.find(e => e.final === true)!;
-    expect(final.id).toBe(e2.id);
+    expect(nach.find(e => e.id === e2.id)).toMatchObject({ superseded: true });
+    expect(final.supersededById).toBeUndefined();
     expect(nach.find(e => e.reference === '287001')!.final).toBeUndefined();
   });
 });
@@ -371,8 +407,9 @@ describe('AB→Rechnung ohne gemeinsame Referenz (Terravigna)', () => {
       { quelle: 'monatsrechnung', ersatzFensterTage: 3 });
     expect(res.ueberschrieben).toBe(1);
     const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    expect(nach).toHaveLength(1);
-    expect(nach[0].final).toBe(true);
+    expect(nach).toHaveLength(2);
+    expect(zaehlendeEintraege(nach)).toHaveLength(1);
+    expect(zaehlendeEintraege(nach)[0].final).toBe(true);
   });
 
   it('bei MEHREREN AB-Kandidaten wird NIE geraten — Neu-Buchung, ABs bleiben', async () => {
@@ -556,12 +593,13 @@ describe('Sammelrechnung finalisiert NUR die in ihr gelisteten Lieferscheine', (
     expect(mr1.neu).toBe(0);
 
     let monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    const byRef = (ref: string) => monat.find(e => e.reference === ref)!;
+    const byRef = (ref: string) => zaehlendeEintraege(monat).find(e => e.reference === ref)!;
     expect(byRef('S1').final).toBe(true);
     expect(byRef('S2').final).toBe(true);
     expect(byRef('S3').final).toBeUndefined(); // NICHT von MR1 finalisiert
     expect(byRef('S4').final).toBeUndefined();
-    expect(monat).toHaveLength(4); // kein Gesamtbetrag zusätzlich
+    expect(monat).toHaveLength(6); // 4 Lieferscheine historisch + 2 zählende MR-Lieferungen
+    expect(zaehlendeEintraege(monat)).toHaveLength(4);
 
     // Monatsend-MR: listet S3+S4 → finalisiert genau diese.
     const mr2 = await kernImportiereFsRechnungen(TENANT, 'Spahni', [
@@ -570,8 +608,9 @@ describe('Sammelrechnung finalisiert NUR die in ihr gelisteten Lieferscheine', (
     ], { quelle: 'monatsrechnung', idPrefix: 'lpdf' });
     expect(mr2.ueberschrieben).toBe(2);
     monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
-    expect(monat).toHaveLength(4);
-    expect(monat.every(e => e.final === true)).toBe(true);
+    expect(monat).toHaveLength(8);
+    expect(zaehlendeEintraege(monat)).toHaveLength(4);
+    expect(zaehlendeEintraege(monat).every(e => e.final === true)).toBe(true);
   });
 
   it('Datum+Betrag-Fallback greift nur bei Fenster (Default 0 = exaktes LS-Datum), fremde Tage bleiben stehen', async () => {

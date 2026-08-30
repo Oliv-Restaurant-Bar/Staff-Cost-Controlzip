@@ -29,6 +29,7 @@
  *
  * Debug-Logs: keine (reine Lib).
  */
+import { istErsetzt } from './waren-supersession';
 
 // ─── Kategorie ────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,9 @@ export interface WarenkostenEntryInput {
   amountNet: number;
   kategorie?: WarenKategorie;
   warenkonto?: string;
+  superseded?: boolean;
+  supersededById?: string;
+  supersededByReference?: string;
 }
 
 /**
@@ -195,6 +199,9 @@ export function computeWarenkostenTotals(
   const perEntry: WarenkostenPerEntry[] = [];
 
   for (const e of entries) {
+    // Ersetzte Lieferscheine bleiben revisionssicher im Bestand, dürfen aber
+    // in keiner Warenkosten-Aggregation ein zweites Mal zählen.
+    if (istErsetzt(e)) continue;
     const kategorie = kategorieOf(e, grenze);
     const net = e.amountNet ?? 0;
     if (kategorie === 'Food') foodNet += net;

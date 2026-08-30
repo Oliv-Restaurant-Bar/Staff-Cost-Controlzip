@@ -1,0 +1,13 @@
+FIDECO MURTEN
+Fleisch und Comestibles
+www.fideco.ch
+
+Lieferschein 7750842
+LS-Datum 24.08.26
+Kundennummer 27135
+
+Artikel Bezeichnung Menge Einheit Preis Betrag M
+4851 Rindsentrecôte 2.350 KG 43.10 101.29 1
+4903 Kalbsgeschnetzeltes 1.800 KG 35.12 63.21 1
+
+CHF / CHILLED Gesamt-Betrag 164.50

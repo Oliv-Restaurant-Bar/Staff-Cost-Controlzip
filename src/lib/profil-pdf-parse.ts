@@ -243,8 +243,25 @@ function parseSpahniLieferungen(lines: string[], profil: LieferantenProfil, mwst
 
 /** Fideco: «4851  TK *Rindsentrecôte…  10,470 KG  29,90 CHF  313,05 CHF  1» */
 function parseFidecoLieferungen(lines: string[], profil: LieferantenProfil, mwstSatz: number): ParsedCsvRechnung[] {
-  const { vorlauf, bloecke } = teileInBloecke(lines, /LIEFERSCHEIN\s+(\d+)\s+VOM\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
-  const zeileRe = /^\s*([A-Z]?\d{3,6})\s+(.+?)\s+(-?[\d.,]+)\s+(KG|STK|PC)\b\s+(-?[\d.,]+)\s*CHF\s+(-?[\d.,]+)\s*CHF\s+(\d)\s*$/i;
+  const { vorlauf, bloecke: erkannteBloecke } = teileInBloecke(lines, /LIEFERSCHEIN\s+(\d+)\s+VOM\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
+  let bloecke = erkannteBloecke;
+  // Einzel-Lieferschein (auch OCR): «Lieferschein 7750842» und
+  // «LS-Datum 24.08.26». Anders als bei der Monatsrechnung stehen Nr. und
+  // Datum in separaten Feldern und die Positionswerte tragen oft kein «CHF».
+  // Beide Felder sind Pflicht, damit keine Referenznummer zur Lieferung wird.
+  if (bloecke.length === 0) {
+    const text = lines.join('\n');
+    const nr = suche(text, [
+      /Lieferschein[\s-]*(?:Nr\.?)?\s*:?\s*(\d{6,10})/i,
+      /\bLS[\s-]*Nr\.?\s*:?\s*(\d{6,10})/i,
+    ]);
+    const datum = parseDatumCH(suche(text, [/LS[\s-]*Datum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
+    if (nr && datum) bloecke = [{ nr, datum, zeilen: lines }];
+  }
+  // Monatsrechnung: «… 29,90 CHF 313,05 CHF 1»; Einzel-Lieferschein/OCR:
+  // «… 43.10 101.29 1». Beide Varianten enthalten Art-Nr, Menge, Einheit,
+  // Preis und Betrag und werden daher gleich streng erfasst.
+  const zeileRe = /^\s*([A-Z]?\d{3,6})\s+(.+?)\s+(-?[\d.,]+)\s+(KG|STK|PC)\b\s+(-?[\d.,]+)(?:\s*CHF)?\s+(-?[\d.,]+)(?:\s*CHF)?\s+(\d)\s*$/i;
   const parseZeilen = (zeilen: string[]) => {
     const positionen: WarenPosition[] = [];
     for (const z of zeilen) {
@@ -263,7 +280,7 @@ function parseFidecoLieferungen(lines: string[], profil: LieferantenProfil, mwst
   // GUTSCHRIFT-Block vor dem ersten Lieferschein: als eigene (negative) Position
   // der ERSTEN Lieferung zuschlagen, damit das Total stimmt.
   const gutschriftIdx = vorlauf.findIndex(z => /GUTSCHRIFT\s*:?\s*\d+/i.test(z));
-  if (gutschriftIdx >= 0 && out.length > 0) {
+  if (erkannteBloecke.length > 0 && gutschriftIdx >= 0 && out.length > 0) {
     const gPos = parseZeilen(vorlauf.slice(gutschriftIdx + 1));
     if (gPos.length > 0) {
       const erste = out[0];
@@ -775,9 +792,10 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     }
     // Gescannter Einzel-Lieferschein (OCR): «Lieferschein-Nr 7746026»,
     // «LS-Datum 3.08.26» (1-stelliger Tag/2-stelliges Jahr möglich) und
-    // «Gesamt-Betrag 164.50». Der Gesamt-Betrag wird als NETTO interpretiert
-    // (Lieferschein-Warenwert; MWST-Legende 1=2.6%/2=8.1%/3=0% ist auf dem
-    // LS nur informativ) — Kontrolle im Abgleich mit der Monatsrechnung.
+    // «Gesamt-Betrag 164.50» bzw. «CHF / CHILLED Gesamt-Betrag 164.50».
+    // Der Gesamt-Betrag wird als NETTO interpretiert (Lieferschein-Warenwert;
+    // MWST-Legende 1=2.6%/2=8.1%/3=0% ist auf dem LS nur informativ) —
+    // Kontrolle im Abgleich mit der Monatsrechnung.
     // Kein Fund → Felder bleiben leer (nie raten, nie heutiges Datum).
     const lsNr = suche(text, [
       /Lieferschein[\s-]*(?:Nr\.?)?\s*:?\s*(\d{6,10})/i,
@@ -785,7 +803,10 @@ const KOPF_PARSER: Record<string, KopfParser> = {
     ]);
     const lsDatum = parseDatumCH(suche(text, [/LS[\s-]*Datum\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i]) ?? '');
     const lsBetrag = gefunden ? null
-      : sucheBetrag(text, [new RegExp(`Gesamt[\\s-]*Betrag\\s*:?\\s*(?:CHF\\s*)?(${BETRAG_RE.source})`, 'i')]);
+      : sucheBetrag(text, [new RegExp(
+        `(?:Gesamt[\\s-]*Betrag|CHF\\s*\\/\\s*CHILLED(?:\\s+(?:Gesamt[\\s-]*Betrag|Total))?|Total\\s+CHF\\s*\\/\\s*CHILLED)\\s*:?\\s*(?:CHF\\s*)?(${BETRAG_RE.source})`,
+        'i',
+      )]);
     // Scan-Lieferschein erkannt (LS-Nr oder LS-Datum vorhanden): der Betrag
     // kommt AUSSCHLIESSLICH aus «Gesamt-Betrag» — generische Labels
     // («Warenwert» u.ä.) dürfen im Scan-Pfad KEINEN Betrag liefern (kein

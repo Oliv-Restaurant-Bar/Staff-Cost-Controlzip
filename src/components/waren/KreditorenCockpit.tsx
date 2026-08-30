@@ -24,12 +24,13 @@ import {
 import {
   loadKreditorZuordnung, saveKreditorZuordnung, zuordnungKey, abgleichKreditoren,
   buildUebernahmeEntry, loadKreditorIgnoriert, saveKreditorIgnoriert, ignoriertKey,
-  supplierMatchesKreditor,
+  kreditorBuchungKey, supplierMatchesKreditor,
   type KreditorZuordnungMap, type KreditorIgnoriertMap, type AbgleichErgebnis, type BuchungMatch,
 } from '@/lib/kreditoren-abgleich';
 import {
-  baueMonatsAbgleich, wendeMonatsrechnungAn, markiereDifferenzOffen,
-  type MonatsAbgleichVorschau, type DifferenzModus,
+  akzeptiereMonatsrechnung, baueMonatsAbgleich, kanonischerLieferantMonatKey,
+  kanonischerWarenLieferant, loeseEindeutigenLiefermonatAuf,
+  markiereDifferenzOffen, type MonatsAbgleichVorschau,
 } from '@/lib/waren-monatsabgleich';
 import {
   loadMonthInvoices, saveMonthInvoices, loadWarenkonten, loadSupplierAliases,
@@ -49,9 +50,9 @@ const defaultVat = (konto: string) => ['4020', '4030', '4040', '4050'].includes(
 /**
  * Eine Abgleich-Gruppe = ein Lieferant × Monat der Übernahme-Auswahl mit
  * vorhandenen provisorischen Lieferscheinen. Der User entscheidet:
- *  'anteilig' | 'rechnungsdatum' → Lieferscheine ERSETZEN (Σ = Monatsrechnung)
- *  'nicht'                      → Lieferscheine bleiben, Differenz offen,
- *                                 die Buchungen werden NICHT übernommen.
+ *  'uebernehmen' → Original-Lieferscheine revisionssicher markieren und genau
+ *                  eine autoritative Monatsrechnung speichern.
+ *  'nicht'       → Lieferscheine bleiben, Differenz offen; keine Übernahme.
  */
 interface AbgleichGruppe {
   key: string;             // `${monat}|${lieferant}`
@@ -65,7 +66,7 @@ interface AbgleichGruppe {
   konto?: string;
   vatRate: number;
   vorschau: MonatsAbgleichVorschau;
-  entscheid: DifferenzModus | 'nicht';
+  entscheid: 'uebernehmen' | 'nicht';
 }
 
 interface ReviewRow {
@@ -214,21 +215,48 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
     if (auswahl.length === 0) { toast.error('Nichts ausgewählt.'); return; }
     setBusy(true);
     try {
-      const gruppenMap = new Map<string, typeof auswahl>();
-      for (const f of auswahl) {
-        const key = `${f.match.monat}|${f.zeileName}`;
-        gruppenMap.set(key, [...(gruppenMap.get(key) ?? []), f]);
-      }
+      // Firmenwechsel/Aliasse müssen VOR der Gruppierung aufgelöst werden:
+      // WKQ AG + Fideco Schweiz im selben Monat ergeben genau EINE MR.
+      const aliases = await loadSupplierAliases(tenantId);
+      const canonicalize = (name: string) =>
+        kanonischerWarenLieferant(aliases[name] ?? name);
+      const vormonat = (monat: string) => {
+        const [y, m] = monat.split('-').map(Number);
+        const d = new Date(Date.UTC(y, m - 2, 1));
+        return d.toISOString().slice(0, 7);
+      };
+      // Buchungsmonat + Vormonat laden: Kreditoren werden oft erst im
+      // Folgemonat gebucht, die Lieferscheine gehören aber zum Liefermonat.
+      const pruefMonate = new Set(auswahl.flatMap(f => [f.match.monat, vormonat(f.match.monat)]));
       const bestandByMonat = new Map<string, Awaited<ReturnType<typeof loadMonthInvoices>>>();
-      for (const m of [...new Set(auswahl.map(f => f.match.monat))]) {
+      for (const m of [...pruefMonate]) {
         bestandByMonat.set(m, await loadMonthInvoices(tenantId, m));
       }
-      // Dieselben Aliasse wie der Kreditorenabgleich — sonst öffnet der
-      // Monatsabgleich für Alias-Lieferanten nicht und es würde verdoppelt.
-      const aliases = await loadSupplierAliases(tenantId);
+      type Aufgeloest = (typeof auswahl)[number] & { liefermonat: string };
+      const aufgeloest: Aufgeloest[] = [];
+      for (const f of auswahl) {
+        const fenster = new Map([
+          [vormonat(f.match.monat), bestandByMonat.get(vormonat(f.match.monat)) ?? []],
+          [f.match.monat, bestandByMonat.get(f.match.monat) ?? []],
+        ]);
+        const resolved = loeseEindeutigenLiefermonatAuf({
+          buchungsmonat: f.match.monat,
+          bestandByMonat: fenster,
+          matcht: name => supplierMatchesKreditor(name, f.zeileName, aliases),
+        });
+        if (resolved.monat === null) {
+          throw new Error(`${f.zeileName}: passende provisorische Lieferscheine in mehreren Monaten gefunden. Übernahme abgebrochen; Liefermonat bitte zuerst bereinigen.`);
+        }
+        aufgeloest.push({ ...f, liefermonat: resolved.monat });
+      }
+      const gruppenMap = new Map<string, Aufgeloest[]>();
+      for (const f of aufgeloest) {
+        const key = kanonischerLieferantMonatKey(f.liefermonat, f.zeileName, canonicalize);
+        gruppenMap.set(key, [...(gruppenMap.get(key) ?? []), f]);
+      }
       const gruppen: AbgleichGruppe[] = [];
       for (const [key, fs] of gruppenMap) {
-        const [monat, lieferant] = [fs[0].match.monat, fs[0].zeileName];
+        const [monat, lieferant] = [fs[0].liefermonat, fs[0].zeileName];
         const totalGross = fs.reduce((s, f) => s + f.match.buchung.betrag, 0);
         const totalNet = fs.reduce((s, f) => {
           const rate = uebernahme[f.key].vatRate;
@@ -247,7 +275,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
           rechnungsDatum: datums[datums.length - 1],
           referenz: fs.map(f => f.match.buchung.referenz).filter(Boolean).join(', ') || undefined,
           konto: uebernahme[fs[0].key].konto, vatRate: uebernahme[fs[0].key].vatRate,
-          vorschau, entscheid: 'anteilig',
+          vorschau, entscheid: 'uebernehmen',
         });
       }
       if (gruppen.length > 0) { setAbgleich(gruppen); setBusy(false); return; }
@@ -311,12 +339,45 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
             liste = markiereDifferenzOffen(liste, vorschau.lieferscheine, now);
             continue; // Buchungen NICHT übernehmen — Lieferscheine bleiben massgeblich
           }
-          liste = wendeMonatsrechnungAn({
-            bestand: liste, vorschau, modus: g.entscheid, now,
-            rechnung: {
-              datum: g.rechnungsDatum, referenz: g.referenz,
-              totalNet: g.totalNet, totalGross: g.totalGross,
-              warenkonto: g.konto, vatRate: g.vatRate,
+          const aliasName = (name: string) => aliases[name] ?? name;
+          const idTeil = `${g.monat}-${g.lieferant}-${g.referenz ?? g.rechnungsDatum}`
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+          // Der Eintrag lebt im Liefermonat-Blob und muss auch datumsmässig in
+          // diesem Monat liegen. Das Kreditoren-Buchungsdatum bleibt in der
+          // Revisionsnotiz erhalten.
+          const lieferDatum = [...vorschau.lieferscheine]
+            .map(e => e.date).sort().at(-1) ?? `${m}-01`;
+          liste = akzeptiereMonatsrechnung({
+            bestand: liste,
+            liefermonat: m,
+            canonicalize: name => kanonischerWarenLieferant(aliasName(name)),
+            now,
+            monatsrechnung: {
+              id: `kred-mr-${idTeil}`,
+              date: lieferDatum,
+              supplierName: g.lieferant,
+              amountGross: g.totalGross,
+              amountNet: g.totalNet,
+              vatIncluded: true,
+              vatRate: g.vatRate,
+              reference: g.referenz,
+              warenkonto: g.konto,
+              note: `Kreditoren-Monatsrechnung (autoritative Buchung; Kreditoren-Datum ${g.rechnungsDatum})`,
+              sourceBookingKeys: g.fehlendeKeys
+                .map(key => proKey.get(key))
+                .filter((f): f is NonNullable<typeof f> => Boolean(f))
+                .map(f => kreditorBuchungKey(f.zeileName, f.match.buchung)),
+              sourceBookingAllocations: g.fehlendeKeys
+                .map(key => proKey.get(key))
+                .filter((f): f is NonNullable<typeof f> => Boolean(f))
+                .map(f => ({
+                  key: kreditorBuchungKey(f.zeileName, f.match.buchung),
+                  amountGross: f.match.buchung.betrag,
+                })),
+              quelle: 'monatsrechnung',
+              final: true,
+              createdAt: now,
+              updatedAt: now,
             },
           });
           uebernommen += 1;
@@ -728,10 +789,9 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
               Monatsabgleich: Lieferscheine sind bereits erfasst
             </h3>
             <p className="text-xs text-muted-foreground">
-              Für diese Lieferanten sind provisorische Lieferscheine erfasst. «Übernehmen» ERSETZT die
-              Lieferscheine durch die Monatsrechnung (der Monat entspricht danach exakt der Buchhaltung —
-              es wird NIE addiert). Die Differenz (Rabatt, fehlender/doppelter Lieferschein, Preiskorrektur,
-              Retoure) wird anteilig auf die Lieferdaten verteilt oder aufs Rechnungsdatum gebucht.
+              Für diese Lieferanten sind provisorische Lieferscheine erfasst. «Übernehmen» speichert genau
+              eine autoritative Monatsrechnung. Die ursprünglichen Lieferscheine bleiben mit Datum, Betrag
+              und Notiz revisionssicher erhalten, werden als ersetzt markiert und nicht mehr summiert.
               «Nicht übernehmen» lässt die Lieferscheine stehen und markiert die Differenz als offen.
             </p>
             <table className="w-full text-sm">
@@ -763,8 +823,7 @@ export default function KreditorenCockpit({ tenantId, canCreate }: { tenantId: T
                         data-testid={`select-abgleich-${g.key}`}
                         onChange={e => setAbgleich(a => a!.map(x => x.key === g.key
                           ? { ...x, entscheid: e.target.value as AbgleichGruppe['entscheid'] } : x))}>
-                        <option value="anteilig">Übernehmen — Differenz anteilig auf Lieferdaten</option>
-                        <option value="rechnungsdatum">Übernehmen — Differenz aufs Rechnungsdatum</option>
+                        <option value="uebernehmen">Übernehmen — Monatsrechnung ist massgeblich</option>
                         <option value="nicht">Nicht übernehmen — Differenz offen lassen</option>
                       </select>
                     </td>

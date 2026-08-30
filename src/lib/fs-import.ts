@@ -6,10 +6,10 @@
  * - RANGORDNUNG (Dual-Modell): Monatsrechnung (final) > Lieferschein/AB
  *   (provisorisch). opts.quelle='monatsrechnung' ist MASSGEBLICH: jede
  *   Lieferung matcht bestehende Buchungen (exakte Referenz, sonst Datum im
- *   Fenster + Brutto ±0.10, Monate ±1) und ÜBERSCHREIBT sie mit den finalen
- *   Rechnungswerten — Lieferdatum je EINZELNER Lieferung aus der Rechnung,
- *   nie das Belegdatum. Ohne Treffer wird frisch (final) gebucht; der
- *   Gesamtbetrag der Rechnung wird NIE zusätzlich gebucht.
+ *   Fenster + Brutto ±0.10, Monate ±1). Originale Provisorien bleiben als
+ *   ersetzte Revisionshistorie erhalten; pro Lieferung zählt genau eine neue
+ *   finale Buchung mit dem Lieferdatum aus der Rechnung. Der Gesamtbetrag der
+ *   Rechnung wird NIE zusätzlich gebucht.
  * - Lieferschein/AB nach Finalisierung: ein erneuter Upload derselben
  *   Lieferung überschreibt die finale Buchung NICHT (Zähler bereitsFinal).
  * - Lieferschein ersetzt weiterhin nahe provisorische Buchungen (Monats-
@@ -30,6 +30,9 @@ import { mitFsDefaults, kontoSplitsAusFsKategorien, type FsKategorieSumme } from
 import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
 import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat, resolveImportReceiptPath } from '@/lib/waren-db';
 import type { TenantId } from '@/contexts/TenantContext';
+import {
+  istErsetzt, istProvisorischerLieferschein, kanonischerWarenLieferant,
+} from '@/lib/waren-monatsabgleich';
 
 export interface FsImportRechnung {
   r: ParsedCsvRechnung;
@@ -152,15 +155,15 @@ export async function kernImportiereFsRechnungen(
   for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
-    const lief = lieferant.trim().toLowerCase();
-    let vorhanden = bestand.find(e => !vergeben.has(e.id)
+    const lief = kanonischerWarenLieferant(lieferant);
+    let vorhanden = bestand.find(e => !vergeben.has(e.id) && !istErsetzt(e)
       && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
       && e.date === r.datum
-      && e.supplierName.trim().toLowerCase() === lief);
+      && kanonischerWarenLieferant(e.supplierName) === lief);
     let vorhandenMonat = month;
     // Provisorisch = Lieferschein/AB oder Monatsrechnungs-ALTDATEN ohne
     // final-Flag; final = massgebliche Monatsrechnungs-Buchung.
-    const istProv = (e: InvoiceEntry) => !e.final;
+    const istProv = (e: InvoiceEntry) => istProvisorischerLieferschein(e);
     const istMr = opts?.quelle === 'monatsrechnung';
     const bruttoDetail = bruttoOffiziell ?? r.bruttoTotal;
     // KREDITOREN-ÜBERNAHME finalisieren: provisorische Übernahme mit gleicher
@@ -170,7 +173,7 @@ export async function kernImportiereFsRechnungen(
     if (!vorhanden && opts?.quelle !== 'auftragsbestaetigung') {
       let mehrdeutigF = false;
       for (const nm of nachbarMonate(r.datum)) {
-        const nb = (await holeMonat(nm)).bestand.filter(e => !vergeben.has(e.id));
+        const nb = (await holeMonat(nm)).bestand.filter(e => !vergeben.has(e.id) && !istErsetzt(e));
         const res = findeKreditorenUebernahme(nb, r.rechnungsNr, lieferant, bruttoDetail);
         if (res.entry) { vorhanden = res.entry; vorhandenMonat = nm; break; }
         if (res.mehrdeutig) mehrdeutigF = true;
@@ -197,8 +200,8 @@ export async function kernImportiereFsRechnungen(
         for (const pass of ['ref', 'fallback'] as const) {
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
-            const m = nb.find(e => !vergeben.has(e.id)
-              && e.supplierName.trim().toLowerCase() === lief
+            const m = nb.find(e => !vergeben.has(e.id) && !istErsetzt(e)
+              && kanonischerWarenLieferant(e.supplierName) === lief
               && (pass === 'ref'
                 ? refMatch(e)
                 : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
@@ -218,8 +221,8 @@ export async function kernImportiereFsRechnungen(
         for (const nm of nachbarMonate(r.datum)) {
           const nb = (await holeMonat(nm)).bestand;
           for (const e of nb) {
-            if (!vergeben.has(e.id) && istProv(e) && e.quelle === 'auftragsbestaetigung'
-              && e.supplierName.trim().toLowerCase() === lief
+            if (!vergeben.has(e.id) && !istErsetzt(e) && istProv(e) && e.quelle === 'auftragsbestaetigung'
+              && kanonischerWarenLieferant(e.supplierName) === lief
               && tageDiff(e.date, r.datum) <= fenster
               && Math.abs(e.amountGross - brutto) <= tol) kandidaten.push({ e, nm });
           }
@@ -277,9 +280,9 @@ export async function kernImportiereFsRechnungen(
         for (const pass of ['ref', 'fallback'] as const) {
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
-            const kandidat = nb.find(e => !vergeben.has(e.id)
+            const kandidat = nb.find(e => !vergeben.has(e.id) && !istErsetzt(e)
               && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung' || e.quelle === 'kreditoren_uebernahme')
-              && e.supplierName.trim().toLowerCase() === lief
+              && kanonischerWarenLieferant(e.supplierName) === lief
               && (pass === 'ref'
                 ? r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
                 : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
@@ -294,8 +297,8 @@ export async function kernImportiereFsRechnungen(
           let finalTreffer: { e: InvoiceEntry; nm: string } | null = null;
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
-            const e = nb.find(e => e.final === true && !vergeben.has(e.id)
-              && e.supplierName.trim().toLowerCase() === lief
+            const e = nb.find(e => e.final === true && !vergeben.has(e.id) && !istErsetzt(e)
+              && kanonischerWarenLieferant(e.supplierName) === lief
               && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase());
             if (e) { finalTreffer = { e, nm }; break; }
           }
@@ -358,7 +361,12 @@ export async function kernImportiereFsRechnungen(
     alleAenderungen.push(...aenderungen);
     hist = aktualisierePreisHistorie(hist, [r], lieferant);
     const jetzt = new Date().toISOString();
-    const id = vorhanden?.id ?? `${opts?.idPrefix ?? 'fs'}-${r.rechnungsNr}-${Date.now()}-${neu}`;
+    // Eine Monatsrechnung ersetzt einen provisorischen Lieferschein historien-
+    // erhaltend: neuer finaler Eintrag statt Überschreiben derselben ID.
+    const supersedesExisting = istMr && !!vorhanden && istProv(vorhanden);
+    const id = supersedesExisting
+      ? `${opts?.idPrefix ?? 'fs'}-mr-${r.rechnungsNr}-${Date.now()}-${neu}-${ueberschrieben}`
+      : (vorhanden?.id ?? `${opts?.idPrefix ?? 'fs'}-${r.rechnungsNr}-${Date.now()}-${neu}`);
     const entry: InvoiceEntry = {
       id,
       date: r.datum, // LIEFERDATUM — führend für Wochen-Analyse und Cockpit
@@ -390,12 +398,26 @@ export async function kernImportiereFsRechnungen(
       // dürfen diese Werte nicht mehr verschlechtern. finalDirekt: Lieferant
       // ohne Monatsrechnung ⇒ Einzelrechnung ist sofort final.
       ...(istMr || opts?.finalDirekt ? { final: true } : {}),
-      createdAt: vorhanden?.createdAt ?? jetzt,
+      createdAt: supersedesExisting ? jetzt : (vorhanden?.createdAt ?? jetzt),
       updatedAt: jetzt,
     };
-    // Alten Eintrag entfernen (auch wenn er in einem Nachbarmonat lag) —
-    // Positionen UND Preis-Hinweise mit aufräumen (keine verwaisten IDs).
-    if (vorhanden) {
+    if (supersedesExisting && vorhanden) {
+      // Originalbetrag/-datum/-notiz bleiben unverändert auditierbar. Nur die
+      // Lineage markiert, warum dieser Lieferschein nicht mehr zählt.
+      const altBestand = bestandCache.get(vorhandenMonat)!;
+      bestandCache.set(vorhandenMonat, altBestand.map(e => e.id === vorhanden!.id
+        ? {
+            ...e,
+            superseded: true,
+            supersededById: id,
+            supersededByReference: r.rechnungsNr || undefined,
+            updatedAt: jetzt,
+          }
+        : e));
+      geaendert.add(vorhandenMonat);
+    } else if (vorhanden) {
+      // Regulärer idempotenter Upsert/Platzhalter-Ersatz: alten Eintrag
+      // entfernen (auch wenn er in einem Nachbarmonat lag).
       bestandCache.set(vorhandenMonat, bestandCache.get(vorhandenMonat)!.filter(e => e.id !== vorhanden!.id));
       if (vorhandenMonat !== month) {
         delete posCache.get(vorhandenMonat)![vorhanden.id];

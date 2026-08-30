@@ -16,8 +16,10 @@ description: ER-KPI/P&L-Definition «direkt» ist strikt 4020–4070; 4000–401
   bleibt nachrichtlich in der Kontenliste, zählt nie ins Total/die Vergleichsquote.
 - **Why:** KPI, P&L-Zeile und Waren-Analyse müssen überall dieselbe Definition
   zeigen (User-Befehl «überall identisch, Wareneinsatz = 4020–4070»).
-- **Grenzen:** Die OPERATIVE Cockpit-WKQ (`warenkosten-quote.ts`, 4000–Grenze) ist
-  eine bewusst separate ZÄHLER-Definition — weiterhin NICHT angleichen.
+- **Warenrechnungen-Modul:** Monatskopf, Analyse, Wochen/Kumuliert und Excel-Export
+  verwenden dieselbe WKQ: zählende Belege, Netto 4020–4070 ÷ kanonischer
+  Netto-Umsatz. Noch nicht ersetzte provisorische Lieferscheine zählen und werden
+  mit Betrag/Anzahl transparent ausgewiesen; ersetzte Historienzeilen nie.
 
 ## Einheitliche UMSATZBASIS (Nenner) — 08/2026
 - Alle WKQ-Nenner (Cockpit-Monatsreport UND Warenrechnungen-Modul) = **Netto

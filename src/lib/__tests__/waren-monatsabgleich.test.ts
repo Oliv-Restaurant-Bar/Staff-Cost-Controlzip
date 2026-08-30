@@ -7,7 +7,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   istProvisorischerLieferschein, baueMonatsAbgleich, wendeMonatsrechnungAn,
-  markiereDifferenzOffen, lieferantStatus,
+  markiereDifferenzOffen, lieferantStatus, istErsetzt, zaehlendeEintraege,
+  gruppiereNachKanonischemLieferantUndMonat, akzeptiereMonatsrechnung,
+  kanonischerWarenLieferant,
+  hatZaehlendeLieferantenReferenz, kanonischerLieferantMonatKey,
+  loeseEindeutigenLiefermonatAuf,
 } from '../waren-monatsabgleich';
 import type { InvoiceEntry } from '../waren-db';
 
@@ -31,6 +35,7 @@ describe('istProvisorischerLieferschein', () => {
     expect(istProvisorischerLieferschein(inv({ quelle: 'fibu_uebernahme' }))).toBe(false);
     expect(istProvisorischerLieferschein(inv({ quelle: 'monatsrechnung' }))).toBe(false);
     expect(istProvisorischerLieferschein(inv({ final: true }))).toBe(false);
+    expect(istProvisorischerLieferschein(inv({ superseded: true }))).toBe(false);
   });
 });
 
@@ -147,5 +152,113 @@ describe('markiereDifferenzOffen / lieferantStatus', () => {
     expect(lieferantStatus([inv({})])).toBe('provisorisch');
     expect(lieferantStatus([inv({ final: true, abgleichStatus: 'abgeglichen' })])).toBe('abgeglichen');
     expect(lieferantStatus([inv({ quelle: 'kreditoren_uebernahme' })])).toBe('abgeglichen');
+  });
+});
+
+describe('historienerhaltender Monatsabgleich', () => {
+  const canonicalize = kanonischerWarenLieferant;
+
+  it('ersetzt nur Lieferbelege im Liefermonat, bewahrt deren Historie und zählt die MR genau einmal', () => {
+    const ls = inv({
+      id: 'ls-july', supplierName: 'WKQ AG', date: '2026-07-31',
+      amountNet: 120, amountGross: 129.72, reference: 'LS-7', note: 'Original-LS',
+    });
+    const june = inv({ id: 'ls-june', supplierName: 'Fideco Schweiz', date: '2026-06-30', amountNet: 90 });
+    // Eine finale Einzelrechnung ist kein provisorischer Lieferschein und zählt weiter.
+    const einzel = inv({ id: 'einzel', supplierName: 'Fideco', date: '2026-07-15', amountNet: 40, final: true });
+    const monthly = inv({
+      id: 'mr-july', supplierName: 'Fideco', date: '2026-08-03',
+      amountNet: 125, amountGross: 135.13, reference: 'MR-2026-07',
+    });
+    const out = akzeptiereMonatsrechnung({
+      bestand: [ls, june, einzel], liefermonat: '2026-07', monatsrechnung: monthly,
+      canonicalize, now: NOW,
+    });
+
+    const historical = out.find(e => e.id === 'ls-july')!;
+    expect(historical.date).toBe('2026-07-31');
+    expect(historical.amountNet).toBe(120);
+    expect(historical.amountGross).toBe(129.72);
+    expect(historical.note).toBe('Original-LS');
+    expect(historical.supersededById).toBe('mr-july');
+    expect(historical.supersededByReference).toBe('MR-2026-07');
+    expect(istErsetzt(historical)).toBe(true);
+    expect(out.find(e => e.id === 'ls-june')!.superseded).toBeUndefined(); // month boundary
+    expect(out.find(e => e.id === 'einzel')!.superseded).toBeUndefined();
+
+    const counting = zaehlendeEintraege(out);
+    expect(counting.map(e => e.id)).toEqual(['ls-june', 'einzel', 'mr-july']);
+    expect(counting.filter(e => e.id === 'mr-july')).toHaveLength(1);
+    expect(counting.reduce((sum, e) => sum + e.amountNet, 0)).toBe(255);
+    expect(out.find(e => e.id === 'mr-july')!.quelle).toBe('monatsrechnung');
+    expect(out.find(e => e.id === 'mr-july')!.final).toBe(true);
+  });
+
+  it('groups only counting entries by injected canonical supplier and delivery month', () => {
+    const entries = [
+      inv({ id: 'old', supplierName: 'WKQ AG', date: '2026-07-01', superseded: true }),
+      inv({ id: 'alias', supplierName: 'Fideco Schweiz', date: '2026-07-31' }),
+      inv({ id: 'next', supplierName: 'Fideco', date: '2026-08-01' }),
+      // Old persisted entries have no new fields and must remain countable.
+      inv({ id: 'legacy', supplierName: 'Fideco', date: '2026-07-10' }),
+    ];
+    const groups = gruppiereNachKanonischemLieferantUndMonat(entries, canonicalize);
+    expect([...groups.values()].map(g => [g.lieferant, g.monat, g.entries.map(e => e.id)])).toEqual([
+      ['fideco', '2026-07', ['alias', 'legacy']],
+      ['fideco', '2026-08', ['next']],
+    ]);
+  });
+
+  it('recognizes lineage-only historical records as superseded for forward-compatible reads', () => {
+    expect(istErsetzt(inv({ supersededById: 'mr-old' }))).toBe(true);
+    expect(istErsetzt(inv({ supersededByReference: 'MR-old' }))).toBe(true);
+    expect(zaehlendeEintraege([inv({ id: 'legacy' }), inv({ id: 'replaced', superseded: true })])
+      .map(e => e.id)).toEqual(['legacy']);
+  });
+
+  it('bildet für WKQ und Fideco denselben Monats-Gruppenschlüssel', () => {
+    expect(kanonischerLieferantMonatKey('2026-07', 'WKQ AG'))
+      .toBe(kanonischerLieferantMonatKey('2026-07', 'Fideco Schweiz AG'));
+    expect(kanonischerLieferantMonatKey('2026-08', 'Fideco'))
+      .not.toBe(kanonischerLieferantMonatKey('2026-07', 'Fideco'));
+  });
+
+  it('ignoriert ersetzte WKQ-Historie in der Fideco-Dublettenanzeige', () => {
+    const refs = new Set(['ls-1']);
+    const historie = inv({
+      supplierName: 'WKQ AG', reference: 'LS-1', superseded: true,
+    });
+    expect(hatZaehlendeLieferantenReferenz([historie], 'Fideco', refs)).toBe(false);
+    expect(hatZaehlendeLieferantenReferenz([
+      { ...historie, superseded: false },
+    ], 'Fideco Schweiz', refs)).toBe(true);
+  });
+
+  it('löst eine August-Buchung eindeutig auf Juli-Lieferscheine auf', () => {
+    const july = inv({
+      id: 'wkq-july', supplierName: 'WKQ AG', date: '2026-07-31',
+      final: false,
+    });
+    const resolved = loeseEindeutigenLiefermonatAuf({
+      buchungsmonat: '2026-08',
+      bestandByMonat: new Map([
+        ['2026-07', [july]],
+        ['2026-08', []],
+      ]),
+      matcht: name => kanonischerWarenLieferant(name) === 'fideco',
+    });
+    expect(resolved).toEqual({ monat: '2026-07', hatLieferscheine: true });
+  });
+
+  it('verweigert eine automatische Wahl bei passenden Lieferscheinen in zwei Monaten', () => {
+    const resolved = loeseEindeutigenLiefermonatAuf({
+      buchungsmonat: '2026-08',
+      bestandByMonat: new Map([
+        ['2026-07', [inv({ supplierName: 'WKQ AG', date: '2026-07-31' })]],
+        ['2026-08', [inv({ supplierName: 'Fideco', date: '2026-08-01' })]],
+      ]),
+      matcht: name => kanonischerWarenLieferant(name) === 'fideco',
+    });
+    expect(resolved).toEqual({ monat: null, hatLieferscheine: true });
   });
 });

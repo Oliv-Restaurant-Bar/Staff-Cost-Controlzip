@@ -3,11 +3,10 @@
  * Spahni, Gasser, Terravigna).
  *
  * RANGORDNUNG: Monatsrechnung (final) > Lieferschein/Auftragsbestätigung
- * (provisorisch). Die Monatsrechnung ist die MASSGEBLICHE Quelle: sie
- * überschreibt die während des Monats erfassten provisorischen Buchungen mit
- * den finalen Werten — das LIEFERDATUM je EINZELNER Lieferung kommt aus der
- * Rechnung (nie das Belegdatum am Monatsende). Sie bucht NIE zusätzlich ihren
- * Gesamtbetrag; jede Lieferung existiert am Ende genau einmal.
+ * (provisorisch). Die Monatsrechnung ist die MASSGEBLICHE Quelle. Dieser
+ * Vorschau-Helfer ermittelt Deckung und Differenzen; der produktive Schreibpfad
+ * erhält Original-Lieferscheine als markierte Revisionshistorie und lässt nur
+ * die autoritative Monatsrechnung wirtschaftlich zählen.
  *
  * Match je Lieferung gegen die erfassten Buchungen (Monate ±1):
  * 1. exakt über die LS-/Lieferungsnr (reference, case-insensitiv),
@@ -16,11 +15,12 @@
  *
  * STUFE-1-MONATSRECHNUNG (Lieferanten OHNE Positions-Parser, z.B. Gourmador):
  * die Rechnung wird via kopfAlsLieferung() als EINE Gesamt-Lieferung
- * abgeglichen — sie ersetzt die provisorischen Lieferscheine des Monats
- * (nichtInMr → Einzelentscheid behalten/entfernen), nie zusätzlich buchen.
+ * abgeglichen — nicht aufgeführte provisorische Lieferscheine werden vom
+ * autoritativen Schreibpfad ebenfalls als ersetzt markiert, nie gelöscht.
  */
 import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
 import type { ParsedCsvRechnung } from '@/lib/waren-positionen';
+import { istErsetzt, kanonischerWarenLieferant } from '@/lib/waren-monatsabgleich';
 import type { TenantId } from '@/contexts/TenantContext';
 
 /**
@@ -113,8 +113,8 @@ export async function abgleicheMonatsrechnung(
   for (const l of lieferungen) for (const m of nachbarMonate(l.datum)) monate.add(m);
   const bestand: InvoiceEntry[] = [];
   for (const m of [...monate].sort()) bestand.push(...await loadMonthInvoices(tenantId, m));
-  const lief = lieferant.trim().toLowerCase();
-  const kandidaten = bestand.filter(e => e.supplierName.trim().toLowerCase() === lief);
+  const lief = kanonischerWarenLieferant(lieferant);
+  const kandidaten = bestand.filter(e => !istErsetzt(e) && kanonischerWarenLieferant(e.supplierName) === lief);
 
   const vergeben = new Set<string>();
   const eintraege: AbgleichEintrag[] = [];

@@ -109,6 +109,19 @@ describe('computeWarenkostenTotals', () => {
     expect(t.totalNet).toBe(0);
     expect(t.perEntry).toHaveLength(0);
   });
+
+  it('schliesst Lineage-only-Historie vollständig aus allen Summen aus', () => {
+    const t = computeWarenkostenTotals([
+      entry({ id: 'active', amountNet: 100, warenkonto: '4060' }),
+      entry({ id: 'old-id', amountNet: 80, warenkonto: '4060', supersededById: 'mr-1' }),
+      entry({ id: 'old-ref', amountNet: 40, warenkonto: '4030', supersededByReference: 'MR-1' }),
+    ]);
+    expect(t.foodNet).toBe(100);
+    expect(t.beverageNet).toBe(0);
+    expect(t.relevantNet).toBe(100);
+    expect(t.totalNet).toBe(100);
+    expect(t.perEntry.map(e => e.id)).toEqual(['active']);
+  });
 });
 
 describe('warenkostenQuote', () => {

@@ -28,6 +28,7 @@ import {
   type InvoiceEntry,
 } from './waren-db';
 import type { Kreditor, KreditorBuchung, KreditorAnalyse, AbrechnungsModell } from './kreditoren-parser';
+import { kanonischerWarenLieferant, zaehlendeEintraege } from './waren-monatsabgleich';
 
 // ─── Zuordnung (pro Mandant gemerkt) ─────────────────────────────────────────
 
@@ -134,6 +135,7 @@ export function supplierMatchesKreditor(
   const s = normName(aliases[supplierName] ?? supplierName);
   const k = normName(kreditorName);
   if (!s || !k) return false;
+  if (kanonischerWarenLieferant(s) === kanonischerWarenLieferant(k)) return true;
   // Konzern-Gruppe: Prodega-Rechnungen gehören zum Transgourmet-Kreditor.
   const gs = konzernGruppe(s);
   if (gs && gs === konzernGruppe(k)) return true;
@@ -142,6 +144,13 @@ export function supplierMatchesKreditor(
   const sw = s.split(' ').find(w => w.length >= 4);
   const kw = k.split(' ').find(w => w.length >= 4);
   return !!sw && !!kw && sw === kw;
+}
+
+/** Persistierbare Identität einer Kreditorenbuchung, alias- und rerun-stabil. */
+export function kreditorBuchungKey(kreditorName: string, b: KreditorBuchung): string {
+  const supplier = kanonischerWarenLieferant(kreditorName);
+  const ref = normRef(b.referenz) ?? normRef(b.blg) ?? '';
+  return `${supplier}|${b.datum}|${b.betrag.toFixed(2)}|${ref}`;
 }
 
 // ─── Abgleich ────────────────────────────────────────────────────────────────
@@ -153,6 +162,8 @@ export interface BuchungMatch {
   status: BuchungStatus;
   /** Gematchte erfasste Rechnung (bei 'erfasst') */
   invoice?: InvoiceEntry;
+  /** Anteil der gematchten Sammel-Monatsrechnung für genau diese Buchung. */
+  matchedAmountGross?: number;
   monat: string; // YYYY-MM
   /** Notiz bei status 'ignoriert' («kein Wareneinkauf») */
   notiz?: string;
@@ -226,9 +237,19 @@ export async function abgleichKreditoren(
   const aliases = await loadSupplierAliases(tenantId);
   const ign = ignoriert ?? await loadKreditorIgnoriert(tenantId);
 
+  const vormonat = (monat: string) => {
+    const [y, m] = monat.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
+  };
+  // Autoritative Monatsrechnungen können im Liefermonat (Vormonat der
+  // Kreditorenbuchung) gespeichert sein. Für Matching mitladen, ohne den
+  // ausgewiesenen Auszugszeitraum zu verändern.
+  const lookupMonate = [...new Set(monate.flatMap(m => [vormonat(m), m]))];
   const invoicesByMonth: Record<string, InvoiceEntry[]> = {};
-  for (const m of monate) invoicesByMonth[m] = await loadMonthInvoices(tenantId, m);
-  const alleInvoices = monate.flatMap(m => invoicesByMonth[m]);
+  for (const m of lookupMonate) invoicesByMonth[m] = await loadMonthInvoices(tenantId, m);
+  // Ersetzte Lieferscheine sind reine Revisionshistorie: Sie dürfen weder
+  // Match, Provisorisch-Status noch Dublettenwache beeinflussen.
+  const alleInvoices = zaehlendeEintraege(lookupMonate.flatMap(m => invoicesByMonth[m]));
 
   const zeilen: CockpitZeile[] = [];
 
@@ -260,6 +281,34 @@ export async function abgleichKreditoren(
       else aktiv.push(b);
     }
 
+    // 0) Exakte strukturierte Herkunftsidentität: greift auch ohne Referenz und
+    // bei Kreditoren-Buchungsmonat ≠ Liefermonat.
+    const identityAssign = new Map<KreditorBuchung, {
+      invoice: InvoiceEntry;
+      amountGross: number;
+    }>();
+    const identityRemaining = new Map<string, Array<{ key: string; amountGross: number }>>();
+    for (const candidate of matchbar) {
+      const allocations = candidate.sourceBookingAllocations?.map(a => ({ ...a }))
+        ?? candidate.sourceBookingKeys?.map(key => ({ key, amountGross: candidate.amountGross }))
+        ?? [];
+      identityRemaining.set(candidate.id, allocations);
+    }
+    for (const b of aktiv) {
+      const key = kreditorBuchungKey(a.kreditor.name, b);
+      const inv = matchbar.find(candidate =>
+        (identityRemaining.get(candidate.id) ?? []).some(a => a.key === key));
+      if (inv) {
+        const remaining = identityRemaining.get(inv.id)!;
+        const allocationIndex = remaining.findIndex(a => a.key === key);
+        const [allocation] = remaining.splice(allocationIndex, 1);
+        identityAssign.set(b, { invoice: inv, amountGross: allocation.amountGross });
+      }
+    }
+    const identityInvoiceIds = new Set(
+      [...identityAssign.values()].map(assignment => assignment.invoice.id),
+    );
+
     // 1) PRIMÄR: Belegnummer (Kreditor-Referenz ↔ Rechnungs-Referenz).
     //    Das Kreditor-Buchungsdatum weicht systematisch vom Lieferdatum ab —
     //    Datum ist hier KEIN Kriterium. Betrag nur als Zusatz-Check: bei
@@ -268,6 +317,7 @@ export async function abgleichKreditoren(
     //    unabhängig von der Buchungs-Reihenfolge im Auszug.
     const refInvoices = new Map<string, InvoiceEntry[]>();
     for (const inv of matchbar) {
+      if (identityInvoiceIds.has(inv.id)) continue;
       const r = normRef(inv.reference);
       if (!r) continue;
       const l = refInvoices.get(r) ?? [];
@@ -275,7 +325,7 @@ export async function abgleichKreditoren(
     }
     const refAssign = new Map<KreditorBuchung, InvoiceEntry>();
     for (const [r, invs] of refInvoices) {
-      const books = aktiv.filter(b => normRef(b.referenz) === r);
+      const books = aktiv.filter(b => !identityAssign.has(b) && normRef(b.referenz) === r);
       const pairs = books
         .flatMap(b => invs.map(inv => ({ b, inv, delta: Math.abs(inv.amountGross - b.betrag) })))
         .sort((x, y) => x.delta - y.delta);
@@ -297,12 +347,15 @@ export async function abgleichKreditoren(
     // Für einen Ref-Match reservierte Rechnungen: der Datums-Fallback einer
     // ref-losen Buchung darf sie NIE stehlen (auch wenn ihre Buchung erst
     // später in der Schleife drankommt).
-    const refReserviert = new Set<string>([...refAssign.values()].map(inv => inv.id));
+    const refReserviert = new Set<string>([
+      ...[...identityAssign.values()].map(a => a.invoice), ...refAssign.values(),
+    ].map(inv => inv.id));
 
     for (const b of aktiv) {
       const monat = b.datum.slice(0, 7);
       const bRef = normRef(b.referenz);
-      let best: InvoiceEntry | undefined = refAssign.get(b);
+      const identity = identityAssign.get(b);
+      let best: InvoiceEntry | undefined = identity?.invoice ?? refAssign.get(b);
       if (!best && bRef && bekannteRefs.has(bRef)) {
         // Ref existiert im Bestand, aber kein freier Treffer mehr →
         // Dublette; nie fallback-matchen, nie als fehlend anbieten.
@@ -327,7 +380,13 @@ export async function abgleichKreditoren(
       }
       if (best) {
         verwendet.add(best.id);
-        matches.push({ buchung: b, status: 'erfasst', invoice: best, monat });
+        matches.push({
+          buchung: b,
+          status: 'erfasst',
+          invoice: best,
+          matchedAmountGross: identity?.amountGross,
+          monat,
+        });
         continue;
       }
       // 3) Dual ohne finale Monatsrechnung, aber mit provisorischen Lieferscheinen im Monat
@@ -351,7 +410,10 @@ export async function abgleichKreditoren(
     const summeIgnoriert = Math.round(ignorierte.reduce((s, m) => s + m.buchung.betrag, 0) * 100) / 100;
     // Kreditor-Summe/Differenz OHNE ignorierte Buchungen (kein Wareneinkauf)
     const summeKreditor = Math.round(aktiv.reduce((s, b) => s + b.betrag, 0) * 100) / 100;
-    const summeErfasst = Math.round(matches.reduce((s, m) => s + (m.invoice?.amountGross ?? 0), 0) * 100) / 100;
+    const summeErfasst = Math.round(matches.reduce(
+      (s, m) => s + (m.matchedAmountGross ?? m.invoice?.amountGross ?? 0),
+      0,
+    ) * 100) / 100;
     const differenz = aktiv.length === 0 ? null : Math.round((summeKreditor - summeErfasst) * 100) / 100;
 
     zeilen.push({

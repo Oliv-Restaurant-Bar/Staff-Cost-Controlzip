@@ -92,6 +92,18 @@ describe('abgleicheMonatsrechnung (massgeblich — Fideco-Kontrollszenario)', ()
     expect(new Set(matchIds).size).toBe(matchIds.length);
   });
 
+  it('findet bestehende WKQ-AG-Lieferscheine für eine Fideco-Monatsrechnung', async () => {
+    const ls = fidecoLieferungen().slice(0, 1);
+    bestand.set('2026-07', [{
+      ...eintrag({ id: 'lpdf-wkq', ref: ls[0].rechnungsNr, date: ls[0].datum, net: ls[0].nettoTotal }),
+      supplierName: 'WKQ AG',
+    }]);
+
+    const a = await abgleicheMonatsrechnung('beaulieu', 'Fideco Schweiz', ls);
+    expect(a.unveraendert).toBe(1);
+    expect(a.eintraege[0].match?.id).toBe('lpdf-wkq');
+  });
+
   it('Match ohne LS-Nr über Datum + Betrag (brutto ±0.10), Fenster 0 = exaktes Datum', async () => {
     const ls = fidecoLieferungen();
     bestand.set('2026-07', [

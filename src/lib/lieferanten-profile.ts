@@ -99,11 +99,10 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   // Firmenname ODER die Spahni-Kundennummer XBEA (= Restaurant Beaulieu).
   { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual', monatsrechnung: true,
     erkennungTokenGruppen: [['metzgerei spahni'], ['xbea']] },
-  // Kopf-Fallback für gescannte Lieferscheine (OCR, keine MWST-Nr im Text):
-  // NUR der Firmenname «Fideco» in der Kopfzone. Die Kundennr 27135 ist als
-  // nacktes Ziffern-Substring bewusst KEIN Signal (Teiltreffer in fremden
-  // Referenz-/Belegnummern wären möglich — kein Raten bei Unbekannten).
-  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual',
+  // Kopf-Fallback für gescannte Lieferscheine (OCR, keine MWST-Nr im Text).
+  // Die zusätzliche, kontextgebundene Kundennr-Erkennung erfolgt in
+  // findeProfilImText; eine nackte «27135» ist ausdrücklich kein Signal.
+  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Food/Fleisch',     konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual',
     erkennungTokenGruppen: [['fideco']] },
   // Gourmador: DUAL — Lieferscheine laufen provisorisch (importiert ODER
   // manuell erfasst); die Faktura (Monatsrechnung) gleicht gegen die
@@ -299,6 +298,15 @@ export function findeProfilImText(
   // Fusstexte/Zahlteile dürfen die Lieferanten-Erkennung nicht bestimmen.
   const kopfLower = text.split('\n').map(z => z.trim()).filter(Boolean).slice(0, 25).join('\n').toLowerCase();
   for (const p of profile) {
+    // Fideco-Lieferscheine werden gelegentlich ohne MWST-Nr gescannt. Die
+    // Firmenvarianten (Fideco, www.fideco.ch, Fideco Murten) sind durch das
+    // Wort «fideco» abgedeckt. Kundennr. 27135 ist nur mit einem expliziten
+    // Kundenfeld in der Kopfzone belastbar — nie als nackte Ziffernfolge.
+    // Dieser Fallback läuft bewusst erst NACH dem MWST-Matching oben.
+    if (p.id === 'fideco' && (
+      /\bfideco\b/i.test(kopfLower)
+      || /\b(?:kunden(?:nummer|[\s-]*nr\.?)?|kd[\s-]*nr\.?)\s*:?\s*27135\b/i.test(kopfLower)
+    )) return { profil: p, mwstNrn };
     if (p.erkennungTokens?.length && p.erkennungTokens.every(t => lower.includes(t))) return { profil: p, mwstNrn };
     if (p.erkennungTokenGruppen?.some(gr => gr.length > 0 && gr.every(t => kopfLower.includes(t)))) return { profil: p, mwstNrn };
     if (p.iban && kompakt.includes(p.iban.replace(/\s/g, '').toUpperCase())) return { profil: p, mwstNrn };

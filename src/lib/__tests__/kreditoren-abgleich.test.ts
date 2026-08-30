@@ -15,7 +15,10 @@ vi.mock('@/lib/waren-db', async (orig) => {
   };
 });
 
-import { abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry, zuordnungKey, normRef, ignoriertKey } from '@/lib/kreditoren-abgleich';
+import {
+  abgleichKreditoren, supplierMatchesKreditor, buildUebernahmeEntry,
+  kreditorBuchungKey, zuordnungKey, normRef, ignoriertKey,
+} from '@/lib/kreditoren-abgleich';
 import { analysiereKreditor } from '@/lib/kreditoren-parser';
 
 const inv = (p: Partial<InvoiceEntry>): InvoiceEntry => ({
@@ -47,6 +50,14 @@ describe('supplierMatchesKreditor', () => {
   it('Konzern-Gruppe: Prodega gehört zum Transgourmet-Kreditor', () => {
     expect(supplierMatchesKreditor('Prodega', 'Transgourmet Schweiz AG', {})).toBe(true);
     expect(supplierMatchesKreditor('Prodega', 'Metzgerei Spahni AG', {})).toBe(false);
+  });
+  it('Firmenwechsel: WKQ AG gehört zum Fideco-Kreditor', () => {
+    expect(supplierMatchesKreditor('WKQ AG', 'Fideco Schweiz AG', {})).toBe(true);
+    expect(supplierMatchesKreditor('Fideco', 'WKQ AG', {})).toBe(true);
+  });
+  it('Buchungsidentität bleibt über WKQ/Fideco-Namen stabil', () => {
+    const b = buchung('2026-08-03', 500);
+    expect(kreditorBuchungKey('WKQ AG', b)).toBe(kreditorBuchungKey('Fideco Schweiz AG', b));
   });
 });
 
@@ -206,6 +217,85 @@ describe('abgleichKreditoren', () => {
     expect(z.anzahlErfasst).toBe(1);
     expect(z.anzahlFehlt).toBe(0);
     expect(z.matches.filter(m => m.status === 'gesperrt_dublette')).toHaveLength(1);
+  });
+
+  it('ersetzte Lieferschein-Historie erzeugt weder Provisorisch-Status noch Dublettensperre', async () => {
+    invoicesByMonth['2026-04'] = [inv({
+      supplierName: 'WKQ AG',
+      date: '2026-04-10',
+      amountGross: 500,
+      reference: 'LS-ALT',
+      superseded: true,
+      supersededById: 'mr-fideco-april',
+    })];
+    const a = analyse('Fideco Schweiz AG', [{
+      ...buchung('2026-04-10', 500),
+      referenz: 'LS-ALT',
+    }]);
+    const zu = {
+      [zuordnungKey('Fideco Schweiz AG')]: {
+        waren: true, konto: '4060', modell: 'monatsrechnung' as const, bestaetigt: 'x',
+      },
+    };
+    const erg = await abgleichKreditoren('beaulieu', [a], zu, '2026-04-01', '2026-04-30');
+    expect(erg.zeilen[0].matches[0].status).toBe('fehlt');
+    expect(erg.zeilen[0].anzahlProvisorisch).toBe(0);
+    expect(erg.zeilen[0].anzahlFehlt).toBe(1);
+  });
+
+  it('erkennt referenzlose August-Wiederholung an autoritativer Juli-MR', async () => {
+    const b = buchung('2026-08-03', 500);
+    invoicesByMonth['2026-07'] = [inv({
+      id: 'mr-fideco-juli',
+      supplierName: 'Fideco',
+      date: '2026-07-31',
+      amountGross: 500,
+      final: true,
+      quelle: 'monatsrechnung',
+      sourceBookingKeys: [kreditorBuchungKey('WKQ AG', b)],
+    })];
+    const a = analyse('Fideco Schweiz AG', [b]);
+    const zu = {
+      [zuordnungKey('Fideco Schweiz AG')]: {
+        waren: true, konto: '4060', modell: 'monatsrechnung' as const, bestaetigt: 'x',
+      },
+    };
+    const erg = await abgleichKreditoren('beaulieu', [a], zu, '2026-08-01', '2026-08-31');
+    expect(erg.zeilen[0].matches[0]).toMatchObject({
+      status: 'erfasst',
+      invoice: { id: 'mr-fideco-juli' },
+    });
+    expect(erg.zeilen[0].anzahlFehlt).toBe(0);
+  });
+
+  it('allokiert zwei identische referenzlose Buchungen auf dieselbe Sammel-MR ohne Doppelzählung', async () => {
+    const b1 = buchung('2026-08-03', 250);
+    const b2 = buchung('2026-08-03', 250);
+    const key = kreditorBuchungKey('WKQ AG', b1);
+    invoicesByMonth['2026-07'] = [inv({
+      id: 'mr-fideco-juli-sammel',
+      supplierName: 'Fideco',
+      date: '2026-07-31',
+      amountGross: 500,
+      final: true,
+      quelle: 'monatsrechnung',
+      sourceBookingKeys: [key, key],
+      sourceBookingAllocations: [
+        { key, amountGross: 250 },
+        { key, amountGross: 250 },
+      ],
+    })];
+    const a = analyse('Fideco Schweiz AG', [b1, b2]);
+    const zu = {
+      [zuordnungKey('Fideco Schweiz AG')]: {
+        waren: true, konto: '4060', modell: 'monatsrechnung' as const, bestaetigt: 'x',
+      },
+    };
+    const erg = await abgleichKreditoren('beaulieu', [a], zu, '2026-08-01', '2026-08-31');
+    expect(erg.zeilen[0].matches.map(m => m.status)).toEqual(['erfasst', 'erfasst']);
+    expect(erg.zeilen[0].matches.map(m => m.matchedAmountGross)).toEqual([250, 250]);
+    expect(erg.zeilen[0].summeErfasst).toBe(500);
+    expect(erg.zeilen[0].anzahlFehlt).toBe(0);
   });
 });
 
