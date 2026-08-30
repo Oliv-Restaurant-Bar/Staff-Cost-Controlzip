@@ -32,7 +32,21 @@ type TimelineRow = { name: string; department?: ControlListDepartment; days: Con
 type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState };
 const fmt = (n: number | undefined, digits = 1) => n === undefined ? '—' : n.toLocaleString('de-CH', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
-const weekDates = (week: string) => { const [year, raw] = week.split('-W').map(Number); const jan4 = new Date(Date.UTC(year, 0, 4)); const monday = new Date(jan4); monday.setUTCDate(jan4.getUTCDate() - (jan4.getUTCDay() || 7) + 1 + (raw - 1) * 7); return Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setUTCDate(monday.getUTCDate() + i); return isoDate(d); }); };
+const weekDates = (week: string) => {
+  const match = week.match(/^(\d{4})-W(\d{2})$/);
+  if (!match) return [];
+  const year = Number(match[1]);
+  const raw = Number(match[2]);
+  if (!Number.isInteger(year) || raw < 1 || raw > 53) return [];
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - (jan4.getUTCDay() || 7) + 1 + (raw - 1) * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + i);
+    return isoDate(date);
+  });
+};
 const timeLabel = (n: number) => `${String(Math.floor(n % 24)).padStart(2, '0')}:${String(Math.round((n % 1) * 60)).padStart(2, '0')}`;
 
 export default function BesatzungProduktivitaetPage() {
@@ -90,7 +104,7 @@ export default function BesatzungProduktivitaetPage() {
   };
   const toggleHelper = (id: string, date: string, checked: boolean) => { if (!state) return; save({ ...state, helperSelections: { ...state.helperSelections, [`${id}|${date}`]: checked } }); };
   const toggleHelperWeek = (id: string, days: HelperDay[], checked: boolean) => { if (!state) return; const helperSelections = { ...state.helperSelections }; days.filter(day => day.hours > 0).forEach(day => { helperSelections[`${id}|${day.date}`] = checked; }); save({ ...state, helperSelections }); };
-  const shiftWeek = (amount: number) => { const d = new Date(`${dates[0]}T12:00:00`); d.setDate(d.getDate() + amount * 7); setWeek(isoWeekForDate(isoDate(d))); };
+  const shiftWeek = (amount: number) => { if (!dates[0]) return; const d = new Date(`${dates[0]}T12:00:00`); d.setDate(d.getDate() + amount * 7); setWeek(isoWeekForDate(isoDate(d))); };
   const onFile = async (file?: File) => { if (!file) return; const importTenant = tenantId; try { const parsed = parseControlListXls(await file.arrayBuffer()); if (tenantRef.current !== importTenant) throw new Error('Der Mandant wurde während des Imports gewechselt. Bitte Datei erneut auswählen.'); const text = parsed.tenant.toLowerCase(); const valid = importTenant === 'oliv' ? text.includes('3027') || text.includes('oliv') : text.includes('3012') || text.includes('beaulieu'); if (!valid) throw new Error(`Diese Datei gehört nicht zu ${tenant.name}.`); setPending(parsed); } catch (e) { setError(e instanceof Error ? e.message : 'Import konnte nicht gelesen werden.'); } };
   const applyImport = () => { if (!state || !pending) return; const text = pending.tenant.toLowerCase(); const valid = tenantId === 'oliv' ? text.includes('3027') || text.includes('oliv') : text.includes('3012') || text.includes('beaulieu'); if (!valid) { setPending(null); setError('Der aktive Mandant passt nicht mehr zur ausgewählten Datei.'); return; } const merged = mergeControlListHistory(state.document, pending); save({ ...state, document: merged }); setPending(null); setWeek(isoWeekForDate(pending.employees.flatMap(e => e.days).at(-1)?.date ?? isoDate(new Date()))); };
 
@@ -114,7 +128,7 @@ export default function BesatzungProduktivitaetPage() {
     {!document ? <EmptyState icon={FileSpreadsheet} title="Noch keine Kontrollliste importiert" description={`Importiere den MIRUS report_test-Export für ${tenant.shortName}. Die Datei wird vor dem Ersetzen geprüft.`} action={<Button onClick={() => fileRef.current?.click()}>Datei auswählen</Button>} /> :
       mode === 'productivity' ? <ProductivityMode currentWeek={currentWeek} days={chartDays} weeks={lastFiveProductivityWeeks(weeks)} onSelect={day => setSelectedDay({ ...modelDays.find(item => item.date === day.date), ...day })} selectedDay={selectedDay} filtered={filtered} helperHours={helperHours} state={state} /> :
       <ScheduleMode document={document} filtered={filtered} week={week} dates={dates} helperHours={helperHours} state={state} selectedEmployee={selectedEmployee} setSelectedEmployee={setSelectedEmployee} personPeriod={personPeriod} setPersonPeriod={setPersonPeriod} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} />}
-    <MappingPanel document={document} state={state} personnel={personnel} tenantId={tenantId} save={save} />
+    {document && <MappingPanel document={document} state={state} personnel={personnel} tenantId={tenantId} save={save} />}
     {pending && <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4"><div className="w-full max-w-2xl rounded-xl border border-border bg-card p-5 shadow-xl">
       <p className="text-xs font-semibold uppercase tracking-widest text-primary">Import-Vorschau</p>
       <h2 className="mt-1 text-lg font-semibold">{pending.tenant}</h2>
@@ -302,7 +316,7 @@ function DayDetail({ day, filtered, helperHours, state }: { day: ProductivityDay
   </section>;
 }
 
-function MappingPanel({ document, state, personnel, save }: {
+function MappingPanel({ document, state, personnel, tenantId, save }: {
   document: ControlListDocument;
   state: ControlListTenantState;
   personnel: Employee[];
