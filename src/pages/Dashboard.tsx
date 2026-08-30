@@ -51,6 +51,7 @@ import { FinancialMonthSection } from '@/components/dashboard/FinancialMonthSect
 import { OperationalDaySection } from '@/components/dashboard/OperationalDaySection';
 import { useStartOverview } from '@/hooks/useStartOverview';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
+import { CockpitExportCharts } from '@/components/besatzung/CockpitExportCharts';
 import { resolveZielwert } from '@/lib/zielwerte-store';
 import { useFinancialMonthInput } from '@/hooks/useFinancialMonthInput';
 import {
@@ -356,6 +357,8 @@ const Dashboard = () => {
   const revenueInputRef = useRef<HTMLInputElement>(null);
   const dashboardMainRef = useRef<HTMLDivElement>(null);
   const [exportingPDF, setExportingPDF] = useState(false);
+  const [productivityExportReady, setProductivityExportReady] = useState(false);
+  const handleProductivityExportReady = useCallback((ready: boolean) => setProductivityExportReady(ready), []);
 
   const handleExportPDF = useCallback(async () => {
     const el = dashboardMainRef.current;
@@ -374,6 +377,15 @@ const Dashboard = () => {
         logging: false,
         windowWidth: el.scrollWidth,
         windowHeight: el.scrollHeight,
+        onclone: (clonedDocument) => {
+          clonedDocument.querySelectorAll<HTMLElement>('.pdf-only').forEach(node => {
+            node.classList.remove('hidden');
+            node.style.display = 'block';
+          });
+          clonedDocument.querySelectorAll<HTMLElement>('.pdf-hide').forEach(node => {
+            node.style.display = 'none';
+          });
+        },
       });
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -1053,8 +1065,8 @@ const Dashboard = () => {
                 variant="outline" size="sm"
                 className="h-8 print:hidden"
                 onClick={handleExportPDF}
-                disabled={exportingPDF}
-                title="Dashboard als PDF speichern (mit Farben & Charts)"
+                disabled={exportingPDF || !productivityExportReady}
+                title={productivityExportReady ? 'Dashboard als PDF speichern (mit Farben & Charts)' : 'Exportdaten werden geladen…'}
               >
                 {exportingPDF ? (
                   <span className="h-3.5 w-3.5 mr-1.5 inline-block animate-spin border-2 border-current border-t-transparent rounded-full" />
@@ -1941,6 +1953,8 @@ const Dashboard = () => {
 
             {/* ── Margenkontrolle – WES-Ampel ──────────────────────────────── */}
             {isAdmin && <WesMarginWidget />}
+
+            <CockpitExportCharts tenantId={tenantId} onReadyChange={handleProductivityExportReady} />
 
             {/* ── Schnellzugriff ───────────────────────────────────────────── */}
             <SectionTitle>Schnellzugriff</SectionTitle>

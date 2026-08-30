@@ -73,7 +73,8 @@ export type AppModule =
   | 'op_liste'
   | 'gaeste'
   | 'positionen'
-  | 'personalbedarf';
+  | 'personalbedarf'
+  | 'besatzung_produktivitaet';
 
 /** Feingranulare Rechte für das Warenrechnungen-Modul */
 export interface WarenrechnungenPerms {
@@ -216,6 +217,7 @@ export const usePermissions = (): Permissions => {
       case 'positionen':
         return canManageOperationalData;
       case 'personalbedarf':
+      case 'besatzung_produktivitaet':
         return canManageOperationalData;
       default:
         return isAdmin;

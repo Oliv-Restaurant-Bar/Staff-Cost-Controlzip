@@ -182,6 +182,15 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 'personalbedarf' as import('@/hooks/usePermissions').AppModule,
       },
       {
+        path: '/besatzung-produktivitaet',
+        label: 'Besatzung & Produktivität',
+        shortLabel: 'Besatzung',
+        icon: Activity,
+        adminOnly: true,
+        beaulieuAllowed: true,
+        module: 'besatzung_produktivitaet' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
         path: '/positionen',
         label: 'Positionen',
         shortLabel: 'Position',

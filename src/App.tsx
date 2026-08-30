@@ -28,6 +28,7 @@ import PersonaleintrittDetail from "./pages/PersonaleintrittDetail";
 import Betriebe from "./pages/Betriebe";
 import Positionen from "./pages/Positionen";
 import Personalbedarf from "./pages/Personalbedarf";
+import BesatzungProduktivitaetPage from "./pages/BesatzungProduktivitaetPage";
 import Rezensionen from "./pages/Rezensionen";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
@@ -333,6 +334,9 @@ const AppContent = () => {
             {/* Personalbedarf: Admin + Beaulieu-Geschäftsführer */}
             <Route path="/personalbedarf"
               element={canAccessModule('personalbedarf') ? <Personalbedarf /> : <Navigate to="/personal" replace />}
+            />
+            <Route path="/besatzung-produktivitaet"
+              element={canAccessModule('besatzung_produktivitaet') ? <BesatzungProduktivitaetPage /> : <Navigate to="/personal" replace />}
             />
 
             {/* Einstellungen/Systemverwaltung: ausschliesslich Admin */}
