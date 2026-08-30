@@ -125,3 +125,4 @@
 - [Manueller Buchungsimport](manuelle-buchungen-import.md) — BOM/Kommentare vor Header prüfen; toleranter optionaler Header für CSV/Text-Exporte.
 - [Beaulieu-Geschäftsführer Rechte](beaulieu-manager-permissions.md) — operativ+Gäste+Cockpit-Budget; nie Finanzen, Cockpit-Exporte oder Systemverwaltung.
 - [PDF-Artikeldetail MwSt-Rundung](pdf-artikeldetail-mwst-rundung.md) — Positionsdetails müssen Netto UND gedruckte MwSt-Klassen decken; Rundungsdelta pro Klasse deterministisch ausgleichen.
+- [MIRUS report_test Echtdaten](mirus-report-test-shape.md) — reale Exporte können >30 Spalten und über die Datumsspalte verbundene Mitarbeiter-Kopfzeilen haben.

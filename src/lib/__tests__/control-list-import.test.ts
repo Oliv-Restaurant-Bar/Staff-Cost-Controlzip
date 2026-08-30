@@ -1,10 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import { parseControlListWorkbook, parseControlListXls, parseEffectiveWindows } from '@/lib/control-list-import';
 import { aggregateProductivityDays, aggregateProductivityWeeks, lastFiveProductivityWeeks } from '@/lib/control-list-productivity';
 import { mergeControlListHistory } from '@/lib/control-list-history';
 import { departmentFromDailyHoursMeta } from '@/lib/control-list-department-seed';
+
+const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
 function reportSheet(): XLSX.WorkBook {
   const rows: unknown[][] = Array.from({ length: 12 }, () => Array(30).fill(''));
@@ -60,6 +63,51 @@ describe('Kontrollliste report_test importer', () => {
   it('rejects renamed .xlsx or arbitrary input instead of silently accepting it as legacy .xls', () => {
     expect(() => parseControlListXls(new Uint8Array([0x50, 0x4b, 0x03, 0x04])))
       .toThrow('echte MIRUS-.xls-Datei');
+  });
+
+  it('confirms the approved OLIV KW34 fixture and separates control-list-only hours from Ist', () => {
+    const document = parseControlListXls(fixture('control-list-oliv-kw34.xls'));
+    const weekDays = document.employees.flatMap(employee => employee.days
+      .filter(day => day.date >= '2026-08-17' && day.date <= '2026-08-23')
+      .map(day => ({ employee, day })));
+    const netHours = weekDays.reduce((sum, { day }) => sum + day.netHours, 0);
+    const abdii = weekDays.filter(({ employee }) => employee.name === 'Abdii Avdi');
+    const gestempeltIstHours = weekDays
+      .filter(({ employee }) => employee.name !== 'Abdii Avdi')
+      .reduce((sum, { day }) => sum + day.netHours, 0);
+
+    expect(document.tenant).toContain('3027 Restaurant OLIV');
+    expect(netHours).toBeCloseTo(663.28, 2);
+    expect(abdii.reduce((sum, { day }) => sum + day.netHours, 0)).toBeCloseTo(45, 2);
+    expect(Math.round(gestempeltIstHours * 10) / 10).toBe(618.3);
+    expect(abdii.every(({ employee }) => !employee.inIst)).toBe(true);
+  });
+
+  it('confirms the approved Beaulieu KW35 fixture', () => {
+    const document = parseControlListXls(fixture('control-list-beaulieu-kw35.xls'));
+    const netHours = document.employees.flatMap(employee => employee.days)
+      .filter(day => day.date >= '2026-08-24' && day.date <= '2026-08-30')
+      .reduce((sum, day) => sum + day.netHours, 0);
+
+    expect(document.tenant).toContain('3012 Restaurant Beaulieu AG');
+    expect(netHours).toBeCloseTo(317.53, 2);
+  });
+
+  it('keeps real split shifts, midnight windows, and re-import history idempotent', () => {
+    const document = parseControlListXls(fixture('control-list-oliv-kw34.xls'));
+    const days = document.employees.flatMap(employee => employee.days);
+    const split = days.find(day => day.date === '2026-08-01' && day.effectiveWindows.length === 2);
+    const midnight = days.find(day => day.effectiveWindows.some(window => window.end > 24));
+
+    expect(split?.effectiveWindows).toHaveLength(2);
+    expect(midnight?.effectiveWindows.some(window => window.end > 24)).toBe(true);
+
+    const imported = mergeControlListHistory(undefined, document);
+    const reimported = mergeControlListHistory(imported, document);
+    expect(reimported).toEqual(imported);
+    expect(reimported.employees.flatMap(employee => employee.days)).toHaveLength(
+      document.employees.flatMap(employee => employee.days).length,
+    );
   });
 });
 

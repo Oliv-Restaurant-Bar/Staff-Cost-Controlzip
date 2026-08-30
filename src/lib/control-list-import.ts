@@ -111,8 +111,8 @@ export function parseControlListWorkbook(workbook: XLSX.WorkBook): ControlListDo
   const sheet = workbook.Sheets.report_test;
   if (!sheet?.['!ref']) throw new ControlListParseError('Das Blatt „report_test“ ist leer.');
   const range = XLSX.utils.decode_range(sheet['!ref']);
-  if (range.e.c - range.s.c + 1 !== 30) {
-    throw new ControlListParseError('Das Blatt „report_test“ muss genau 30 Spalten enthalten.');
+  if (range.e.c - range.s.c + 1 < 30) {
+    throw new ControlListParseError('Das Blatt „report_test“ muss mindestens 30 Spalten enthalten.');
   }
   const merges = sheet['!merges'] ?? [];
   const cell = (row: number, column: number) => valueAt(sheet, row, column, merges);
@@ -121,7 +121,7 @@ export function parseControlListWorkbook(workbook: XLSX.WorkBook): ControlListDo
   for (let row = 7; row <= range.e.r; row++) {
     const name = text(cell(row, 2));
     const dateValue = cell(row, COLUMNS.date);
-    if (name && !text(dateValue)) {
+    if (name && numeric(dateValue) <= 0) {
       if (name.toLowerCase() === 'total') break;
       employee = { name, inIst: false, days: [] };
       employees.push(employee);
