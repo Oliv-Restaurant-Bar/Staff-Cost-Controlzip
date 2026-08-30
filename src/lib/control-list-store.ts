@@ -44,6 +44,9 @@ export async function loadControlListState(tenantId: TenantId): Promise<ControlL
 }
 
 export async function saveControlListState(tenantId: TenantId, state: ControlListTenantState): Promise<void> {
-  const { error } = await appSettingsTable().upsert({ key: keyFor(tenantId), value: state });
+  const { error } = await appSettingsTable().upsert(
+    { key: keyFor(tenantId), value: state },
+    { onConflict: 'key' },
+  );
   if (error) throw new Error(`Kontrollliste konnte nicht gespeichert werden: ${error.message}`);
 }
