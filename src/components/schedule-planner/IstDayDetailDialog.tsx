@@ -30,7 +30,7 @@ import { DaySchedule } from './ScheduleGrid';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { getEffectiveHourlyRate } from './ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
-import type { SocialCostRates } from '@/lib/social-costs';
+import { socialCostFactorFromRates, type SocialCostRates } from '@/lib/social-costs';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -72,9 +72,9 @@ function calcSlotHours(slot: { start?: string; end?: string } | null | undefined
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 // Ausschlussregel exakt wie im zentralen Datenlader ladePersonalkostenDaten:
-// Absenz-Markierung (FE/K/U …) ODER Zusatzkosten-Eintrag (isAdditionalCost)
-// zählen NICHT als Arbeits-Ist. ABSENCE_CODES fängt zusätzlich die legacy
-// Fälle ab, in denen der Code direkt statt in absenceType steht.
+// Nur Absenz-Markierungen (FE/K/U …) zählen nicht als Arbeits-Ist.
+// Zusatzkosten-Markierungen ändern den Kostenpfad, dürfen die geleisteten
+// Stunden aber nicht aus Tages-, Besatzungs- oder Produktivitätssummen nehmen.
 function isWorkIst(
   entry: { hours: number; absenceType?: string; isAdditionalCost?: boolean } | undefined,
 ): entry is { hours: number; absenceType?: string; isAdditionalCost?: boolean } {
@@ -82,8 +82,26 @@ function isWorkIst(
   // Jede Absenz-Markierung (auch legacy Codes direkt in absenceType) schliesst
   // den Tag als Arbeits-Ist aus — identisch zum zentralen Datenlader.
   if (entry.absenceType) return false;
-  if (entry.isAdditionalCost) return false;
   return true;
+}
+
+function fixedMonthlySalary(employee: Employee): number {
+  return employee.monthlySalaryWith13th ?? employee.monthlySalary ?? 0;
+}
+
+function employeeCostForDay(
+  employee: Employee,
+  workedHours: number,
+  dateStr: string,
+  socialCostRates: SocialCostRates,
+): number {
+  const monthly = fixedMonthlySalary(employee);
+  if (monthly > 0) {
+    const date = new Date(`${dateStr}T12:00:00`);
+    const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    return r2((monthly * socialCostFactorFromRates(socialCostRates)) / daysInMonth);
+  }
+  return r2(workedHours * (getEffectiveHourlyRate(employee, socialCostRates) ?? 0));
 }
 
 function computeStats(
@@ -104,17 +122,17 @@ function computeStats(
 
   const cost = emps.reduce((s, e) => {
     const entry = actualHoursData[`${e.id}-${dateStr}`];
-    if (!isWorkIst(entry)) return s;
-    return s + r2((entry.hours ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0));
+    const workedHours = isWorkIst(entry) ? (entry.hours ?? 0) : 0;
+    if (workedHours <= 0 && fixedMonthlySalary(e) <= 0) return s;
+    return s + employeeCostForDay(e, workedHours, dateStr, socialCostRates);
   }, 0);
 
   const empBreakdown = emps
     .map(e => {
       const entry = actualHoursData[`${e.id}-${dateStr}`];
-      if (!isWorkIst(entry)) return null;
-      const h = entry.hours ?? 0;
-      if (h === 0) return null;
-      return { emp: e, hours: h, cost: r2(h * (getEffectiveHourlyRate(e, socialCostRates) ?? 0)) };
+      const h = isWorkIst(entry) ? (entry.hours ?? 0) : 0;
+      if (h === 0 && fixedMonthlySalary(e) <= 0) return null;
+      return { emp: e, hours: h, cost: employeeCostForDay(e, h, dateStr, socialCostRates) };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .sort((a, b) => b.cost - a.cost);
@@ -501,7 +519,9 @@ export function IstDayDetailDialog({
                           </td>
                           <td className="px-2 py-1.5 text-right font-mono">{fmtH(h)}</td>
                           <td className="px-2 py-1.5 text-right font-mono text-muted-foreground">
-                            {(getEffectiveHourlyRate(emp, socialCostRates) ?? 0).toFixed(2)}
+                            {fixedMonthlySalary(emp) > 0
+                              ? 'Fixlohn'
+                              : (getEffectiveHourlyRate(emp, socialCostRates) ?? 0).toFixed(2)}
                           </td>
                           <td className="px-3 py-1.5 text-right font-mono font-semibold">
                             {fmtChf(c)}

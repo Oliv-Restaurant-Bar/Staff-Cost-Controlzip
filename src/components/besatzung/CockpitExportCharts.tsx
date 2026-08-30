@@ -11,7 +11,8 @@ import {
 } from '@/lib/control-list-productivity';
 import { ladeUmsatzTage, nettoUmsatzTag } from '@/lib/umsatz';
 import { loadExtraCostPeople } from '@/lib/extra-cost-people-db';
-import { loadActualHoursForMonth } from '@/lib/supabase-db';
+import { loadActualHoursForMonth, loadEmployees } from '@/lib/supabase-db';
+import type { ActualHourEntry } from '@/lib/supabase-db';
 
 const DAY_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const CHF = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
@@ -196,16 +197,25 @@ export function CockpitExportCharts({ tenantId, onReadyChange }: { tenantId: Ten
     if (!range || !controlState) { setHelperHours({}); setHelpersLoaded(true); return; }
     let cancelled = false;
     (async () => {
-      const [helpers, ...actuals] = await Promise.all([
+      const [helpers, employees, ...actuals] = await Promise.all([
         loadExtraCostPeople(tenantId),
+        loadEmployees(tenantId),
         ...monthsBetween(range.from, range.to).map(month => loadActualHoursForMonth(new Date(`${month}-15T12:00:00`), tenantId)),
       ]);
       if (cancelled) return;
       const selected = controlState.helperSelections;
-      const merged = Object.assign({}, ...actuals.filter(Boolean));
+      const merged = Object.assign({}, ...actuals.filter(Boolean)) as Record<string, ActualHourEntry>;
       const controlNames = new Set((controlState.document?.employees ?? []).map(employee =>
         employee.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH')));
       const hours: Record<string, number> = {};
+      const employeeIds = new Set((employees ?? []).map(employee => String(employee.id)));
+      for (const [key, entry] of Object.entries(merged)) {
+        const date = key.slice(-10);
+        const employeeId = key.slice(0, -11);
+        if (!employeeIds.has(employeeId) || date < range.from || date > range.to) continue;
+        if (!entry || entry.absenceType || !(entry.hours > 0)) continue;
+        hours[date] = (hours[date] ?? 0) + entry.hours;
+      }
       for (const helper of helpers.filter(person =>
         person.isActive
         && !controlNames.has(person.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH')))) {
@@ -230,12 +240,9 @@ export function CockpitExportCharts({ tenantId, onReadyChange }: { tenantId: Ten
     if (!range) return [];
     const hours = new Map<string, number>();
     for (let i = 0; i < 35; i++) hours.set(addDays(range.from, i), 0);
-    for (const employee of controlState?.document?.employees ?? []) for (const day of employee.days) {
-      if (hours.has(day.date)) hours.set(day.date, (hours.get(day.date) ?? 0) + day.netHours);
-    }
     for (const [date, value] of Object.entries(helperHours)) hours.set(date, (hours.get(date) ?? 0) + value);
     return aggregateProductivityDays([...hours].map(([date, netHours]) => ({ date, netHours })), revenue);
-  }, [controlState, helperHours, range, revenue]);
+  }, [helperHours, range, revenue]);
   const weeks = useMemo(() => lastFiveProductivityWeeks(aggregateProductivityWeeks(days)), [days]);
   const latestDays = useMemo(() => range ? days.filter(day => day.date >= range.latestWeek) : [], [days, range]);
 

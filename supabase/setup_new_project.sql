@@ -117,7 +117,7 @@ INSERT INTO public.employees (id, name, department, employment_type, hourly_wage
   ('11', 'David',              'service', 'vollzeit', 31.33, 42, 4700.00, 5264.00),
   ('12', 'Saad',               'service', 'vollzeit', 26.00, 42, 3900.00, 4368.00),
   ('13', 'Aushilfe Service',   'service', 'teilzeit', 20.50, NULL, NULL, NULL),
-  ('14', 'Mejdi',              'kueche',  'vollzeit', 49.33, 42, 7400.00, 8288.00),
+  ('14', 'Mejdi',              'kueche',  'vollzeit', 0.00, 42, 7400.00, 8288.00),
   ('15', 'Miro',               'kueche',  'vollzeit', 34.46, 42, 5169.00, 5789.28),
   ('16', 'Culi',               'kueche',  'vollzeit', 47.33, 42, 7100.00, 7952.00),
   ('17', 'Karel',              'kueche',  'vollzeit', 30.67, 42, 4600.00, 5152.00),

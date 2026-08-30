@@ -14,8 +14,10 @@
  *   Kosten = Stunden × CHF/h. Plan aus Dienstplan, Ist aus MIRUS-Import.
  * - TAG-REGEL: Ein Tag zählt als IST, wenn für diesen Tag Ist-Stunden
  *   importiert sind, sonst als PLAN. Nie Plan UND Ist für denselben Tag.
- * - NICHT enthalten: Ferienabbau (FE), Kranken-/Unfallkosten (Absenzen),
- *   Überstunden/Zusatzkosten-Einträge (isAdditionalCost) — separate Info.
+ * - NICHT enthalten: Ferienabbau (FE), Kranken-/Unfallkosten (Absenzen).
+ * - Zusatzkosten-Markierungen von Fixlohn-MA bleiben in den allgemeinen
+ *   Personalstunden enthalten; nur ihre zusätzliche Kostenkomponente wird
+ *   separat ausgewiesen.
  */
 
 import type { Employee } from '@/types/personnel';
@@ -40,6 +42,12 @@ import { loadZielPersonalquoteLocal } from '@/lib/ziel-personalquote';
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Zusatzkosten-Markierungen dürfen Fixlohn-Stunden nicht aus allgemeinen
+ * Stunden-/Produktivitäts-Summen entfernen. */
+export function countsTowardsGeneralHours(isAdditionalCost: boolean, isFixedSalary: boolean): boolean {
+  return !isAdditionalCost || isFixedSalary;
+}
 
 // ══ Datenbasis ════════════════════════════════════════════════════════════════
 
@@ -573,6 +581,7 @@ export async function ladePersonalkostenDaten(
   const aktiv = employees.filter(e => isEmployeeActiveInMonth(e, year, month));
   const fixEmployees  = aktiv.filter(pkHasFixedSalary);
   const flexEmployees = aktiv.filter(e => !pkHasFixedSalary(e));
+  const fixedEmployeeIds = new Set(fixEmployees.map(employee => String(employee.id)));
   // Lohnart-Wechsel MITTEN im Monat: Stundenlohn-Anteil als Pseudo-Flex-MA
   // (eigene id `<empId>::flexsplit`), Fix-Anteil bleibt pro rata in fixKosten.
   for (const emp of fixEmployees) {
@@ -606,7 +615,10 @@ export async function ladePersonalkostenDaten(
     // FLEX-Kosten (Stundenlohn) → FE/FT-Einsätze zählen NICHT (Anrechnung
     // FE/FT gilt nur für Fix-MA, die über den Monatslohn laufen); F immer 0.
     // K/U bleiben drin (Anrechnung für Fix UND Flex). Pro Einsatz gefiltert.
-    if (ds.isAdditionalCostPlan) continue;
+    // Eine Zusatzkosten-Markierung darf Fixlohn-MA nicht aus den allgemeinen
+    // Plan-/Besatzungsstunden entfernen. Bei Flex bleibt sie ein separater
+    // Kostenpfad und wird hier weiterhin nicht doppelt gezählt.
+    if (!countsTowardsGeneralHours(Boolean(ds.isAdditionalCostPlan), fixedEmployeeIds.has(empId))) continue;
     const NO_FLEX = new Set(['F', 'FE', 'FT']);
     const dropF = NO_FLEX.has(canonicalAbsenceCode(ds.frühAbsence) ?? '');
     const dropS = NO_FLEX.has(canonicalAbsenceCode(ds.spätAbsence) ?? '');
@@ -625,7 +637,7 @@ export async function ladePersonalkostenDaten(
   const istStdProTag: Record<string, Record<string, number>> = {};
   const istTage = new Set<string>();
   const absenzKreditTageProMa = new Set<string>();
-  const localIst = readJson<Record<string, any>>(tenantKey(`actual-hours-${prefix}`), {});
+  const localIst = readJson<Record<string, number | ActualHourEntry>>(tenantKey(`actual-hours-${prefix}`), {});
   const supaIst  = (await loadActualHoursForMonth(monthDate, tenantId)) ?? {};
   const cellKeys = new Set([...Object.keys(localIst), ...Object.keys(supaIst)]);
   for (const cellKey of cellKeys) {
@@ -648,11 +660,12 @@ export async function ladePersonalkostenDaten(
     }
     // Lokale Absenz-Markierung (FE/K/U) gewinnt → kein Arbeits-Ist
     if (localObj?.absenceType) continue;
-    // Zusatzkosten (Überstunden Fix-MA) fliessen NICHT in diese Totale
-    if (localObj?.isAdditionalCost) continue;
+    // Fixlohn: markierte Stunden zählen weiterhin voll in Personalstunden,
+    // Produktivität und Belegung. Flex-Zusatzkosten bleiben separat.
+    if (!countsTowardsGeneralHours(Boolean(localObj?.isAdditionalCost), fixedEmployeeIds.has(empId))) continue;
     const supaVal = supaIst[cellKey];
     const h = supaVal != null
-      ? (supaVal.isAdditionalCost ? 0 : (supaVal.hours ?? 0))
+      ? (countsTowardsGeneralHours(Boolean(supaVal.isAdditionalCost), fixedEmployeeIds.has(empId)) ? (supaVal.hours ?? 0) : 0)
       : (typeof localVal === 'number' ? localVal : (localObj?.hours ?? 0));
     if (h > 0) {
       (istStdProTag[date] ??= {})[empId] = r2(((istStdProTag[date]?.[empId]) ?? 0) + h);

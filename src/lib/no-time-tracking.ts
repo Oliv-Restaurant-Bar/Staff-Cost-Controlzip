@@ -89,6 +89,7 @@ export async function setzeNoTimeTracking(
  */
 export const NO_TIME_TRACKING_EMPLOYEES: string[] = [
   'Lokaj Mendim',
+  'Ramadani Mejdi',
 ];
 
 /**

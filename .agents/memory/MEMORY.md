@@ -126,3 +126,4 @@
 - [Beaulieu-Geschäftsführer Rechte](beaulieu-manager-permissions.md) — operativ+Gäste+Cockpit-Budget; nie Finanzen, Cockpit-Exporte oder Systemverwaltung.
 - [PDF-Artikeldetail MwSt-Rundung](pdf-artikeldetail-mwst-rundung.md) — Positionsdetails müssen Netto UND gedruckte MwSt-Klassen decken; Rundungsdelta pro Klasse deterministisch ausgleichen.
 - [MIRUS report_test Echtdaten](mirus-report-test-shape.md) — reale Exporte können >30 Spalten und über die Datumsspalte verbundene Mitarbeiter-Kopfzeilen haben.
+- [Fixlohn-Stunden trotz ÜStd-Ausnahme](fixlohn-stunden-ueberstunden-ausnahme.md) — ÜStd-Ausnahme nie auf Stunden/Produktivität scopen; Fixkosten bleiben unabhängig von Ist-Stunden.

@@ -19,6 +19,7 @@ vi.mock('@/hooks/useShiftConfig', () => ({ calculateDayNetHours: vi.fn() }));
 import { DEFAULT_SOCIAL_COST_RATES, socialCostFactorFromRates } from '@/lib/social-costs';
 import {
   getEffectiveIstQuelle,
+  countsTowardsGeneralHours,
   flexKostenProTagDetail,
   personalkosten,
   type PersonalkostenDaten,
@@ -58,6 +59,17 @@ describe('getEffectiveIstQuelle', () => {
   it('ignoriert ungültige Werte und fällt auf Default zurück', () => {
     const bad = { ...flexEmp('e'), istQuelle: 'xxx' as unknown as Employee['istQuelle'] };
     expect(getEffectiveIstQuelle(bad)).toBe('plan');
+  });
+});
+
+describe('allgemeine Stunden-Summen', () => {
+  it('zählt Zusatzkosten-markierte Stunden eines Fixlohn-MA weiterhin voll', () => {
+    expect(countsTowardsGeneralHours(true, true)).toBe(true);
+    expect(countsTowardsGeneralHours(false, true)).toBe(true);
+  });
+
+  it('behält den separaten Zusatzkostenpfad für variable MA', () => {
+    expect(countsTowardsGeneralHours(true, false)).toBe(false);
   });
 });
 

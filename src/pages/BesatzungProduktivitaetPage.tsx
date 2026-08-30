@@ -25,7 +25,7 @@ import { ProductivityChart } from '@/components/besatzung/ProductivityChart';
 
 type DeptFilter = 'all' | ControlListDepartment;
 type Mode = 'productivity' | 'schedule';
-type ActualEntry = { hours: number; start?: string; end?: string };
+type ActualEntry = { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean };
 type HelperDay = { date: string; hours: number };
 type HelperHours = { helper: ExtraCostPerson; days: HelperDay[] };
 type TimelineRow = { name: string; department?: ControlListDepartment; days: ControlListDay[] };
@@ -87,7 +87,21 @@ export default function BesatzungProduktivitaetPage() {
   const importedDates = useMemo(() => { if (!documentRange.from || !documentRange.to) return []; const result: string[] = []; for (const cursor = new Date(`${documentRange.from}T12:00:00`); isoDate(cursor) <= documentRange.to; cursor.setUTCDate(cursor.getUTCDate() + 1)) result.push(isoDate(cursor)); return result; }, [documentRange]);
   const allHelperHours = useMemo(() => helperHours.map(({ helper }) => ({ helper, days: importedDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperHours, importedDates, actual]);
   const selectedHours = useCallback((id: string, date: string) => state?.helperSelections[`${id}|${date}`] ? (actual[`${id}-${date}`]?.hours ?? 0) : 0, [state, actual]);
-  const modelDays = useMemo(() => filtered.map(({ day }) => day).concat(allHelperHours.flatMap(({ helper, days }) => days.filter(d => selectedHours(helper.id, d.date) > 0).map(d => ({ date: d.date, netHours: d.hours, rawTimeRecording: 'Aushilfe', timeRecordingGross: 0, timeRecordingTotal: d.hours, effectiveWindows: [], effectiveGross: 0, difference: 0, status: 'Ist / manuell', danger: false } as ControlListDay)))), [filtered, allHelperHours, selectedHours]);
+  // Produktivität/Besatzung verwendet dieselbe kanonische Ist-Dienstplanquelle
+  // wie die Tages- und Cockpit-Summen. Die Kontrollliste bleibt Kontroll- und
+  // Zeitachsenansicht, ist aber nicht länger ein abweichender Stunden-Nenner.
+  const actualPersonnelDays = useMemo(() => personnel.flatMap(employee => {
+    const employeeDept: ControlListDepartment = employee.department === 'küche'
+      ? 'kueche'
+      : employee.department === 'service' ? 'service' : 'geschaeftsleitung';
+    if (dept !== 'all' && employeeDept !== dept) return [];
+    return importedDates.flatMap(date => {
+      const entry = actual[`${employee.id}-${date}`];
+      if (!entry || entry.absenceType || !(entry.hours > 0)) return [];
+      return [{ date, netHours: entry.hours }];
+    });
+  }), [actual, dept, importedDates, personnel]);
+  const modelDays = useMemo(() => actualPersonnelDays.concat(allHelperHours.flatMap(({ helper, days }) => days.filter(d => selectedHours(helper.id, d.date) > 0).map(d => ({ date: d.date, netHours: d.hours })))), [actualPersonnelDays, allHelperHours, selectedHours]);
   const productivityDays = useMemo(() => aggregateProductivityDays(modelDays, revenue), [modelDays, revenue]);
   const chartDays = useMemo(() => dates.map(date => productivityDays.find(day => day.date === date) ?? ({ date, isoWeek: isoWeekForDate(date), netHours: 0, revenue: revenue[date] })), [dates, productivityDays, revenue]);
   const weeks = useMemo(() => aggregateProductivityWeeks(aggregateProductivityDays(modelDays, revenue)), [modelDays, revenue]);
@@ -126,7 +140,7 @@ export default function BesatzungProduktivitaetPage() {
     {error && <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><Button variant="ghost" size="sm" onClick={() => setError('')}><RefreshCw className="mr-1 h-3.5 w-3.5" />Schliessen</Button></div>}
     {document && <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold text-foreground">{document.period}</span><span className="mx-2">·</span>{document.tenant}<span className="mx-2">·</span>Quelle: MIRUS report_test</div>}
     {!document ? <EmptyState icon={FileSpreadsheet} title="Noch keine Kontrollliste importiert" description={`Importiere den MIRUS report_test-Export für ${tenant.shortName}. Die Datei wird vor dem Ersetzen geprüft.`} action={<Button onClick={() => fileRef.current?.click()}>Datei auswählen</Button>} /> :
-      mode === 'productivity' ? <ProductivityMode currentWeek={currentWeek} days={chartDays} weeks={lastFiveProductivityWeeks(weeks)} onSelect={day => setSelectedDay({ ...modelDays.find(item => item.date === day.date), ...day })} selectedDay={selectedDay} filtered={filtered} helperHours={helperHours} state={state} /> :
+      mode === 'productivity' ? <ProductivityMode currentWeek={currentWeek} days={chartDays} weeks={lastFiveProductivityWeeks(weeks)} onSelect={day => setSelectedDay({ ...filtered.find(item => item.day.date === day.date)?.day, ...day })} selectedDay={selectedDay} filtered={filtered} helperHours={helperHours} state={state} /> :
       <ScheduleMode document={document} filtered={filtered} week={week} dates={dates} helperHours={helperHours} state={state} selectedEmployee={selectedEmployee} setSelectedEmployee={setSelectedEmployee} personPeriod={personPeriod} setPersonPeriod={setPersonPeriod} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} />}
     {document && <MappingPanel document={document} state={state} personnel={personnel} tenantId={tenantId} save={save} />}
     {pending && <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4"><div className="w-full max-w-2xl rounded-xl border border-border bg-card p-5 shadow-xl">

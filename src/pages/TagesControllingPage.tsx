@@ -66,6 +66,7 @@ type CategoryFilter = 'total' | 'food' | 'beverage';
 interface EmployeeLite {
   id: string;
   hourlyWage: number;
+  fixedMonthlySalary?: number;
 }
 
 /** Strukturierter Warenkosteneintrags pro Tag (netto und brutto, aufgeteilt nach Kategorie) */
@@ -167,8 +168,15 @@ function loadLocalEmployees(keyFn: (k: string) => string = k => k): EmployeeLite
   try {
     const raw = localStorage.getItem(keyFn('schedule-employees'));
     if (raw) {
-      const parsed = JSON.parse(raw) as Array<{ id: string; hourlyWage?: number; hourly_wage?: number }>;
-      return parsed.map(e => ({ id: e.id, hourlyWage: Number(e.hourlyWage ?? e.hourly_wage) || 0 }));
+      const parsed = JSON.parse(raw) as Array<{ id: string; hourlyWage?: number; hourly_wage?: number; monthlySalary?: number; monthlySalaryWith13th?: number }>;
+      return parsed.map(e => {
+        const fixedMonthlySalary = Number(e.monthlySalaryWith13th ?? e.monthlySalary) || 0;
+        return {
+          id: e.id,
+          hourlyWage: fixedMonthlySalary > 0 ? 0 : Number(e.hourlyWage ?? e.hourly_wage) || 0,
+          fixedMonthlySalary,
+        };
+      });
     }
   } catch { /* ignore */ }
   return [
@@ -178,7 +186,7 @@ function loadLocalEmployees(keyFn: (k: string) => string = k => k): EmployeeLite
     { id: '7', hourlyWage: 24.70 }, { id: '8', hourlyWage: 30.77 },
     { id: '9', hourlyWage: 28.67 }, { id: '10', hourlyWage: 26.37 },
     { id: '11', hourlyWage: 31.33 }, { id: '12', hourlyWage: 26.00 },
-    { id: '13', hourlyWage: 20.50 }, { id: '14', hourlyWage: 49.33 },
+    { id: '13', hourlyWage: 20.50 }, { id: '14', hourlyWage: 0 },
     { id: '15', hourlyWage: 34.46 }, { id: '16', hourlyWage: 47.33 },
     { id: '17', hourlyWage: 30.67 }, { id: '18', hourlyWage: 27.69 },
     { id: '19', hourlyWage: 28.92 }, { id: '20', hourlyWage: 20.36 },
@@ -230,6 +238,22 @@ function buildActualCostFromHours(
     const wage    = wageMap[empId] ?? 0;
     if (wage === 0) continue;
     map[dateStr] = (map[dateStr] ?? 0) + entry.hours * wage;
+  }
+  return map;
+}
+
+/** Fixlohnkosten werden pro Kalendertag verteilt und nie aus Ist-Stunden abgeleitet. */
+function addFixedSalaryCostPerCalendarDay(
+  variableCosts: Record<string, number>,
+  fixedMonthlySalary: number,
+  visibleDates: Date[],
+): Record<string, number> {
+  const map = { ...variableCosts };
+  if (fixedMonthlySalary <= 0) return map;
+  for (const date of visibleDates) {
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    map[dateStr] = (map[dateStr] ?? 0) + fixedMonthlySalary / daysInMonth;
   }
   return map;
 }
@@ -507,15 +531,17 @@ export default function TagesControllingPage() {
         const today = new Date().toISOString().split('T')[0];
         const wageHistory = await getEffectiveWageBatch(emps.map(e => e.id), today, tenantId);
         const mapped = emps.map(e => {
-          // VZ/TZ employees may have hourlyWage=0 and use monthlySalary instead.
-          // Compute effective hourly wage so plan-cost calculation works.
-          let hw = wageHistory[e.id]?.hourlyWage || (e.hourlyWage ?? 0);
-          if (hw === 0) {
-            const monthly = e.monthlySalaryWith13th ?? e.monthlySalary ?? 0;
-            const wh = e.weeklyHours ?? 42;
-            if (monthly > 0 && wh > 0) hw = monthly / (wh * 4.3333);
-          }
-          return { id: e.id, hourlyWage: hw };
+          const effective = wageHistory[e.id];
+          const fixedMonthlySalary = effective?.monthlySalaryWith13th
+            ?? effective?.monthlySalary
+            ?? e.monthlySalaryWith13th
+            ?? e.monthlySalary
+            ?? 0;
+          return {
+            id: e.id,
+            hourlyWage: fixedMonthlySalary > 0 ? 0 : (effective?.hourlyWage || (e.hourlyWage ?? 0)),
+            fixedMonthlySalary,
+          };
         });
         setEmployees(mapped);
         console.log(`[CONSISTENCY] tages_controlling employees: ${mapped.length}`);
@@ -644,10 +670,20 @@ export default function TagesControllingPage() {
     for (const e of employees) m[e.id] = e.hourlyWage;
     return m;
   }, [employees]);
+  const fixedMonthlySalary = useMemo(
+    () => employees.reduce((sum, employee) => sum + (employee.fixedMonthlySalary ?? 0), 0),
+    [employees],
+  );
 
   // Plan / Ist / Warenkosten-Maps berechnen
-  const planMap   = useMemo(() => buildPlanCostFromSchedule(scheduleMap, wageMap),   [scheduleMap, wageMap]);
-  const actualMap = useMemo(() => buildActualCostFromHours(actualHoursMap, wageMap), [actualHoursMap, wageMap]);
+  const planMap = useMemo(
+    () => addFixedSalaryCostPerCalendarDay(buildPlanCostFromSchedule(scheduleMap, wageMap), fixedMonthlySalary, dates),
+    [scheduleMap, wageMap, fixedMonthlySalary, dates],
+  );
+  const actualMap = useMemo(
+    () => addFixedSalaryCostPerCalendarDay(buildActualCostFromHours(actualHoursMap, wageMap), fixedMonthlySalary, dates),
+    [actualHoursMap, wageMap, fixedMonthlySalary, dates],
+  );
 
   // ── Pro-Rata: letzter Tag mit Umsatz im gewählten Monat (auto-Erkennung) ────
   const lastRevenueDayInMonth = useMemo(() => {
