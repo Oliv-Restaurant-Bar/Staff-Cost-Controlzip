@@ -31,7 +31,7 @@ type ActualEntry = { hours: number; start?: string; end?: string; absenceType?: 
 type HelperDay = { date: string; hours: number };
 type HelperHours = { helper: ExtraCostPerson; days: HelperDay[] };
 type TimelineRow = { name: string; department?: ControlListDepartment; days: ControlListDay[] };
-type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState };
+type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState; hasSelectedHelpers: boolean };
 const fmt = (n: number | undefined, digits = 1) => n === undefined ? '—' : n.toLocaleString('de-CH', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const weekDates = (week: string) => {
@@ -97,16 +97,48 @@ export default function BesatzungProduktivitaetPage() {
   }, [allDays, dates, selectedScheduleDate]);
   const documentRange = useMemo(() => { const values = document?.employees.flatMap(e => e.days.map(d => d.date)).sort() ?? []; return { from: values[0], to: values.at(-1) }; }, [document]);
   useEffect(() => { let alive = true; if (!documentRange.from || !documentRange.to) { setRevenue({}); return; } ladeUmsatzTage(tenantId, documentRange.from, documentRange.to).then(map => { if (alive) setRevenue(Object.fromEntries([...map].map(([date, value]) => [date, nettoUmsatzTag(value)]))); }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Umsatz konnte nicht geladen werden.'); }); return () => { alive = false; }; }, [tenantId, documentRange.from, documentRange.to]);
-  useEffect(() => { let alive = true; if (!documentRange.from || !documentRange.to) { setActual({}); return; } const start = new Date(`${documentRange.from}T12:00:00`); const end = new Date(`${documentRange.to}T12:00:00`); const months: Date[] = []; for (const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) months.push(new Date(cursor)); Promise.all(months.map(month => loadActualHoursForMonth(month, tenantId))).then(parts => { if (!alive) return; setActual(Object.assign({}, ...parts.filter((part): part is Record<string, ActualEntry> => Boolean(part)))); }); return () => { alive = false; }; }, [tenantId, documentRange.from, documentRange.to]);
+  useEffect(() => {
+    let alive = true;
+    const monthKeys = new Set<string>();
+    if (documentRange.from && documentRange.to) {
+      const start = new Date(`${documentRange.from}T12:00:00Z`);
+      const end = new Date(`${documentRange.to}T12:00:00Z`);
+      for (const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+        monthKeys.add(`${cursor.getUTCFullYear()}-${cursor.getUTCMonth()}`);
+      }
+    }
+    const selectedWeekStart = weekDates(week)[0];
+    if (selectedWeekStart) {
+      const selected = new Date(`${selectedWeekStart}T12:00:00Z`);
+      monthKeys.add(`${selected.getUTCFullYear()}-${selected.getUTCMonth()}`);
+      const selectedWeekEnd = new Date(selected);
+      selectedWeekEnd.setUTCDate(selectedWeekEnd.getUTCDate() + 6);
+      monthKeys.add(`${selectedWeekEnd.getUTCFullYear()}-${selectedWeekEnd.getUTCMonth()}`);
+    }
+    if (!monthKeys.size) { setActual({}); return; }
+    const months = [...monthKeys].map(key => {
+      const [year, month] = key.split('-').map(Number);
+      return new Date(Date.UTC(year, month, 1));
+    });
+    Promise.all(months.map(month => loadActualHoursForMonth(month, tenantId))).then(parts => {
+      if (!alive) return;
+      setActual(Object.assign({}, ...parts.filter((part): part is Record<string, ActualEntry> => Boolean(part))));
+    }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Ist-Stunden konnten nicht geladen werden.'); });
+    return () => { alive = false; };
+  }, [tenantId, documentRange.from, documentRange.to, week]);
 
   const controlNames = useMemo(() => new Set((document?.employees ?? []).map(employee => employee.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH'))), [document]);
-  const helperHours = useMemo(() => helpers.filter(helper =>
+  const helperCandidates = useMemo(() => helpers.filter(helper =>
     helper.isActive
     && !controlNames.has(helper.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH'))
-    && (dept === 'all' || helper.department === dept)
-  ).map(helper => ({ helper, days: dates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helpers, controlNames, dates, actual, dept]);
+  ), [helpers, controlNames]);
+  const visibleHelperCandidates = useMemo(() => helperCandidates.filter(helper => dept === 'all' || helper.department === dept), [dept, helperCandidates]);
+  const helperHours = useMemo(() => visibleHelperCandidates.map(helper => ({ helper, days: dates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [visibleHelperCandidates, dates, actual]);
+  const selectedWeekDates = useMemo(() => weekDates(week), [week]);
+  const weekHelperHours = useMemo(() => helperCandidates.map(helper => ({ helper, days: selectedWeekDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperCandidates, selectedWeekDates, actual]);
   const importedDates = useMemo(() => { if (!documentRange.from || !documentRange.to) return []; const result: string[] = []; for (const cursor = new Date(`${documentRange.from}T12:00:00`); isoDate(cursor) <= documentRange.to; cursor.setUTCDate(cursor.getUTCDate() + 1)) result.push(isoDate(cursor)); return result; }, [documentRange]);
-  const allHelperHours = useMemo(() => helperHours.map(({ helper }) => ({ helper, days: importedDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperHours, importedDates, actual]);
+  const modelDates = useMemo(() => [...new Set([...importedDates, ...dates])].sort(), [dates, importedDates]);
+  const allHelperHours = useMemo(() => helperCandidates.map(helper => ({ helper, days: modelDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperCandidates, modelDates, actual]);
   const selectedHours = useCallback((id: string, date: string) => state?.helperSelections[`${id}|${date}`] ? (actual[`${id}-${date}`]?.hours ?? 0) : 0, [state, actual]);
   // Produktivität/Besatzung verwendet dieselbe kanonische Ist-Dienstplanquelle
   // wie die Tages- und Cockpit-Summen. Die Kontrollliste bleibt Kontroll- und
@@ -116,12 +148,12 @@ export default function BesatzungProduktivitaetPage() {
       ? 'kueche'
       : employee.department === 'service' ? 'service' : 'geschaeftsleitung';
     if (dept !== 'all' && employeeDept !== dept) return [];
-    return importedDates.flatMap(date => {
+    return modelDates.flatMap(date => {
       const entry = actual[`${employee.id}-${date}`];
       if (!entry || entry.absenceType || !(entry.hours > 0)) return [];
       return [{ date, netHours: entry.hours }];
     });
-  }), [actual, dept, importedDates, personnel]);
+  }), [actual, dept, modelDates, personnel]);
   const modelDays = useMemo(() => actualPersonnelDays.concat(allHelperHours.flatMap(({ helper, days }) => days.filter(d => selectedHours(helper.id, d.date) > 0).map(d => ({ date: d.date, netHours: d.hours })))), [actualPersonnelDays, allHelperHours, selectedHours]);
   const productivityDays = useMemo(() => aggregateProductivityDays(modelDays, revenue), [modelDays, revenue]);
   const chartDays = useMemo(() => dates.map(date => productivityDays.find(day => day.date === date) ?? ({ date, isoWeek: isoWeekForDate(date), netHours: 0, revenue: revenue[date] })), [dates, productivityDays, revenue]);
@@ -134,6 +166,7 @@ export default function BesatzungProduktivitaetPage() {
     const productivity = periodRevenue !== undefined && netHours > 0 ? periodRevenue / netHours : undefined;
     return { isoWeek: periodLabel, netHours, revenue: periodRevenue, productivity, meetsBudget: productivity === undefined ? undefined : Math.round(productivity) >= 100, days: chartDays };
   }, [chartDays, periodLabel, scope, week, weeks]);
+  const hasSelectedHelpers = useMemo(() => allHelperHours.some(({ helper, days }) => days.some(day => dates.includes(day.date) && day.hours > 0 && state?.helperSelections[`${helper.id}|${day.date}`])), [allHelperHours, dates, state]);
   const save = (next: ControlListTenantState) => {
     const saveTenant = tenantId;
     setState(next);
@@ -162,25 +195,25 @@ export default function BesatzungProduktivitaetPage() {
   if (!state) return <PageShell width="wide">{error
     ? <EmptyState icon={AlertTriangle} title="Besatzung konnte nicht geladen werden" description={error} action={<Button onClick={() => window.location.reload()}>Neu laden</Button>} />
     : <LoadingState label="Besatzung und Produktivität wird geladen…" />}</PageShell>;
-  return <PageShell width="wide" header={<PageHeader width="wide" icon={<UsersRound />} title="Besatzung & Produktivität" meta={`${tenant.shortName} · Kontrollliste / Umsatz`}>
-    <div className="flex w-full flex-wrap gap-1 rounded-lg bg-muted/60 p-1 sm:w-auto">
+  return <PageShell width="wide" header={<PageHeader width="wide" icon={<UsersRound />} title="Besatzung & Produktivität" meta={`${tenant.shortName} · Kontrollliste / Umsatz`} />}>
+    <HelperPanel helperHours={weekHelperHours} state={state} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} dates={selectedWeekDates} />
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-2 shadow-sm">
+      <div className="flex w-full flex-wrap gap-1 rounded-lg bg-muted/60 p-1 sm:w-auto">
       <button className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${mode === 'productivity' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setMode('productivity')}>Produktivität</button>
       <button className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${mode === 'schedule' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setMode('schedule')}>Dienstplan</button>
-    </div>
-    <div className="flex rounded-lg border border-border bg-card p-1">
+      </div>
+      <div className="flex rounded-lg border border-border bg-card p-1">
       {([['week', 'Woche'], ['month', 'Monat'], ['year', 'Jahr']] as const).map(([value, label]) => <button key={value} onClick={() => setScope(value)} className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${scope === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>{label}</button>)}
-    </div>
-    <div className="flex flex-wrap items-center gap-2">
+      </div>
       {(['all', 'kueche', 'service'] as DeptFilter[]).map(item => <button key={item} onClick={() => setDept(item)} className={`rounded-md border px-2.5 py-1 text-xs font-medium ${dept === item ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground'}`}>{item === 'all' ? 'Alle' : item === 'kueche' ? 'Küche' : 'Service'}</button>)}
       <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-card px-1"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => shiftPeriod(-1)}><ArrowLeft className="h-3.5 w-3.5" /></Button><span className="min-w-[110px] text-center text-xs font-semibold">{periodLabel}</span><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => shiftPeriod(1)}><ArrowRight className="h-3.5 w-3.5" /></Button></div>
       <input ref={fileRef} type="file" accept=".xls" className="hidden" onChange={event => { void onFile(event.target.files?.[0]); event.target.value = ''; }} />
       <Button size="sm" variant="outline" disabled={!canManageOperationalData} onClick={() => fileRef.current?.click()}><FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Kontrollliste importieren</Button>
     </div>
-  </PageHeader>}>
     {error && <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><Button variant="ghost" size="sm" onClick={() => setError('')}><RefreshCw className="mr-1 h-3.5 w-3.5" />Schliessen</Button></div>}
     {document && <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold text-foreground">{document.period}</span><span className="mx-2">·</span>{document.tenant}<span className="mx-2">·</span>Quelle: MIRUS report_test</div>}
     {!document ? <EmptyState icon={FileSpreadsheet} title="Noch keine Kontrollliste importiert" description={`Importiere den MIRUS report_test-Export für ${tenant.shortName}. Die Datei wird vor dem Ersetzen geprüft.`} action={<Button onClick={() => fileRef.current?.click()}>Datei auswählen</Button>} /> :
-      mode === 'productivity' ? <ProductivityMode currentWeek={currentPeriod} days={chartDays} weeks={lastFiveProductivityWeeks(weeks)} onSelect={day => setSelectedDay({ ...filtered.find(item => item.day.date === day.date)?.day, ...day })} selectedDay={selectedDay} filtered={filtered} helperHours={helperHours} state={state} /> :
+      mode === 'productivity' ? <ProductivityMode currentWeek={currentPeriod} days={chartDays} weeks={lastFiveProductivityWeeks(weeks)} onSelect={day => setSelectedDay({ ...filtered.find(item => item.day.date === day.date)?.day, ...day })} selectedDay={selectedDay} filtered={filtered} helperHours={helperHours} state={state} hasSelectedHelpers={hasSelectedHelpers} /> :
       <ScheduleMode document={document} filtered={filtered} periodLabel={periodLabel} dates={dates} helperHours={helperHours} state={state} selectedEmployee={selectedEmployee} setSelectedEmployee={setSelectedEmployee} selectedScheduleDate={selectedScheduleDate} setSelectedScheduleDate={setSelectedScheduleDate} personPeriod={personPeriod} setPersonPeriod={setPersonPeriod} scheduleView={scheduleView} setScheduleView={setScheduleView} setScope={setScope} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} />}
     {document && <MappingPanel document={document} state={state} personnel={personnel} tenantId={tenantId} save={save} />}
     {pending && <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4"><div className="w-full max-w-2xl rounded-xl border border-border bg-card p-5 shadow-xl">
@@ -204,16 +237,16 @@ export default function BesatzungProduktivitaetPage() {
   </PageShell>;
 }
 
-function ProductivityMode({ currentWeek, days, weeks, onSelect, selectedDay, filtered, helperHours, state }: ProductivityViewProps & { helperHours: HelperHours[]; state: ControlListTenantState }) {
+function ProductivityMode({ currentWeek, days, weeks, onSelect, selectedDay, filtered, helperHours, state, hasSelectedHelpers }: ProductivityViewProps & { helperHours: HelperHours[]; state: ControlListTenantState }) {
   const best = days.filter(d => d.productivity !== undefined).sort((a, b) => (b.productivity ?? 0) - (a.productivity ?? 0))[0];
   return <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-4">
-    <Metric label="Besatzungsstunden" value={`${fmt(currentWeek.netHours)} Std`} icon={<Clock3 />} />
+    <Metric label="Besatzungsstunden" value={`${fmt(currentWeek.netHours)} Std`} subtitle={hasSelectedHelpers ? 'Kontrollliste + Aushilfe' : undefined} icon={<Clock3 />} />
     <Metric label="Netto-Umsatz" value={`${currentWeek.revenue === undefined ? '—' : `${Math.round(currentWeek.revenue).toLocaleString('de-CH')} CHF`}`} icon={<BarChart3 />} />
     <Metric label="Produktivität Ø" value={`${fmt(currentWeek.productivity, 0)} CHF/Std`} accent={(currentWeek.productivity ?? 0) >= 100} icon={<Layers3 />} />
     <Metric label="Produktivster Tag" value={best ? `${new Date(`${best.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short' })} · ${fmt(best.productivity, 0)}` : '—'} icon={<CalendarDays />} />
   </div><section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold">Umsatz & Produktivität pro Tag</h2><p className="text-xs text-muted-foreground">Balken anklicken für die Schicht-Zeitlinie · Budget 100 CHF/Std</p></div><span className="rounded bg-[#f4e8bd] px-2 py-1 font-mono text-[11px] text-[#765f16]">{currentWeek.isoWeek.includes('-W') ? `KW ${currentWeek.isoWeek.split('-W')[1]}` : currentWeek.isoWeek}</span></div><div className="overflow-x-auto"><ProductivityChart days={days} onSelect={onSelect} /></div></section><section className="rounded-xl border border-border bg-card p-4 shadow-sm"><h2 className="font-semibold">Wochenverlauf</h2><div className="mt-3 grid gap-2 sm:grid-cols-5">{weeks.map(w => <div key={w.isoWeek} className="rounded-lg bg-muted/50 p-3"><p className="font-mono text-xs text-muted-foreground">{w.isoWeek}</p><p className="mt-2 text-lg font-semibold">{fmt(w.productivity, 0)} <span className="text-xs font-normal text-muted-foreground">CHF/Std</span></p><p className="text-xs text-muted-foreground">{fmt(w.netHours)} Std · {w.revenue === undefined ? 'Umsatz fehlt' : `${Math.round(w.revenue).toLocaleString('de-CH')} CHF`}</p></div>)}</div></section>{selectedDay && <DayDetail day={selectedDay} filtered={filtered} helperHours={helperHours} state={state} />}</div>;
 }
-function Metric({ label, value, icon, accent }: { label: string; value: string; icon: ReactNode; accent?: boolean }) { return <div className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between text-muted-foreground"><span className="text-xs font-medium">{label}</span><span className={accent ? 'text-[#1f8a62]' : 'text-primary'}>{icon}</span></div><p className="mt-3 font-mono text-xl font-semibold tracking-tight">{value}</p></div>; }
+function Metric({ label, value, icon, accent, subtitle }: { label: string; value: string; icon: ReactNode; accent?: boolean; subtitle?: string }) { return <div className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between text-muted-foreground"><span><span className="block text-xs font-medium">{label}</span>{subtitle && <span className="mt-0.5 block text-[10px] text-primary">{subtitle}</span>}</span><span className={accent ? 'text-[#1f8a62]' : 'text-primary'}>{icon}</span></div><p className="mt-3 font-mono text-xl font-semibold tracking-tight">{value}</p></div>; }
 function Timeline({ rows, dates }: { rows: TimelineRow[]; dates: string[] }) {
   return <div className="overflow-x-auto rounded-lg border border-border"><div className="min-w-[760px]">
     <div className="grid grid-cols-[180px_1fr] border-b bg-muted/40 px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -275,7 +308,7 @@ function ScheduleMode({ document, filtered, periodLabel, dates, helperHours, sta
     department,
     rows: dayRows.filter(row => row.department === department),
   })).filter(group => group.rows.length);
-  return <div className="space-y-4"><section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Schichten · {periodLabel}</h2><p className="text-xs text-muted-foreground">Zeitachse 07:00–02:00 · rot = nach Mitternacht oder ≥ 9 Netto-Stunden.</p></div><div className="flex gap-1 rounded-md bg-muted p-1">{([['day', 'Pro Tag'], ['employee-week', 'Pro Mitarbeiter · Woche'], ['employee-month', 'Pro Mitarbeiter · Monat']] as const).map(([view, label]) => <button key={view} onClick={() => { setScheduleView(view); if (view === 'employee-week') { setPersonPeriod('week'); setScope('week'); } else if (view === 'employee-month') { setPersonPeriod('month'); setScope('month'); } }} className={`rounded px-2 py-1 text-xs ${scheduleView === view ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>{label}</button>)}</div></div>{scheduleView === 'day' ? <select className="mt-3 h-9 rounded-md border border-input bg-background px-2 text-sm" value={selectedScheduleDate} onChange={e => setSelectedScheduleDate(e.target.value)}>{dates.map(date => <option key={date} value={date}>{new Date(`${date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'long', day: '2-digit', month: '2-digit' })}</option>)}</select> : <div className="mt-3 flex flex-wrap items-center gap-2"><select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={selectedEmployee} onChange={e => setSelectedEmployee(e.target.value)}><option value="">Mitarbeiter auswählen</option>{employeeNames.map(name => <option key={name}>{name}</option>)}</select><div className="flex gap-1 rounded-md bg-muted p-1">{(['week', 'month'] as const).map(period => <button key={period} onClick={() => { setPersonPeriod(period); setScheduleView(period === 'month' ? 'employee-month' : 'employee-week'); setScope(period); }} className={`rounded px-2 py-1 text-xs ${personPeriod === period ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>{period === 'week' ? 'KW' : 'Monat'}</button>)}</div></div>}<div className="mt-4">{scheduleView === 'day' ? dayGroups.length ? <div className="space-y-3">{dayGroups.map(group => <div key={group.department}><h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.department === 'kueche' ? 'Küche' : group.department === 'service' ? 'Service' : 'Geschäftsleitung'}</h3><Timeline rows={group.rows} dates={[selectedScheduleDate]} /></div>)}</div> : <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">An diesem Tag wurden keine Arbeitsstunden erfasst.</p> : selectedEmployee ? <PersonPeriodRows rows={personRows} grouped={personPeriod === 'month'} /> : <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">Mitarbeiter mit geleisteten Stunden auswählen.</p>}</div></section><WeeklyMatrix document={document} dates={dates} filtered={filtered} selectedEmployee={scheduleView === 'day' ? '' : selectedEmployee} state={state} helperHours={helperHours} /><HelperPanel helperHours={helperHours} state={state} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} dates={dates} /></div>;
+  return <div className="space-y-4"><section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Schichten · {periodLabel}</h2><p className="text-xs text-muted-foreground">Zeitachse 07:00–02:00 · rot = nach Mitternacht oder ≥ 9 Netto-Stunden.</p></div><div className="flex gap-1 rounded-md bg-muted p-1">{([['day', 'Pro Tag'], ['employee-week', 'Pro Mitarbeiter · Woche'], ['employee-month', 'Pro Mitarbeiter · Monat']] as const).map(([view, label]) => <button key={view} onClick={() => { setScheduleView(view); if (view === 'employee-week') { setPersonPeriod('week'); setScope('week'); } else if (view === 'employee-month') { setPersonPeriod('month'); setScope('month'); } }} className={`rounded px-2 py-1 text-xs ${scheduleView === view ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>{label}</button>)}</div></div>{scheduleView === 'day' ? <select className="mt-3 h-9 rounded-md border border-input bg-background px-2 text-sm" value={selectedScheduleDate} onChange={e => setSelectedScheduleDate(e.target.value)}>{dates.map(date => <option key={date} value={date}>{new Date(`${date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'long', day: '2-digit', month: '2-digit' })}</option>)}</select> : <div className="mt-3 flex flex-wrap items-center gap-2"><select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={selectedEmployee} onChange={e => setSelectedEmployee(e.target.value)}><option value="">Mitarbeiter auswählen</option>{employeeNames.map(name => <option key={name}>{name}</option>)}</select><div className="flex gap-1 rounded-md bg-muted p-1">{(['week', 'month'] as const).map(period => <button key={period} onClick={() => { setPersonPeriod(period); setScheduleView(period === 'month' ? 'employee-month' : 'employee-week'); setScope(period); }} className={`rounded px-2 py-1 text-xs ${personPeriod === period ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>{period === 'week' ? 'KW' : 'Monat'}</button>)}</div></div>}<div className="mt-4">{scheduleView === 'day' ? dayGroups.length ? <div className="space-y-3">{dayGroups.map(group => <div key={group.department}><h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.department === 'kueche' ? 'Küche' : group.department === 'service' ? 'Service' : 'Geschäftsleitung'}</h3><Timeline rows={group.rows} dates={[selectedScheduleDate]} /></div>)}</div> : <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">An diesem Tag wurden keine Arbeitsstunden erfasst.</p> : selectedEmployee ? <PersonPeriodRows rows={personRows} grouped={personPeriod === 'month'} /> : <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">Mitarbeiter mit geleisteten Stunden auswählen.</p>}</div></section><WeeklyMatrix document={document} dates={dates} filtered={filtered} selectedEmployee={scheduleView === 'day' ? '' : selectedEmployee} state={state} helperHours={helperHours} /></div>;
 }
 
 function PersonPeriodRows({ rows, grouped }: { rows: { name: string; day: ControlListDay }[]; grouped: boolean }) {
@@ -375,7 +408,22 @@ function WeeklyMatrix({ document, dates, filtered, selectedEmployee, state, help
     </div>
   </section>;
 }
-function HelperPanel({ helperHours, state, toggleHelper, toggleHelperWeek, dates }: { helperHours: HelperHours[]; state: ControlListTenantState; toggleHelper: (id: string, date: string, checked: boolean) => void; toggleHelperWeek: (id: string, days: HelperDay[], checked: boolean) => void; dates: string[] }) { return <section className="rounded-xl border border-border bg-card p-4 shadow-sm"><h2 className="font-semibold">Aushilfen · Ist-Stunden ergänzen</h2><p className="mt-1 text-xs text-muted-foreground">Nur Personen ausserhalb der Kontrollliste. Stunden sind schreibgeschützt; Auswahl wird mandantenbezogen gespeichert.</p>{helperHours.length ? <div className="mt-3 divide-y border-y">{helperHours.map(({ helper, days }) => <div key={helper.id} className="flex flex-wrap items-center gap-2 py-3"><label className="flex min-w-[170px] items-center gap-2 text-sm font-medium"><input type="checkbox" checked={dates.filter(date => days.some(day => day.date === date && day.hours > 0)).every(date => state.helperSelections[`${helper.id}|${date}`])} onChange={event => toggleHelperWeek(helper.id, days.filter(day => dates.includes(day.date)), event.target.checked)} />{helper.name}</label><div className="flex gap-1 overflow-x-auto">{days.filter(day => day.hours > 0).map(day => <button key={day.date} onClick={() => toggleHelper(helper.id, day.date, !state.helperSelections[`${helper.id}|${day.date}`])} className={`rounded-full border px-2 py-1 font-mono text-[10px] ${state.helperSelections[`${helper.id}|${day.date}`] ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground'}`}>{new Date(`${day.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit' })} · {fmt(day.hours)} h</button>)}</div></div>)}</div> : <p className="mt-4 text-sm text-muted-foreground">Keine aktiven Aushilfen ausserhalb der Kontrollliste gefunden.</p>}</section>; }
+function HelperPanel({ helperHours, state, toggleHelper, toggleHelperWeek, dates }: { helperHours: HelperHours[]; state: ControlListTenantState; toggleHelper: (id: string, date: string, checked: boolean) => void; toggleHelperWeek: (id: string, days: HelperDay[], checked: boolean) => void; dates: string[] }) {
+  const visible = helperHours.map(item => ({ ...item, days: item.days.filter(day => day.hours > 0) })).filter(item => item.days.length);
+  return <section className="rounded-xl border border-primary/30 bg-primary/[0.06] p-4 shadow-sm">
+    <h2 className="font-semibold text-primary">＋ Aushilfen — Aushilfen aus ‹Dienstplan · Ist-Stunden› ergänzen</h2>
+    <p className="mt-1 text-xs text-muted-foreground">Manuell erfasst, nicht in der Kontrollliste. Ganze Woche = Häkchen; einzelne Tage = Datums-Chips anklicken. Ausgewählte Stunden fliessen in Besatzung, Produktivität und den Dienstplan.</p>
+    {visible.length ? <div className="mt-3 divide-y divide-primary/15 border-y border-primary/15">{visible.map(({ helper, days }) => {
+      const selectedDays = days.filter(day => state.helperSelections[`${helper.id}|${day.date}`]);
+      const selectedTotal = selectedDays.reduce((sum, day) => sum + day.hours, 0);
+      const department = helper.department === 'kueche' ? 'Küche' : 'Service';
+      return <div key={helper.id} className="flex flex-wrap items-center gap-2 py-3">
+        <label className="flex min-w-[230px] items-center gap-2 text-sm font-medium"><input type="checkbox" checked={days.every(day => state.helperSelections[`${helper.id}|${day.date}`])} onChange={event => toggleHelperWeek(helper.id, days, event.target.checked)} /><span>{helper.name}<span className="ml-2 text-xs font-normal text-muted-foreground">{department}</span></span><span className="ml-auto rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{fmt(selectedTotal)} h gewählt</span></label>
+        <div className="flex gap-1 overflow-x-auto">{days.map(day => <button key={day.date} onClick={() => toggleHelper(helper.id, day.date, !state.helperSelections[`${helper.id}|${day.date}`])} className={`rounded-full border px-2 py-1 font-mono text-[10px] ${state.helperSelections[`${helper.id}|${day.date}`] ? 'border-primary bg-primary text-primary-foreground' : 'border-primary/25 bg-card text-muted-foreground'}`}>{new Date(`${day.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })} · {fmt(day.hours)} h</button>)}</div>
+      </div>;
+    })}</div> : <p className="mt-4 rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Keine Aushilfen in dieser Woche erfasst</p>}
+  </section>;
+}
 function DayDetail({ day, filtered, helperHours, state }: { day: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours: HelperHours[]; state: ControlListTenantState }) {
   const rows: TimelineRow[] = filtered.filter(item => item.day.date === day.date).reduce<TimelineRow[]>((acc, item) => {
     let row = acc.find(existing => existing.name === item.employee.name);
