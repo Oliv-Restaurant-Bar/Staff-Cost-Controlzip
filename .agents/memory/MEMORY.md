@@ -4,7 +4,7 @@
 - [seedBeaulieuEmployees delete scope](seed-beaulieu-delete-scope.md) — seed function must only delete IDs b-1…b-10 (old placeholders), never arbitrary b-* IDs; manually-added employees must be preserved.
 - [Employees write gate](employees-write-gate.md) — Only Personalstamm form may write employees to Supabase. All auto-sync, SchedulePlanner, and seed paths are blocked.
 - [Ali reactivation root cause](ali-reactivation.md) — employeeToDb sent employment_end_date:null when undefined → cleared archived dates. usePersonnelData also called upsertAllEmployees on every state change. Both fixed.
-- [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees; FK on schedule_entries was dropped.
+- [External helpers architecture](external-helpers.md) — aush_* cost resources live separately; analytics “Aushilfen” may also be MANUELL employees absent from that week’s MIRUS list.
 - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated to employees (IDs: kawtar, party); loadEmployees filters isActive !== false to hide archived aush_* ghosts.
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
 - [budget_v1 KV-Backup Merge](budget-kv-backup.md) — Budget-Blobs nur per Jahr-Merge mit Aktions-Kontext sichern; kvGetStrict für Merge-Basen (Lesefehler ≠ leer); keine Jahr-Tombstones (bekannte Grenze).

@@ -21,15 +21,18 @@ import { loadExtraCostPeople } from '@/lib/extra-cost-people-db';
 import type { ExtraCostPerson } from '@/lib/extra-cost-people-db';
 import { loadActualHoursForMonth, loadEmployees } from '@/lib/supabase-db';
 import type { Employee } from '@/types/personnel';
+import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { ProductivityChart } from '@/components/besatzung/ProductivityChart';
 import { calendarDatesForScope, requiresTimelineAttention, timelineStyle, TIMELINE_END, TIMELINE_START, workedDays, TIMELINE_HOURS } from '@/lib/control-list-timeline';
+import { buildControlPresenceByWeek, isHelperOnDate as isControlListHelperOnDate, selectedHelperHourRows } from '@/lib/control-list-helper-detection';
 
 type DeptFilter = 'all' | ControlListDepartment;
 type Mode = 'productivity' | 'schedule';
 type Scope = 'week' | 'month' | 'year';
 type ActualEntry = { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean };
 type HelperDay = { date: string; hours: number };
-type HelperHours = { helper: ExtraCostPerson; days: HelperDay[] };
+type HelperPerson = Pick<ExtraCostPerson, 'id' | 'name' | 'department' | 'isActive'>;
+type HelperHours = { helper: HelperPerson; days: HelperDay[] };
 type TimelineRow = { name: string; department?: ControlListDepartment; days: ControlListDay[] };
 type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState; hasSelectedHelpers: boolean };
 const fmt = (n: number | undefined, digits = 1) => n === undefined ? '—' : n.toLocaleString('de-CH', { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -127,18 +130,47 @@ export default function BesatzungProduktivitaetPage() {
     return () => { alive = false; };
   }, [tenantId, documentRange.from, documentRange.to, week]);
 
-  const controlNames = useMemo(() => new Set((document?.employees ?? []).map(employee => employee.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH'))), [document]);
-  const helperCandidates = useMemo(() => helpers.filter(helper =>
-    helper.isActive
-    && !controlNames.has(helper.name.trim().normalize('NFKC').toLocaleLowerCase('de-CH'))
-  ), [helpers, controlNames]);
-  const visibleHelperCandidates = useMemo(() => helperCandidates.filter(helper => dept === 'all' || helper.department === dept), [dept, helperCandidates]);
-  const helperHours = useMemo(() => visibleHelperCandidates.map(helper => ({ helper, days: dates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [visibleHelperCandidates, dates, actual]);
+  const controlPresenceByWeek = useMemo(() => buildControlPresenceByWeek(
+    document?.employees ?? [],
+    name => matchEmployeeByName(name, personnel).employee?.id,
+  ), [document, personnel]);
+  const allIstPeople = useMemo<HelperPerson[]>(() => {
+    const byId = new Map<string, HelperPerson>();
+    for (const employee of personnel) {
+      byId.set(employee.id, {
+        id: employee.id,
+        name: employee.name,
+        department: employee.department === 'küche' ? 'kueche' : 'service',
+        isActive: employee.isActive !== false,
+      });
+    }
+    for (const helper of helpers) {
+      if (!byId.has(helper.id)) byId.set(helper.id, helper);
+    }
+    return [...byId.values()].filter(person => person.isActive);
+  }, [helpers, personnel]);
+  const isHelperOnDate = useCallback((person: HelperPerson, date: string) =>
+    isControlListHelperOnDate(person, date, controlPresenceByWeek),
+  [controlPresenceByWeek]);
   const selectedWeekDates = useMemo(() => weekDates(week), [week]);
-  const weekHelperHours = useMemo(() => helperCandidates.map(helper => ({ helper, days: selectedWeekDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperCandidates, selectedWeekDates, actual]);
+  const helperCandidates = useMemo(() => allIstPeople.filter(person =>
+    selectedWeekDates.some(date => isHelperOnDate(person, date) && (actual[`${person.id}-${date}`]?.hours ?? 0) > 0)
+  ), [actual, allIstPeople, isHelperOnDate, selectedWeekDates]);
+  const visibleHelperCandidates = useMemo(() => helperCandidates.filter(helper => dept === 'all' || helper.department === dept), [dept, helperCandidates]);
+  const helperHours = useMemo(() => visibleHelperCandidates.map(helper => ({
+    helper,
+    days: dates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
+  })), [visibleHelperCandidates, dates, actual, isHelperOnDate]);
+  const weekHelperHours = useMemo(() => helperCandidates.map(helper => ({
+    helper,
+    days: selectedWeekDates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
+  })), [helperCandidates, selectedWeekDates, actual, isHelperOnDate]);
   const importedDates = useMemo(() => { if (!documentRange.from || !documentRange.to) return []; const result: string[] = []; for (const cursor = new Date(`${documentRange.from}T12:00:00`); isoDate(cursor) <= documentRange.to; cursor.setUTCDate(cursor.getUTCDate() + 1)) result.push(isoDate(cursor)); return result; }, [documentRange]);
   const modelDates = useMemo(() => [...new Set([...importedDates, ...dates])].sort(), [dates, importedDates]);
-  const allHelperHours = useMemo(() => helperCandidates.map(helper => ({ helper, days: modelDates.map(date => ({ date, hours: actual[`${helper.id}-${date}`]?.hours ?? 0 })) })), [helperCandidates, modelDates, actual]);
+  const allHelperHours = useMemo(() => allIstPeople.map(helper => ({
+    helper,
+    days: modelDates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
+  })).filter(({ days }) => days.some(day => day.hours > 0)), [allIstPeople, modelDates, actual, isHelperOnDate]);
   const selectedHours = useCallback((id: string, date: string) => state?.helperSelections[`${id}|${date}`] ? (actual[`${id}-${date}`]?.hours ?? 0) : 0, [state, actual]);
   // Produktivität/Besatzung verwendet dieselbe kanonische Ist-Dienstplanquelle
   // wie die Tages- und Cockpit-Summen. Die Kontrollliste bleibt Kontroll- und
@@ -150,11 +182,16 @@ export default function BesatzungProduktivitaetPage() {
     if (dept !== 'all' && employeeDept !== dept) return [];
     return modelDates.flatMap(date => {
       const entry = actual[`${employee.id}-${date}`];
-      if (!entry || entry.absenceType || !(entry.hours > 0)) return [];
+      if (!entry || entry.absenceType || !(entry.hours > 0) || isHelperOnDate({
+        id: employee.id,
+        name: employee.name,
+        department: employeeDept === 'kueche' ? 'kueche' : 'service',
+        isActive: employee.isActive !== false,
+      }, date)) return [];
       return [{ date, netHours: entry.hours }];
     });
-  }), [actual, dept, modelDates, personnel]);
-  const modelDays = useMemo(() => actualPersonnelDays.concat(allHelperHours.flatMap(({ helper, days }) => days.filter(d => selectedHours(helper.id, d.date) > 0).map(d => ({ date: d.date, netHours: d.hours })))), [actualPersonnelDays, allHelperHours, selectedHours]);
+  }), [actual, dept, isHelperOnDate, modelDates, personnel]);
+  const modelDays = useMemo(() => actualPersonnelDays.concat(selectedHelperHourRows(allHelperHours, state?.helperSelections ?? {})), [actualPersonnelDays, allHelperHours, state]);
   const productivityDays = useMemo(() => aggregateProductivityDays(modelDays, revenue), [modelDays, revenue]);
   const chartDays = useMemo(() => dates.map(date => productivityDays.find(day => day.date === date) ?? ({ date, isoWeek: isoWeekForDate(date), netHours: 0, revenue: revenue[date] })), [dates, productivityDays, revenue]);
   const weeks = useMemo(() => aggregateProductivityWeeks(aggregateProductivityDays(modelDays, revenue)), [modelDays, revenue]);

@@ -6,9 +6,16 @@ description: How aush_* (external cost) people are stored and used — separate 
 # External helpers (schedule_extra_cost_people)
 
 ## Rule
-External helpers (Arber, Mejdi, Micky, Nahuel, Gaumen, Nuri, etc.) must NEVER be written to the `employees` table. They live in `schedule_extra_cost_people`.
+New external cost resources with `aush_*` IDs must NEVER be written to the `employees` table. They live in `schedule_extra_cost_people`.
 
 **Why:** employees table is for permanent staff with contracts/wages. External helpers are session-plannable resources with only a CHF/h rate and no HR data. Also the `aush_*` guard in `upsertEmployee` blocks them anyway.
+
+## Terminology boundary
+An analytics panel labelled “Aushilfen” must not assume every qualifying person is stored in `schedule_extra_cost_people`. Existing staff marked for manual time capture can legitimately live in `employees` and still count as an Aushilfe for a week when they have Ist hours but no MIRUS/control-list presence that week.
+
+**Why:** Storage class and reporting classification answer different questions. Restricting detection to `aush_*` resources silently drops manually captured employee-based helpers.
+
+**How to apply:** Keep creation/write paths separated by storage class, but build week-based reporting candidates from every tenant-scoped person referenced by Ist hours and exclude that week’s normalized/name-mapped MIRUS roster.
 
 ## How to apply
 - `src/lib/extra-cost-people-db.ts` is the only write path for external helpers
