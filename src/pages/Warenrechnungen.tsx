@@ -57,6 +57,7 @@ import {
   type KontoSplit,
   type WarenKategorie,
   type Warenkonto,
+  invoiceVatRates,
 } from '@/lib/waren-db';
 import { ladeNettoUmsatzByDate, ladeUmsatzTage, foodBeverageSplit, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
@@ -1426,6 +1427,10 @@ export default function WarenrechnungenPage() {
   const speicherePositionen = async (invoiceId: string, positionenRoh: GespeichertePosition[]) => {
     if (granular === 'jahr') { toast.error('Kontierung nur in der Monats-/Wochenansicht änderbar.'); return; }
     const entry = entries.find(e => e.id === invoiceId);
+    if (entry?.vatClassesSource === 'printed_summary') {
+      toast.error('Kontierung nicht geändert: Dieser Import enthält belegsgenaue MwSt-Klassen. Bitte den Beleg mit korrigierter Kontierung erneut importieren.');
+      return;
+    }
     // Universelle Zwangs-Regeln: Pfand/Leergut IMMER 4800, Gebühren/
     // Konditionen (VEG/Recycling/Logistikpauschale) IMMER 4701 — auch eine
     // manuelle Dialog-Wahl kann das nicht auf ein Warenkonto legen.
@@ -1439,9 +1444,12 @@ export default function WarenrechnungenPage() {
         const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto;
         const aktualisiert: InvoiceEntry = {
           ...entry,
-          ...(splits.length > 1
+          ...(splits.length > 1 || splits.some(split => split.vatClasses.length > 0)
             ? { kontoSplits: splits, warenkonto: undefined }
             : { warenkonto: splits[0]?.warenkonto, kontoSplits: undefined }),
+          ...(splits.some(split => split.vatClasses.length > 0)
+            ? { vatClassesSource: 'positions' as const }
+            : { vatClassesSource: undefined }),
           ...(haupt ? { kategorie: kategorieFromKonto(haupt) } : {}),
           updatedAt: new Date().toISOString(),
         };
@@ -4079,7 +4087,9 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-right tabular-nums text-xs text-muted-foreground whitespace-nowrap">
                                 {listeAnsicht === 'direkt' ? <span className="opacity-30">–</span> : fmtChf(e.amountGross)}
                               </td>
-                              <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{e.vatRate} %</td>
+                              <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">
+                                {invoiceVatRates(e).map(rate => `${rate} %`).join(' / ')}
+                              </td>
                               <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                                 {(() => {
                                   // Kompakt: Hauptkonto (grösster Anteil) + «+n»; Details im Tooltip.
@@ -6606,11 +6616,12 @@ export default function WarenrechnungenPage() {
                 <div className="space-y-1">
                   <Label className="text-xs">Netto CHF</Label>
                   <Input type="number" step="0.01" value={editEntry.amountNet.toFixed(2)}
+                    readOnly={invoiceVatRates(editEntry).length > 1}
                     onChange={e => {
                       const net = Number(e.target.value);
                       setEditEntry(x => x ? { ...x, amountNet: net, amountGross: net * (1 + x.vatRate / 100) } : x);
                     }}
-                    className="h-9 text-sm" />
+                    className={cn('h-9 text-sm', invoiceVatRates(editEntry).length > 1 && 'bg-muted')} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Brutto CHF</Label>
@@ -6618,7 +6629,11 @@ export default function WarenrechnungenPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">MWST %</Label>
-                  <Select value={String(editEntry.vatRate)} onValueChange={v => {
+                  {invoiceVatRates(editEntry).length > 1 ? (
+                    <div className="h-9 rounded-md border border-input bg-muted px-3 flex items-center text-sm">
+                      {invoiceVatRates(editEntry).map(rate => `${rate} %`).join(' / ')}
+                    </div>
+                  ) : <Select value={String(editEntry.vatRate)} onValueChange={v => {
                     const rate = Number(v);
                     setEditEntry(x => x ? { ...x, vatRate: rate, amountGross: x.amountNet * (1 + rate / 100) } : x);
                   }}>
@@ -6626,7 +6641,7 @@ export default function WarenrechnungenPage() {
                     <SelectContent>
                       {VAT_RATES.map(r => <SelectItem key={r} value={r}>{r} %</SelectItem>)}
                     </SelectContent>
-                  </Select>
+                  </Select>}
                 </div>
               </div>
               {/* Kategorie */}
@@ -6680,7 +6695,12 @@ export default function WarenrechnungenPage() {
                     {editEntry.kontoSplits.map((s, i) => (
                       <div key={i} className="flex items-center justify-between text-xs">
                         <span className="font-mono font-semibold">{s.warenkonto}</span>
-                        <span className="text-muted-foreground">Netto CHF {fmtChf(s.amountNet)}</span>
+                        <span className="text-muted-foreground">
+                          Netto CHF {fmtChf(s.amountNet)}
+                          {s.vatClasses?.length
+                            ? ` · ${s.vatClasses.map(v => `${v.vatRate}%: ${fmtChf(v.amountVat)} MwSt`).join(' · ')}`
+                            : ''}
+                        </span>
                       </div>
                     ))}
                   </div>

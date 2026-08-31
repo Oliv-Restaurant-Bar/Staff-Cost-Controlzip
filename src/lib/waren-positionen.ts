@@ -28,6 +28,23 @@ export interface WarenPosition {
   mwstBetrag: number;
   /** MwSt. Code (0 = Pfand/Gebinde). */
   mwstCode: number;
+  /** Exakter Satz, wenn die Quelle ihn ausweist; hat Vorrang vor importspezifischen Codes. */
+  mwstSatz?: TransgourmetVatRate;
+}
+
+/** Gesetzlicher Satz des TG/Prodega-MwSt.-Codes; unbekannte Codes werden nie geraten. */
+export type TransgourmetVatRate = 0 | 2.6 | 8.1;
+
+/**
+ * TG/Prodega-Codes sind keine Prozentwerte. Insbesondere bedeutet Code 1
+ * den reduzierten Satz, nicht 8.1 %. Diese Tabelle ist die einzige Quelle
+ * für die Steuerklasse eines CSV-Postens.
+ */
+export function vatRateFuerTransgourmetMwstCode(code: number): TransgourmetVatRate | null {
+  if (code === 0) return 0;
+  if (code === 1 || code === 7) return 2.6;
+  if (code === 2 || code === 3 || code === 8) return 8.1;
+  return null;
 }
 
 export interface ParsedCsvRechnung {
@@ -58,6 +75,8 @@ export interface CsvParseErgebnis {
     beispielZeile?: string;
     /** Unparsebare Zahlenwerte (als 0 übernommen) — MUSS dem User gemeldet werden. */
     zahlenfehler?: string[];
+     /** MwSt-Code/-Betrag passt nicht zur gesetzlichen Steuerklasse — bitte CSV prüfen. */
+     mwstfehler?: string[];
   };
 }
 
@@ -113,6 +132,7 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
 
   const proRechnung = new Map<string, ParsedCsvRechnung>();
   const zahlenfehler: string[] = [];
+  const mwstfehler: string[] = [];
   let verwendet = 0, verworfen = 0;
   for (let z = 1; z < zeilen.length; z++) {
     const c = zeilen[z].split(';');
@@ -150,6 +170,22 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
       mwstBetrag: iMwst >= 0 ? num(c[iMwst], 'MwSt') : 0,
       mwstCode: iCode >= 0 ? parseMwstCode(c[iCode]) : -1,
     };
+    const mwstSatz = vatRateFuerTransgourmetMwstCode(pos.mwstCode);
+    if (mwstSatz !== null) pos.mwstSatz = mwstSatz;
+    const vatRate = vatRateFuerTransgourmetMwstCode(pos.mwstCode);
+    // Gedruckte Zeilen-MwSt. bleibt führend; die Prüfung vergleicht dagegen
+    // den auf Rappen gerundeten gesetzlichen Satz und macht CSV-/Codefehler
+    // sichtbar, ohne den gedruckten Centbetrag zu überschreiben.
+    if (iMwst >= 0 && vatRate !== null
+      && Math.abs(pos.mwstBetrag - Math.round(pos.positionspreis * vatRate) / 100) > 0.001) {
+      if (mwstfehler.length < 20) {
+        mwstfehler.push(`Zeile ${z + 1} (${bez}): MwSt ${pos.mwstBetrag.toFixed(2)} passt nicht zu Netto ${pos.positionspreis.toFixed(2)} bei ${vatRate.toFixed(1)} % (Code ${pos.mwstCode})`);
+      } else if (mwstfehler.length === 20) mwstfehler.push('… weitere MwSt-Prüffehler unterdrückt');
+    }
+    if (iCode >= 0 && vatRate === null) {
+      if (mwstfehler.length < 20) mwstfehler.push(`Zeile ${z + 1} (${bez}): unbekannter MwSt.-Code «${c[iCode] ?? ''}» — keiner Steuerklasse zugeordnet`);
+      else if (mwstfehler.length === 20) mwstfehler.push('… weitere MwSt-Prüffehler unterdrückt');
+    }
     r.positionen.push(pos);
     r.nettoTotal += pos.positionspreis;
     r.mwstTotal += pos.mwstBetrag;
@@ -167,6 +203,7 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
     debug: {
       ...debugBasis, zeilenVerwendet: verwendet, zeilenVerworfen: verworfen,
       ...(zahlenfehler.length > 0 ? { zahlenfehler } : {}),
+      ...(mwstfehler.length > 0 ? { mwstfehler } : {}),
     },
   };
 }
@@ -520,6 +557,59 @@ export function kontoFuerPositionMitArtikel(
 export const KONTO_LABEL_PFAND = '4800';
 export const KONTO_LABEL_OFFEN = 'offen';
 
+/** Exakte, aus den gedruckten Positionswerten summierte Steuerklasse. */
+export interface PositionsVatKlasse {
+  vatRate: TransgourmetVatRate;
+  amountNet: number;
+  amountVat: number;
+  amountGross: number;
+}
+
+export interface PositionsKontoSplit {
+  warenkonto: string;
+  amountNet: number;
+  amountGross: number;
+  /** Je Konto getrennt, damit bei Mischbelegen kein Durchschnittssatz entsteht. */
+  vatClasses: PositionsVatKlasse[];
+}
+
+function rappen(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
+function kontoSplitsMitVat<T extends Pick<WarenPosition, 'positionspreis' | 'mwstBetrag' | 'mwstCode'>>(
+  positionen: T[],
+  konto: (p: T, index: number) => string,
+): PositionsKontoSplit[] {
+  const m = new Map<string, { net: number; gross: number; vat: Map<TransgourmetVatRate, { net: number; vat: number }> }>();
+  positionen.forEach((p, i) => {
+    const key = konto(p, i);
+    const cur = m.get(key) ?? { net: 0, gross: 0, vat: new Map() };
+    cur.net += p.positionspreis;
+    cur.gross += p.positionspreis + p.mwstBetrag;
+    const rate = 'mwstSatz' in p && typeof p.mwstSatz === 'number'
+      ? p.mwstSatz as TransgourmetVatRate
+      : vatRateFuerTransgourmetMwstCode(p.mwstCode);
+    // Unbekannte Codes bleiben in Positionsdaten, aber werden nicht einer
+    // gesetzlichen Klasse zugeschlagen (kein stilles Erraten).
+    if (rate !== null) {
+      const vat = cur.vat.get(rate) ?? { net: 0, vat: 0 };
+      vat.net += p.positionspreis;
+      vat.vat += p.mwstBetrag;
+      cur.vat.set(rate, vat);
+    }
+    m.set(key, cur);
+  });
+  return [...m.entries()].map(([warenkonto, v]) => ({
+    warenkonto,
+    amountNet: rappen(v.net),
+    amountGross: rappen(v.gross),
+    vatClasses: [...v.vat.entries()]
+      .map(([vatRate, a]) => ({ vatRate, amountNet: rappen(a.net), amountVat: rappen(a.vat), amountGross: rappen(a.net + a.vat) }))
+      .sort((a, b) => a.vatRate - b.vatRate),
+  })).sort((a, b) => b.amountNet - a.amountNet);
+}
+
 /**
  * Netto/MwSt je Konto aggregieren (für kontoSplits).
  * Pfand → Pseudo-Split «Depot», unbekannte Gruppen → «offen»
@@ -531,20 +621,12 @@ export function kontoSplitsFuerRechnung(
   mapping: WarengruppenMapping = DEFAULT_WARENGRUPPEN_MAPPING,
   /** Optionale manuelle Overrides je Positions-Index. */
   overrides?: Record<number, string>,
-): Array<{ warenkonto: string; amountNet: number; amountGross: number }> {
-  const m = new Map<string, { net: number; gross: number }>();
-  r.positionen.forEach((p, i) => {
+): PositionsKontoSplit[] {
+  return kontoSplitsMitVat(r.positionen, (p, i) => {
     const ov = overrides?.[i]?.trim();
     const pk = ov ? { konto: ov, status: 'zugeordnet' as const } : kontoFuerPosition(p, mapping);
-    const key = pk.status === 'zugeordnet' ? pk.konto! : pk.status === 'pfand' ? KONTO_LABEL_PFAND : KONTO_LABEL_OFFEN;
-    const cur = m.get(key) ?? { net: 0, gross: 0 };
-    cur.net += p.positionspreis;
-    cur.gross += p.positionspreis + p.mwstBetrag;
-    m.set(key, cur);
+    return pk.status === 'zugeordnet' ? pk.konto! : pk.status === 'pfand' ? KONTO_LABEL_PFAND : KONTO_LABEL_OFFEN;
   });
-  return [...m.entries()]
-    .map(([warenkonto, v]) => ({ warenkonto, amountNet: Math.round(v.net * 100) / 100, amountGross: Math.round(v.gross * 100) / 100 }))
-    .sort((a, b) => b.amountNet - a.amountNet);
 }
 
 /** Unbekannte Warengruppen einer Rechnungsliste (für den «Konto offen»-Hinweis vor dem Import). */
@@ -584,6 +666,7 @@ export interface GespeichertePosition {
   positionspreis: number;  // Netto der Position
   mwstBetrag: number;
   mwstCode: number;
+  mwstSatz?: TransgourmetVatRate;
   konto: string | null;    // null = Pfand/offen
   status: PositionsKontoStatus;
   /** true, wenn das Konto manuell überschrieben wurde (Auto-Zuordnung fasst es nicht mehr an). */
@@ -606,6 +689,7 @@ export function positionenAusRechnung(
       artNr: p.artNr, bezeichnung: p.bezeichnung, warengruppe: p.warengruppe,
       menge: p.menge, einheit: p.einheit, preis: p.preis,
       positionspreis: p.positionspreis, mwstBetrag: p.mwstBetrag, mwstCode: p.mwstCode,
+      ...(p.mwstSatz !== undefined ? { mwstSatz: p.mwstSatz } : {}),
       konto: pk.konto, status: pk.status,
       ...('manuell' in pk && pk.manuell ? { manuell: true } : {}),
     };
@@ -677,20 +761,12 @@ export function erzwingeRegelPosition(p: GespeichertePosition): GespeichertePosi
 /** kontoSplits aus GESPEICHERTEN Positionen (nach manuellen Overrides) neu ableiten. */
 export function kontoSplitsAusPositionen(
   positionen: GespeichertePosition[],
-): Array<{ warenkonto: string; amountNet: number; amountGross: number }> {
-  const m = new Map<string, { net: number; gross: number }>();
-  for (const p of positionen) {
-    const key = p.konto && p.konto.trim()
+): PositionsKontoSplit[] {
+  return kontoSplitsMitVat(positionen, p => (
+    p.konto && p.konto.trim()
       ? p.konto.trim()
-      : p.status === 'pfand' ? KONTO_LABEL_PFAND : KONTO_LABEL_OFFEN;
-    const cur = m.get(key) ?? { net: 0, gross: 0 };
-    cur.net += p.positionspreis;
-    cur.gross += p.positionspreis + p.mwstBetrag;
-    m.set(key, cur);
-  }
-  return [...m.entries()]
-    .map(([warenkonto, v]) => ({ warenkonto, amountNet: Math.round(v.net * 100) / 100, amountGross: Math.round(v.gross * 100) / 100 }))
-    .sort((a, b) => b.amountNet - a.amountNet);
+      : p.status === 'pfand' ? KONTO_LABEL_PFAND : KONTO_LABEL_OFFEN
+  ));
 }
 
 /**

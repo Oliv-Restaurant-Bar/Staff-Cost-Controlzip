@@ -151,6 +151,28 @@ describe('kernImportiereFsRechnungen', () => {
     const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
     const m = Object.fromEntries((monat[0].kontoSplits ?? []).map(s => [s.warenkonto, s.amountNet]));
     expect(m).toEqual({ '4030': 200, '4040': 100 });
+    expect(monat[0].vatRate).toBe(8.1);
+  });
+
+  it('speichert gemischte ZSF-Sätze als exakte Klassen statt eines Mischsatzes', async () => {
+    const r = rechnung('L-Z-VAT', '2026-07-13');
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      r,
+      fsKategorien: [
+        { name: 'Bier', netto81: 200, netto26: 0, netto00: 0, nettoTotal: 200, mwst81: 16.2 },
+        { name: 'Mineralwasser', netto81: 0, netto26: 80, netto00: 0, nettoTotal: 80, mwst26: 2.08 },
+        { name: 'Leergut', netto81: 0, netto26: 0, netto00: 20, nettoTotal: 20, mwst00: 0 },
+      ],
+    }], { quelle: 'monatsrechnung' });
+    expect(res.hinweise).toEqual([]);
+    const entry = (kv.get('supplier_invoices_2026-07') as InvoiceEntry[])[0];
+    expect(entry.vatRate).toBe(0);
+    expect(entry.kontoSplits?.find(s => s.warenkonto === '4030')).toMatchObject({
+      vatClasses: [{ vatRate: 8.1, amountNet: 200, amountVat: 16.2, amountGross: 216.2 }],
+    });
+    expect(entry.kontoSplits?.find(s => s.warenkonto === '4800')).toMatchObject({
+      vatClasses: [{ vatRate: 0, amountNet: 20, amountVat: 0, amountGross: 20 }],
+    });
   });
 
   it('fsKategorien massgeblich, aber Positions-Netto weicht ab → Warnhinweis (Splits bleiben ZSF)', async () => {

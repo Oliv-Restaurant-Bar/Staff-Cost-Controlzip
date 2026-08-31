@@ -854,6 +854,9 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
                     {splits.map(sp => (
                       <span key={sp.warenkonto} className={cn(sp.warenkonto === 'offen' && 'text-amber-600 dark:text-amber-400')}>
                         {sp.warenkonto}: {fmt(sp.amountNet)}
+                        <span className="ml-1">
+                          ({sp.vatClasses.map(c => `${String(c.vatRate).replace('.', ',')}% ${fmt(c.amountNet)} + ${fmt(c.amountVat)} = ${fmt(c.amountGross)}`).join(' · ')})
+                        </span>
                       </span>
                     ))}
                     {offen.length > 0 && (

@@ -301,6 +301,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
             menge: lief ?? 0, einheit: einh, preis: stkPreis ?? 0,
             positionspreis: preis, mwstBetrag: Math.round(preis * satz) / 100,
             mwstCode: mc.code,
+            mwstSatz: satz as 0 | 2.6 | 8.1,
           });
           out.debug.positionszeilen++;
           void inh;
@@ -340,6 +341,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
           artNr: z.cells[0], bezeichnung: bez, warengruppe: 'Leergut',
           menge: 1, einheit: 'ST', preis: 0,
           positionspreis: preis, mwstBetrag: 0, mwstCode: 0,
+          mwstSatz: 0,
         });
       }
       continue;
@@ -356,6 +358,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
           artNr: '', bezeichnung: bez, warengruppe: gebuehrWarengruppe(bez, mc.satz),
           menge: 1, einheit: '', preis: preis,
           positionspreis: preis, mwstBetrag: Math.round(preis * mc.satz) / 100, mwstCode: mc.code,
+          mwstSatz: mc.satz as 0 | 2.6 | 8.1,
         });
       }
       continue;
@@ -398,6 +401,25 @@ export interface FsKategorieSumme {
   name: string;
   netto81: number; netto26: number; netto00: number;
   nettoTotal: number;
+  /** Gedruckte MwSt. aus der direkt folgenden «MwSt»-Zeile der ZSF. */
+  mwst81?: number; mwst26?: number; mwst00?: number;
+}
+
+/** Unveränderliche Steuerklasse einer Feldschlösschen-ZSF-Aufteilung. */
+export interface FsVatKlasse {
+  vatRate: 8.1 | 2.6 | 0;
+  amountNet: number;
+  /** Gedruckter (nicht aus einem Mischsatz zurückgerechneter) Steuerbetrag. */
+  amountVat: number;
+  amountGross: number;
+}
+
+export interface FsKontoSplit {
+  warenkonto: string;
+  amountNet: number;
+  amountGross: number;
+  /** Steuerklassen bleiben je Konto erhalten, auch wenn ein Konto mehrere Sätze enthält. */
+  vatClasses: FsVatKlasse[];
 }
 
 /** Eingebetteter Lieferschein aus dem Anhang der Sammelrechnung. */
@@ -449,6 +471,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
           artNr: '', bezeichnung: 'Pfand geliefert', warengruppe: 'Leergut',
           menge: 1, einheit: '', preis: 0,
           positionspreis: Math.round(pfandGeliefert * 100) / 100, mwstBetrag: 0, mwstCode: 0,
+          mwstSatz: 0,
         });
       }
       if (aktLs.positionen.length > 0) out.anhangLieferscheine.push(aktLs);
@@ -487,13 +510,22 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
 
       if (k.startsWith('zusammenfassungmwst')) { sektion = 'kategorien'; continue; }
       if (sektion === 'kategorien') {
-        // «Bier | Nettowert | a | b | c | total» — MwSt/Total-Zeilen überspringen
+        // «Bier | Nettowert | a | b | c | total», gefolgt von der gedruckten
+        // «MwSt | a | b | c | total»-Zeile. Beide Zeilen gehören zusammen.
         const idxNetto = z.cells.findIndex(c => /^Nettowert$/i.test(c));
         if (idxNetto > 0) {
           const name = z.cells.slice(0, idxNetto).join(' ').trim();
           const nums = z.cells.slice(idxNetto + 1).map(parseChf).filter((n): n is number => n !== null);
           if (nums.length >= 4 && name && !/^endbetrag$/i.test(name)) {
             out.kategorien.push({ name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3] });
+          }
+          continue;
+        }
+        if (k.startsWith('mwst') && out.kategorien.length > 0) {
+          const nums = z.cells.slice(1).map(parseChf).filter((n): n is number => n !== null);
+          if (nums.length >= 3) {
+            const kat = out.kategorien.at(-1)!;
+            kat.mwst81 = nums[0]; kat.mwst26 = nums[1]; kat.mwst00 = nums[2];
           }
           continue;
         }
@@ -533,6 +565,13 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
             (out.fakturaKategorien[aktFaktura] ??= []).push({
               name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3],
             });
+          }
+        } else if (k.startsWith('mwst') && aktFaktura) {
+          const nums = z.cells.slice(1).map(parseChf).filter((n): n is number => n !== null);
+          const kats = out.fakturaKategorien[aktFaktura];
+          if (nums.length >= 3 && kats && kats.length > 0) {
+            const kat = kats.at(-1)!;
+            kat.mwst81 = nums[0]; kat.mwst26 = nums[1]; kat.mwst00 = nums[2];
           }
         }
         continue; // MwSt-/Total-/Kopfzeilen der Zusammenfassung überspringen
@@ -574,6 +613,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
               artNr: z.cells[0], bezeichnung: z.cells.slice(1, z.cells.length - 3).join(' ').trim() || 'Leergutrückgabe',
               warengruppe: 'Leergut', menge: 1, einheit: '', preis: 0,
               positionspreis: wert, mwstBetrag: 0, mwstCode: 0,
+              mwstSatz: 0,
             });
           }
         }
@@ -591,6 +631,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
             warengruppe: gebuehrWarengruppe(bezZa, satz), menge: 1, einheit: '', preis: wert,
             positionspreis: wert, mwstBetrag: Math.round(wert * satz * 10) / 1000,
             mwstCode: satz === 2.6 ? 2 : 1,
+            mwstSatz: satz as 2.6 | 8.1,
           });
         }
         continue;
@@ -617,6 +658,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
             warengruppe: gebuehrWarengruppe(bezGeb, satz), menge: 1, einheit: '', preis: wert,
             positionspreis: wert, mwstBetrag: Math.round(wert * satz * 10) / 1000,
             mwstCode: satz === 0 ? 0 : satz === 2.6 ? 2 : 1,
+            mwstSatz: satz as 0 | 2.6 | 8.1,
           });
         }
         continue;
@@ -642,6 +684,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
             menge: stk ?? 0, einheit: '', preis: preis ?? 0,
             positionspreis: wert, mwstBetrag: Math.round(wert * satz * 10) / 1000,
             mwstCode: satz === 0 ? 0 : satz === 2.6 ? 2 : 1,
+            mwstSatz: satz as 0 | 2.6 | 8.1,
           });
         }
         continue;
@@ -692,6 +735,7 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
         artNr: '', bezeichnung: 'Rundungsdifferenz', warengruppe: 'Leergut',
         menge: 1, einheit: '', preis: 0,
         positionspreis: diff, mwstBetrag: 0, mwstCode: 0,
+        mwstSatz: 0,
       });
     }
   }
@@ -928,7 +972,7 @@ export function kontoSplitsAusFsKategorien(
    */
   positionen?: Array<{ bezeichnung: string; warengruppe: string; mwstCode: number; positionspreis: number }>,
 ): {
-  splits: Array<{ warenkonto: string; amountNet: number; amountGross: number }>;
+  splits: FsKontoSplit[];
   offen: string[];
   /**
    * Netto-Summe der Zwangs-Gebühren, die NICHT sauber aus einem Warenkonto-
@@ -940,7 +984,7 @@ export function kontoSplitsAusFsKategorien(
   gebuehrenRest: number;
 } {
   const effektiv = mitFsDefaults(mapping);
-  const proKonto = new Map<string, { net: number; gross: number }>();
+  const proKonto = new Map<string, Map<8.1 | 2.6 | 0, { net: number; vat: number }>>();
   const offen: string[] = [];
   // Zwangs-Positionen (Gebühren→4701, Reinigung→6040) je ZSF-Kategorie
   // (warengruppe), ZIEL-Konto und Satz sammeln — beide werden identisch aus
@@ -961,10 +1005,17 @@ export function kontoSplitsAusFsKategorien(
   }
   const verrechnet = new Set<string>();
   let gebuehrenRest = 0;
-  const addKonto = (konto: string, net: number, gross: number) => {
-    const cur = proKonto.get(konto) ?? { net: 0, gross: 0 };
-    cur.net += net; cur.gross += gross;
-    proKonto.set(konto, cur);
+  const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const ensureKonto = (konto: string) => {
+    if (!proKonto.has(konto)) proKonto.set(konto, new Map<8.1 | 2.6 | 0, { net: number; vat: number }>());
+  };
+  const addKlasse = (konto: string, vatRate: 8.1 | 2.6 | 0, net: number, vat: number) => {
+    if (Math.abs(net) < 0.005 && Math.abs(vat) < 0.005) return;
+    const proSatz = proKonto.get(konto) ?? new Map<8.1 | 2.6 | 0, { net: number; vat: number }>();
+    const cur = proSatz.get(vatRate) ?? { net: 0, vat: 0 };
+    cur.net += net; cur.vat += vat;
+    proSatz.set(vatRate, cur);
+    proKonto.set(konto, proSatz);
   };
   for (const kat of kategorien) {
     const leer = Math.abs(kat.nettoTotal) < 0.005
@@ -994,7 +1045,13 @@ export function kontoSplitsAusFsKategorien(
     // nur wenn die Kategorie selbst auf ein anderes Konto läuft (sonst wäre der
     // Betrag doppelt gezählt; Pfand-Kategorien enthalten via istZwingendGebuehr
     // nie Gebühren-Positionen).
-    let n81 = kat.netto81, n26 = kat.netto26, netTotal = kat.nettoTotal;
+    let n81 = kat.netto81, n26 = kat.netto26;
+    // Falls ein alter, bereits gespeicherter Test-/Importwert keine MwSt.-Zeile
+    // kennt, ist die Satz-Rundung der einzige rückwärtskompatible Ersatz. Bei
+    // PDF-Imports sind mwstXX immer die gedruckten Werte.
+    let v81 = kat.mwst81 ?? r2(kat.netto81 * 0.081);
+    let v26 = kat.mwst26 ?? r2(kat.netto26 * 0.026);
+    const v00 = kat.mwst00 ?? 0;
     const katKey = kat.name.trim().toLowerCase();
     const proZiel = gebProKat.get(katKey);
     if (proZiel) {
@@ -1011,13 +1068,21 @@ export function kontoSplitsAusFsKategorien(
         gebuehrenRest += (geb.n81 - take81) + (geb.n26 - take26);
         if (take81 + take26 > 0) {
           n81 -= take81; n26 -= take26;
-          netTotal -= take81 + take26;
-          addKonto(ziel, take81 + take26, take81 * 1.081 + take26 * 1.026);
+          const vat81 = r2(take81 * 0.081);
+          const vat26 = r2(take26 * 0.026);
+          v81 -= vat81; v26 -= vat26;
+          addKlasse(ziel, 8.1, take81, vat81);
+          addKlasse(ziel, 2.6, take26, vat26);
         }
       }
       verrechnet.add(katKey);
     }
-    addKonto(konto, netTotal, n81 * 1.081 + n26 * 1.026 + kat.netto00);
+    // Auch ein vollständig durch eine Gebühr aufgebrauchter Waren-Bucket
+    // bleibt als 0.00-Split sichtbar (bestehende Kontierungs-/Undo-Semantik).
+    ensureKonto(konto);
+    addKlasse(konto, 8.1, n81, v81);
+    addKlasse(konto, 2.6, n26, v26);
+    addKlasse(konto, 0, kat.netto00, v00);
   }
   // Zwangs-Positionen OHNE passende ZSF-Kategorie (abweichender Name) → Rest melden.
   for (const [key, proZiel] of gebProKat) {
@@ -1025,11 +1090,21 @@ export function kontoSplitsAusFsKategorien(
     for (const geb of proZiel.values()) gebuehrenRest += geb.n81 + geb.n26;
   }
   gebuehrenRest = Math.abs(gebuehrenRest) < 0.005 ? 0 : Math.round(gebuehrenRest * 100) / 100;
-  const splits = [...proKonto.entries()].map(([warenkonto, v]) => ({
-    warenkonto,
-    amountNet: Math.round(v.net * 100) / 100,
-    amountGross: Math.round(v.gross * 100) / 100,
-  }));
+  const splits = [...proKonto.entries()].map(([warenkonto, proSatz]) => {
+    const vatClasses = ([8.1, 2.6, 0] as const).flatMap(vatRate => {
+      const v = proSatz.get(vatRate);
+      if (!v) return [];
+      const amountNet = r2(v.net);
+      const amountVat = r2(v.vat);
+      return [{ vatRate, amountNet, amountVat, amountGross: r2(amountNet + amountVat) }];
+    });
+    return {
+      warenkonto,
+      amountNet: r2(vatClasses.reduce((sum, c) => sum + c.amountNet, 0)),
+      amountGross: r2(vatClasses.reduce((sum, c) => sum + c.amountGross, 0)),
+      vatClasses,
+    };
+  });
   return { splits, offen, gebuehrenRest };
 }
 

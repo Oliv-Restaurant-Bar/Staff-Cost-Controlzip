@@ -24,6 +24,7 @@ import {
 import {
   berechnePreisAenderungen, aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
   positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
+  vatRateFuerTransgourmetMwstCode,
   type ParsedCsvRechnung, type PreisAenderung,
 } from '@/lib/waren-positionen';
 import { mitFsDefaults, kontoSplitsAusFsKategorien, type FsKategorieSumme } from '@/lib/feldschloesschen';
@@ -330,6 +331,9 @@ export async function kernImportiereFsRechnungen(
     // wenn übergeben; sonst Positions-Klassifizierung. Weicht die Zusammenfassung
     // vom Buchungs-Netto ab (>0.10), fällt der Import SICHTBAR auf Positionen zurück.
     let splits = kontoSplitsAusPositionen(positionen);
+    // ZSF-Splits tragen zusätzlich die gedruckten MwSt.-Klassen. Separat halten,
+    // damit sie beim strukturell schmaleren Positions-Split nicht verlorengehen.
+    let zsfSplits: ReturnType<typeof kontoSplitsAusFsKategorien>['splits'] | undefined;
     if (fsKategorien && fsKategorien.length > 0) {
       // Positionen mitgeben: Gebühren-Zeilen (VEG/Recycl./Logistik) werden aus
       // den Warenkonto-Buckets der Zusammenfassung herausgerechnet → 4701.
@@ -343,6 +347,7 @@ export async function kernImportiereFsRechnungen(
         hinweise.push(`${lieferant} ${r.rechnungsNr || r.datum}: Gebühren (CHF ${ausZsf.gebuehrenRest.toFixed(2)}) nicht mit der Zusammenfassung MwSt. abstimmbar — Kontierung aus Positionen übernommen (Gebühren auf 4701).`);
       } else if (Math.abs(zsfNetto - zielNetto) <= 0.10) {
         splits = ausZsf.splits;
+        zsfSplits = ausZsf.splits;
         // Warnsignal (ohne die massgebliche ZSF-Kontierung zu ändern): weicht
         // das aus den POSITIONEN gelesene Netto von der Zusammenfassung ab,
         // stimmt Parser oder PDF nicht — sichtbar machen.
@@ -357,6 +362,17 @@ export async function kernImportiereFsRechnungen(
       }
     }
     const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? opts?.defaultKonto ?? '4030';
+    // Eine Mischrechnung darf nie mit einem mathematisch gemittelten Satz
+    // gespeichert werden. Bei ZSF-Importen liegen die exakten Klassen dauerhaft
+    // auf kontoSplits.vatClasses; vatRate ist nur noch für echte Ein-Satz-Belege.
+    const saetze = zsfSplits
+      ? [...new Set(zsfSplits.flatMap(s => s.vatClasses)
+        .filter(c => Math.abs(c.amountNet) >= 0.005 || Math.abs(c.amountVat) >= 0.005)
+        .map(c => c.vatRate))]
+      : [...new Set(r.positionen
+        .map(p => p.mwstSatz ?? vatRateFuerTransgourmetMwstCode(p.mwstCode))
+        .filter((satz): satz is 0 | 2.6 | 8.1 => satz !== null))];
+    const vatRate = saetze.length === 1 ? saetze[0] : 0;
     const aenderungen = berechnePreisAenderungen(r, lieferant, hist, schwelle);
     alleAenderungen.push(...aenderungen);
     hist = aktualisierePreisHistorie(hist, [r], lieferant);
@@ -374,7 +390,7 @@ export async function kernImportiereFsRechnungen(
       amountGross: bruttoOffiziell ?? r.bruttoTotal,
       amountNet: nettoOffiziell ?? r.nettoTotal,
       vatIncluded: false,
-      vatRate: r.nettoTotal > 0 ? Math.round((r.mwstTotal / r.nettoTotal) * 1000) / 10 : 0,
+      vatRate,
       reference: r.rechnungsNr,
       note: (() => {
         const label = opts?.noteLabel ?? 'Feldschlösschen-PDF';
@@ -387,7 +403,14 @@ export async function kernImportiereFsRechnungen(
           ? `provisorisch (Auftragsbestätigung) · ${r.positionen.length} Positionen`
           : basis;
       })(),
-      ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
+      // Auch eine Ein-Konto-ZSF bleibt ein Split: nur so bleiben ihre exakten
+      // 2.6/8.1/0-Klassen (Netto, gedruckte MwSt., Brutto) im KV dauerhaft.
+      ...(zsfSplits || splits.length > 1 ? { kontoSplits: zsfSplits ?? splits } : { warenkonto: haupt }),
+      ...(zsfSplits
+        ? { vatClassesSource: 'printed_summary' as const }
+        : splits.some(split => split.vatClasses.length > 0)
+          ? { vatClassesSource: 'positions' as const }
+          : {}),
       kategorie: kategorieFromKonto(haupt),
       ...(() => {
         const p = resolveImportReceiptPath(vorhanden?.receiptPath, receiptPath);

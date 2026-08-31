@@ -21,6 +21,7 @@ import {
   parseTransgourmetCsv, berechnePreisAenderungen,
   aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING,
   offeneWarengruppen, positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
+  vatRateFuerTransgourmetMwstCode,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, findeCsvBestandsTreffer,
   type ArtikelKontenMapping, type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
   type WarengruppenMapping, type MarktLieferantenMapping,
@@ -325,6 +326,11 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
         description: res.debug.zahlenfehler.slice(0, 3).join(' · '),
       });
     }
+    if (res.debug.mwstfehler?.length) {
+      toast.warning(`${res.debug.mwstfehler.length} MwSt.-Zeile(n) weichen vom gesetzlichen Code-Satz ab — gedruckte Beträge werden übernommen, bitte prüfen.`, {
+        description: res.debug.mwstfehler.slice(0, 3).join(' · '),
+      });
+    }
   };
 
   // Einspeise-Kanal des universellen Uploads: mehrere CSVs werden VERLUSTFREI
@@ -532,6 +538,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
           vorhanden ? bestehendePos[vorhanden.id] : undefined,
         );
         const splits = kontoSplitsAusPositionen(positionen);
+        const vatRates = [...new Set(positionen
+          .map(p => vatRateFuerTransgourmetMwstCode(p.mwstCode))
+          .filter((rate): rate is 0 | 2.6 | 8.1 => rate !== null))];
         // Hauptkonto = grösstes NUMERISCHES Konto (Pseudo-Splits «Depot»/«offen» nie als Kategorie-Quelle)
         const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? '4060';
         const jetzt = new Date().toISOString();
@@ -548,11 +557,16 @@ export function WarenCsvImport({ tenantId, suppliers, onImported, externalFilesR
           amountGross: r.bruttoTotal,
           amountNet: r.nettoTotal,
           vatIncluded: false,
-          vatRate: r.nettoTotal > 0 ? Math.round((r.mwstTotal / r.nettoTotal) * 1000) / 10 : 0,
+          // Nur echte Ein-Satz-Belege erhalten einen Satz. Mischbelege tragen
+          // die gedruckten Steuer-Cents dauerhaft in kontoSplits.vatClasses.
+          vatRate: vatRates.length === 1 ? vatRates[0] : 0,
           reference: r.rechnungsNr,
           ...(r.markt.trim() ? { markt: r.markt.trim() } : {}),
           note: `CSV-Import ${r.markt ? `(${r.markt}) ` : ''}· ${r.positionen.length} Positionen`,
-          ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
+          // Auch ein Ein-Konto-/Ein-Satz-Beleg bleibt ein Split: nur
+          // vatClasses bewahrt die gedruckte Positions-MwSt. und ihre
+          // Rundungs-Cents bei Re-Import und späterer Weiterverarbeitung.
+          ...(splits.length > 0 ? { kontoSplits: splits, vatClassesSource: 'positions' as const } : { warenkonto: haupt }),
           kategorie: kategorieFromKonto(haupt),
           ...(() => {
             const p = resolveImportReceiptPath(vorhanden?.receiptPath, csvBelegPfad);

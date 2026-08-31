@@ -507,19 +507,51 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
         } else {
           // Stufe 1: Kopf-Buchung als Ganzes (editierte Beträge sind führend).
-          const satz = netto > 0 ? R2((mwst / netto) * 100) : 0;
+          const klassen = row.ergebnis.mwstKlassen;
+          if (klassen.length === 0 && row.ergebnis.mwstSatz === null && Math.abs(mwst) >= 0.005) {
+            throw new Error(
+              `${profil.name} ${row.rechnungsNr}: mehrere MwSt-Sätze erkannt, aber keine prüfbaren Satz-Basen gefunden. `
+              + 'Der Beleg wird nicht mit einem Mischsatz gebucht.',
+            );
+          }
+          const klassenNetto = R2(klassen.reduce((sum, klasse) => sum + klasse.basis, 0));
+          const klassenMwst = R2(klassen.reduce((sum, klasse) => sum + klasse.betrag, 0));
+          if (klassen.length > 1 && (Math.abs(klassenNetto - netto) > 0.05 || Math.abs(klassenMwst - mwst) > 0.05)) {
+            throw new Error(
+              `${profil.name} ${row.rechnungsNr}: editierte Kopfwerte decken die gedruckten MwSt-Klassen nicht. `
+              + 'Bitte Belegwerte unverändert übernehmen oder den Beleg prüfen.',
+            );
+          }
+          const positionen = klassen.length > 0
+            ? klassen.map(klasse => ({
+                artNr: '',
+                bezeichnung: `Rechnung gesamt · MwSt ${klasse.satz}%`,
+                warengruppe: profil.parser === 'caporaso' && klasse.satz === 8.1 ? 'Betriebsmaterial' : profil.kategorie,
+                menge: 0,
+                einheit: '',
+                preis: 0,
+                positionspreis: klasse.basis,
+                mwstBetrag: klasse.betrag,
+                mwstCode: klasse.satz === 0 ? 0 : klasse.satz === 2.6 ? 1 : 2,
+                ...(klasse.satz === 0 || klasse.satz === 2.6 || klasse.satz === 8.1
+                  ? { mwstSatz: klasse.satz as 0 | 2.6 | 8.1 }
+                  : {}),
+              }))
+            : [{
+                artNr: '', bezeichnung: 'Rechnung gesamt', warengruppe: profil.kategorie,
+                menge: 0, einheit: '', preis: 0, positionspreis: netto,
+                mwstBetrag: mwst, mwstCode: row.ergebnis.mwstSatz === 0 ? 0 : row.ergebnis.mwstSatz === 2.6 ? 1 : 2,
+                ...(row.ergebnis.mwstSatz === 0 || row.ergebnis.mwstSatz === 2.6 || row.ergebnis.mwstSatz === 8.1
+                  ? { mwstSatz: row.ergebnis.mwstSatz as 0 | 2.6 | 8.1 }
+                  : {}),
+              }];
           const r: ParsedCsvRechnung = {
             docKey: `${row.rechnungsNr || row.fileName}|${row.datum}|${profil.name}`,
             rechnungsNr: row.rechnungsNr || row.fileName,
             datum: row.datum, markt: profil.name,
-            positionen: [{
-              artNr: '', bezeichnung: 'Rechnung gesamt', warengruppe: profil.kategorie,
-              menge: 0, einheit: '', preis: 0, positionspreis: netto,
-              mwstBetrag: mwst, mwstCode: 1,
-            }],
+            positionen,
             nettoTotal: netto, mwstTotal: mwst, bruttoTotal: R2(netto + mwst),
           };
-          void satz;
           eintrag.rechnungen.push({ r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst), ...(belegPfad ? { receiptPath: belegPfad } : {}) });
         }
         proProfil.set(key, eintrag);

@@ -425,6 +425,46 @@ describe('Caporaso LIEFERSCHEIN-RECHNUNG (echte Artikel + Konto-Split via MwSt)'
     expect(basen.find(b => b.satz === 2.6)?.basis).toBe(566.4);
     expect(basen.find(b => b.satz === 8.1)?.basis).toBe(120.0);
   });
+
+  it('behält gedruckte Klassen beim Kopf-Fallback exakt bei', () => {
+    // 2146205 liegt nicht als Originalfixture vor. Dieser Summenblock bildet
+    // dessen massgebliche Klassen ab; absichtlich ohne lesbare Artikelzeilen.
+    const e = parseProfilPdf([
+      'Caporaso',
+      'LIEFERSCHEIN-RECHNUNG: 2146205',
+      'Lieferschein: L2146205 vom 15.08.2026',
+      'MwSt 2.60 % von 1471.50  38.26',
+      'MwSt 8.10 % von 175.00  14.18',
+    ].join('\n'), P);
+    expect(e.positionenErkannt).toBe(false);
+    expect(e.mwstSatz).toBeNull();
+    expect(e.netto).toBe(1646.5);
+    expect(e.mwst).toBe(52.44);
+    expect(e.mwstKlassen).toEqual([
+      { satz: 2.6, basis: 1471.5, betrag: 38.26 },
+      { satz: 8.1, basis: 175, betrag: 14.18 },
+    ]);
+  });
+
+  it('erfasst auch eine explizit gedruckte 0%-Basis', async () => {
+    const { caporasoMwstBasen } = await import('@/lib/profil-pdf-parse');
+    expect(caporasoMwstBasen('MwSt 0.00 % von 175.00  0.00')).toEqual([
+      { satz: 0, basis: 175, betrag: 0 },
+    ]);
+  });
+});
+
+describe('gemischte MwSt im generischen Kopf', () => {
+  it('verwendet aus gemischten Kopftotals nie einen gemittelten oder Profil-Defaultsatz', () => {
+    const e = parseProfilPdf([
+      'RECHNUNG: 123456',
+      'Datum: 15.08.2026',
+      'Total exkl. MwSt CHF 1646.50',
+      'MwSt 2.60 % von 1471.50 CHF 38.26',
+      'MwSt 8.10 % von 175.00 CHF 14.18',
+    ].join('\n'), P);
+    expect(e.mwstSatz).toBeNull();
+  });
 });
 
 describe('caporasoMwstBasen: nur MwSt-Zusammenfassungszeilen', () => {

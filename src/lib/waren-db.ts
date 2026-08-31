@@ -51,6 +51,13 @@ export interface KontoSplit {
   warenkonto: string;   // Kontonummer, z.B. "4000"
   amountGross: number;
   amountNet: number;
+  /** Exakte Beleg-MwSt je Satz; fehlt nur bei Legacy-/manuellen Splits. */
+  vatClasses?: Array<{
+    vatRate: 0 | 2.6 | 8.1;
+    amountNet: number;
+    amountVat: number;
+    amountGross: number;
+  }>;
 }
 
 export interface InvoiceEntry {
@@ -60,7 +67,11 @@ export interface InvoiceEntry {
   amountGross: number;   // Betrag inkl. MWST (Gesamtbetrag)
   amountNet: number;     // Betrag exkl. MWST (Gesamtbetrag)
   vatIncluded: boolean;  // true = Eingabe war Brutto, false = Netto
-  vatRate: number;       // z.B. 8.1 oder 2.6
+  /**
+   * Satz bei Ein-Satz-Belegen. Bei Mischbelegen 0 als Legacy-kompatibler
+   * Sentinel; die echten Sätze stehen zwingend in kontoSplits.vatClasses.
+   */
+  vatRate: number;
   reference?: string;    // Rechnungs- oder Lieferscheinnummer
   /**
    * Abhol-/Markt-Standort aus dem CSV-Positionsimport (z.B. «Bern»,
@@ -76,6 +87,8 @@ export interface InvoiceEntry {
   warenkonto?: string;
   /** Optionale Kontoaufteilung auf 2 Konten (überschreibt warenkonto wenn vorhanden) */
   kontoSplits?: KontoSplit[];
+  /** Herkunft exakter MwSt-Klassen; gedruckte Zusammenfassungen dürfen nicht aus Positionswerten überschrieben werden. */
+  vatClassesSource?: 'positions' | 'printed_summary';
   /** Kategorie für Food/Beverage-Auswertung (Standard: Sonstiges) */
   kategorie?: WarenKategorie;
   /** Optionaler Beleg/Screenshot im privaten Storage-Bucket `waren-belege` (Pfad `<tenantId>/<id>.<ext>`). */
@@ -128,6 +141,17 @@ export interface InvoiceEntry {
   sourceBookingAllocations?: Array<{ key: string; amountGross: number }>;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Echte, persistierte MwSt-Sätze eines Belegs; Legacy-Einträge fallen auf vatRate zurück. */
+export function invoiceVatRates(entry: Pick<InvoiceEntry, 'vatRate' | 'kontoSplits'>): number[] {
+  const exact = [...new Set(
+    (entry.kontoSplits ?? [])
+      .flatMap(split => split.vatClasses ?? [])
+      .filter(vat => Math.abs(vat.amountNet) >= 0.005 || Math.abs(vat.amountVat) >= 0.005)
+      .map(vat => vat.vatRate),
+  )].sort((a, b) => a - b);
+  return exact.length > 0 ? exact : [entry.vatRate];
 }
 
 // ─── Beleg-/Screenshot-Upload (privater Bucket `waren-belege`) ───────────────

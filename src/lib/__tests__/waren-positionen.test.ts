@@ -47,6 +47,32 @@ describe('parseTransgourmetCsv', () => {
     expect(res.debug.zeilenVerworfen).toBe(1);
     expect(res.rechnungen[0].positionen).toHaveLength(1);
   });
+
+  it('bildet die gesetzlichen TG/Prodega-Codes exakt ab und prüft gedruckte Zeilen-MwSt.', () => {
+    const csv = [HEADER,
+      zeile('R1', '2026-07-01', 'Food', '1', 'Reduziert', 10, 10, 0.26, 1),
+      zeile('R1', '2026-07-01', 'Food', '2', 'Reduziert alt', 10, 10, 0.26, 7),
+      zeile('R1', '2026-07-01', 'Bier', '3', 'Normal', 10, 10, 0.81, 2),
+      zeile('R1', '2026-07-01', 'Bier', '4', 'Normal alt', 10, 10, 0.81, 8),
+      zeile('R1', '2026-07-01', 'Leergut', '5', 'Pfand', 10, 10, 0, 0),
+    ].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const splits = kontoSplitsFuerRechnung(r, DEFAULT_WARENGRUPPEN_MAPPING);
+    expect(splits.find(s => s.warenkonto === '4060')?.vatClasses).toEqual([
+      { vatRate: 2.6, amountNet: 20, amountVat: 0.52, amountGross: 20.52 },
+    ]);
+    expect(splits.find(s => s.warenkonto === '4030')?.vatClasses).toEqual([
+      { vatRate: 8.1, amountNet: 20, amountVat: 1.62, amountGross: 21.62 },
+    ]);
+    expect(splits.find(s => s.warenkonto === KONTO_LABEL_PFAND)?.vatClasses).toEqual([
+      { vatRate: 0, amountNet: 10, amountVat: 0, amountGross: 10 },
+    ]);
+
+    const fehler = parseTransgourmetCsv([HEADER, zeile('R2', '2026-07-01', 'Food', '6', 'Falsch', 10, 10, 0.81, 1)].join('\n'));
+    expect(fehler.debug.mwstfehler?.[0]).toContain('2.6 %');
+    // Der gedruckte Centbetrag wird trotz Warnung nicht durch eine Rechnung ersetzt.
+    expect(fehler.rechnungen[0].positionen[0].mwstBetrag).toBe(0.81);
+  });
 });
 
 describe('docKey: gleiche Rechnungsnummer an verschiedenen Daten', () => {
@@ -180,7 +206,10 @@ describe('Artikel → Konto (in der Vorschau gelernte Zuordnungen)', () => {
     expect(erzwingePfandPosition({ ...base, status: 'pfand' }).konto).toBeNull();
     // kontoSplitsAusPositionen zählt danach auf 4800:
     const splits = kontoSplitsAusPositionen([erzwingePfandPosition(base)]);
-    expect(splits).toEqual([{ warenkonto: KONTO_LABEL_PFAND, amountNet: -24.4, amountGross: -24.4 }]);
+    expect(splits).toEqual([{
+      warenkonto: KONTO_LABEL_PFAND, amountNet: -24.4, amountGross: -24.4,
+      vatClasses: [{ vatRate: 0, amountNet: -24.4, amountVat: 0, amountGross: -24.4 }],
+    }]);
     // Normale Bier-Positionen bleiben unangetastet (Fass/Container im Namen):
     for (const bez of ['Valaisanne Lager Container 1X20,00', 'Feldschlösschen Lager Fass 20L', 'Bügel 10X0,33 Harass']) {
       const bier: GespeichertePosition = { ...base, bezeichnung: bez, warengruppe: 'Bier', mwstCode: 1, konto: '4030', status: 'zugeordnet', manuell: false };

@@ -24,3 +24,19 @@ FIBU-Netto-Werte (reporting/PLView) nie umrechnen. Beaulieu ohne TA rechnet
 datengetrieben automatisch durchgehend Standardsatz. ER-Übernahme
 (vj-daily-transfer) trägt `taSplit`/`taDayCount` — UI-Badges bei fehlendem oder
 unvollständigem Split.
+
+Für Warenbelege gilt zusätzlich: nie einen Satz aus Gesamt-MwSt ÷ Gesamt-Netto
+bilden. Gedruckte Positions-/Zusammenfassungswerte je 0/2.6/8.1 % bleiben als
+Satzklassen am Kontosplit erhalten; der skalare Satz gilt nur für echte
+Ein-Satz-Belege. Ein gemischter PDF-Beleg ohne prüfbare Satzbasen fällt
+geschlossen aus. Positionsdetails dürfen eine gedruckte Zusammenfassung nur
+ersetzen, wenn Netto UND MwSt in beiden Richtungen pro Satz decken.
+
+**Why:** Ein mathematischer Mischsatz ist keine buchbare Steuerklasse und
+zerstört die Nachvollziehbarkeit; einseitige Prüfungen übersehen zusätzliche
+Detailklassen.
+
+**How to apply:** Importspezifische MwSt-Codes nie zwischen Lieferanten
+wiederverwenden; Positionen tragen zusätzlich den expliziten Satz. Gedruckte
+Zusammenfassungen kennzeichnen ihre Herkunft, damit spätere Kontoänderungen
+nicht unbemerkt deren Rundungs-Cents verwerfen.

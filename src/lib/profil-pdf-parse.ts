@@ -18,6 +18,13 @@
 import type { ParsedCsvRechnung, WarenPosition } from '@/lib/waren-positionen';
 import { findeProfilImText, type LieferantenProfil } from '@/lib/lieferanten-profile';
 
+/** Gedruckte, prüfbare MwSt-Zusammenfassung einer Rechnung. */
+export interface MwstKlasse {
+  satz: number;
+  basis: number;
+  betrag: number;
+}
+
 export interface ProfilPdfErgebnis {
   /** Erkanntes Profil (null = «Lieferant offen», via Vorschau zuordnen). */
   profil: LieferantenProfil | null;
@@ -30,6 +37,11 @@ export interface ProfilPdfErgebnis {
   netto: number | null;
   mwst: number | null;
   mwstSatz: number | null;
+  /**
+   * Gedruckte MwSt-Klassen. Bei gemischten Sätzen ist dies die autoritative
+   * Darstellung; `mwstSatz` bleibt bewusst null und darf nie ein Mittelwert sein.
+   */
+  mwstKlassen: MwstKlasse[];
   brutto: number | null;
   /** Stufe 2: eine ParsedCsvRechnung pro Lieferung (LS-Datum als datum). */
   lieferungen: ParsedCsvRechnung[];
@@ -205,7 +217,9 @@ function position(
   return {
     artNr: p.artNr, bezeichnung: p.bezeichnung, warengruppe: kategorie,
     menge: p.menge, einheit: p.einheit, preis: p.preis, positionspreis: rundung2(p.positionspreis),
-    mwstBetrag: rundung2(p.positionspreis * mwstSatz / 100), mwstCode: 1,
+    mwstBetrag: rundung2(p.positionspreis * mwstSatz / 100),
+    mwstCode: mwstSatz === 0 ? 0 : mwstSatz === 2.6 ? 1 : 2,
+    ...(mwstSatz === 0 || mwstSatz === 2.6 || mwstSatz === 8.1 ? { mwstSatz } : {}),
   };
 }
 
@@ -582,7 +596,9 @@ function parseTransgourmetLieferungen(lines: string[], profil: LieferantenProfil
         artNr: c[1], bezeichnung: bez || c[1],
         warengruppe: satz === 2.6 ? 'Food' : 'Nonfood',
         menge: 0, einheit: '', preis, positionspreis: rundung2(exkl),
-        mwstBetrag: rundung2(inkl - exkl), mwstCode: 1,
+        mwstBetrag: rundung2(inkl - exkl),
+        mwstCode: satz === 0 ? 0 : satz === 2.6 ? 1 : 2,
+        ...(satz === 0 || satz === 2.6 || satz === 8.1 ? { mwstSatz: satz as 0 | 2.6 | 8.1 } : {}),
       });
     }
     return baueLieferung(profil.name, b.nr, b.datum, positionen, 0);
@@ -600,8 +616,38 @@ interface KopfFelder {
   netto: number | null;
   mwst: number | null;
   mwstSatz: number | null;
+  /** Nur aus einer gedruckten MwSt-Zusammenfassung, nie aus Artikelzeilen. */
+  mwstKlassen?: MwstKlasse[];
+  /** Mehrere gedruckte Sätze ohne verifizierbare Basen: nicht schätzen. */
+  gemischteMwstSaetze?: boolean;
   /** Profil-spezifische Hinweise (z.B. Gebinde separat, Kontierung prüfen). */
   hinweise?: string[];
+}
+
+/** Gedruckte MwSt-Zusammenfassungen gängiger Lieferantenlayouts. */
+function generischeMwstKlassen(text: string): MwstKlasse[] {
+  const result: MwstKlasse[] = [];
+  const push = (satzRaw: string, basisRaw: string, betragRaw: string) => {
+    const satz = parseBetrag(satzRaw);
+    const basis = parseBetrag(basisRaw);
+    const betrag = parseBetrag(betragRaw);
+    if (satz === null || basis === null || betrag === null || ![0, 2.6, 8.1].includes(satz)) return;
+    if (!result.some(k => k.satz === satz && Math.abs(k.basis - basis) < 0.005 && Math.abs(k.betrag - betrag) < 0.005)) {
+      result.push({ satz, basis: rundung2(basis), betrag: rundung2(betrag) });
+    }
+  };
+  for (const line of text.split('\n')) {
+    // Transgourmet: MWST 8.10% | Steuer | exkl. | inkl.
+    let m = line.match(new RegExp(`MWST\\s+(\\d{1,2}[.,]\\d{1,2})%\\s+(${BETRAG_RE.source})\\s+(${BETRAG_RE.source})\\s+${BETRAG_RE.source}`, 'i'));
+    if (m) { push(m[1], m[3], m[2]); continue; }
+    // Caporaso/ähnlich: 2.6% MwSt. aus Betrag von CHF 100.00 CHF 2.60
+    m = line.match(new RegExp(`(\\d{1,2}(?:[.,]\\d{1,2})?)%\\s*MwSt\\.?[^\\n]*?(?:von|auf)\\s+(?:CHF\\s*)?(${BETRAG_RE.source})\\s+(?:CHF\\s*)?(${BETRAG_RE.source})`, 'i'));
+    if (m) { push(m[1], m[2], m[3]); continue; }
+    // Ambro: Mehrwertsteuer 2.6% (...) auf 5'699.94 148.20
+    m = line.match(new RegExp(`Mehrwertsteuer\\s+(\\d{1,2}(?:[.,]\\d{1,2})?)%[^\\n]*?auf\\s+(${BETRAG_RE.source})\\s+(${BETRAG_RE.source})`, 'i'));
+    if (m) push(m[1], m[2], m[3]);
+  }
+  return result.sort((a, b) => a.satz - b.satz);
 }
 
 function generischerKopf(text: string): KopfFelder {
@@ -625,9 +671,18 @@ function generischerKopf(text: string): KopfFelder {
     new RegExp(`MwSt\\.?\\s*CHF\\s*(${BETRAG_RE.source})`, 'i'),
     new RegExp(`MwSt\\.?\\s+[\\d.]+\\s*%\\s*von\\s+[\\d’'.,]+\\s+(?:CHF\\s+)?(${BETRAG_RE.source})`, 'i'),
   ]);
-  const satzS = suche(text, [/(\d{1,2}[.,]\d{1,2})\s*%/]);
-  const mwstSatz = satzS ? parseBetrag(satzS) : null;
-  return { rechnungsNr, rechnungsdatum, lieferdatum: null, netto, mwst, mwstSatz };
+  const mwstKlassen = generischeMwstKlassen(text);
+  const saetze = [...text.matchAll(/(?:MWST|Mehrwertsteuer)[^\n]{0,40}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%/gi)]
+    .map(m => parseBetrag(m[1]))
+    .filter((satz): satz is number => satz !== null);
+  const unterschiedlicheSaetze = new Set([
+    ...saetze.map(satz => Math.round(satz * 10) / 10),
+    ...mwstKlassen.map(klasse => klasse.satz),
+  ]);
+  const gemischteMwstSaetze = unterschiedlicheSaetze.size > 1;
+  const satzS = gemischteMwstSaetze ? null : saetze[0] ?? null;
+  const mwstSatz = satzS;
+  return { rechnungsNr, rechnungsdatum, lieferdatum: null, netto, mwst, mwstSatz, mwstKlassen, gemischteMwstSaetze };
 }
 
 /** Deutsches Langdatum («15. Mai 2026») → YYYY-MM-DD. */
@@ -923,10 +978,10 @@ const KOPF_PARSER: Record<string, KopfParser> = {
   },
   caporaso: (text) => {
     const g = generischerKopf(text);
-    const basen = caporasoMwstBasen(text);
+    const mwstKlassen = caporasoMwstBasen(text);
     const lieferdatum = parseDatumCH(suche(text, [CAPORASO_LS_RE]) ?? '');
-    const netto = basen.length > 0 ? rundung2(basen.reduce((s, b) => s + b.basis, 0)) : g.netto;
-    const mwst = basen.length > 0 ? rundung2(basen.reduce((s, b) => s + b.betrag, 0)) : g.mwst;
+    const netto = mwstKlassen.length > 0 ? rundung2(mwstKlassen.reduce((s, b) => s + b.basis, 0)) : g.netto;
+    const mwst = mwstKlassen.length > 0 ? rundung2(mwstKlassen.reduce((s, b) => s + b.betrag, 0)) : g.mwst;
     return {
       ...g,
       rechnungsNr: suche(text, [/LIEFERSCHEIN-?RECHNUNG\s*:?\s*(\d{4,12})/i]) ?? g.rechnungsNr,
@@ -934,8 +989,10 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       rechnungsdatum: lieferdatum ?? g.rechnungsdatum,
       lieferdatum,
       netto, mwst,
+      mwstKlassen,
       // Gemischte Sätze (2.6 Food / 8.1 Verpackung) — kein einzelner Satz.
       mwstSatz: null,
+      gemischteMwstSaetze: mwstKlassen.length > 1,
     };
   },
   espro: (text) => {
@@ -1028,16 +1085,18 @@ const CAPORASO_LS_RE = /Lieferschein\s*:?\s*L?\s*\d{2,12}\s+vom\s+(\d{1,2}\.\d{1
  * damit Positionszeilen mit zufälligen Prozentangaben nie mitzählen —
  * unabhängig von der Spaltenreihenfolge des Layouts.
  */
-export function caporasoMwstBasen(text: string): Array<{ satz: number; basis: number; betrag: number }> {
-  const proSatz = new Map<number, { satz: number; basis: number; betrag: number }>();
+export function caporasoMwstBasen(text: string): MwstKlasse[] {
+  const proSatz = new Map<number, MwstKlasse>();
   for (const line of text.split('\n')) {
     // Nur echte MwSt-Zusammenfassungszeilen — Positions-/Rabattzeilen mit
     // zufällig passendem Prozentbetrag dürfen NIE eine Basis stellen.
     if (!/mwst|mehrwertsteuer|\bvat\b|\btva\b/i.test(line)) continue;
     if (/rabatt|skonto|zuschlag/i.test(line)) continue;
-    const rm = /(2\.60?|8\.10?)\s*%/.exec(line);
+    const rm = /(0(?:[.,]0+)?|2[.,]60?|8[.,]10?)\s*%/.exec(line);
     if (!rm) continue;
-    const satz = Math.round(parseFloat(rm[1]) * 10) / 10;
+    const parsedSatz = parseBetrag(rm[1]);
+    if (parsedSatz === null) continue;
+    const satz = Math.round(parsedSatz * 10) / 10;
     const rest = line.slice(rm.index + rm[0].length);
     const vor = line.slice(0, rm.index);
     // Kandidaten: alle Beträge der Zeile ausser der Satz-Angabe selbst.
@@ -1045,7 +1104,19 @@ export function caporasoMwstBasen(text: string): Array<{ satz: number; basis: nu
       .map(m => parseBetrag(m[0]))
       .filter((n): n is number => n !== null && Math.abs(n) > 0.005);
     let paar: { basis: number; betrag: number } | null = null;
+    // Bei 0 % ist der gedruckte Steuerbetrag ebenfalls 0 und wird oben
+    // absichtlich aus der Kandidatenliste entfernt. Die Basis nach «von» ist
+    // trotzdem eine echte, explizite Steuerklasse.
+    if (satz === 0) {
+      const von = new RegExp(`\\bvon\\s+(${BETRAG_RE.source})`, 'i').exec(line);
+      // Manche Caporaso-Layouts haben kein «von» und zeigen nur
+      // «MwSt 0.00 %  175.00  0.00». Da die Zeile bereits als MwSt-Summe
+      // erkannt ist, ist ihr einziger nicht-null Betrag die Basis.
+      const basis = von ? parseBetrag(von[1]) : nums[0] ?? null;
+      if (basis !== null && basis >= 0) paar = { basis, betrag: 0 };
+    }
     for (const basis of nums) {
+      if (paar) break;
       for (const betrag of nums) {
         if (basis === betrag) continue;
         if (Math.abs(rundung2(basis * satz / 100) - betrag) <= 0.06 && Math.abs(basis) > Math.abs(betrag)) {
@@ -1183,14 +1254,25 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   const kopfFn = profil ? KOPF_PARSER[profil.id] : undefined;
   const kopf = kopfFn ? kopfFn(text, lines) : generischerKopf(text);
   let { netto, mwst } = kopf;
-  const mwstSatz = kopf.mwstSatz ?? satzAusBetraegen(netto, mwst) ?? profil?.mwstSatz ?? null;
+  // Mehrere gedruckte Klassen dürfen nie in einen rechnerischen Mischsatz
+  // umgewandelt werden. Ohne exakt extrahierbare Klassen bleibt ein generischer
+  // Mischbeleg fail-closed statt mit einem Profil-Defaultsatz falsch zu buchen.
+  const hatGemischteKlassen =
+    (kopf.mwstKlassen?.length ?? 0) > 1 ||
+    // Bei einem nicht zuordenbaren, generischen Beleg gibt es keinen sicheren
+    // Profil-Defaultsatz. Bekannte Detailparser werten ihre Positionen selbst
+    // aus und dürfen nicht durch Prozentangaben in Artikelzeilen blockieren.
+    kopf.gemischteMwstSaetze === true;
+  const mwstSatz = hatGemischteKlassen
+    ? null
+    : kopf.mwstSatz ?? satzAusBetraegen(netto, mwst) ?? profil?.mwstSatz ?? null;
   if (netto !== null && mwst === null && mwstSatz !== null) mwst = rundung2(netto * mwstSatz / 100);
   if (netto === null && mwst !== null && mwstSatz) netto = rundung2(mwst / (mwstSatz / 100));
 
   // Stufe 2: Positionen je Lieferung (wo Profil-Parser vorhanden)
   let lieferungen: ParsedCsvRechnung[] = [];
-  if (profil?.parser && mwstSatz !== null) {
-    try { lieferungen = LIEFERUNG_PARSER[profil.parser](lines, profil, mwstSatz); }
+  if (profil?.parser && (mwstSatz !== null || kopf.gemischteMwstSaetze === true || profil.id === 'caporaso')) {
+    try { lieferungen = LIEFERUNG_PARSER[profil.parser](lines, profil, mwstSatz ?? profil.mwstSatz ?? 0); }
     catch {
       hinweise.push(profil.id === 'ambro' || profil.id === 'caporaso'
         ? 'Artikeldetails verworfen — Positionen konnten nicht vollständig mit den Rechnungswerten abgeglichen werden; Rechnung wird über die Kopfwerte gebucht.'
@@ -1209,6 +1291,36 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
       } else {
         hinweise.push(`Positionssumme ${summe.toFixed(2)} ≠ Rechnungs-Netto ${netto.toFixed(2)} — bitte prüfen.`);
       }
+    }
+  }
+  if (lieferungen.length > 0 && (kopf.mwstKlassen?.length ?? 0) > 0) {
+    const positionen = lieferungen.flatMap(lieferung => lieferung.positionen);
+    const erwartet = new Map<number, { basis: number; betrag: number }>();
+    for (const klasse of kopf.mwstKlassen!) {
+      const alt = erwartet.get(klasse.satz) ?? { basis: 0, betrag: 0 };
+      erwartet.set(klasse.satz, {
+        basis: rundung2(alt.basis + klasse.basis),
+        betrag: rundung2(alt.betrag + klasse.betrag),
+      });
+    }
+    const erhalten = new Map<number, { basis: number; betrag: number }>();
+    for (const position of positionen) {
+      if (position.mwstSatz === undefined) continue;
+      const alt = erhalten.get(position.mwstSatz) ?? { basis: 0, betrag: 0 };
+      erhalten.set(position.mwstSatz, {
+        basis: rundung2(alt.basis + position.positionspreis),
+        betrag: rundung2(alt.betrag + position.mwstBetrag),
+      });
+    }
+    const saetze = new Set([...erwartet.keys(), ...erhalten.keys()]);
+    const klassenDecken = [...saetze].every(satz => {
+      const soll = erwartet.get(satz) ?? { basis: 0, betrag: 0 };
+      const ist = erhalten.get(satz) ?? { basis: 0, betrag: 0 };
+      return Math.abs(soll.basis - ist.basis) <= 0.05 && Math.abs(soll.betrag - ist.betrag) <= 0.05;
+    });
+    if (!klassenDecken) {
+      lieferungen = [];
+      hinweise.push('Artikeldetails verworfen — ihre MwSt-Klassen decken die gedruckte MwSt-Zusammenfassung nicht.');
     }
   }
   const positionenErkannt = lieferungen.length > 0;
@@ -1245,7 +1357,7 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
     rechnungsNr,
     rechnungsdatum: kopf.rechnungsdatum,
     lieferdatum,
-    netto, mwst, mwstSatz,
+    netto, mwst, mwstSatz, mwstKlassen: kopf.mwstKlassen ?? [],
     brutto: netto !== null && mwst !== null ? rundung2(netto + mwst) : null,
     lieferungen, positionenErkannt, belegart,
     dokumenttyp: (() => {

@@ -195,6 +195,9 @@ describe('parseFsLieferschein', () => {
     const zab = ls.positionen.filter(p => p.warengruppe === 'Zu-/Abschläge');
     expect(zab.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(15.00, 2);
     expect(ls.positionen.find(p => /^VEG/.test(p.bezeichnung))?.warengruppe).toBe('Spirituosen');
+    expect(waren.find(p => p.artNr === '10030')?.mwstSatz).toBe(8.1);
+    expect(waren.find(p => p.artNr === '10450')?.mwstSatz).toBe(2.6);
+    expect(leergut.every(p => p.mwstSatz === 0)).toBe(true);
   });
   it('Netto-Summe aller Positionen = Total netto Lieferung', () => {
     const r = fsLieferscheinAlsRechnung(ls);
@@ -237,6 +240,7 @@ describe('parseFsSammelrechnung', () => {
     expect(kats).toBeDefined();
     expect(kats.map(k => k.name)).toEqual(['Bier', 'Zu-/Abschläge']);
     expect(kats.find(k => k.name === 'Bier')?.netto81).toBe(3923.92);
+    expect(kats.find(k => k.name === 'Bier')?.mwst81).toBe(317.84);
     expect(kats.find(k => k.name === 'Zu-/Abschläge')?.nettoTotal).toBe(15);
     // Endbetrag-/MwSt-/Total-Zeilen werden NICHT als Kategorien gesammelt
     expect(kats.some(k => /endbetrag|total|mwst/i.test(k.name))).toBe(false);
@@ -297,6 +301,12 @@ describe('parseFsFaktura / fsFakturenAlsRechnungen (einzelne Faktura-PDF)', () =
     const { splits } = kontoSplitsAusFsKategorien(fr.fsKategorien!, []);
     const m = Object.fromEntries(splits.map(x => [x.warenkonto, x.amountNet]));
     expect(m).toEqual({ '4030': 300, '4050': 100, '4800': 36.6 });
+    expect(splits.find(x => x.warenkonto === '4030')?.vatClasses).toEqual([
+      { vatRate: 8.1, amountNet: 300, amountVat: 24.3, amountGross: 324.3 },
+    ]);
+    expect(splits.find(x => x.warenkonto === '4800')?.vatClasses).toEqual([
+      { vatRate: 0, amountNet: 36.6, amountVat: 0, amountGross: 36.6 },
+    ]);
   });
   it('ohne Zusammenfassung MwSt. → failureReason (Kontierung nicht belegbar)', () => {
     const ohne = zeilen([
@@ -573,6 +583,12 @@ describe('FS Juli Kontrollwerte: Depot separat, Warenkosten ohne Leergut', () =>
   });
   it('gemischt-sätzige Depot-Kategorie (Name zählt, nicht nur 0 %)', () => {
     const { splits } = kontoSplitsAusFsKategorien([kat2('Harasse', 10, 0, 90)], []);
-    expect(splits).toEqual([{ warenkonto: '4800', amountNet: 100, amountGross: expect.any(Number) }]);
+    expect(splits).toMatchObject([{
+      warenkonto: '4800', amountNet: 100, amountGross: expect.any(Number),
+      vatClasses: [
+        { vatRate: 8.1, amountNet: 10, amountVat: 0.81, amountGross: 10.81 },
+        { vatRate: 0, amountNet: 90, amountVat: 0, amountGross: 90 },
+      ],
+    }]);
   });
 });
