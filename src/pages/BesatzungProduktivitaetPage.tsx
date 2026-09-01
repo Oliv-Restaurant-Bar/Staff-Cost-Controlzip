@@ -25,6 +25,8 @@ import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { ProductivityChart } from '@/components/besatzung/ProductivityChart';
 import { calendarDatesForScope, requiresTimelineAttention, timelineStyle, TIMELINE_END, TIMELINE_START, workedDays, TIMELINE_HOURS } from '@/lib/control-list-timeline';
 import { buildControlHoursIndex, selectedHelperHourRows, supplementHoursForPerson } from '@/lib/control-list-helper-detection';
+import { applyEffectiveWagesForMonth } from '@/lib/wage-history';
+import { pkHasFixedSalary } from '@/lib/personalkosten';
 
 type DeptFilter = 'all' | ControlListDepartment;
 type Mode = 'productivity' | 'schedule';
@@ -36,6 +38,9 @@ type HelperHours = { helper: HelperPerson; days: HelperDay[] };
 type TimelineRow = { name: string; department?: ControlListDepartment; days: ControlListDay[] };
 type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState; hasSelectedHelpers: boolean };
 const fmt = (n: number | undefined, digits = 1) => n === undefined ? '—' : n.toLocaleString('de-CH', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+const ALWAYS_SUPPLEMENT_EMPLOYEE_IDS: Partial<Record<'oliv' | 'beaulieu', ReadonlySet<string>>> = {
+  oliv: new Set(['103', '14']), // Lokaj Mendim, Ramadani Mejdi
+};
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 const weekDates = (week: string) => {
   const match = week.match(/^(\d{4})-W(\d{2})$/);
@@ -60,6 +65,7 @@ export default function BesatzungProduktivitaetPage() {
   const [state, setState] = useState<ControlListTenantState | null>(null);
   const [helpers, setHelpers] = useState<ExtraCostPerson[]>([]);
   const [personnel, setPersonnel] = useState<Employee[]>([]);
+  const [flexEmployeeIds, setFlexEmployeeIds] = useState<Set<string>>(new Set());
   const [actual, setActual] = useState<Record<string, ActualEntry>>({});
   const [revenue, setRevenue] = useState<Record<string, number>>({});
   const [mode, setMode] = useState<Mode>('productivity');
@@ -78,8 +84,32 @@ export default function BesatzungProduktivitaetPage() {
   const saveQueue = useRef(Promise.resolve());
   const tenantRef = useRef(tenantId);
 
-  useEffect(() => { let alive = true; tenantRef.current = tenantId; setState(null); setHelpers([]); setPersonnel([]); setRevenue({}); setActual({}); setPending(null); setError(''); setSelectedDay(undefined); setSelectedScheduleDate(''); setSelectedEmployee(''); setSelectedSupplementPerson(''); setWeek(''); Promise.all([loadControlListState(tenantId), loadExtraCostPeople(tenantId), loadEmployees(tenantId)]).then(([loaded, people, employees]) => { if (!alive) return; setState(loaded); setHelpers(people); setPersonnel(employees ?? []); const dates = loaded.document?.employees.flatMap(e => e.days.map(d => d.date)).sort() ?? []; if (dates.length) { setWeek(isoWeekForDate(dates[dates.length - 1])); setSelectedScheduleDate(dates[dates.length - 1]); } }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Daten konnten nicht geladen werden.'); }); return () => { alive = false; }; }, [tenantId]);
+  useEffect(() => { let alive = true; tenantRef.current = tenantId; setState(null); setHelpers([]); setPersonnel([]); setFlexEmployeeIds(new Set()); setRevenue({}); setActual({}); setPending(null); setError(''); setSelectedDay(undefined); setSelectedScheduleDate(''); setSelectedEmployee(''); setSelectedSupplementPerson(''); setWeek(''); Promise.all([loadControlListState(tenantId), loadExtraCostPeople(tenantId), loadEmployees(tenantId)]).then(([loaded, people, employees]) => { if (!alive) return; setState(loaded); setHelpers(people); setPersonnel(employees ?? []); const dates = loaded.document?.employees.flatMap(e => e.days.map(d => d.date)).sort() ?? []; if (dates.length) { setWeek(isoWeekForDate(dates[dates.length - 1])); setSelectedScheduleDate(dates[dates.length - 1]); } }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Daten konnten nicht geladen werden.'); }); return () => { alive = false; }; }, [tenantId]);
   useEffect(() => { setSelectedSupplementPerson(''); }, [tenantId, week]);
+  useEffect(() => {
+    let alive = true;
+    const months = [...new Set(weekDates(week).map(date => date.slice(0, 7)))];
+    if (!personnel.length || !months.length) {
+      setFlexEmployeeIds(new Set());
+      return () => { alive = false; };
+    }
+    Promise.all(months.map(monthKey => {
+      const [year, month] = monthKey.split('-').map(Number);
+      return applyEffectiveWagesForMonth(personnel, year, month, tenantId);
+    })).then(results => {
+      if (!alive) return;
+      const ids = new Set<string>();
+      for (const result of results) {
+        for (const employee of result.employees) {
+          if (!pkHasFixedSalary(employee) || result.splits[employee.id]) ids.add(employee.id);
+        }
+      }
+      setFlexEmployeeIds(ids);
+    }).catch(e => {
+      if (alive) setError(e instanceof Error ? e.message : 'Flex-Mitarbeitende konnten nicht geladen werden.');
+    });
+    return () => { alive = false; };
+  }, [personnel, tenantId, week]);
   const document = state?.document;
   const allDays = useMemo(() => document?.employees.flatMap(employee => workedDays(employee.days).map(day => ({ day, employee }))) ?? [], [document]);
   const filtered = useMemo(() => allDays.filter(({ employee }) => dept === 'all' || departmentForEmployee(state ?? { departments: {} }, employee.name).department === dept), [allDays, dept, state]);
@@ -157,9 +187,13 @@ export default function BesatzungProduktivitaetPage() {
     supplementHoursForPerson(person, date, actual[`${person.id}-${date}`], controlHoursIndex),
   [actual, controlHoursIndex]);
   const selectedWeekDates = useMemo(() => weekDates(week), [week]);
-  const helperCandidates = useMemo(() => allIstPeople.filter(person =>
-    selectedWeekDates.some(date => supplementHours(person, date) > 0)
-  ), [allIstPeople, selectedWeekDates, supplementHours]);
+  const helperCandidates = useMemo(() => {
+    const alwaysIds = ALWAYS_SUPPLEMENT_EMPLOYEE_IDS[tenantId] ?? new Set<string>();
+    return allIstPeople.filter(person =>
+      selectedWeekDates.some(date => supplementHours(person, date) > 0)
+      || (person.kind === 'employee' && (flexEmployeeIds.has(person.id) || alwaysIds.has(person.id)))
+    );
+  }, [allIstPeople, flexEmployeeIds, selectedWeekDates, supplementHours, tenantId]);
   const visibleHelperCandidates = useMemo(() => helperCandidates.filter(helper => dept === 'all' || helper.department === dept), [dept, helperCandidates]);
   const helperHours = useMemo(() => visibleHelperCandidates.map(helper => ({
     helper,
@@ -461,26 +495,27 @@ function WeeklyMatrix({ document, dates, filtered, selectedEmployee, state, help
   </section>;
 }
 function HelperPanel({ helperHours, state, toggleHelper, toggleHelperWeek, selectedPersonId, setSelectedPersonId, canEdit }: { helperHours: HelperHours[]; state: ControlListTenantState; toggleHelper: (id: string, date: string, checked: boolean) => void; toggleHelperWeek: (id: string, days: HelperDay[], checked: boolean) => void; selectedPersonId: string; setSelectedPersonId: (id: string) => void; canEdit: boolean }) {
-  const visible = helperHours.map(item => ({ ...item, days: item.days.filter(day => day.hours > 0) })).filter(item => item.days.length);
+  const visible = helperHours.map(item => ({ ...item, days: item.days.filter(day => day.hours > 0) }));
   const selected = visible.find(item => item.helper.id === selectedPersonId);
   return <section className="rounded-xl border border-primary/30 bg-primary/[0.06] p-4 shadow-sm">
     <h2 className="font-semibold text-primary">＋ Aushilfen & Ergänzungen aus ‹Dienstplan · Ist-Stunden›</h2>
-    <p className="mt-1 text-xs text-muted-foreground">Zuerst Mitarbeiter wählen, danach ergänzbare manuelle Stunden auswählen. Berücksichtigt wird nur der Tagesüberschuss gegenüber der Kontrollliste.</p>
+    <p className="mt-1 text-xs text-muted-foreground">Zuerst Mitarbeiter wählen, danach ergänzbare manuelle Stunden auswählen. Alle Flex-Mitarbeitenden sowie Mendim und Mejdi bleiben auch ohne aktuellen Tagesüberschuss sichtbar.</p>
     {visible.length ? <div className="mt-3 space-y-3">
       <label className="block text-xs font-semibold text-foreground">1. Mitarbeiter wählen
         <select className="mt-1 block h-10 w-full max-w-md rounded-md border border-input bg-card px-3 text-sm font-normal" value={selectedPersonId} onChange={event => setSelectedPersonId(event.target.value)}>
           <option value="">Mitarbeiter auswählen …</option>
-          {visible.map(({ helper, days }) => <option key={helper.id} value={helper.id}>{helper.name} · {helper.department === 'kueche' ? 'Küche' : 'Service'} · {fmt(days.reduce((sum, day) => sum + day.hours, 0))} h ergänzbar</option>)}
+          {visible.map(({ helper, days }) => <option key={helper.id} value={helper.id}>{helper.name} · {helper.department === 'kueche' ? 'Küche' : 'Service'} · {days.length ? `${fmt(days.reduce((sum, day) => sum + day.hours, 0))} h ergänzbar` : 'keine ergänzbaren Stunden'}</option>)}
         </select>
       </label>
       {selected ? <div className="rounded-lg border border-primary/20 bg-card/70 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        {selected.days.length ? <><div className="flex flex-wrap items-center justify-between gap-2">
           <div><p className="text-xs font-semibold">2. Stunden/Tage wählen</p><p className="text-sm font-medium">{selected.helper.name}<span className="ml-2 text-xs font-normal text-muted-foreground">{selected.helper.department === 'kueche' ? 'Küche' : 'Service'}</span></p></div>
           <label className={`flex items-center gap-2 text-xs font-medium ${canEdit ? '' : 'text-muted-foreground'}`}><input type="checkbox" disabled={!canEdit} checked={selected.days.every(day => state.helperSelections[`${selected.helper.id}|${day.date}`])} onChange={event => toggleHelperWeek(selected.helper.id, selected.days, event.target.checked)} />Alle ergänzbaren Tage</label>
         </div>
         <div className="mt-3 flex flex-wrap gap-1">{selected.days.map(day => <button key={day.date} disabled={!canEdit} onClick={() => toggleHelper(selected.helper.id, day.date, !state.helperSelections[`${selected.helper.id}|${day.date}`])} className={`rounded-full border px-2.5 py-1.5 font-mono text-[11px] disabled:cursor-not-allowed disabled:opacity-60 ${state.helperSelections[`${selected.helper.id}|${day.date}`] ? 'border-primary bg-primary text-primary-foreground' : 'border-primary/25 bg-card text-muted-foreground'}`}>{new Date(`${day.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })} · {fmt(day.hours)} h</button>)}</div>
         <p className="mt-2 text-right font-mono text-xs text-primary">{fmt(selected.days.reduce((sum, day) => sum + (state.helperSelections[`${selected.helper.id}|${day.date}`] ? day.hours : 0), 0))} h gewählt</p>
         {!canEdit && <p className="mt-2 text-xs text-muted-foreground">Nur Benutzer mit operativem Bearbeitungsrecht können die Auswahl ändern.</p>}
+        </> : <div><p className="text-xs font-semibold">2. Stunden/Tage wählen</p><p className="mt-2 text-sm font-medium">{selected.helper.name}</p><p className="mt-1 text-sm text-muted-foreground">Für diese Woche sind keine ergänzbaren manuellen Ist-Stunden vorhanden.</p></div>}
       </div> : <p className="rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Bitte zuerst einen Mitarbeiter auswählen.</p>}
     </div> : <p className="mt-4 rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Keine ergänzbaren manuellen Ist-Stunden in dieser Woche</p>}
   </section>;
