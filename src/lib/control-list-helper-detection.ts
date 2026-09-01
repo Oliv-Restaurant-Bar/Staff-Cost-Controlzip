@@ -1,13 +1,11 @@
-import { isoWeekForDate } from './control-list-productivity';
-
 export interface HelperIdentity {
   id: string;
   name: string;
 }
 
-export interface ControlWeekPresence {
-  names: Set<string>;
-  employeeIds: Set<string>;
+export interface ControlHoursIndex {
+  byNameAndDate: Map<string, number>;
+  byEmployeeAndDate: Map<string, number>;
 }
 
 export interface HelperHoursRow<T extends HelperIdentity = HelperIdentity> {
@@ -19,31 +17,60 @@ export function normalizeControlListName(name: string): string {
   return name.trim().normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase('de-CH');
 }
 
-export function buildControlPresenceByWeek(
-  employees: Array<{ name: string; days: Array<{ date: string }> }>,
+export function buildControlHoursIndex(
+  employees: Array<{ name: string; days: Array<{ date: string; netHours: number }> }>,
   resolveEmployeeId: (name: string) => string | undefined,
-): Map<string, ControlWeekPresence> {
-  const result = new Map<string, ControlWeekPresence>();
+): ControlHoursIndex {
+  const result: ControlHoursIndex = {
+    byNameAndDate: new Map<string, number>(),
+    byEmployeeAndDate: new Map<string, number>(),
+  };
   for (const employee of employees) {
     const matchedId = resolveEmployeeId(employee.name);
     for (const day of employee.days) {
-      const weekKey = isoWeekForDate(day.date);
-      const presence = result.get(weekKey) ?? { names: new Set<string>(), employeeIds: new Set<string>() };
-      presence.names.add(normalizeControlListName(employee.name));
-      if (matchedId) presence.employeeIds.add(matchedId);
-      result.set(weekKey, presence);
+      const nameKey = `${normalizeControlListName(employee.name)}|${day.date}`;
+      result.byNameAndDate.set(nameKey, (result.byNameAndDate.get(nameKey) ?? 0) + day.netHours);
+      if (matchedId) {
+        const employeeKey = `${matchedId}|${day.date}`;
+        result.byEmployeeAndDate.set(employeeKey, (result.byEmployeeAndDate.get(employeeKey) ?? 0) + day.netHours);
+      }
     }
   }
   return result;
 }
 
-export function isHelperOnDate(
+export function controlHoursForPerson(
   person: HelperIdentity,
   date: string,
-  presenceByWeek: Map<string, ControlWeekPresence>,
-): boolean {
-  const presence = presenceByWeek.get(isoWeekForDate(date));
-  return !presence?.names.has(normalizeControlListName(person.name)) && !presence?.employeeIds.has(person.id);
+  index: ControlHoursIndex,
+): number {
+  return index.byEmployeeAndDate.get(`${person.id}|${date}`)
+    ?? index.byNameAndDate.get(`${normalizeControlListName(person.name)}|${date}`)
+    ?? 0;
+}
+
+export function isManualActualSource(source: string | null | undefined): boolean {
+  return source == null || source === 'manual' || source === 'manual_edit';
+}
+
+export function manualSupplementHours(
+  actualHours: number,
+  controlHours: number,
+  source: string | null | undefined,
+): number {
+  if (!isManualActualSource(source) || !(actualHours > 0)) return 0;
+  const roundedDifference = Math.round((actualHours - controlHours + Number.EPSILON) * 100) / 100;
+  return roundedDifference > 0 ? roundedDifference : 0;
+}
+
+export function supplementHoursForPerson(
+  person: HelperIdentity,
+  date: string,
+  actual: { hours: number; source?: string | null } | undefined,
+  index: ControlHoursIndex,
+): number {
+  if (!actual) return 0;
+  return manualSupplementHours(actual.hours, controlHoursForPerson(person, date, index), actual.source);
 }
 
 export function selectedHelperHourRows<T extends HelperIdentity>(

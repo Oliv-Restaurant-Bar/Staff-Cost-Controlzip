@@ -1,5 +1,6 @@
 import type { TenantId } from '@/contexts/TenantContext';
 import { appSettingsTable } from '@/lib/app-settings-table';
+import { supabase } from '@/integrations/supabase/client';
 import type { ControlListDepartment, ControlListDocument } from './control-list-import';
 
 export interface ControlListTenantState {
@@ -44,9 +45,12 @@ export async function loadControlListState(tenantId: TenantId): Promise<ControlL
 }
 
 export async function saveControlListState(tenantId: TenantId, state: ControlListTenantState): Promise<void> {
-  const { error } = await appSettingsTable().upsert(
-    { key: keyFor(tenantId), value: state },
-    { onConflict: 'key' },
-  );
+  // Nicht über den generischen app_settings-Upsert schreiben: Der RPC prüft
+  // Rolle und Mandant serverseitig und konstruiert den erlaubten Key selbst.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any).rpc('save_control_list_state', {
+    p_tenant: tenantId,
+    p_value: state,
+  });
   if (error) throw new Error(`Kontrollliste konnte nicht gespeichert werden: ${error.message}`);
 }

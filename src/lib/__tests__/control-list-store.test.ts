@@ -1,10 +1,15 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const upsert = vi.fn().mockResolvedValue({ error: null });
+const { rpc } = vi.hoisted(() => ({
+  rpc: vi.fn().mockResolvedValue({ error: null }),
+}));
 
 vi.mock('@/lib/app-settings-table', () => ({
-  appSettingsTable: () => ({ upsert }),
+  appSettingsTable: vi.fn(),
+}));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { rpc },
 }));
 
 import { saveControlListState, type ControlListTenantState } from '@/lib/control-list-store';
@@ -17,28 +22,28 @@ const state: ControlListTenantState = {
 
 describe('control-list-store', () => {
   beforeEach(() => {
-    upsert.mockClear();
+    rpc.mockClear();
   });
 
-  it('upserts by the unique app_settings key so repeated saves stay idempotent', async () => {
+  it('writes repeated saves through the role-checked RPC', async () => {
     await saveControlListState('oliv', state);
     await saveControlListState('oliv', state);
 
-    expect(upsert).toHaveBeenCalledTimes(2);
-    expect(upsert).toHaveBeenNthCalledWith(
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenNthCalledWith(
       2,
-      { key: 'control-list:v1:oliv', value: state },
-      { onConflict: 'key' },
+      'save_control_list_state',
+      { p_tenant: 'oliv', p_value: state },
     );
   });
 
-  it('keeps OLIV and Beaulieu in separate app_settings keys', async () => {
+  it('passes only the allow-listed tenant instead of an arbitrary settings key', async () => {
     await saveControlListState('oliv', state);
     await saveControlListState('beaulieu', state);
 
-    expect(upsert.mock.calls.map(([row]) => row.key)).toEqual([
-      'control-list:v1:oliv',
-      'control-list:v1:beaulieu',
+    expect(rpc.mock.calls.map(([, params]) => params.p_tenant)).toEqual([
+      'oliv',
+      'beaulieu',
     ]);
   });
 });

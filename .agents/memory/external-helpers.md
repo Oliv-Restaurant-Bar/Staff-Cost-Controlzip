@@ -11,11 +11,11 @@ New external cost resources with `aush_*` IDs must NEVER be written to the `empl
 **Why:** employees table is for permanent staff with contracts/wages. External helpers are session-plannable resources with only a CHF/h rate and no HR data. Also the `aush_*` guard in `upsertEmployee` blocks them anyway.
 
 ## Terminology boundary
-An analytics panel labelled “Aushilfen” must not assume every qualifying person is stored in `schedule_extra_cost_people`. Existing staff marked for manual time capture can legitimately live in `employees` and still count as an Aushilfe for a week when they have Ist hours but no MIRUS/control-list presence that week.
+An analytics panel labelled “Aushilfen” or “Ergänzungen” must not assume every qualifying person is stored in `schedule_extra_cost_people`. Existing staff can legitimately live in `employees` and still have manually captured supplementary days or hours.
 
-**Why:** Storage class and reporting classification answer different questions. Restricting detection to `aush_*` resources silently drops manually captured employee-based helpers.
+**Why:** Storage class and reporting classification answer different questions. A regular employee may have MIRUS hours on some days and additional manual Ist hours on others; person-level presence checks silently drop those extra days.
 
-**How to apply:** Keep creation/write paths separated by storage class, but build week-based reporting candidates from every tenant-scoped person referenced by Ist hours and exclude that week’s normalized/name-mapped MIRUS roster.
+**How to apply:** Keep creation/write paths separated by storage class. For reporting, calculate the manual Ist surplus per mapped person and date against control-list net hours; only positive manual surplus is selectable and additive.
 
 ## How to apply
 - `src/lib/extra-cost-people-db.ts` is the only write path for external helpers

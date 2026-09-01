@@ -24,14 +24,14 @@ import type { Employee } from '@/types/personnel';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { ProductivityChart } from '@/components/besatzung/ProductivityChart';
 import { calendarDatesForScope, requiresTimelineAttention, timelineStyle, TIMELINE_END, TIMELINE_START, workedDays, TIMELINE_HOURS } from '@/lib/control-list-timeline';
-import { buildControlPresenceByWeek, isHelperOnDate as isControlListHelperOnDate, selectedHelperHourRows } from '@/lib/control-list-helper-detection';
+import { buildControlHoursIndex, selectedHelperHourRows, supplementHoursForPerson } from '@/lib/control-list-helper-detection';
 
 type DeptFilter = 'all' | ControlListDepartment;
 type Mode = 'productivity' | 'schedule';
 type Scope = 'week' | 'month' | 'year';
-type ActualEntry = { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean };
+type ActualEntry = { hours: number; start?: string; end?: string; absenceType?: string; isAdditionalCost?: boolean; source?: string | null };
 type HelperDay = { date: string; hours: number };
-type HelperPerson = Pick<ExtraCostPerson, 'id' | 'name' | 'department' | 'isActive'>;
+type HelperPerson = Pick<ExtraCostPerson, 'id' | 'name' | 'department' | 'isActive'> & { kind: 'employee' | 'external'; displayLabel: string };
 type HelperHours = { helper: HelperPerson; days: HelperDay[] };
 type TimelineRow = { name: string; department?: ControlListDepartment; days: ControlListDay[] };
 type ProductivityViewProps = { currentWeek: ProductivityWeek; days: ProductivityDay[]; weeks: ProductivityWeek[]; onSelect: (day: ProductivityDay) => void; selectedDay?: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours?: HelperHours[]; state?: ControlListTenantState; hasSelectedHelpers: boolean };
@@ -70,6 +70,7 @@ export default function BesatzungProduktivitaetPage() {
   const [selectedDay, setSelectedDay] = useState<ProductivityDay & Partial<ControlListDay>>();
   const [selectedScheduleDate, setSelectedScheduleDate] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState('');
+  const [selectedSupplementPerson, setSelectedSupplementPerson] = useState('');
   const [personPeriod, setPersonPeriod] = useState<'week' | 'month'>('week');
   const [pending, setPending] = useState<ControlListDocument | null>(null);
   const [error, setError] = useState('');
@@ -77,7 +78,8 @@ export default function BesatzungProduktivitaetPage() {
   const saveQueue = useRef(Promise.resolve());
   const tenantRef = useRef(tenantId);
 
-  useEffect(() => { let alive = true; tenantRef.current = tenantId; setState(null); setHelpers([]); setPersonnel([]); setRevenue({}); setActual({}); setPending(null); setError(''); setSelectedDay(undefined); setSelectedScheduleDate(''); setSelectedEmployee(''); setWeek(''); Promise.all([loadControlListState(tenantId), loadExtraCostPeople(tenantId), loadEmployees(tenantId)]).then(([loaded, people, employees]) => { if (!alive) return; setState(loaded); setHelpers(people); setPersonnel(employees ?? []); const dates = loaded.document?.employees.flatMap(e => e.days.map(d => d.date)).sort() ?? []; if (dates.length) { setWeek(isoWeekForDate(dates[dates.length - 1])); setSelectedScheduleDate(dates[dates.length - 1]); } }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Daten konnten nicht geladen werden.'); }); return () => { alive = false; }; }, [tenantId]);
+  useEffect(() => { let alive = true; tenantRef.current = tenantId; setState(null); setHelpers([]); setPersonnel([]); setRevenue({}); setActual({}); setPending(null); setError(''); setSelectedDay(undefined); setSelectedScheduleDate(''); setSelectedEmployee(''); setSelectedSupplementPerson(''); setWeek(''); Promise.all([loadControlListState(tenantId), loadExtraCostPeople(tenantId), loadEmployees(tenantId)]).then(([loaded, people, employees]) => { if (!alive) return; setState(loaded); setHelpers(people); setPersonnel(employees ?? []); const dates = loaded.document?.employees.flatMap(e => e.days.map(d => d.date)).sort() ?? []; if (dates.length) { setWeek(isoWeekForDate(dates[dates.length - 1])); setSelectedScheduleDate(dates[dates.length - 1]); } }).catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Daten konnten nicht geladen werden.'); }); return () => { alive = false; }; }, [tenantId]);
+  useEffect(() => { setSelectedSupplementPerson(''); }, [tenantId, week]);
   const document = state?.document;
   const allDays = useMemo(() => document?.employees.flatMap(employee => workedDays(employee.days).map(day => ({ day, employee }))) ?? [], [document]);
   const filtered = useMemo(() => allDays.filter(({ employee }) => dept === 'all' || departmentForEmployee(state ?? { departments: {} }, employee.name).department === dept), [allDays, dept, state]);
@@ -130,7 +132,7 @@ export default function BesatzungProduktivitaetPage() {
     return () => { alive = false; };
   }, [tenantId, documentRange.from, documentRange.to, week]);
 
-  const controlPresenceByWeek = useMemo(() => buildControlPresenceByWeek(
+  const controlHoursIndex = useMemo(() => buildControlHoursIndex(
     document?.employees ?? [],
     name => matchEmployeeByName(name, personnel).employee?.id,
   ), [document, personnel]);
@@ -142,36 +144,37 @@ export default function BesatzungProduktivitaetPage() {
         name: employee.name,
         department: employee.department === 'küche' ? 'kueche' : 'service',
         isActive: employee.isActive !== false,
+        kind: 'employee',
+        displayLabel: employee.employmentType === 'aushilfe' ? 'Aushilfe · manuell' : 'Ergänzung · manuell',
       });
     }
     for (const helper of helpers) {
-      if (!byId.has(helper.id)) byId.set(helper.id, helper);
+      if (!byId.has(helper.id)) byId.set(helper.id, { ...helper, kind: 'external', displayLabel: 'Aushilfe · manuell' });
     }
     return [...byId.values()].filter(person => person.isActive);
   }, [helpers, personnel]);
-  const isHelperOnDate = useCallback((person: HelperPerson, date: string) =>
-    isControlListHelperOnDate(person, date, controlPresenceByWeek),
-  [controlPresenceByWeek]);
+  const supplementHours = useCallback((person: HelperPerson, date: string) =>
+    supplementHoursForPerson(person, date, actual[`${person.id}-${date}`], controlHoursIndex),
+  [actual, controlHoursIndex]);
   const selectedWeekDates = useMemo(() => weekDates(week), [week]);
   const helperCandidates = useMemo(() => allIstPeople.filter(person =>
-    selectedWeekDates.some(date => isHelperOnDate(person, date) && (actual[`${person.id}-${date}`]?.hours ?? 0) > 0)
-  ), [actual, allIstPeople, isHelperOnDate, selectedWeekDates]);
+    selectedWeekDates.some(date => supplementHours(person, date) > 0)
+  ), [allIstPeople, selectedWeekDates, supplementHours]);
   const visibleHelperCandidates = useMemo(() => helperCandidates.filter(helper => dept === 'all' || helper.department === dept), [dept, helperCandidates]);
   const helperHours = useMemo(() => visibleHelperCandidates.map(helper => ({
     helper,
-    days: dates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
-  })), [visibleHelperCandidates, dates, actual, isHelperOnDate]);
+    days: dates.map(date => ({ date, hours: supplementHours(helper, date) })),
+  })), [visibleHelperCandidates, dates, supplementHours]);
   const weekHelperHours = useMemo(() => helperCandidates.map(helper => ({
     helper,
-    days: selectedWeekDates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
-  })), [helperCandidates, selectedWeekDates, actual, isHelperOnDate]);
+    days: selectedWeekDates.map(date => ({ date, hours: supplementHours(helper, date) })),
+  })), [helperCandidates, selectedWeekDates, supplementHours]);
   const importedDates = useMemo(() => { if (!documentRange.from || !documentRange.to) return []; const result: string[] = []; for (const cursor = new Date(`${documentRange.from}T12:00:00`); isoDate(cursor) <= documentRange.to; cursor.setUTCDate(cursor.getUTCDate() + 1)) result.push(isoDate(cursor)); return result; }, [documentRange]);
   const modelDates = useMemo(() => [...new Set([...importedDates, ...dates])].sort(), [dates, importedDates]);
   const allHelperHours = useMemo(() => allIstPeople.map(helper => ({
     helper,
-    days: modelDates.map(date => ({ date, hours: isHelperOnDate(helper, date) ? (actual[`${helper.id}-${date}`]?.hours ?? 0) : 0 })),
-  })).filter(({ days }) => days.some(day => day.hours > 0)), [allIstPeople, modelDates, actual, isHelperOnDate]);
-  const selectedHours = useCallback((id: string, date: string) => state?.helperSelections[`${id}|${date}`] ? (actual[`${id}-${date}`]?.hours ?? 0) : 0, [state, actual]);
+    days: modelDates.map(date => ({ date, hours: supplementHours(helper, date) })),
+  })).filter(({ days }) => days.some(day => day.hours > 0)), [allIstPeople, modelDates, supplementHours]);
   // Produktivität/Besatzung verwendet dieselbe kanonische Ist-Dienstplanquelle
   // wie die Tages- und Cockpit-Summen. Die Kontrollliste bleibt Kontroll- und
   // Zeitachsenansicht, ist aber nicht länger ein abweichender Stunden-Nenner.
@@ -182,15 +185,19 @@ export default function BesatzungProduktivitaetPage() {
     if (dept !== 'all' && employeeDept !== dept) return [];
     return modelDates.flatMap(date => {
       const entry = actual[`${employee.id}-${date}`];
-      if (!entry || entry.absenceType || !(entry.hours > 0) || isHelperOnDate({
+      if (!entry || entry.absenceType || !(entry.hours > 0)) return [];
+      const supplement = supplementHours({
         id: employee.id,
         name: employee.name,
         department: employeeDept === 'kueche' ? 'kueche' : 'service',
         isActive: employee.isActive !== false,
-      }, date)) return [];
-      return [{ date, netHours: entry.hours }];
+        kind: 'employee',
+        displayLabel: employee.employmentType === 'aushilfe' ? 'Aushilfe · manuell' : 'Ergänzung · manuell',
+      }, date);
+      const baseHours = Math.max(0, entry.hours - supplement);
+      return baseHours > 0 ? [{ date, netHours: baseHours }] : [];
     });
-  }), [actual, dept, isHelperOnDate, modelDates, personnel]);
+  }), [actual, dept, modelDates, personnel, supplementHours]);
   const modelDays = useMemo(() => actualPersonnelDays.concat(selectedHelperHourRows(allHelperHours, state?.helperSelections ?? {})), [actualPersonnelDays, allHelperHours, state]);
   const productivityDays = useMemo(() => aggregateProductivityDays(modelDays, revenue), [modelDays, revenue]);
   const chartDays = useMemo(() => dates.map(date => productivityDays.find(day => day.date === date) ?? ({ date, isoWeek: isoWeekForDate(date), netHours: 0, revenue: revenue[date] })), [dates, productivityDays, revenue]);
@@ -214,8 +221,16 @@ export default function BesatzungProduktivitaetPage() {
       if (persisted && tenantRef.current === saveTenant) setState(persisted);
     });
   };
-  const toggleHelper = (id: string, date: string, checked: boolean) => { if (!state) return; save({ ...state, helperSelections: { ...state.helperSelections, [`${id}|${date}`]: checked } }); };
-  const toggleHelperWeek = (id: string, days: HelperDay[], checked: boolean) => { if (!state) return; const helperSelections = { ...state.helperSelections }; days.filter(day => day.hours > 0).forEach(day => { helperSelections[`${id}|${day.date}`] = checked; }); save({ ...state, helperSelections }); };
+  const toggleHelper = (id: string, date: string, checked: boolean) => {
+    if (!state || !canManageOperationalData) return;
+    save({ ...state, helperSelections: { ...state.helperSelections, [`${id}|${date}`]: checked } });
+  };
+  const toggleHelperWeek = (id: string, days: HelperDay[], checked: boolean) => {
+    if (!state || !canManageOperationalData) return;
+    const helperSelections = { ...state.helperSelections };
+    days.filter(day => day.hours > 0).forEach(day => { helperSelections[`${id}|${day.date}`] = checked; });
+    save({ ...state, helperSelections });
+  };
   const shiftPeriod = (amount: number) => {
     const anchor = weekDates(week)[0];
     if (!anchor) return;
@@ -233,7 +248,7 @@ export default function BesatzungProduktivitaetPage() {
     ? <EmptyState icon={AlertTriangle} title="Besatzung konnte nicht geladen werden" description={error} action={<Button onClick={() => window.location.reload()}>Neu laden</Button>} />
     : <LoadingState label="Besatzung und Produktivität wird geladen…" />}</PageShell>;
   return <PageShell width="wide" header={<PageHeader width="wide" icon={<UsersRound />} title="Besatzung & Produktivität" meta={`${tenant.shortName} · Kontrollliste / Umsatz`} />}>
-    <HelperPanel helperHours={weekHelperHours} state={state} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} dates={selectedWeekDates} />
+    <HelperPanel helperHours={weekHelperHours} state={state} toggleHelper={toggleHelper} toggleHelperWeek={toggleHelperWeek} selectedPersonId={selectedSupplementPerson} setSelectedPersonId={setSelectedSupplementPerson} canEdit={canManageOperationalData} />
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-2 shadow-sm">
       <div className="flex w-full flex-wrap gap-1 rounded-lg bg-muted/60 p-1 sm:w-auto">
       <button className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${mode === 'productivity' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`} onClick={() => setMode('productivity')}>Produktivität</button>
@@ -277,7 +292,7 @@ export default function BesatzungProduktivitaetPage() {
 function ProductivityMode({ currentWeek, days, weeks, onSelect, selectedDay, filtered, helperHours, state, hasSelectedHelpers }: ProductivityViewProps & { helperHours: HelperHours[]; state: ControlListTenantState }) {
   const best = days.filter(d => d.productivity !== undefined).sort((a, b) => (b.productivity ?? 0) - (a.productivity ?? 0))[0];
   return <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-4">
-    <Metric label="Besatzungsstunden" value={`${fmt(currentWeek.netHours)} Std`} subtitle={hasSelectedHelpers ? 'Kontrollliste + Aushilfe' : undefined} icon={<Clock3 />} />
+    <Metric label="Besatzungsstunden" value={`${fmt(currentWeek.netHours)} Std`} subtitle={hasSelectedHelpers ? 'Kontrollliste + manuelle Ergänzung' : undefined} icon={<Clock3 />} />
     <Metric label="Netto-Umsatz" value={`${currentWeek.revenue === undefined ? '—' : `${Math.round(currentWeek.revenue).toLocaleString('de-CH')} CHF`}`} icon={<BarChart3 />} />
     <Metric label="Produktivität Ø" value={`${fmt(currentWeek.productivity, 0)} CHF/Std`} accent={(currentWeek.productivity ?? 0) >= 100} icon={<Layers3 />} />
     <Metric label="Produktivster Tag" value={best ? `${new Date(`${best.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short' })} · ${fmt(best.productivity, 0)}` : '—'} icon={<CalendarDays />} />
@@ -295,7 +310,7 @@ function Timeline({ rows, dates }: { rows: TimelineRow[]; dates: string[] }) {
         </div>)}
       </div>
     </div>
-    {rows.map(row => <div key={row.name} className="grid grid-cols-[180px_1fr] items-center border-b px-3 py-3 last:border-0">
+    {rows.map((row, rowIndex) => <div key={`${row.name}-${rowIndex}`} className="grid grid-cols-[180px_1fr] items-center border-b px-3 py-3 last:border-0">
       <div className="text-xs font-medium">{row.name}<span className={`ml-2 font-mono ${row.days.some(day => day.danger) ? 'text-destructive' : 'text-muted-foreground'}`}>{fmt(row.days.reduce((sum, day) => sum + day.netHours, 0))} h</span></div>
       <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${dates.length}, minmax(0, 1fr))` }}>{dates.map(date => {
         const day = row.days.find(item => item.date === date);
@@ -308,7 +323,7 @@ function Timeline({ rows, dates }: { rows: TimelineRow[]; dates: string[] }) {
             <span className="absolute -top-4 left-1/2 -translate-x-1/2 whitespace-nowrap text-[9px] text-foreground">{timeLabel(window.start)}–{timeLabel(window.end)}</span>
            </div>;
            })}
-          {day?.netHours && !day.effectiveWindows.length ? <span className="absolute inset-0 grid place-items-center rounded border border-dashed border-primary/40 text-[10px] font-medium text-primary">{fmt(day.netHours)} h · Aushilfe · manuell</span> : null}
+          {day?.netHours && !day.effectiveWindows.length ? <span className="absolute inset-0 grid place-items-center rounded border border-dashed border-primary/40 text-[10px] font-medium text-primary">{fmt(day.netHours)} h · {day.status || 'manuell'}</span> : null}
         </div>;
       })}</div>
     </div>)}
@@ -332,7 +347,7 @@ function ScheduleMode({ document, filtered, periodLabel, dates, helperHours, sta
       effectiveWindows: [],
       effectiveGross: 0,
       difference: 0,
-      status: 'Aushilfe · manuell',
+      status: helper.displayLabel,
       danger: day.hours >= 9,
     }));
     if (selectedDays.length) rows.push({ name: helper.name, department: helper.department, days: selectedDays });
@@ -366,7 +381,7 @@ function PersonPeriodRows({ rows, grouped }: { rows: { name: string; day: Contro
             return <div key={index} className={`absolute top-5 h-3 rounded-sm border ${requiresTimelineAttention(day) ? 'border-destructive bg-destructive/20' : 'border-[#165f58] bg-[#165f58]/20'}`} style={style}>
             <span className="absolute -top-4 left-1/2 -translate-x-1/2 whitespace-nowrap text-[9px]">{timeLabel(window.start)}–{timeLabel(window.end)}</span>
           </div>;
-          })}{day.netHours > 0 && !day.effectiveWindows.length ? <span className="absolute inset-0 grid place-items-center rounded border border-dashed border-primary/40 text-[10px] font-medium text-primary">{fmt(day.netHours)} h · Aushilfe · manuell</span> : null}</div>
+          })}{day.netHours > 0 && !day.effectiveWindows.length ? <span className="absolute inset-0 grid place-items-center rounded border border-dashed border-primary/40 text-[10px] font-medium text-primary">{fmt(day.netHours)} h · {day.status || 'manuell'}</span> : null}</div>
         </div>
       </Fragment>;
     })}
@@ -426,7 +441,7 @@ function WeeklyMatrix({ document, dates, filtered, selectedEmployee, state, help
               <td className="px-2 py-2 text-right font-mono">{fmt(employee.days.filter(day => dates.includes(day.date)).reduce((sum, day) => sum + day.netHours, 0))} h</td>
             </tr>)}
             {groupHelpers.map(({ helper, days }) => <tr key={helper.id} className="border-b border-dashed">
-              <td className="px-2 py-2 font-medium">{helper.name}<span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">Aushilfe · manuell</span></td>
+              <td className="px-2 py-2 font-medium">{helper.name}<span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{helper.displayLabel}</span></td>
               {dates.map(date => {
                 const day = days.find(item => item.date === date);
                 const hours = state.helperSelections[`${helper.id}|${date}`] ? day?.hours ?? 0 : 0;
@@ -445,20 +460,29 @@ function WeeklyMatrix({ document, dates, filtered, selectedEmployee, state, help
     </div>
   </section>;
 }
-function HelperPanel({ helperHours, state, toggleHelper, toggleHelperWeek, dates }: { helperHours: HelperHours[]; state: ControlListTenantState; toggleHelper: (id: string, date: string, checked: boolean) => void; toggleHelperWeek: (id: string, days: HelperDay[], checked: boolean) => void; dates: string[] }) {
+function HelperPanel({ helperHours, state, toggleHelper, toggleHelperWeek, selectedPersonId, setSelectedPersonId, canEdit }: { helperHours: HelperHours[]; state: ControlListTenantState; toggleHelper: (id: string, date: string, checked: boolean) => void; toggleHelperWeek: (id: string, days: HelperDay[], checked: boolean) => void; selectedPersonId: string; setSelectedPersonId: (id: string) => void; canEdit: boolean }) {
   const visible = helperHours.map(item => ({ ...item, days: item.days.filter(day => day.hours > 0) })).filter(item => item.days.length);
+  const selected = visible.find(item => item.helper.id === selectedPersonId);
   return <section className="rounded-xl border border-primary/30 bg-primary/[0.06] p-4 shadow-sm">
-    <h2 className="font-semibold text-primary">＋ Aushilfen — Aushilfen aus ‹Dienstplan · Ist-Stunden› ergänzen</h2>
-    <p className="mt-1 text-xs text-muted-foreground">Manuell erfasst, nicht in der Kontrollliste. Ganze Woche = Häkchen; einzelne Tage = Datums-Chips anklicken. Ausgewählte Stunden fliessen in Besatzung, Produktivität und den Dienstplan.</p>
-    {visible.length ? <div className="mt-3 divide-y divide-primary/15 border-y border-primary/15">{visible.map(({ helper, days }) => {
-      const selectedDays = days.filter(day => state.helperSelections[`${helper.id}|${day.date}`]);
-      const selectedTotal = selectedDays.reduce((sum, day) => sum + day.hours, 0);
-      const department = helper.department === 'kueche' ? 'Küche' : 'Service';
-      return <div key={helper.id} className="flex flex-wrap items-center gap-2 py-3">
-        <label className="flex min-w-[230px] items-center gap-2 text-sm font-medium"><input type="checkbox" checked={days.every(day => state.helperSelections[`${helper.id}|${day.date}`])} onChange={event => toggleHelperWeek(helper.id, days, event.target.checked)} /><span>{helper.name}<span className="ml-2 text-xs font-normal text-muted-foreground">{department}</span></span><span className="ml-auto rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary">{fmt(selectedTotal)} h gewählt</span></label>
-        <div className="flex gap-1 overflow-x-auto">{days.map(day => <button key={day.date} onClick={() => toggleHelper(helper.id, day.date, !state.helperSelections[`${helper.id}|${day.date}`])} className={`rounded-full border px-2 py-1 font-mono text-[10px] ${state.helperSelections[`${helper.id}|${day.date}`] ? 'border-primary bg-primary text-primary-foreground' : 'border-primary/25 bg-card text-muted-foreground'}`}>{new Date(`${day.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })} · {fmt(day.hours)} h</button>)}</div>
-      </div>;
-    })}</div> : <p className="mt-4 rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Keine Aushilfen in dieser Woche erfasst</p>}
+    <h2 className="font-semibold text-primary">＋ Aushilfen & Ergänzungen aus ‹Dienstplan · Ist-Stunden›</h2>
+    <p className="mt-1 text-xs text-muted-foreground">Zuerst Mitarbeiter wählen, danach ergänzbare manuelle Stunden auswählen. Berücksichtigt wird nur der Tagesüberschuss gegenüber der Kontrollliste.</p>
+    {visible.length ? <div className="mt-3 space-y-3">
+      <label className="block text-xs font-semibold text-foreground">1. Mitarbeiter wählen
+        <select className="mt-1 block h-10 w-full max-w-md rounded-md border border-input bg-card px-3 text-sm font-normal" value={selectedPersonId} onChange={event => setSelectedPersonId(event.target.value)}>
+          <option value="">Mitarbeiter auswählen …</option>
+          {visible.map(({ helper, days }) => <option key={helper.id} value={helper.id}>{helper.name} · {helper.department === 'kueche' ? 'Küche' : 'Service'} · {fmt(days.reduce((sum, day) => sum + day.hours, 0))} h ergänzbar</option>)}
+        </select>
+      </label>
+      {selected ? <div className="rounded-lg border border-primary/20 bg-card/70 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><p className="text-xs font-semibold">2. Stunden/Tage wählen</p><p className="text-sm font-medium">{selected.helper.name}<span className="ml-2 text-xs font-normal text-muted-foreground">{selected.helper.department === 'kueche' ? 'Küche' : 'Service'}</span></p></div>
+          <label className={`flex items-center gap-2 text-xs font-medium ${canEdit ? '' : 'text-muted-foreground'}`}><input type="checkbox" disabled={!canEdit} checked={selected.days.every(day => state.helperSelections[`${selected.helper.id}|${day.date}`])} onChange={event => toggleHelperWeek(selected.helper.id, selected.days, event.target.checked)} />Alle ergänzbaren Tage</label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1">{selected.days.map(day => <button key={day.date} disabled={!canEdit} onClick={() => toggleHelper(selected.helper.id, day.date, !state.helperSelections[`${selected.helper.id}|${day.date}`])} className={`rounded-full border px-2.5 py-1.5 font-mono text-[11px] disabled:cursor-not-allowed disabled:opacity-60 ${state.helperSelections[`${selected.helper.id}|${day.date}`] ? 'border-primary bg-primary text-primary-foreground' : 'border-primary/25 bg-card text-muted-foreground'}`}>{new Date(`${day.date}T12:00:00`).toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })} · {fmt(day.hours)} h</button>)}</div>
+        <p className="mt-2 text-right font-mono text-xs text-primary">{fmt(selected.days.reduce((sum, day) => sum + (state.helperSelections[`${selected.helper.id}|${day.date}`] ? day.hours : 0), 0))} h gewählt</p>
+        {!canEdit && <p className="mt-2 text-xs text-muted-foreground">Nur Benutzer mit operativem Bearbeitungsrecht können die Auswahl ändern.</p>}
+      </div> : <p className="rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Bitte zuerst einen Mitarbeiter auswählen.</p>}
+    </div> : <p className="mt-4 rounded-lg border border-dashed border-primary/25 bg-card/60 px-3 py-3 text-sm text-muted-foreground">Keine ergänzbaren manuellen Ist-Stunden in dieser Woche</p>}
   </section>;
 }
 function DayDetail({ day, filtered, helperHours, state }: { day: ProductivityDay & Partial<ControlListDay>; filtered: { employee: { name: string }; day: ControlListDay }[]; helperHours: HelperHours[]; state: ControlListTenantState }) {
@@ -471,10 +495,10 @@ function DayDetail({ day, filtered, helperHours, state }: { day: ProductivityDay
   helperHours.forEach(({ helper, days }) => {
     const hours = days.find(item => item.date === day.date)?.hours ?? 0;
     if (state.helperSelections[`${helper.id}|${day.date}`] && hours > 0) {
-      rows.push({ name: `${helper.name} · Aushilfe · manuell`, days: [{
+      rows.push({ name: `${helper.name} · ${helper.displayLabel}`, days: [{
         date: day.date, netHours: hours, rawTimeRecording: 'Ist / manuell',
         timeRecordingGross: 0, timeRecordingTotal: hours, effectiveWindows: [],
-        effectiveGross: 0, difference: 0, status: 'Aushilfe', danger: false,
+        effectiveGross: 0, difference: 0, status: helper.displayLabel, danger: false,
       }] });
     }
   });
