@@ -19,7 +19,7 @@
  *   Lieferant+Lieferung-Nr+Datum (ersetzt, dupliziert nie); Jahr-Sperre wird
  *   frisch im Save-Pfad geprüft.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -30,7 +30,9 @@ import {
   toFsZeilen, detectFsPdfTyp, istFeldschloesschenPdf,
   parseFsLieferschein, parseFsSammelrechnung, parseFsFaktura, fsFakturenAlsRechnungen,
   fsLieferscheinAlsRechnung, kontoSplitsAusFsKategorien, fsKontoVorschlag,
-  fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, findeNaheRechnung,
+  fsAnhangAlsRechnung, fsFakturaKopfAlsRechnung, matchFakturen,
+  offeneFakturaMatches as ermittleOffeneFakturaMatches, summiereFakturaMatches,
+  kategorienGegenprobe, findeNaheRechnung,
   sammelrechnungZuHistorie,
   type FsLieferschein, type FsSammelrechnung, type FakturaAbgleich,
   type FsAnhangLieferschein, type FsKategorieSumme,
@@ -78,6 +80,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
   uploadUiVersteckt?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const importInFlight = useRef(false);
   const [lieferscheine, setLieferscheine] = useState<FsLieferschein[] | null>(null);
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set());
   const [sammel, setSammel] = useState<FsSammelrechnung | null>(null);
@@ -132,6 +135,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
     () => suppliers.find(s => /feldschl/i.test(s.name))?.name ?? 'Feldschlösschen',
     [suppliers],
   );
+  const offeneFakturaMatches = useMemo(
+    () => ermittleOffeneFakturaMatches(abgleich, uebernommen, ignoriert),
+    [abgleich, ignoriert, uebernommen],
+  );
 
   /**
    * Kategorien der Faktura-eigenen «Zusammenfassung MwSt.» für einen Anhang-
@@ -177,22 +184,39 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
       return [m(-1), m(0), m(1)];
     }))];
     const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
-    const res = await kernImportiereRechnungen(rechnungen, opts);
-    // Die Buchung ist ab hier PERSISTIERT — ein Fehler beim Undo-Protokoll darf
-    // nicht mehr als «Import fehlgeschlagen» erscheinen (wäre irreführend).
     try {
+      const res = await kernImportiereRechnungen(rechnungen, opts);
       const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
       await saveWarenImportUndo(tenantId, {
         typ: 'fs', zeitpunkt: new Date().toISOString(),
         label: undoLabel, anzahlRechnungen: rechnungen.length,
         vorher, nachher,
-      });
+      }, { strict: true });
       setUndoRefresh(x => x + 1);
+      return res;
     } catch (e) {
-      console.error('[FS-FAKTURA] Undo-Protokoll fehlgeschlagen (Buchung OK):', e);
-      toast.warning('Gebucht — aber das Undo-Protokoll konnte nicht gespeichert werden (Rückgängig für diesen Lauf evtl. nicht verfügbar).', { duration: 12000 });
+      // Der Importkern schreibt mehrere KV-Bestände. Falls ein später strikter
+      // Schreibvorgang scheitert, den bis dahin erreichten Teilstand als EINEN
+      // rückgängig machbaren Lauf sichern statt fälschlich «nichts gebucht» zu
+      // behaupten.
+      let recoveryGesichert = false;
+      try {
+        const teilstand = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
+        await saveWarenImportUndo(tenantId, {
+          typ: 'fs', zeitpunkt: new Date().toISOString(),
+          label: `${undoLabel} (abgebrochener Lauf)`, anzahlRechnungen: rechnungen.length,
+          vorher, nachher: teilstand,
+        }, { strict: true });
+        setUndoRefresh(x => x + 1);
+        recoveryGesichert = true;
+      } catch (undoError) {
+        console.error('[FS-FAKTURA] Sicherungs-Undo nach Importfehler fehlgeschlagen:', undoError);
+      }
+      const grund = e instanceof Error ? e.message : String(e);
+      throw new Error(recoveryGesichert
+        ? `${grund} Ein möglicher Teilstand wurde als rückgängig machbarer Lauf gesichert.`
+        : `${grund} Ein möglicher Teilstand konnte NICHT als Undo gesichert werden; bitte Bestand manuell prüfen.`);
     }
-    return res;
   };
 
   // ── Datei-Handling: PDFs (Lieferschein/Sammelrechnung) oder ZIP (Historie) ─
@@ -481,37 +505,77 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
   };
 
   // ── Teil B: fehlende Faktura aus dem Anhang übernehmen ────────────────────
-  const uebernehmeFaktura = async (fakturaNr: string) => {
-    if (!sammel) return;
+  const bereiteFakturaVor = (fakturaNr: string, zugeordnet: Set<string>) => {
+    if (!sammel) return { rechnungen: [] as FsImportRechnung[], blockiert: [] as string[], kopfSplit: false, nichtBuchbar: true };
     const anhang = sammel.anhangLieferscheine.filter(a => a.fakturaNr === fakturaNr && a.positionen.length > 0);
     if (anhang.length === 0) {
-      toast.error(`Für Faktura ${fakturaNr} sind im PDF keine Positions-Seiten enthalten.`);
+      const faktura = sammel.fakturen.find(f => f.nr === fakturaNr);
+      const kopf = faktura ? fsFakturaKopfAlsRechnung(faktura, { markt: lieferant, steuerKategorie: 'Bier' }) : null;
+      if (!kopf) return { rechnungen: [] as FsImportRechnung[], blockiert: [] as string[], kopfSplit: false, nichtBuchbar: true };
+      const nahe = findeNaheRechnung(monatsInvoices, {
+        lieferscheinNr: fakturaNr,
+        datum: kopf.r.datum,
+        brutto: kopf.bruttoOffiziell,
+      }, zugeordnet);
+      return {
+        rechnungen: nahe ? [] as FsImportRechnung[] : [{
+          ...kopf,
+          note: 'Aus Monatsrechnung (final) · Gutschrift / kein Positionsdetail — Kopf-Split',
+        }],
+        blockiert: nahe
+          ? [`Faktura ${fakturaNr} (CHF ${fmt(kopf.bruttoOffiziell)}) ≈ erfasste Rechnung vom ${fmtDatumCH(nahe.date)} (CHF ${fmt(nahe.amountGross)})`]
+          : [],
+        kopfSplit: true,
+        nichtBuchbar: false,
+      };
+    }
+    const rechnungen: FsImportRechnung[] = [];
+    const blockiert: string[] = [];
+    for (const a of anhang) {
+      const r = fsAnhangAlsRechnung(a);
+      const nahe = findeNaheRechnung(monatsInvoices, { lieferscheinNr: a.lieferscheinNr, datum: a.datum, brutto: r.bruttoTotal }, zugeordnet);
+      if (nahe) {
+        blockiert.push(`Lieferschein ${a.lieferscheinNr} (CHF ${fmt(r.bruttoTotal)}) ≈ erfasste Rechnung vom ${fmtDatumCH(nahe.date)} (CHF ${fmt(nahe.amountGross)})`);
+      } else {
+        rechnungen.push({ r, fsKategorien: fsKategorienFuerLs(a, sammel) });
+      }
+    }
+    return { rechnungen, blockiert, kopfSplit: false, nichtBuchbar: false };
+  };
+
+  const ladeSammelAbgleichNeu = async (s: FsSammelrechnung) => {
+    const monate = [...new Set(s.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];
+    const invoices = (await Promise.all(monate.map(m => loadMonthInvoices(tenantId, m)))).flat()
+      .filter(iv => /feldschl/i.test(iv.supplierName));
+    setMonatsInvoices(invoices);
+    setAbgleich(matchFakturen(s.fakturen, invoices));
+  };
+
+  const uebernehmeFaktura = async (fakturaNr: string) => {
+    if (!sammel) return;
+    const zugeordnet = new Set(abgleich?.matches.flatMap(m => m.invoiceIds) ?? []);
+    const vorbereitet = bereiteFakturaVor(fakturaNr, zugeordnet);
+    if (vorbereitet.nichtBuchbar) {
+      toast.error(`Faktura ${fakturaNr} enthält weder Positionsdetail noch einen vollständig buchbaren Kopf-Split.`);
       return;
     }
+    if (importInFlight.current) return;
+    importInFlight.current = true;
     setBusy(true);
     try {
       // Duplikat-Wache: kein Lieferschein wird übernommen, wenn eine noch keiner
       // Faktura zugeordnete bestehende Rechnung ihm nach den Kontroll-Kriterien
       // (Datum ±7 Tage, Betrag ±0.10) nahekommt — sonst droht eine Doppelbuchung.
-      const zugeordnet = new Set(abgleich?.matches.flatMap(m => m.invoiceIds) ?? []);
-      const zuImportieren: typeof anhang = [];
-      const blockiert: string[] = [];
-      for (const a of anhang) {
-        const r = fsAnhangAlsRechnung(a);
-        const nahe = findeNaheRechnung(monatsInvoices, { lieferscheinNr: a.lieferscheinNr, datum: a.datum, brutto: r.bruttoTotal }, zugeordnet);
-        if (nahe) blockiert.push(`Lieferschein ${a.lieferscheinNr} (CHF ${fmt(r.bruttoTotal)}) ≈ erfasste Rechnung vom ${fmtDatumCH(nahe.date)} (CHF ${fmt(nahe.amountGross)})`);
-        else zuImportieren.push(a);
+      if (vorbereitet.blockiert.length > 0) {
+        toast.error(`Nicht übernommen (mögliches Duplikat — bitte manuell prüfen): ${vorbereitet.blockiert.join(' · ')}`, { duration: 12000 });
       }
-      if (blockiert.length > 0) {
-        toast.error(`Nicht übernommen (mögliches Duplikat — bitte manuell prüfen): ${blockiert.join(' · ')}`, { duration: 12000 });
+      if (vorbereitet.rechnungen.length === 0) return;
+      if (vorbereitet.kopfSplit) {
+        toast.info(`Faktura ${fakturaNr}: keine Positions-Seiten — Buchung erfolgt aus dem Kopf-Split.`);
       }
-      if (zuImportieren.length === 0) return;
       const sammelBeleg = await legeBelegAb(`sammel-${sammel.nr}`, quellDateien[`sammel:${sammel.nr}`]);
       const res = await importiereRechnungen(
-        zuImportieren.map(a => ({
-          r: fsAnhangAlsRechnung(a), fsKategorien: fsKategorienFuerLs(a, sammel),
-          ...(sammelBeleg ? { receiptPath: sammelBeleg } : {}),
-        })),
+        vorbereitet.rechnungen.map(r => sammelBeleg ? { ...r, receiptPath: sammelBeleg } : r),
         'Monatsrechnung: fehlende Lieferungen ergänzt',
         { quelle: 'monatsrechnung' },
       );
@@ -519,17 +583,66 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
       for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
       setUebernommen(prev => new Set([...prev, fakturaNr]));
       // Abgleich mit frischem Bestand aktualisieren
-      const monate = [...new Set(sammel.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];
-      const invoices = (await Promise.all(monate.map(m => loadMonthInvoices(tenantId, m)))).flat()
-        .filter(iv => /feldschl/i.test(iv.supplierName));
-      setMonatsInvoices(invoices);
-      setAbgleich(matchFakturen(sammel.fakturen, invoices));
+      await ladeSammelAbgleichNeu(sammel);
       onImported();
     } catch (e) {
       toast.error(`Übernahme fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
+      importInFlight.current = false;
       setBusy(false);
     }
+  };
+
+  const uebernehmeAlleFakturas = async () => {
+    if (!sammel || offeneFakturaMatches.length === 0) return;
+    const zugeordnet = new Set(abgleich?.matches.flatMap(m => m.invoiceIds) ?? []);
+    const vorbereitet = offeneFakturaMatches.map(m => ({
+      match: m,
+      ...bereiteFakturaVor(m.faktura.nr, zugeordnet),
+    }));
+    const nichtBuchbar = vorbereitet.filter(v => v.nichtBuchbar).map(v => v.match.faktura.nr);
+    const blockiert = vorbereitet.flatMap(v => v.blockiert);
+    if (nichtBuchbar.length > 0 || blockiert.length > 0) {
+      const teile = [
+        nichtBuchbar.length ? `kein Positionsdetail und kein buchbarer Kopf-Split: ${nichtBuchbar.join(', ')}` : '',
+        blockiert.length ? `mögliche Duplikate: ${blockiert.join(' · ')}` : '',
+      ].filter(Boolean);
+      toast.error(`Sammelübernahme abgebrochen — nichts gebucht (${teile.join('; ')}).`, { duration: 12000 });
+      return;
+    }
+    const rechnungen = vorbereitet.flatMap(v => v.rechnungen);
+    if (rechnungen.length === 0) return;
+    const kopfSplits = vorbereitet.filter(v => v.kopfSplit).map(v => v.match.faktura.nr);
+    if (kopfSplits.length > 0) {
+      toast.info(`Keine Positions-Seiten bei ${kopfSplits.join(', ')} — Buchung erfolgt aus dem Kopf-Split.`);
+    }
+    if (importInFlight.current) return;
+    importInFlight.current = true;
+    setBusy(true);
+    try {
+      const sammelBeleg = await legeBelegAb(`sammel-${sammel.nr}`, quellDateien[`sammel:${sammel.nr}`]);
+      const res = await importiereRechnungen(
+        rechnungen.map(r => sammelBeleg ? { ...r, receiptPath: sammelBeleg } : r),
+        `Monatsrechnung ${sammel.nr}: alle fehlenden Fakturas`,
+        { quelle: 'monatsrechnung' },
+      );
+      const { brutto, netto } = summiereFakturaMatches(offeneFakturaMatches);
+      toast.success(`Monatsrechnung ${sammel.nr}: ${offeneFakturaMatches.length} Fakturas übernommen · Σ brutto CHF ${fmt(brutto)} · Σ netto CHF ${fmt(netto)}`);
+      for (const h of res.hinweise) toast.warning(h, { duration: 12000 });
+      setUebernommen(prev => new Set([...prev, ...offeneFakturaMatches.map(m => m.faktura.nr)]));
+      await ladeSammelAbgleichNeu(sammel);
+      onImported();
+    } catch (e) {
+      toast.error(`Sammelübernahme fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`, { duration: 12000 });
+    } finally {
+      importInFlight.current = false;
+      setBusy(false);
+    }
+  };
+
+  const ignoriereAlleFakturas = () => {
+    if (offeneFakturaMatches.length === 0) return;
+    setIgnoriert(prev => new Set([...prev, ...offeneFakturaMatches.map(m => m.faktura.nr)]));
   };
 
   // ── Teil C: Jahres-ZIP importieren (Warenkosten + Preis-Historie + Historie) ─
@@ -947,6 +1060,17 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported, extern
             Lieferscheine). Fehlende werden aus den eingebetteten Rechnungs-Seiten final übernommen (gekennzeichnet
             «aus Monatsrechnung»); ein späterer Lieferschein-Upload derselben Lieferung wird als «bereits final» übersprungen.
           </p>
+          <div className="flex flex-wrap gap-2" data-testid="fs-sammel-aktionen">
+            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || offeneFakturaMatches.length === 0}
+              onClick={() => void uebernehmeAlleFakturas()} data-testid="fs-alle-uebernehmen">
+              {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+              Alle übernehmen ({offeneFakturaMatches.length} fehlende)
+            </Button>
+            <Button size="sm" variant="secondary" className="h-7 px-3 text-xs" disabled={busy || offeneFakturaMatches.length === 0}
+              onClick={ignoriereAlleFakturas} data-testid="fs-alle-ignorieren">
+              Alle ignorieren ({offeneFakturaMatches.length} fehlende)
+            </Button>
+          </div>
           <div className="space-y-0.5">
             {abgleich.matches.map(m => {
               // Positionen der eingebetteten Rechnungs-Seiten dieser Faktura

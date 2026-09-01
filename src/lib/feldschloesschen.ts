@@ -831,6 +831,81 @@ export function fsFakturenAlsRechnungen(s: FsSammelrechnung): Array<{
   });
 }
 
+/**
+ * Faktura ohne Anhang-/Positionsseiten aus der Faktura-Kopfzeile buchen.
+ * Die drei Kopfwerte sind Netto je MwSt-Klasse; der offizielle Endbetrag ist
+ * führend. Rundungsdifferenzen werden in der grössten steuerpflichtigen Klasse
+ * auf der MwSt getragen (bei reinen 0%-Belegen auf dem Netto).
+ */
+export function fsFakturaKopfAlsRechnung(
+  faktura: FsFaktura,
+  options?: { markt?: string; steuerKategorie?: string },
+): {
+  r: ParsedCsvRechnung;
+  fsKategorien: FsKategorieSumme[];
+  nettoOffiziell: number;
+  bruttoOffiziell: number;
+} | null {
+  const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const buckets = ([
+    { rate: 8.1 as const, netto: faktura.wert81 },
+    { rate: 2.6 as const, netto: faktura.wert26 },
+    { rate: 0 as const, netto: faktura.wert00 },
+  ]).filter(b => Math.abs(b.netto) >= 0.005)
+    .map(b => ({ ...b, netto: r2(b.netto), mwst: r2(b.netto * b.rate / 100) }));
+  if (buckets.length === 0 || !faktura.nr || !faktura.datum) return null;
+
+  const berechnetBrutto = r2(buckets.reduce((sum, b) => sum + b.netto + b.mwst, 0));
+  const delta = r2(faktura.endbetrag - berechnetBrutto);
+  if (Math.abs(delta) >= 0.005) {
+    const ziel = [...buckets]
+      .sort((a, b) => Number(b.rate > 0) - Number(a.rate > 0) || Math.abs(b.netto) - Math.abs(a.netto))[0];
+    if (ziel.rate === 0) ziel.netto = r2(ziel.netto + delta);
+    else ziel.mwst = r2(ziel.mwst + delta);
+  }
+
+  const steuerKategorie = options?.steuerKategorie ?? 'Bier';
+  const positionen: WarenPosition[] = buckets.map(b => ({
+    artNr: '',
+    bezeichnung: `Gutschrift / kein Positionsdetail — Kopf-Split · ${b.rate.toFixed(1)} %`,
+    warengruppe: b.rate === 0 ? 'Leergut' : steuerKategorie,
+    menge: 1,
+    einheit: '',
+    preis: b.netto,
+    positionspreis: b.netto,
+    mwstBetrag: b.mwst,
+    mwstCode: b.rate === 0 ? 0 : b.rate === 2.6 ? 1 : 2,
+    mwstSatz: b.rate,
+  }));
+  const fsKategorien: FsKategorieSumme[] = buckets.map(b => ({
+    name: b.rate === 0 ? 'Leergut' : steuerKategorie,
+    netto81: b.rate === 8.1 ? b.netto : 0,
+    netto26: b.rate === 2.6 ? b.netto : 0,
+    netto00: b.rate === 0 ? b.netto : 0,
+    nettoTotal: b.netto,
+    mwst81: b.rate === 8.1 ? b.mwst : 0,
+    mwst26: b.rate === 2.6 ? b.mwst : 0,
+    mwst00: b.rate === 0 ? b.mwst : 0,
+  }));
+  const netto = r2(buckets.reduce((sum, b) => sum + b.netto, 0));
+  const mwst = r2(buckets.reduce((sum, b) => sum + b.mwst, 0));
+  return {
+    r: {
+      docKey: `${faktura.nr}|${faktura.datum}`,
+      rechnungsNr: faktura.nr,
+      datum: faktura.datum,
+      markt: options?.markt ?? 'Feldschlösschen',
+      positionen,
+      nettoTotal: netto,
+      mwstTotal: mwst,
+      bruttoTotal: r2(netto + mwst),
+    },
+    fsKategorien,
+    nettoOffiziell: netto,
+    bruttoOffiziell: r2(faktura.endbetrag),
+  };
+}
+
 // ── Faktura-Abgleich (Kontrolle, kein Doppelzählen) ──────────────────────────
 
 export interface FakturaMatch {
@@ -848,6 +923,24 @@ export interface FakturaAbgleich {
   gesamt: number;
   summeErfasst: number;    // Σ gematchte Brutto-Beträge
   summeMonatsrechnung: number; // Σ Faktura-Endbeträge
+}
+
+/** Noch nicht behandelte Fakturas für die Sammelaktionen (Gutschriften bleiben enthalten). */
+export function offeneFakturaMatches(
+  abgleich: FakturaAbgleich | null,
+  uebernommen: ReadonlySet<string>,
+  ignoriert: ReadonlySet<string>,
+): FakturaMatch[] {
+  return (abgleich?.matches ?? []).filter(m =>
+    m.status === 'fehlt' && !uebernommen.has(m.faktura.nr) && !ignoriert.has(m.faktura.nr));
+}
+
+/** Offizielle Faktura-Summen für die Sammel-Erfolgsmeldung. */
+export function summiereFakturaMatches(matches: FakturaMatch[]): { brutto: number; netto: number } {
+  return matches.reduce((sum, { faktura }) => ({
+    brutto: sum.brutto + faktura.endbetrag,
+    netto: sum.netto + faktura.wert81 + faktura.wert26 + faktura.wert00,
+  }), { brutto: 0, netto: 0 });
 }
 
 /**

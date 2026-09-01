@@ -49,6 +49,8 @@ export interface FsImportRechnung {
   /** Storage-Pfad des Quelldokuments (Import-Beleg) — wird am Eintrag als
    *  «📎 Beleg» verknüpft. Ein bestehender manueller Beleg gewinnt immer. */
   receiptPath?: string;
+  /** Explizite Importnotiz, z.B. für synthetische Kopf-Split-Buchungen. */
+  note?: string;
 }
 
 export interface FsImportErgebnis {
@@ -153,7 +155,7 @@ export async function kernImportiereFsRechnungen(
   };
   // Sortiert nach Lieferdatum, damit die Preis-Historie chronologisch wächst.
   const sortiert = [...rechnungen].sort((a, b) => a.r.datum.localeCompare(b.r.datum));
-  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath } of sortiert) {
+  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath, note } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
     const lief = kanonischerWarenLieferant(lieferant);
@@ -392,7 +394,7 @@ export async function kernImportiereFsRechnungen(
       vatIncluded: false,
       vatRate,
       reference: r.rechnungsNr,
-      note: (() => {
+      note: note ?? (() => {
         const label = opts?.noteLabel ?? 'Feldschlösschen-PDF';
         // Synthetische Ganz-Rechnungs-Position (Stufe 1, preis 0) nicht zählen.
         const echte = r.positionen.filter(p => p.artNr !== '' || p.preis > 0).length;
@@ -458,14 +460,14 @@ export async function kernImportiereFsRechnungen(
   }
   // Ein Schreibvorgang pro Monat.
   for (const m of geaendert) {
-    await saveMonthInvoices(tenantId, m, bestandCache.get(m)!);
-    await saveRechnungsPositionen(tenantId, m, posCache.get(m)!);
-    await savePreisHinweise(tenantId, m, hinweisCache.get(m)!);
+    await saveMonthInvoices(tenantId, m, bestandCache.get(m)!, { strict: true });
+    await saveRechnungsPositionen(tenantId, m, posCache.get(m)!, { strict: true });
+    await savePreisHinweise(tenantId, m, hinweisCache.get(m)!, { strict: true });
     // FIBU-Match-Zuordnungen des Monats mitbereinigen: cross-Monat verschobene
     // IDs (z.B. finalisierte Kreditoren-Platzhalter) dürfen im alten Monat
     // keine «gematcht»-Leichen hinterlassen (best-effort, wirft nie).
     await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set(bestandCache.get(m)!.map(e => e.id)));
   }
-  await savePreisHistorie(tenantId, hist);
+  await savePreisHistorie(tenantId, hist, { strict: true });
   return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], bereitsFinal, ueberschrieben, kreditorenFinalisiert, hinweise, neuUebersprungen };
 }

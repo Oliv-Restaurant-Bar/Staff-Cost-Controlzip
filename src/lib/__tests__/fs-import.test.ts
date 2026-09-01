@@ -21,6 +21,8 @@ import { kernImportiereFsRechnungen } from '@/lib/fs-import';
 import type { InvoiceEntry } from '@/lib/waren-db';
 import type { ParsedCsvRechnung, WarenPosition } from '@/lib/waren-positionen';
 import { zaehlendeEintraege } from '@/lib/waren-monatsabgleich';
+import { kvSetStrict } from '@/lib/supabase-kv';
+import { fsFakturaKopfAlsRechnung } from '@/lib/feldschloesschen';
 
 const TENANT = 'oliv' as never;
 const LIEFERANT = 'Feldschlösschen';
@@ -41,9 +43,45 @@ const rechnung = (nr: string, datum: string, preis = 30): ParsedCsvRechnung => {
   };
 };
 
-beforeEach(() => kv.clear());
+beforeEach(() => {
+  kv.clear();
+  vi.mocked(kvSetStrict).mockImplementation(async (key: string, value: unknown) => {
+    kv.set(key, JSON.parse(JSON.stringify(value)));
+  });
+});
 
 describe('kernImportiereFsRechnungen', () => {
+  it('bricht bei einem strikten Persistenzfehler ab, statt Erfolg zu melden', async () => {
+    vi.mocked(kvSetStrict).mockRejectedValueOnce(new Error('Backend nicht erreichbar'));
+    await expect(kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('STRICT-1', '2026-07-10', 5) },
+    ])).rejects.toThrow('Backend nicht erreichbar');
+  });
+
+  it('bucht eine negative Faktura ohne Positionsdetail auf 4030 und Pfand 4800', async () => {
+    const kopf = fsFakturaKopfAlsRechnung({
+      nr: '87788385', datum: '2026-08-31',
+      wert81: 0, wert26: -84, wert00: -150, endbetrag: -236.20,
+    });
+    expect(kopf).not.toBeNull();
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{
+      ...kopf!,
+      note: 'Aus Monatsrechnung (final) · Gutschrift / kein Positionsdetail — Kopf-Split',
+    }], { quelle: 'monatsrechnung' });
+    const monat = kv.get('supplier_invoices_2026-08') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0]).toMatchObject({
+      reference: '87788385',
+      amountNet: -234,
+      amountGross: -236.20,
+      quelle: 'monatsrechnung',
+      final: true,
+      note: 'Aus Monatsrechnung (final) · Gutschrift / kein Positionsdetail — Kopf-Split',
+    });
+    expect(monat[0].kontoSplits?.map(s => s.warenkonto).sort()).toEqual(['4030', '4800']);
+    expect(monat[0].kontoSplits?.reduce((sum, s) => sum + s.amountGross, 0)).toBeCloseTo(-236.20, 2);
+  });
+
   it('Monatsrechnung: DIESELBE Lieferung doppelt im Batch bleibt EIN Eintrag (exakter Referenz-Upsert auch gegen frisch Erstelltes)', async () => {
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
       { r: rechnung('D-1', '2026-07-10', 5) },

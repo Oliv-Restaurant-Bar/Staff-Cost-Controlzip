@@ -11,7 +11,7 @@
  * Debug-Logs: [WAREN]
  */
 
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvSet, kvSetStrict } from './supabase-kv';
 import { normRef } from './waren-ref';
 import { tenantKey } from './tenant-utils';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -472,8 +472,8 @@ export async function loadPreisHistorie(tenantId: TenantId): Promise<import('./w
   catch { return {}; }
 }
 
-export async function savePreisHistorie(tenantId: TenantId, historie: import('./waren-positionen').PreisHistorie): Promise<void> {
-  await kvSet(tenantKey(tenantId, 'waren_preishistorie_v1'), historie);
+export async function savePreisHistorie(tenantId: TenantId, historie: import('./waren-positionen').PreisHistorie, options?: { strict?: boolean }): Promise<void> {
+  await (options?.strict ? kvSetStrict : kvSet)(tenantKey(tenantId, 'waren_preishistorie_v1'), historie);
 }
 
 export async function loadPreisSchwelle(tenantId: TenantId): Promise<import('./waren-positionen').PreisSchwelle> {
@@ -500,8 +500,9 @@ export async function loadPreisHinweise(
 export async function savePreisHinweise(
   tenantId: TenantId, monthKey: string,
   hinweise: Record<string, import('./waren-positionen').PreisAenderung[]>,
+  options?: { strict?: boolean },
 ): Promise<void> {
-  await kvSet(tenantKey(tenantId, `waren_preishinweise_${monthKey}_v1`), hinweise);
+  await (options?.strict ? kvSetStrict : kvSet)(tenantKey(tenantId, `waren_preishinweise_${monthKey}_v1`), hinweise);
 }
 
 // ─── Warengruppe → Konto (konfigurierbare Zuordnungstabelle, pro Mandant) ────
@@ -551,8 +552,9 @@ export async function loadRechnungsPositionen(
 export async function saveRechnungsPositionen(
   tenantId: TenantId, monthKey: string,
   positionen: import('./waren-positionen').PositionenProRechnung,
+  options?: { strict?: boolean },
 ): Promise<void> {
-  await kvSet(tenantKey(tenantId, `waren_positionen_${monthKey}_v1`), positionen);
+  await (options?.strict ? kvSetStrict : kvSet)(tenantKey(tenantId, `waren_positionen_${monthKey}_v1`), positionen);
 }
 
 // ─── Auto-Match-Toleranz (CHF, pro Mandant, Default 10.00) ───────────────────
@@ -863,6 +865,7 @@ export async function saveMonthInvoices(
   tenantId: TenantId,
   month: string, // YYYY-MM
   entries: InvoiceEntry[],
+  options?: { strict?: boolean },
 ): Promise<void> {
   // Import-Fence: ignorierte Rechnungsnummern (Privatbezug) fliegen raus.
   const refs = await ignorierteRefs(tenantId);
@@ -873,7 +876,7 @@ export async function saveMonthInvoices(
       console.log(`[WAREN] ${vorher - entries.length} Rechnung(en) übersprungen (Ignore-Liste/privat) für ${month} tenant="${tenantId}"`);
     }
   }
-  await kvSet(invoicesKey(tenantId, month), entries);
+  await (options?.strict ? kvSetStrict : kvSet)(invoicesKey(tenantId, month), entries);
   console.log(`[WAREN] month saved: ${month} (${entries.length} entries) tenant="${tenantId}"`);
 }
 
@@ -1249,8 +1252,8 @@ export async function erstelleWarenImportSnapshot(
   return snap;
 }
 
-export async function saveWarenImportUndo(tenantId: TenantId, record: WarenImportUndoRecord): Promise<void> {
-  await kvSet(importUndoKey(tenantId, record.typ), record);
+export async function saveWarenImportUndo(tenantId: TenantId, record: WarenImportUndoRecord, options?: { strict?: boolean }): Promise<void> {
+  await (options?.strict ? kvSetStrict : kvSet)(importUndoKey(tenantId, record.typ), record);
 }
 
 export async function loadWarenImportUndo(tenantId: TenantId, typ: WarenImportTyp): Promise<WarenImportUndoRecord | null> {

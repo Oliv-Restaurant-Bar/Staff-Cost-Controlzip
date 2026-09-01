@@ -1,0 +1,23 @@
+Build-Befehl — Fix: Monatsrechnungs-Faktura OHNE Positions-Seiten (z. B. Gutschrift) lässt sich nicht übernehmen
+
+PROBLEM
+Beim Klick auf «Übernehmen» einer Faktura einer Sammelrechnung/Monatsrechnung, die im PDF KEINE Positions-Seiten (Artikelzeilen) hat, erscheint «Für Faktura <Nr> sind im PDF keine Positions-Seiten enthalten» und die Übernahme bricht ab — es wird nichts gebucht. Betrifft v. a. GUTSCHRIFTEN/Korrekturen (z. B. Feldschlösschen 87788385 = CHF -236.20), die in der Sammelrechnung nur als Kopfzeile stehen (Warenwert inkl. 8.1 % / 2.6 % / 0.0 % + Endbetrag), ohne Artikeldetail.
+
+SOLL
+Fehlt einer Faktura das Positionsdetail, darf «Übernehmen» NICHT abbrechen, sondern bucht aus der Kopf-/Rekapitulations-Aufteilung der Sammelrechnung:
+- Für jeden MwSt-Satz-Bucket der Faktura mit Betrag ≠ 0 (8.1 %, 2.6 %, 0.0 %) eine eigene Buchungszeile.
+- Netto = Warenwert_inkl(Satz) / (1 + Satz). Satz 0.0 % (Pfand/Leergut) → Konto 4800, Kategorie «Leergut/Pfand»; 8.1 % / 2.6 % → dieselben Waren-/Beverage-Konten wie beim jeweiligen Lieferanten-Profil (Feldschlösschen: Beverage 4030).
+- NEGATIVE Beträge (Gutschriften) sind zulässig — NICHT wegen «Betrag ≤ 0» oder «keine Positionen» überspringen.
+- Rundung: Die Summe der gebuchten Buckets muss EXAKT dem Faktura-Endbetrag entsprechen; eine Differenz von 1–2 Rappen aus der Netto-aus-Brutto-Rechnung wird dem betragsgrössten Bucket zugeschlagen.
+- Kennzeichnung «aus Monatsrechnung»; Bemerkung «Gutschrift / kein Positionsdetail — Kopf-Split».
+- Danach zählt die Faktura als «erfasst», der Zähler «X von N» und «Σ erfasst» aktualisieren sich, die Differenz-Zeile muss CHF 0.00 zeigen.
+- Die bisherige Meldung «keine Positions-Seiten» wird zu einem HINWEIS (Info), nicht mehr zu einem Abbruch.
+
+GILT ALLGEMEIN
+Für alle Lieferanten/Sammelrechnungen, nicht nur Feldschlösschen; jede Faktura ohne Positionsdetail wird über den Kopf-Split gebucht.
+
+AKZEPTANZKRITERIEN
+1) Faktura 87788385 (-236.20) lässt sich per «Übernehmen» buchen: erzeugt -84.00 @ 2.6 % (Beverage 4030) + -150.00 @ 0 % (Pfand 4800); Summe -236.20.
+2) Sammelrechnung 87814028 danach «5 von 5 erfasst», Differenz CHF 0.00, Feldschlösschen Beaulieu/August netto 5'232.63 / brutto 5'557.35.
+3) Kein Abbruch mehr bei Fakturas ohne Positionsdetail; «keine Positions-Seiten» erscheint nur noch als Hinweis.
+4) «Letzter Import rückgängig machen» nimmt auch diese Kopf-Split-Buchung zurück.

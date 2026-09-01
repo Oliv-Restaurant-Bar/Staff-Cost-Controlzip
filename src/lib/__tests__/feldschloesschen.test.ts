@@ -4,11 +4,60 @@ import {
   parseChf, parseDatumCH, detectFsPdfTyp, istFeldschloesschenPdf,
   parseFsLieferschein, parseFsSammelrechnung, fsKategorie,
   fsLieferscheinAlsRechnung, fsAnhangAlsRechnung, matchFakturen,
+  offeneFakturaMatches, summiereFakturaMatches, fsFakturaKopfAlsRechnung,
   kategorienGegenprobe, mitFsDefaults, sammelrechnungZuHistorie, findeNaheRechnung,
   kontoSplitsAusFsKategorien, fsKontoVorschlag, parseFsFaktura, fsFakturenAlsRechnungen,
   DEFAULT_FS_KATEGORIEN_MAPPING,
   type FsZeile, type FsKategorieSumme,
 } from '../feldschloesschen';
+
+describe('Monatsrechnung-Sammelaktionen', () => {
+  const faktura = (nr: string, endbetrag: number, netto: number) => ({
+    nr, datum: '2026-08-31', endbetrag,
+    wert81: netto, wert26: 0, wert00: 0,
+  });
+
+  it('nimmt alle unbehandelten fehlenden Fakturas mit — auch negative Gutschriften', () => {
+    const matches = [
+      { faktura: faktura('87814028', 5793.55, 5454.21), status: 'fehlt' as const, invoiceIds: [], erfasstBrutto: null },
+      { faktura: faktura('87788385', -236.20, -221.58), status: 'fehlt' as const, invoiceIds: [], erfasstBrutto: null },
+      { faktura: faktura('VORHANDEN', 100, 92.51), status: 'vorhanden' as const, invoiceIds: ['x'], erfasstBrutto: 100 },
+      { faktura: faktura('IGNORIERT', 50, 46.25), status: 'fehlt' as const, invoiceIds: [], erfasstBrutto: null },
+      { faktura: faktura('UEBERNOMMEN', 25, 23.13), status: 'fehlt' as const, invoiceIds: [], erfasstBrutto: null },
+    ];
+    const offen = offeneFakturaMatches(
+      { matches, vorhanden: 1, gesamt: 5, summeErfasst: 100, summeMonatsrechnung: 5732.35 },
+      new Set(['UEBERNOMMEN']),
+      new Set(['IGNORIERT']),
+    );
+    expect(offen.map(m => m.faktura.nr)).toEqual(['87814028', '87788385']);
+    expect(summiereFakturaMatches(offen)).toEqual({ brutto: 5557.35, netto: 5232.63 });
+  });
+
+  it('baut eine Faktura ohne Positionsseiten als exakten MwSt-Kopf-Split', () => {
+    const kopf = fsFakturaKopfAlsRechnung({
+      nr: '87788385',
+      datum: '2026-08-31',
+      wert81: 0,
+      wert26: -84,
+      wert00: -150,
+      endbetrag: -236.20,
+    });
+    expect(kopf).not.toBeNull();
+    expect(kopf!.r.positionen.map(p => ({
+      netto: p.positionspreis,
+      satz: p.mwstSatz,
+      gruppe: p.warengruppe,
+    }))).toEqual([
+      { netto: -84, satz: 2.6, gruppe: 'Bier' },
+      { netto: -150, satz: 0, gruppe: 'Leergut' },
+    ]);
+    expect(kopf!.r.nettoTotal).toBe(-234);
+    expect(kopf!.r.mwstTotal).toBe(-2.20);
+    expect(kopf!.r.bruttoTotal).toBe(-236.20);
+    expect(kopf!.bruttoOffiziell).toBe(-236.20);
+  });
+});
 
 /** Test-Helfer: «a | b | c»-Strings → FsZeile (wie toFsZeilen aus GnPdfLines). */
 function zeilen(rows: Array<[number, string]>): FsZeile[] {

@@ -30,17 +30,24 @@ import type { TenantId } from '@/contexts/TenantContext';
  */
 export function kopfAlsLieferung(
   kopf: { rechnungsNr: string | null; rechnungsdatum: string | null; netto: number | null; mwst: number | null },
-  profil: { name: string; kategorie: string },
+  profil: { name: string; kategorie: string; mwstSatz?: number },
 ): ParsedCsvRechnung | null {
   if (!kopf.rechnungsNr || !kopf.rechnungsdatum || kopf.netto === null) return null;
   const netto = kopf.netto;
   const mwst = kopf.mwst ?? 0;
+  const satz = Math.abs(mwst) < 0.005
+    ? 0
+    : profil.mwstSatz === 2.6 || profil.mwstSatz === 8.1
+      ? profil.mwstSatz
+      : null;
   return {
     docKey: `${kopf.rechnungsNr}|${kopf.rechnungsdatum}|${profil.name}`,
     rechnungsNr: kopf.rechnungsNr, datum: kopf.rechnungsdatum, markt: profil.name,
     positionen: [{
-      artNr: '', bezeichnung: 'Monatsrechnung gesamt', warengruppe: profil.kategorie,
-      menge: 0, einheit: '', preis: 0, positionspreis: netto, mwstBetrag: mwst, mwstCode: 1,
+      artNr: '', bezeichnung: 'Monatsrechnung gesamt', warengruppe: satz === 0 ? 'Leergut' : profil.kategorie,
+      menge: 0, einheit: '', preis: 0, positionspreis: netto, mwstBetrag: mwst,
+      mwstCode: satz === 0 ? 0 : satz === 2.6 ? 1 : 2,
+      ...(satz !== null ? { mwstSatz: satz } : {}),
     }],
     nettoTotal: netto, mwstTotal: mwst, bruttoTotal: R2(netto + mwst),
   };

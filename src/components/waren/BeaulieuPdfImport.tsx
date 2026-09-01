@@ -9,7 +9,7 @@
  * - Buchung über die gemeinsame Kern-Pipeline (Upsert auf Lieferant+Nr+Datum,
  *   nie doppelt), EIN Undo-Slot (Typ «pdf_profil») mit Konfliktschutz.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -123,6 +123,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
   const [profile, setProfile] = useState<LieferantenProfil[]>([]);
   const [zeilen, setZeilen] = useState<VorschauZeile[]>([]);
   const [busy, setBusy] = useState(false);
+  const importInFlight = useRef(false);
   const [undoRefresh, setUndoRefresh] = useState(0);
   // Positions-Kontierung direkt in der Vorschau: Warengruppen-Tabelle des
   // Mandanten, gelernte Artikel-Zuordnungen + Overrides dieser Sitzung.
@@ -365,7 +366,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
     const neuOffen = z.abgleich.eintraege.some(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]);
     return !neuOffen;
   };
-  const bereit = zeilen.filter(z => z.lieferant !== ''
+  const importierbareZeilen = (rows: VorschauZeile[]) => rows.filter(z => z.lieferant !== ''
     && istBuchbar(z)
     && (z.modus === 'monatsrechnung'
       // Monatsrechnung (MASSGEBLICH): importierbar, sobald Lieferungen erkannt
@@ -375,6 +376,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         && ((z.abgleich?.manuell ?? 0) === 0 || z.bestaetigt === true)
         && alleEntschieden(z))
       : (z.datum !== '' && num(z.netto) !== null)));
+  const bereit = importierbareZeilen(zeilen);
   const offen = zeilen.filter(z => istBuchbar(z)
     && (z.lieferant === ''
       || (z.modus === 'monatsrechnung'
@@ -382,8 +384,12 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         : (z.datum === '' || num(z.netto) === null)))).length;
   const gesperrt = zeilen.filter(z => !istBuchbar(z)).length;
 
-  async function handleImport() {
-    if (bereit.length === 0) { toast.error('Keine importierbaren Rechnungen (Lieferant/Datum/Netto fehlen).'); return; }
+  async function handleImport(rows: VorschauZeile[] = zeilen) {
+    const importBereit = importierbareZeilen(rows);
+    if (importBereit.length === 0) { toast.error('Keine importierbaren Rechnungen (Lieferant/Datum/Netto fehlen).'); return; }
+    if (importInFlight.current) return;
+    importInFlight.current = true;
+    let recovery: { vorher: Awaited<ReturnType<typeof erstelleWarenImportSnapshot>>; monate: string[] } | null = null;
     setBusy(true);
     try {
       // Buchungen pro Profil UND Quelle sammeln (provisorische Quellen —
@@ -401,7 +407,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         id: string; month: string; date: string; amountGross: number;
         supersededByReference?: string;
       }> = [];
-      for (const row of bereit) {
+      for (const row of importBereit) {
         const profil = profilById.get(row.lieferant);
         if (!profil) continue;
         // Quell-PDF als Beleg ablegen (Schlüssel Lieferant+Rechnungs-Nr —
@@ -445,7 +451,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             .map(e => `${e.match!.id}|${e.match!.date}|${e.match!.amountGross}`)
             .sort().join(';');
           if (frisch.manuell > 0 && fingerprint(frisch) !== fingerprint(row.abgleich)) {
-            patch(zeilen.indexOf(row), { abgleich: frisch, bestaetigt: false });
+            setZeilen(zs => zs.map(z => z.datei === row.datei ? { ...z, abgleich: frisch, bestaetigt: false } : z));
             toast.warning(`${row.fileName}: Die manuell erfassten Treffer haben sich seit der Vorschau geändert — bitte neu prüfen und bestätigen. Nichts importiert.`);
             return;
           }
@@ -457,7 +463,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           const lsFp = (a?: MonatsrechnungAbgleich) => (a?.nichtInMr ?? [])
             .map(e => `${e.id}|${e.date}|${e.amountGross}`).sort().join(';');
           if (neuFp(frisch) !== neuFp(row.abgleich) || lsFp(frisch) !== lsFp(row.abgleich)) {
-            patch(zeilen.indexOf(row), { abgleich: frisch, neuEntscheid: {} });
+            setZeilen(zs => zs.map(z => z.datei === row.datei ? { ...z, abgleich: frisch, neuEntscheid: {} } : z));
             toast.warning(`${row.fileName}: Die Differenz zur Monatsrechnung hat sich seit der Vorschau geändert — bitte neu prüfen und einzeln bestätigen. Nichts importiert.`);
             return;
           }
@@ -476,7 +482,15 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             .map(e => `${e.lieferung.rechnungsNr}|${e.lieferung.datum}`)];
           for (const l of mrLief) {
             if (ignorierteNeu.has(`${l.rechnungsNr.trim().toLowerCase()}|${l.datum}`)) continue;
-            eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
+            const istKopfSplit = l.positionen[0]?.bezeichnung === 'Monatsrechnung gesamt';
+            if (istKopfSplit) {
+              toast.info(`${profil.name} ${l.rechnungsNr}: keine Positions-Seiten — Buchung erfolgt aus dem Kopf-Split.`);
+            }
+            eintrag.rechnungen.push({
+              r: l,
+              ...(istKopfSplit ? { note: 'Aus Monatsrechnung (final) · kein Positionsdetail — Kopf-Split' } : {}),
+              ...(belegPfad ? { receiptPath: belegPfad } : {}),
+            });
           }
           // Die Monatsrechnung ist für Lieferant+Liefermonat massgeblich:
           // auch nicht einzeln aufgeführte provisorische Lieferscheine bleiben
@@ -526,7 +540,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             ? klassen.map(klasse => ({
                 artNr: '',
                 bezeichnung: `Rechnung gesamt · MwSt ${klasse.satz}%`,
-                warengruppe: profil.parser === 'caporaso' && klasse.satz === 8.1 ? 'Betriebsmaterial' : profil.kategorie,
+                 warengruppe: klasse.satz === 0
+                   ? 'Leergut'
+                   : profil.parser === 'caporaso' && klasse.satz === 8.1 ? 'Betriebsmaterial' : profil.kategorie,
                 menge: 0,
                 einheit: '',
                 preis: 0,
@@ -538,7 +554,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                   : {}),
               }))
             : [{
-                artNr: '', bezeichnung: 'Rechnung gesamt', warengruppe: profil.kategorie,
+                artNr: '', bezeichnung: 'Rechnung gesamt',
+                warengruppe: row.ergebnis.mwstSatz === 0 ? 'Leergut' : profil.kategorie,
                 menge: 0, einheit: '', preis: 0, positionspreis: netto,
                 mwstBetrag: mwst, mwstCode: row.ergebnis.mwstSatz === 0 ? 0 : row.ergebnis.mwstSatz === 2.6 ? 1 : 2,
                 ...(row.ergebnis.mwstSatz === 0 || row.ergebnis.mwstSatz === 2.6 || row.ergebnis.mwstSatz === 8.1
@@ -577,6 +594,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       }
       for (const e of zuErsetzen) monate.add(e.month);
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [...monate], mitPreisHistorie: true });
+      recovery = { vorher, monate: [...monate] };
 
       let neu = 0, ersetzt = 0, aenderungen = 0, provErsetzt = 0, ueberschrieben = 0, bereitsFinal = 0, kredFinal = 0;
       const lieferanten: string[] = [];
@@ -632,7 +650,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                 updatedAt: jetzt,
               }
             : x);
-          await saveMonthInvoices(tenantId, month, markiert);
+          await saveMonthInvoices(tenantId, month, markiert, { strict: true });
           alsErsetztMarkiert += ersetzen.size;
         }
       }
@@ -646,16 +664,59 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
         zeitpunkt: new Date().toISOString(),
         anzahlRechnungen: neu + ersetzt,
         vorher, nachher,
-      });
+      }, { strict: true });
       setUndoRefresh(k => k + 1);
-      setZeilen(z => z.filter(row => !bereit.includes(row)));
+      setZeilen(z => z.filter(row => !importBereit.some(importiert => importiert.datei === row.datei)));
       toast.success(`${neu} Buchung${neu === 1 ? '' : 'en'} neu${ersetzt > 0 ? `, ${ersetzt} aktualisiert` : ''}${ueberschrieben > 0 ? ` (${ueberschrieben} provisorisch→final ersetzt)` : ''}${provErsetzt > 0 ? ` · ${provErsetzt} provisorische ersetzt` : ''}${bereitsFinal > 0 ? ` · ${bereitsFinal} bereits final (unangetastet)` : ''}${kredFinal > 0 ? ` · ${kredFinal} Kreditoren-Übernahme${kredFinal === 1 ? '' : 'n'} finalisiert` : ''}${aenderungen > 0 ? ` · ${aenderungen} Preisänderung${aenderungen === 1 ? '' : 'en'}` : ''}${alsErsetztMarkiert > 0 ? ` · ${alsErsetztMarkiert} nicht verrechnete${alsErsetztMarkiert === 1 ? 'r' : ''} Lieferschein${alsErsetztMarkiert === 1 ? '' : 'e'} als ersetzt markiert` : ''}.`);
       onImported();
     } catch (e) {
       console.error('[BEAULIEU-PDF] Import fehlgeschlagen:', e);
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
+      let recoveryGesichert = false;
+      if (recovery) {
+        try {
+          const teilstand = await erstelleWarenImportSnapshot(tenantId, { monate: recovery.monate, mitPreisHistorie: true });
+          await saveWarenImportUndo(tenantId, {
+            typ: 'pdf_profil',
+            label: 'Lieferanten-PDF (abgebrochener Lauf)',
+            zeitpunkt: new Date().toISOString(),
+            anzahlRechnungen: importBereit.length,
+            vorher: recovery.vorher,
+            nachher: teilstand,
+          }, { strict: true });
+          setUndoRefresh(k => k + 1);
+          recoveryGesichert = true;
+        } catch (undoError) {
+          console.error('[BEAULIEU-PDF] Sicherungs-Undo nach Importfehler fehlgeschlagen:', undoError);
+        }
+      }
+      const grund = e instanceof Error ? e.message : String(e);
+      toast.error(recoveryGesichert
+        ? `${grund} Ein möglicher Teilstand wurde als rückgängig machbarer Lauf gesichert.`
+        : `${grund}${recovery ? ' Ein möglicher Teilstand konnte NICHT als Undo gesichert werden; bitte Bestand manuell prüfen.' : ''}`,
+      { duration: 12000 });
+    } finally {
+      importInFlight.current = false;
+      setBusy(false);
+    }
   }
+
+  const offeneMonatsrechnungsZeilen = zeilen.reduce((sum, z) =>
+    sum + (z.modus === 'monatsrechnung' && z.abgleich
+      ? z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]).length
+      : 0), 0);
+
+  const entscheideAlleMonatsrechnungen = (wahl: 'uebernehmen' | 'ignorieren') => {
+    const next = zeilen.map(z => {
+      if (z.modus !== 'monatsrechnung' || !z.abgleich) return z;
+      const offene = z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]);
+      if (offene.length === 0) return z;
+      return { ...z, neuEntscheid: { ...z.neuEntscheid, ...Object.fromEntries(offene.map(e => [neuKey(e), wahl])) } };
+    });
+    setZeilen(next);
+    if (wahl === 'uebernehmen') {
+      void handleImport(next.filter(z => z.modus === 'monatsrechnung'));
+    }
+  };
 
   return (
     <div className="border border-border/60 rounded-lg p-3 space-y-3" data-testid="beaulieu-pdf-import"
@@ -753,6 +814,21 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
 
       {zeilen.length > 0 && (
         <div className="space-y-2" data-testid="beaulieu-pdf-vorschau">
+          <div className="flex flex-wrap items-center gap-2" data-testid="beaulieu-pdf-monatsrechnung-aktionen">
+            <Button size="sm" className="h-7 px-3 text-xs"
+              disabled={busy || offeneMonatsrechnungsZeilen === 0}
+              data-testid="beaulieu-pdf-global-alle-uebernehmen"
+              onClick={() => entscheideAlleMonatsrechnungen('uebernehmen')}>
+              {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+              Alle übernehmen ({offeneMonatsrechnungsZeilen} fehlende)
+            </Button>
+            <Button size="sm" variant="secondary" className="h-7 px-3 text-xs"
+              disabled={busy || offeneMonatsrechnungsZeilen === 0}
+              data-testid="beaulieu-pdf-global-alle-ignorieren"
+              onClick={() => entscheideAlleMonatsrechnungen('ignorieren')}>
+              Alle ignorieren ({offeneMonatsrechnungsZeilen} fehlende)
+            </Button>
+          </div>
           {zeilen.map((row, i) => {
             const erg = row.ergebnis;
             const istGesperrt = !istBuchbar(row);
@@ -1039,35 +1115,6 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             );
           })}
 
-          {(() => {
-            // GLOBALE SAMMEL-AKTION über alle Monatsrechnungen der Vorschau:
-            // setzt nur noch OFFENE «neu»-Zeilen (Einzelentscheide bleiben).
-            const offenProZeile = zeilen.map(z => z.modus === 'monatsrechnung' && z.abgleich
-              ? z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]).length : 0);
-            const offenTotal = offenProZeile.reduce((a, b) => a + b, 0);
-            if (offenTotal < 2) return null;
-            const setzeAlleGlobal = (wahl: 'uebernehmen' | 'ignorieren') => setZeilen(zs => zs.map(z => {
-              if (z.modus !== 'monatsrechnung' || !z.abgleich) return z;
-              const offene = z.abgleich.eintraege.filter(e => e.status === 'neu' && !z.neuEntscheid?.[neuKey(e)]);
-              if (offene.length === 0) return z;
-              return { ...z, neuEntscheid: { ...z.neuEntscheid, ...Object.fromEntries(offene.map(e => [neuKey(e), wahl])) } };
-            }));
-            return (
-              <div className="flex flex-wrap items-center gap-2 text-xs border-t border-border/40 pt-2">
-                <span className="text-amber-600 font-medium">{offenTotal} offene Differenz-Zeilen über den ganzen Import:</span>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
-                  data-testid="beaulieu-pdf-global-alle-uebernehmen"
-                  onClick={() => setzeAlleGlobal('uebernehmen')}>
-                  Alle übernehmen
-                </Button>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
-                  data-testid="beaulieu-pdf-global-alle-ignorieren"
-                  onClick={() => setzeAlleGlobal('ignorieren')}>
-                  Alle ignorieren
-                </Button>
-              </div>
-            );
-          })()}
           <div className="flex items-center gap-3">
             <Button size="sm" disabled={busy || bereit.length === 0} onClick={() => void handleImport()}
               data-testid="beaulieu-pdf-import-button">

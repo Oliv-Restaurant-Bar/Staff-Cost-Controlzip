@@ -1,0 +1,30 @@
+Build-Befehl — Monatsrechnungs-Panel: Button «Alle übernehmen»
+
+KONTEXT
+Im Import-Panel «Feldschlösschen-PDF importieren → Monatsrechnung» (gleiche Logik für ALLE Monatsrechnungen/Sammelrechnungen) sind die einzelnen Fakturas als «fehlt» gelistet, jede mit eigenem Button «Übernehmen» / «Ignorieren». Aktuell muss jede Faktura EINZELN angeklickt werden — bei 5+ Fakturas mühsam und fehleranfällig (man vergisst eine, z. B. eine Gutschrift).
+
+SOLL: Sammel-Aktion oben im Panel
+Direkt unter der Kopfzeile «Monatsrechnung … · CHF … · X von N Lieferungen erfasst» zwei Buttons ergänzen:
+1) «Alle übernehmen (N fehlende)» — übernimmt in einem Klick alle noch nicht erfassten Fakturas.
+2) «Alle ignorieren (N fehlende)» — sekundär/grau.
+N = Anzahl der aktuell mit «fehlt» markierten Fakturas. Buttons inaktiv, wenn N = 0.
+
+VERHALTEN «Alle übernehmen» (verbindlich)
+- Ruft für JEDE fehlende Faktura EXAKT dieselbe Übernahme-Logik auf wie der bestehende Einzel-Button «Übernehmen» — gleiche Kategorisierung, gleiche MwSt-Aufteilung pro Satz (8.1 % / 2.6 % / Pfand 0 %), gleiche Warenkonto-Zuordnung, Kennzeichnung «aus Monatsrechnung», Final-Status. Kein separater Code-Pfad — dieselbe Funktion in einer Schleife.
+- Gutschriften / negative Fakturas MÜSSEN mit übernommen werden (z. B. 87788385 = −236.20). Nicht wegen «Betrag ≤ 0» überspringen.
+- Bereits vorhandene/gematchte Lieferungen bleiben unverändert («bereits final») — nicht doppelt anlegen.
+- Nach Abschluss EINE Sammel-Erfolgsmeldung statt N Toasts, z. B. «Monatsrechnung 87814028: 5 Fakturas übernommen · Σ brutto CHF 5'557.35 · Σ netto CHF 5'232.63».
+- Zähler «X von N erfasst» und «Σ erfasst» sofort auf N von N; Differenz-Zeile muss danach CHF 0.00 zeigen.
+
+UNDO
+- «Alle übernehmen» = EIN Import-Vorgang, über «Letzter Import rückgängig machen» in EINEM Schritt komplett zurücknehmbar (alle zusammen), nicht einzeln.
+
+EINZEL-BUTTONS BLEIBEN
+- Bestehende «Übernehmen»/«Ignorieren» je Faktura bleiben erhalten — «Alle übernehmen» ist nur eine Abkürzung.
+
+AKZEPTANZKRITERIEN
+1) Panel zeigt oben «Alle übernehmen (N fehlende)» + «Alle ignorieren (N fehlende)»; bei N = 0 inaktiv.
+2) Ein Klick erfasst alle fehlenden Fakturas inkl. Gutschriften mit korrekter MwSt-Aufteilung pro Satz; Differenz danach CHF 0.00; Zähler N von N.
+3) Beispiel Feldschlösschen 87814028: nach einem Klick alle 5 erfasst, Summe Beaulieu/August Feldschlösschen = netto CHF 5'232.63 / brutto CHF 5'557.35.
+4) Eine Sammel-Erfolgsmeldung; «Letzter Import rückgängig machen» nimmt den ganzen Sammelklick in einem Schritt zurück.
+5) Einzel-Buttons funktionieren weiterhin.

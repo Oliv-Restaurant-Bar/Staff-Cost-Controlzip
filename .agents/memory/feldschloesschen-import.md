@@ -55,3 +55,10 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 - Positions-Netto ≠ ZSF ist NUR Hinweis, nie Blocker (Regressionstest 87750197).
 - Undo-Protokoll-Fehler NACH persistierter Buchung = Warnung, nie «Import fehlgeschlagen».
 - **Why:** Nutzer sah bei gesperrtem Button «keine Reaktion» und hielt die Buchung für kaputt.
+
+## Faktura ohne Positionsdetail — Kopf-Split
+- Fehlende Anhang-/Positionsseiten sind kein Abbruch: Kopfwerte je MwSt-Klasse werden als synthetische finale Monatsrechnungspositionen gebucht; steuerpflichtig aufs Profilkonto, 0 % zwingend Leergut/Pfand → 4800.
+- Die Faktura-Kopfwerte sind die offiziellen Netto-Buckets. Der Endbetrag ist offizielles Brutto; ein MwSt-Rundungsrest wird auf einer steuerpflichtigen Klasse getragen, nie als Steuer auf dem 0%-Bucket und nie durch Verfälschen des bestätigten Nettototals.
+- Der Fallback gilt auch für allgemeine Profil-Monatsrechnungen; die UI zeigt «kein Positionsdetail — Kopf-Split» als Information, und der normale gemeinsame Import-/Undo-Pfad bleibt führend.
+- **Why:** Kopf-only-Gutschriften enthalten belastbare MwSt-Buckets, aber keine Artikelzeilen. Beispiel 87788385: netto −84.00 @2.6 % + −150.00 @0 %, brutto exakt −236.20; 0 % muss neutral auf 4800 bleiben.
+- **How to apply:** Einzel- und Sammelübernahme müssen denselben Kopf-Split verwenden; negative Werte nie filtern. Regressionen prüfen Netto/Brutto, 4030/4800, Info statt Abbruch sowie Undo.

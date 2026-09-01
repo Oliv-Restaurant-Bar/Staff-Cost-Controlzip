@@ -166,6 +166,7 @@ describe('abgleicheMonatsrechnung (massgeblich — Fideco-Kontrollszenario)', ()
     expect(kopf).not.toBeNull();
     expect(kopf!.nettoTotal).toBe(4000);
     expect(kopf!.positionen[0].bezeichnung).toBe('Monatsrechnung gesamt');
+    expect(kopf!.positionen[0].mwstSatz).toBeUndefined();
     // Unvollständiger Kopf ⇒ null (kein MR-Modus)
     expect(kopfAlsLieferung({ rechnungsNr: null, rechnungsdatum: '2026-07-31', netto: 4000, mwst: 0 },
       { name: 'X', kategorie: 'Y' })).toBeNull();
@@ -180,6 +181,20 @@ describe('abgleicheMonatsrechnung (massgeblich — Fideco-Kontrollszenario)', ()
     expect(a.nichtInMr.map(e => e.id).sort()).toEqual(['lpdf-ls1', 'lpdf-ls2']);
     expect(a.summeMonatsrechnung).toBe(4000);
     expect(a.summeErfasst).toBe(3950);
+  });
+
+  it('Stufe-1-Kopf ohne MwSt klassifiziert den 0%-Bucket allgemein als Leergut/Pfand', async () => {
+    const { kopfAlsLieferung } = await import('@/lib/monatsrechnung-abgleich');
+    const kopf = kopfAlsLieferung(
+      { rechnungsNr: 'NULL-1', rechnungsdatum: '2026-08-31', netto: -150, mwst: 0 },
+      { name: 'Beliebiger Lieferant', kategorie: 'Food', mwstSatz: 2.6 },
+    );
+    expect(kopf?.positionen[0]).toMatchObject({
+      warengruppe: 'Leergut',
+      positionspreis: -150,
+      mwstBetrag: 0,
+      mwstSatz: 0,
+    });
   });
 
   it('manuell erfasste Treffer (fremdes id-Präfix) werden als manuell markiert', async () => {
