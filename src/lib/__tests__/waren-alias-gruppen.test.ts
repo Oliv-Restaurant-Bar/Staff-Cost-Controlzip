@@ -30,7 +30,10 @@ describe('buildAliasResolver', () => {
     expect(r('Prodega')).toBe('Prodega / Transgourmet');
     expect(r('TRANSGOURMET')).toBe('Prodega / Transgourmet');
     expect(r('Prodega / Transgourmet')).toBe('Prodega / Transgourmet');
-    expect(r('Frigemo')).toBe('Gourmador / Frigemo');
+    expect(r('Frigemo')).toBe('Gourmador (frigemo)');
+    expect(r('Gourmador SA (frigemo)')).toBe('Gourmador (frigemo)');
+    expect(r('Ambro Food SA')).toBe('Ambro Food');
+    expect(r('Spahni')).toBe('Metzgerei Spahni');
     expect(r('Migros')).toBe('Migros'); // unbekannt bleibt unverändert
     expect(r('')).toBe('');
   });
@@ -43,7 +46,7 @@ describe('applyAliasGruppen', () => {
   it('ersetzt nur Namen, Beträge/Reihenfolge bleiben; Totale unverändert', () => {
     const list = [inv('Prodega', 100), inv('Migros', 50), inv('Frigemo', 25)];
     const out = applyAliasGruppen(list, GRUPPEN);
-    expect(out.map(e => e.supplierName)).toEqual(['Prodega / Transgourmet', 'Migros', 'Gourmador / Frigemo']);
+    expect(out.map(e => e.supplierName)).toEqual(['Prodega / Transgourmet', 'Migros', 'Gourmador (frigemo)']);
     expect(out.reduce((s, e) => s + e.amountNet, 0)).toBeCloseTo(175);
     expect(out[1]).toBe(list[1]); // unveränderte Einträge behalten Referenz
     expect(applyAliasGruppen(list, [])).toBe(list);
@@ -100,7 +103,7 @@ describe('buildWarenAbgleich mit aliasGruppen', () => {
       journal: [jrn('Frigemo AG', 500)],
       aliasGruppen: GRUPPEN,
     });
-    const zeile = res.zeilen.find(z => z.lieferant === 'Gourmador / Frigemo');
+    const zeile = res.zeilen.find(z => z.lieferant === 'Gourmador (frigemo)');
     expect(zeile?.gebucht).toBeCloseTo(500);
     expect(zeile?.status).toBe('nur-gebucht');
     expect(res.nichtZugeordnet).toHaveLength(0);

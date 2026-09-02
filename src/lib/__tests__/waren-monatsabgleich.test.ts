@@ -10,6 +10,7 @@ import {
   markiereDifferenzOffen, lieferantStatus, istErsetzt, zaehlendeEintraege,
   gruppiereNachKanonischemLieferantUndMonat, akzeptiereMonatsrechnung,
   kanonischerWarenLieferant,
+  gleicherWarenLieferant, normalisiereMwstNr,
   hatZaehlendeLieferantenReferenz, kanonischerLieferantMonatKey,
   loeseEindeutigenLiefermonatAuf,
 } from '../waren-monatsabgleich';
@@ -223,6 +224,65 @@ describe('historienerhaltender Monatsabgleich', () => {
       .not.toBe(kanonischerLieferantMonatKey('2026-07', 'Fideco'));
   });
 
+  it('normalisiert Rechtsformen, Klammerzusätze und bekannte Lieferantenvarianten', () => {
+    expect(kanonischerWarenLieferant('  Gourmador   (frigemo) SA ')).toBe('gourmador');
+    expect(kanonischerWarenLieferant('GOURMADOR')).toBe('gourmador');
+    expect(kanonischerWarenLieferant('Ambro Food SA')).toBe('ambro food');
+    expect(kanonischerWarenLieferant('Metzgerei Spahni GmbH')).toBe('spahni');
+    expect(kanonischerWarenLieferant('Spahni')).toBe('spahni');
+  });
+
+  it('vergleicht vorrangig über MWST-Nr und fällt für Legacy-Einträge auf Namen zurück', () => {
+    expect(normalisiereMwstNr('CHE-123.456.789 MWST')).toBe('123456789');
+    expect(gleicherWarenLieferant(
+      { supplierName: 'Altname', supplierVatId: 'CHE-123.456.789' },
+      { supplierName: 'Neuer Name AG', supplierVatId: '123456789' },
+    )).toBe(true);
+    expect(gleicherWarenLieferant(
+      { supplierName: 'Gourmador', supplierVatId: '123456789' },
+      { supplierName: 'Gourmador (frigemo)', supplierVatId: '987654321' },
+    )).toBe(false);
+    expect(gleicherWarenLieferant(
+      { supplierName: 'Gourmador' },
+      { supplierName: 'Gourmador (frigemo)', supplierVatId: '123456789' },
+    )).toBe(true);
+  });
+
+  it('ersetzt provisorische Gourmador-Varianten durch genau eine Monatsrechnung', () => {
+    const provisional = inv({
+      id: 'ls-gourmador', supplierName: 'Gourmador', date: '2026-08-12',
+      amountNet: 3004.04, amountGross: 3082.15,
+    });
+    const monthly = inv({
+      id: 'mr-gourmador', supplierName: 'Gourmador (frigemo)', date: '2026-08-31',
+      amountNet: 3004.04, amountGross: 3082.15,
+    });
+    const out = akzeptiereMonatsrechnung({
+      bestand: [provisional], liefermonat: '2026-08', monatsrechnung: monthly,
+      canonicalize, now: NOW,
+    });
+    expect(out.find(e => e.id === 'ls-gourmador')?.superseded).toBe(true);
+    expect(zaehlendeEintraege(out).map(e => [e.supplierName, e.amountNet]))
+      .toEqual([['Gourmador (frigemo)', 3004.04]]);
+  });
+
+  it('ersetzt bei identischem Namen keinen Beleg mit abweichender bekannter MWST-Nr', () => {
+    const provisional = inv({
+      id: 'ls-fremd', supplierName: 'Gourmador', supplierVatId: '111111111',
+      date: '2026-08-12', amountNet: 3004.04,
+    });
+    const monthly = inv({
+      id: 'mr', supplierName: 'Gourmador (frigemo)', supplierVatId: '222222222',
+      date: '2026-08-31', amountNet: 3004.04,
+    });
+    const out = akzeptiereMonatsrechnung({
+      bestand: [provisional], liefermonat: '2026-08', monatsrechnung: monthly,
+      canonicalize, now: NOW,
+    });
+    expect(out.find(e => e.id === 'ls-fremd')?.superseded).toBeUndefined();
+    expect(zaehlendeEintraege(out)).toHaveLength(2);
+  });
+
   it('ignoriert ersetzte WKQ-Historie in der Fideco-Dublettenanzeige', () => {
     const refs = new Set(['ls-1']);
     const historie = inv({
@@ -232,6 +292,16 @@ describe('historienerhaltender Monatsabgleich', () => {
     expect(hatZaehlendeLieferantenReferenz([
       { ...historie, superseded: false },
     ], 'Fideco Schweiz', refs)).toBe(true);
+  });
+
+  it('zeigt bei gleicher Referenz und abweichender MWST-Nr keine Dublette an', () => {
+    const bestand = inv({
+      supplierName: 'Gourmador', supplierVatId: '111111111', reference: 'LS-1',
+    });
+    expect(hatZaehlendeLieferantenReferenz(
+      [bestand], 'Gourmador (frigemo)', new Set(['ls-1']),
+      kanonischerWarenLieferant, '222222222',
+    )).toBe(false);
   });
 
   it('löst eine August-Buchung eindeutig auf Juli-Lieferscheine auf', () => {

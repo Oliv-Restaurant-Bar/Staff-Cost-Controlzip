@@ -64,6 +64,8 @@ export interface InvoiceEntry {
   id: string;
   date: string;          // YYYY-MM-DD
   supplierName: string;
+  /** Normalisierte CHE-/MWST-Nummer des Lieferanten, sofern im Importprofil bekannt. */
+  supplierVatId?: string;
   amountGross: number;   // Betrag inkl. MWST (Gesamtbetrag)
   amountNet: number;     // Betrag exkl. MWST (Gesamtbetrag)
   vatIncluded: boolean;  // true = Eingabe war Brutto, false = Netto

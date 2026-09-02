@@ -28,7 +28,10 @@ import {
   type InvoiceEntry,
 } from './waren-db';
 import type { Kreditor, KreditorBuchung, KreditorAnalyse, AbrechnungsModell } from './kreditoren-parser';
-import { kanonischerWarenLieferant, zaehlendeEintraege } from './waren-monatsabgleich';
+import {
+  gleicherWarenLieferant, kanonischerWarenLieferant, zaehlendeEintraege,
+} from './waren-monatsabgleich';
+import { normalizeSupplierKey } from './waren-pdf-erkennung';
 
 // ─── Zuordnung (pro Mandant gemerkt) ─────────────────────────────────────────
 
@@ -107,13 +110,7 @@ export async function saveKreditorIgnoriert(tenantId: TenantId, map: KreditorIgn
 
 // ─── Lieferanten-Namens-Matching (Kreditor-Name ↔ erfasster supplierName) ───
 
-function normName(s: string): string {
-  return s.toLowerCase()
-    .replace(/\b(ag|gmbh|sa|sagl|co|cie|kg)\b\.?/g, '')
-    .replace(/[^a-zäöüéèàç0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const normName = kanonischerWarenLieferant;
 
 /**
  * Konzern-Gruppen: mehrere Handelsnamen buchen auf EIN Kreditorenkonto.
@@ -132,7 +129,8 @@ function konzernGruppe(norm: string): string[] | null {
 export function supplierMatchesKreditor(
   supplierName: string, kreditorName: string, aliases: Record<string, string>,
 ): boolean {
-  const s = normName(aliases[supplierName] ?? supplierName);
+  const alias = aliases[supplierName] ?? aliases[normalizeSupplierKey(supplierName)];
+  const s = normName(alias ?? supplierName);
   const k = normName(kreditorName);
   if (!s || !k) return false;
   if (kanonischerWarenLieferant(s) === kanonischerWarenLieferant(k)) return true;
@@ -458,9 +456,11 @@ export function findeKreditorenUebernahme(
   rechnungsNr: string,
   lieferant: string,
   brutto: number,
+  supplierVatId?: string,
 ): { entry?: InvoiceEntry; mehrdeutig: boolean } {
   const kandidaten = bestand.filter(e =>
     e.quelle === 'kreditoren_uebernahme' && e.final !== true
+    && gleicherWarenLieferant(e, { supplierName: lieferant, supplierVatId })
     && supplierMatchesKreditor(lieferant, e.supplierName, {}));
   if (kandidaten.length === 0) return { mehrdeutig: false };
   const ref = normRef(rechnungsNr);

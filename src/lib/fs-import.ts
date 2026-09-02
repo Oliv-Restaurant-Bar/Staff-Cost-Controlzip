@@ -32,7 +32,7 @@ import { findeKreditorenUebernahme } from '@/lib/kreditoren-abgleich';
 import { loadFibuMatchToleranz, bereinigeFibuMatchesFuerMonat, resolveImportReceiptPath } from '@/lib/waren-db';
 import type { TenantId } from '@/contexts/TenantContext';
 import {
-  istErsetzt, istProvisorischerLieferschein, kanonischerWarenLieferant,
+  gleicherWarenLieferant, istErsetzt, istProvisorischerLieferschein,
 } from '@/lib/waren-monatsabgleich';
 
 export interface FsImportRechnung {
@@ -51,6 +51,8 @@ export interface FsImportRechnung {
   receiptPath?: string;
   /** Explizite Importnotiz, z.B. für synthetische Kopf-Split-Buchungen. */
   note?: string;
+  /** CHE-/MWST-Nummer aus dem erkannten Lieferantenprofil. */
+  supplierVatId?: string;
 }
 
 export interface FsImportErgebnis {
@@ -155,14 +157,14 @@ export async function kernImportiereFsRechnungen(
   };
   // Sortiert nach Lieferdatum, damit die Preis-Historie chronologisch wächst.
   const sortiert = [...rechnungen].sort((a, b) => a.r.datum.localeCompare(b.r.datum));
-  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath, note } of sortiert) {
+  for (const { r, nettoOffiziell, bruttoOffiziell, fsKategorien, receiptPath, note, supplierVatId } of sortiert) {
     const month = r.datum.slice(0, 7);
     const { bestand } = await holeMonat(month);
-    const lief = kanonischerWarenLieferant(lieferant);
+    const zielLieferant = { supplierName: lieferant, supplierVatId };
     let vorhanden = bestand.find(e => !vergeben.has(e.id) && !istErsetzt(e)
       && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
       && e.date === r.datum
-      && kanonischerWarenLieferant(e.supplierName) === lief);
+      && gleicherWarenLieferant(e, zielLieferant));
     let vorhandenMonat = month;
     // Provisorisch = Lieferschein/AB oder Monatsrechnungs-ALTDATEN ohne
     // final-Flag; final = massgebliche Monatsrechnungs-Buchung.
@@ -177,7 +179,7 @@ export async function kernImportiereFsRechnungen(
       let mehrdeutigF = false;
       for (const nm of nachbarMonate(r.datum)) {
         const nb = (await holeMonat(nm)).bestand.filter(e => !vergeben.has(e.id) && !istErsetzt(e));
-        const res = findeKreditorenUebernahme(nb, r.rechnungsNr, lieferant, bruttoDetail);
+        const res = findeKreditorenUebernahme(nb, r.rechnungsNr, lieferant, bruttoDetail, supplierVatId);
         if (res.entry) { vorhanden = res.entry; vorhandenMonat = nm; break; }
         if (res.mehrdeutig) mehrdeutigF = true;
       }
@@ -204,7 +206,7 @@ export async function kernImportiereFsRechnungen(
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
             const m = nb.find(e => !vergeben.has(e.id) && !istErsetzt(e)
-              && kanonischerWarenLieferant(e.supplierName) === lief
+              && gleicherWarenLieferant(e, zielLieferant)
               && (pass === 'ref'
                 ? refMatch(e)
                 : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
@@ -225,7 +227,7 @@ export async function kernImportiereFsRechnungen(
           const nb = (await holeMonat(nm)).bestand;
           for (const e of nb) {
             if (!vergeben.has(e.id) && !istErsetzt(e) && istProv(e) && e.quelle === 'auftragsbestaetigung'
-              && kanonischerWarenLieferant(e.supplierName) === lief
+              && gleicherWarenLieferant(e, zielLieferant)
               && tageDiff(e.date, r.datum) <= fenster
               && Math.abs(e.amountGross - brutto) <= tol) kandidaten.push({ e, nm });
           }
@@ -285,7 +287,7 @@ export async function kernImportiereFsRechnungen(
             const nb = (await holeMonat(nm)).bestand;
             const kandidat = nb.find(e => !vergeben.has(e.id) && !istErsetzt(e)
               && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung' || e.quelle === 'kreditoren_uebernahme')
-              && kanonischerWarenLieferant(e.supplierName) === lief
+              && gleicherWarenLieferant(e, zielLieferant)
               && (pass === 'ref'
                 ? r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
                 : (!neuErstellt.has(e.id) && tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
@@ -301,7 +303,7 @@ export async function kernImportiereFsRechnungen(
           for (const nm of nachbarMonate(r.datum)) {
             const nb = (await holeMonat(nm)).bestand;
             const e = nb.find(e => e.final === true && !vergeben.has(e.id) && !istErsetzt(e)
-              && kanonischerWarenLieferant(e.supplierName) === lief
+              && gleicherWarenLieferant(e, zielLieferant)
               && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase());
             if (e) { finalTreffer = { e, nm }; break; }
           }
@@ -389,6 +391,7 @@ export async function kernImportiereFsRechnungen(
       id,
       date: r.datum, // LIEFERDATUM — führend für Wochen-Analyse und Cockpit
       supplierName: lieferant,
+      ...(supplierVatId || vorhanden?.supplierVatId ? { supplierVatId: supplierVatId ?? vorhanden?.supplierVatId } : {}),
       amountGross: bruttoOffiziell ?? r.bruttoTotal,
       amountNet: nettoOffiziell ?? r.nettoTotal,
       vatIncluded: false,

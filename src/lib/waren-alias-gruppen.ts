@@ -15,6 +15,7 @@
 
 import { normalizeSupplierKey } from '@/lib/waren-pdf-erkennung';
 import type { InvoiceEntry } from '@/lib/waren-db';
+import { kanonischerWarenLieferant } from '@/lib/waren-monatsabgleich';
 
 export interface AliasGruppe {
   id: string;
@@ -27,7 +28,9 @@ export interface AliasGruppe {
 /** Vorbelegung Beaulieu — gilt nur, solange noch nie gespeichert wurde. */
 export const DEFAULT_ALIAS_GRUPPEN_BEAULIEU: AliasGruppe[] = [
   { id: 'grp-prodega-transgourmet', name: 'Prodega / Transgourmet', aliases: ['Prodega', 'Transgourmet'] },
-  { id: 'grp-gourmador-frigemo',    name: 'Gourmador / Frigemo',    aliases: ['Gourmador', 'Frigemo'] },
+  { id: 'grp-gourmador-frigemo',    name: 'Gourmador (frigemo)',    aliases: ['Gourmador', 'Gourmador (frigemo)', 'Frigemo'] },
+  { id: 'grp-ambro-food',            name: 'Ambro Food',             aliases: ['Ambro Food', 'Ambro Food SA'] },
+  { id: 'grp-metzgerei-spahni',      name: 'Metzgerei Spahni',       aliases: ['Metzgerei Spahni', 'Spahni'] },
 ];
 
 /** Tolerante Normalisierung eines gespeicherten Blobs (nie werfen). */
@@ -61,13 +64,13 @@ export function buildAliasResolver(gruppen: AliasGruppe[]): AliasResolver {
   const map = new Map<string, string>();
   for (const g of gruppen) {
     for (const alias of [...g.aliases, g.name]) {
-      const key = normalizeSupplierKey(alias);
+      const key = kanonischerWarenLieferant(alias);
       if (key) map.set(key, g.name);
     }
   }
   if (map.size === 0) return (name) => name;
   return (name: string) => {
-    const key = normalizeSupplierKey(name ?? '');
+    const key = kanonischerWarenLieferant(name ?? '');
     return (key && map.get(key)) || name;
   };
 }

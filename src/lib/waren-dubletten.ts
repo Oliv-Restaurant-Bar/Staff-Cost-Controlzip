@@ -28,12 +28,15 @@
 import type { InvoiceEntry } from '@/lib/waren-db';
 import { normRef } from '@/lib/waren-ref';
 import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
-import { normalizeSupplierKey } from '@/lib/waren-pdf-erkennung';
+import {
+  gleicherWarenLieferant, istProvisorischerLieferschein, kanonischerWarenLieferant,
+  normalisiereMwstNr,
+} from '@/lib/waren-monatsabgleich';
 
 export interface DublettenGruppe {
   /** Kanonischer Lieferant (Alias-Gruppen aufgelöst). */
   lieferant: string;
-  grund: 'referenz' | 'betrag_datum' | 'sammelrechnung';
+  grund: 'referenz' | 'betrag_datum' | 'sammelrechnung' | 'monatsrechnung_alias';
   /** Anzeige-Schlüssel (Basis-Rechnungsnummer bzw. Beschreibung). */
   schluessel: string;
   behalten: InvoiceEntry[];
@@ -56,7 +59,7 @@ function quelleRang(e: InvoiceEntry): number {
  * Nur für die Betrag+Datum-Zuordnung — nie für Beträge/Aggregation.
  */
 export function lieferantVerwandt(a: string, b: string): boolean {
-  const na = normalizeSupplierKey(a), nb = normalizeSupplierKey(b);
+  const na = kanonischerWarenLieferant(a), nb = kanonischerWarenLieferant(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
   const pa = ` ${na} `, pb = ` ${nb} `;
@@ -65,6 +68,49 @@ export function lieferantVerwandt(a: string, b: string): boolean {
 
 function sortiertNachAlter(list: InvoiceEntry[]): InvoiceEntry[] {
   return [...list].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
+}
+
+/**
+ * Gruppierung mit MWST-Priorität und sicherem Legacy-Fallback:
+ * - gleiche bekannte MWST-ID verbindet auch verschiedene Namen;
+ * - Legacy ohne ID darf nur an genau EINE für seinen Namen bekannte ID hängen;
+ * - bei mehreren IDs desselben Namens bleibt Legacy getrennt (fail-closed).
+ */
+function gruppiereNachIdentitaet(
+  entries: InvoiceEntry[],
+  resolve: (name: string) => string,
+): Map<string, InvoiceEntry[]> {
+  const vatByName = new Map<string, Set<string>>();
+  for (const e of entries) {
+    const vat = normalisiereMwstNr(e.supplierVatId);
+    if (!vat) continue;
+    const name = kanonischerWarenLieferant(resolve(e.supplierName));
+    const vats = vatByName.get(name) ?? new Set<string>();
+    vats.add(vat);
+    vatByName.set(name, vats);
+  }
+  const out = new Map<string, InvoiceEntry[]>();
+  for (const e of entries) {
+    const name = kanonischerWarenLieferant(resolve(e.supplierName));
+    const vat = normalisiereMwstNr(e.supplierVatId);
+    const nameVats = vatByName.get(name);
+    const key = vat
+      ? `mwst:${vat}`
+      : nameVats?.size === 1
+        ? `mwst:${[...nameVats][0]}`
+        : nameVats && nameVats.size > 1
+          ? `legacy-ambiguous:${name}`
+          : `name:${name}`;
+    out.set(key, [...(out.get(key) ?? []), e]);
+  }
+  return out;
+}
+
+function eintraegeVerwandt(a: InvoiceEntry, b: InvoiceEntry): boolean {
+  const av = normalisiereMwstNr(a.supplierVatId);
+  const bv = normalisiereMwstNr(b.supplierVatId);
+  if (av && bv && av !== bv) return false;
+  return gleicherWarenLieferant(a, b) || lieferantVerwandt(a.supplierName, b.supplierName);
 }
 
 /** Gruppe in behalten/löschen teilen (bester Rang bleibt; Rang-Gleichstand → ältester Beleg). */
@@ -133,13 +179,50 @@ export function findeDublettenGruppen(
   const gruppen: DublettenGruppe[] = [];
   const verplant = new Set<string>(); // entry.id → schon in einer Gruppe
 
+  // ── 0) Finale Monatsrechnung + noch zählende provisorische Alias-Belege.
+  //       Nur bei exakt deckender Monatssumme anbieten; Finals nie entfernen.
+  const monatsMap = new Map<string, InvoiceEntry[]>();
+  const proMonat = new Map<string, InvoiceEntry[]>();
+  for (const e of invoices) {
+    const monat = e.date.slice(0, 7);
+    proMonat.set(monat, [...(proMonat.get(monat) ?? []), e]);
+  }
+  for (const [monat, entries] of proMonat) {
+    for (const [identity, gruppe] of gruppiereNachIdentitaet(entries, resolve)) {
+      monatsMap.set(`${monat}|${identity}`, gruppe);
+    }
+  }
+  for (const liste of monatsMap.values()) {
+    const finals = liste.filter(e => e.final === true && e.quelle === 'monatsrechnung');
+    const provisorisch = liste.filter(istProvisorischerLieferschein);
+    if (finals.length !== 1 || provisorisch.length === 0) continue;
+    const mr = finals[0];
+    const summe = provisorisch.reduce((sum, e) => sum + e.amountNet, 0);
+    if (Math.abs(summe - mr.amountNet) > 0.05) continue;
+    if (!provisorisch.some(e => e.supplierName.trim() !== mr.supplierName.trim())) continue;
+    verplant.add(mr.id);
+    provisorisch.forEach(e => verplant.add(e.id));
+    gruppen.push({
+      lieferant: resolve(mr.supplierName),
+      grund: 'monatsrechnung_alias',
+      schluessel: `Monatsrechnung ${mr.reference ?? mr.date} ersetzt ${provisorisch.length} Alias-Lieferschein${provisorisch.length === 1 ? '' : 'e'}`,
+      behalten: [mr],
+      loeschen: provisorisch,
+    });
+  }
+
   // ── 1) Referenz-Gruppen (kanonischer Lieferant + Basis-Rechnungsnummer) ──
-  const refMap = new Map<string, InvoiceEntry[]>();
+  const refCandidates = new Map<string, InvoiceEntry[]>();
   for (const e of invoices) {
     const ref = normRef(e.reference);
     if (!ref) continue;
-    const key = `${normalizeSupplierKey(resolve(e.supplierName))}|${ref}`;
-    refMap.set(key, [...(refMap.get(key) ?? []), e]);
+    refCandidates.set(ref, [...(refCandidates.get(ref) ?? []), e]);
+  }
+  const refMap = new Map<string, InvoiceEntry[]>();
+  for (const [ref, entries] of refCandidates) {
+    for (const [identity, gruppe] of gruppiereNachIdentitaet(entries, resolve)) {
+      refMap.set(`${identity}|${ref}`, gruppe);
+    }
   }
   for (const [key, mitglieder] of refMap) {
     if (mitglieder.length < 2) continue;
@@ -162,7 +245,7 @@ export function findeDublettenGruppen(
     const partner = invoices.filter(o =>
       o.id !== e.id && !verplant.has(o.id) && o.date === e.date
       && Math.abs(o.amountNet - e.amountNet) <= 0.05
-      && lieferantVerwandt(o.supplierName, e.supplierName));
+      && eintraegeVerwandt(o, e));
     if (partner.length === 0) continue;
     const mitglieder = [e, ...partner];
     const { behalten, loeschen } = teileGruppe(mitglieder);
@@ -178,12 +261,10 @@ export function findeDublettenGruppen(
 
   // ── 3) Sammelrechnung: EIN Übernahme-Eintrag ≈ Summe der übrigen Einträge
   //       desselben Lieferanten (≥3 Stück, Toleranz max(5, 0.5 %)) ──
-  const proLieferant = new Map<string, InvoiceEntry[]>();
-  for (const e of invoices) {
-    if (verplant.has(e.id)) continue;
-    const canon = normalizeSupplierKey(resolve(e.supplierName));
-    proLieferant.set(canon, [...(proLieferant.get(canon) ?? []), e]);
-  }
+  const proLieferant = gruppiereNachIdentitaet(
+    invoices.filter(e => !verplant.has(e.id)),
+    resolve,
+  );
   for (const liste of proLieferant.values()) {
     for (const e of liste) {
       if (verplant.has(e.id)) continue;

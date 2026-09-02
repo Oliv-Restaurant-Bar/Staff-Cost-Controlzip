@@ -45,18 +45,53 @@ export function zaehlendeEintraege(entries: InvoiceEntry[]): InvoiceEntry[] {
 /** Englischer Alias für Import-/Auswertungs-Code ausserhalb der deutschen UI. */
 export const countingEntries = zaehlendeEintraege;
 
+/** CHE-/MWST-Nummer als stabile, formatunabhängige Identität (9 Ziffern). */
+export function normalisiereMwstNr(value: string | null | undefined): string {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return digits.length >= 9 ? digits.slice(-9) : '';
+}
+
 /**
- * Stabile Namensbasis für die bekannte Firmenumbenennung WKQ → Fideco.
- * Andere Lieferanten werden nur firmenform-/zeichenbereinigt zurückgegeben.
+ * Stabile Lieferanten-Namensbasis. Klammerzusätze und Rechtsformen sind keine
+ * Identität; bekannte Handels-/Altbezeichnungen werden auf denselben Kern
+ * abgebildet. Die Funktion enthält bewusst KEINEN Mandantenbezug.
  */
 export function kanonischerWarenLieferant(name: string): string {
-  const normal = name.toLowerCase()
-    .replace(/\b(ag|gmbh|sa|sagl|co|cie|kg)\b\.?/g, '')
+  const normal = name.normalize('NFKD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(ag|sa|gmbh|sagl|sarl|srl|ltd|inc|kg|kgaa|co|cie)\b\.?/g, ' ')
     .replace(/[^a-zäöüéèàç0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (normal.includes('fideco') || normal === 'wkq' || normal.startsWith('wkq ')) return 'fideco';
+  if (normal.includes('gourmador') || normal === 'frigemo' || normal.startsWith('frigemo ')) return 'gourmador';
+  if (normal === 'ambro' || normal.startsWith('ambro food')) return 'ambro food';
+  if (normal === 'spahni' || normal.includes('metzgerei spahni')) return 'spahni';
   return normal;
+}
+
+/** MWST-ID gewinnt, sonst der kanonische Name. */
+export function warenLieferantenIdentitaet(input: {
+  name: string;
+  mwstNr?: string | null;
+}): string {
+  const uid = normalisiereMwstNr(input.mwstNr);
+  return uid ? `mwst:${uid}` : `name:${kanonischerWarenLieferant(input.name)}`;
+}
+
+/**
+ * Identitätsvergleich: nur wenn BEIDE Seiten eine MWST-ID tragen, muss diese
+ * gleich sein; bei Legacy-Belegen ohne ID bleibt der kanonische Name nutzbar.
+ */
+export function gleicherWarenLieferant(
+  a: Pick<InvoiceEntry, 'supplierName' | 'supplierVatId'>,
+  b: Pick<InvoiceEntry, 'supplierName' | 'supplierVatId'>,
+  canonicalize: (name: string) => string = kanonischerWarenLieferant,
+): boolean {
+  const av = normalisiereMwstNr(a.supplierVatId);
+  const bv = normalisiereMwstNr(b.supplierVatId);
+  if (av && bv) return av === bv;
+  return canonicalize(a.supplierName) === canonicalize(b.supplierName);
 }
 
 /** Gemeinsamer Gruppenschlüssel für alle Monatsrechnungs-Einstiegspfade. */
@@ -78,10 +113,10 @@ export function hatZaehlendeLieferantenReferenz(
   supplierName: string,
   refs: Set<string>,
   canonicalize: (name: string) => string = kanonischerWarenLieferant,
+  supplierVatId?: string,
 ): boolean {
-  const supplier = canonicalize(supplierName);
   return zaehlendeEintraege(entries).some(entry =>
-    canonicalize(entry.supplierName) === supplier
+    gleicherWarenLieferant(entry, { supplierName, supplierVatId }, canonicalize)
     && Boolean(entry.reference)
     && refs.has(entry.reference!.trim().toLowerCase()));
 }
@@ -240,7 +275,7 @@ export function akzeptiereMonatsrechnung(input: {
       return authoritative;
     }
     const belongsToMonth = entry.date.slice(0, 7) === liefermonat;
-    const belongsToSupplier = canonicalize(entry.supplierName) === canonicalSupplier;
+    const belongsToSupplier = gleicherWarenLieferant(entry, authoritative, canonicalize);
     if (!belongsToMonth || !belongsToSupplier || !istProvisorischerLieferschein(entry)) return entry;
     // Do not touch amount/date/note: the delivery note remains its original record.
     return {

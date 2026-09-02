@@ -212,7 +212,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           const abgleich = modus === 'monatsrechnung' && erg.profil
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name,
                 erg.lieferungen.length > 0 ? erg.lieferungen : (kopfMr ? [kopfMr] : []),
-                erg.profil.abAlsLieferschein ? 3 : 0)
+                erg.profil.abAlsLieferschein ? 3 : 0, erg.profil.mwstNr)
             : undefined;
           // Dubletten-Check für die Sammelvorschau (Mandant+Lieferant+Referenz,
           // Monate ±1): LS-Nrn UND Rechnungs-Nr prüfen — der Import kann je nach
@@ -243,7 +243,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                 if (dublette) break;
                 let bestand = bestandCache.get(m);
                 if (!bestand) { bestand = await loadMonthInvoices(tenantId, m); bestandCache.set(m, bestand); }
-                dublette = hatZaehlendeLieferantenReferenz(bestand, name, refs);
+                dublette = hatZaehlendeLieferantenReferenz(
+                  bestand, name, refs, kanonischerWarenLieferant, erg.profil.mwstNr,
+                );
               }
             } catch (e) {
               console.warn('[BEAULIEU-PDF] Dubletten-Check fehlgeschlagen (nur Anzeige, ignoriert):', e);
@@ -442,7 +444,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           // prüfen (Vorschau kann veraltet sein).
           const fenster = profil.abAlsLieferschein ? 3 : 0;
           const mrLief = mrLieferungen(row);
-          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, mrLief, fenster);
+          const frisch = await abgleicheMonatsrechnung(
+            tenantId, profil.name, mrLief, fenster, profil.mwstNr,
+          );
           // Bestätigung ist an den EXAKTEN Manuell-Fingerprint gebunden
           // (IDs + alte Werte der manuell erfassten Treffer) — jede Abweichung
           // (auch bei gleicher Anzahl) macht sie ungültig.
@@ -488,6 +492,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             }
             eintrag.rechnungen.push({
               r: l,
+              ...(profil.mwstNr ? { supplierVatId: profil.mwstNr } : {}),
               ...(istKopfSplit ? { note: 'Aus Monatsrechnung (final) · kein Positionsdetail — Kopf-Split' } : {}),
               ...(belegPfad ? { receiptPath: belegPfad } : {}),
             });
@@ -518,7 +523,11 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           && Math.abs(posSumme - netto) <= 0.05 && datumUnveraendert && nrUnveraendert;
         if (stufe2Deckend) {
           // Stufe 2: eine Buchung PRO LIEFERUNG mit deren LS-Datum.
-          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({ r: l, ...(belegPfad ? { receiptPath: belegPfad } : {}) });
+          for (const l of row.ergebnis.lieferungen) eintrag.rechnungen.push({
+            r: l,
+            ...(profil.mwstNr ? { supplierVatId: profil.mwstNr } : {}),
+            ...(belegPfad ? { receiptPath: belegPfad } : {}),
+          });
         } else {
           // Stufe 1: Kopf-Buchung als Ganzes (editierte Beträge sind führend).
           const klassen = row.ergebnis.mwstKlassen;
@@ -569,7 +578,11 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             positionen,
             nettoTotal: netto, mwstTotal: mwst, bruttoTotal: R2(netto + mwst),
           };
-          eintrag.rechnungen.push({ r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst), ...(belegPfad ? { receiptPath: belegPfad } : {}) });
+          eintrag.rechnungen.push({
+            r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst),
+            ...(profil.mwstNr ? { supplierVatId: profil.mwstNr } : {}),
+            ...(belegPfad ? { receiptPath: belegPfad } : {}),
+          });
         }
         proProfil.set(key, eintrag);
       }
@@ -880,7 +893,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                         const modus = v as VorschauZeile['modus'];
                         if (modus === 'monatsrechnung' && !row.abgleich) {
                           const p = profilById.get(row.lieferant);
-                          const abgleich = p ? await abgleicheMonatsrechnung(tenantId, p.name, erg.lieferungen, p.abAlsLieferschein ? 3 : 0) : undefined;
+                          const abgleich = p ? await abgleicheMonatsrechnung(
+                            tenantId, p.name, erg.lieferungen, p.abAlsLieferschein ? 3 : 0, p.mwstNr,
+                          ) : undefined;
                           patch(i, { modus, abgleich });
                         } else patch(i, { modus });
                       }}>

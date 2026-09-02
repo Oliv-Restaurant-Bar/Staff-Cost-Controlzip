@@ -790,9 +790,11 @@ export default function WarenrechnungenPage() {
   const [dublettenGruppen, setDublettenGruppen] = useState<DublettenGruppe[] | null>(null);
   const [dublettenAusgewaehlt, setDublettenAusgewaehlt] = useState<Set<string>>(new Set());
   const [dublettenBusy, setDublettenBusy] = useState(false);
+  const [dublettenTenantId, setDublettenTenantId] = useState<TenantId | null>(null);
   const oeffneDubletten = () => {
     if (granular === 'jahr') { toast.error('Doppel-Bereinigung nur in der Monats-/Wochenansicht möglich.'); return; }
     const gruppen = findeDublettenGruppen(entries, abgleich?.effektiveAliasGruppen ?? aliasGruppen);
+    setDublettenTenantId(tenantId);
     setDublettenGruppen(gruppen);
     setDublettenAusgewaehlt(new Set(gruppen.flatMap(g => g.loeschen.map(e => e.id))));
   };
@@ -800,12 +802,17 @@ export default function WarenrechnungenPage() {
     if (granular === 'jahr') { toast.error('Doppel-Bereinigung nur in der Monats-/Wochenansicht möglich.'); return; }
     if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     if (!dublettenGruppen) return;
+    if (!dublettenTenantId || dublettenTenantId !== tenantId) {
+      toast.error('Der Mandant wurde gewechselt. Dubletten bitte im aktuellen Mandanten neu prüfen.');
+      setDublettenGruppen(null);
+      return;
+    }
     const zuLoeschen = dublettenGruppen.flatMap(g => g.loeschen).filter(e => dublettenAusgewaehlt.has(e.id));
     if (zuLoeschen.length === 0) { setDublettenGruppen(null); return; }
     setDublettenBusy(true);
     let geloescht = 0; // Teilfehler: bereits Gelöschtes ist persistent → immer neu laden
     try {
-      for (const e of zuLoeschen) { await deleteInvoiceEntry(tenantId, e.id, e.date); geloescht++; }
+      for (const e of zuLoeschen) { await deleteInvoiceEntry(dublettenTenantId, e.id, e.date); geloescht++; }
       toast.success(`${geloescht} doppelt erfasste Rechnung${geloescht === 1 ? '' : 'en'} entfernt (CHF ${fmtChf(zuLoeschen.reduce((a, x) => a + x.amountNet, 0))}).`);
     } catch (err) {
       toast.error(`Bereinigung nach ${geloescht} von ${zuLoeschen.length} Löschungen abgebrochen: ${err instanceof Error ? err.message : String(err)} — Ansicht wird neu geladen.`);
@@ -6803,7 +6810,9 @@ export default function WarenrechnungenPage() {
             {(dublettenGruppen ?? []).map((g, gi) => (
               <div key={gi} className="border border-border rounded-lg p-3 text-sm" data-testid={`dubletten-gruppe-${gi}`}>
                 <p className="font-medium">
-                  {g.lieferant} · {g.grund === 'sammelrechnung' ? g.schluessel : g.grund === 'referenz' ? `Rechnungs-Nr. ${g.schluessel}` : `gleicher Betrag/Tag (${g.schluessel})`}
+                  {g.lieferant} · {g.grund === 'sammelrechnung' || g.grund === 'monatsrechnung_alias'
+                    ? g.schluessel
+                    : g.grund === 'referenz' ? `Rechnungs-Nr. ${g.schluessel}` : `gleicher Betrag/Tag (${g.schluessel})`}
                 </p>
                 <div className="mt-2 space-y-1">
                   {g.behalten.map(e => (

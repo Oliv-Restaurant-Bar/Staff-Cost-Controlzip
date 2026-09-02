@@ -14,6 +14,7 @@ function inv(p: Partial<InvoiceEntry> & { supplierName: string; amountNet: numbe
     id: p.id ?? `e${seq}`,
     date: p.date ?? '2026-07-10',
     supplierName: p.supplierName,
+    ...(p.supplierVatId !== undefined ? { supplierVatId: p.supplierVatId } : {}),
     amountNet: p.amountNet,
     amountGross: p.amountGross ?? p.amountNet,
     account: '4000',
@@ -75,6 +76,47 @@ describe('findeDublette (FIBU-Übernahme-Wache, quellenübergreifend)', () => {
 });
 
 describe('findeDublettenGruppen', () => {
+  it('bietet provisorische Gourmador-Aliasse neben der deckenden Monatsrechnung zur Bereinigung an', () => {
+    const invs = [
+      inv({
+        id: 'mr', supplierName: 'Gourmador (frigemo)', amountNet: 3004.04,
+        date: '2026-08-31', reference: 'MR-08', quelle: 'monatsrechnung', final: true,
+      }),
+      inv({ id: 'ls1', supplierName: 'Gourmador', amountNet: 1000, date: '2026-08-05' }),
+      inv({ id: 'ls2', supplierName: 'Gourmador SA', amountNet: 2004.04, date: '2026-08-19' }),
+    ];
+    const result = findeDublettenGruppen(invs, []);
+    expect(result).toHaveLength(1);
+    expect(result[0].grund).toBe('monatsrechnung_alias');
+    expect(result[0].behalten.map(e => e.id)).toEqual(['mr']);
+    expect(result[0].loeschen.map(e => e.id).sort()).toEqual(['ls1', 'ls2']);
+  });
+
+  it('mischt Monatsrechnungen unterschiedlicher Monate nicht', () => {
+    const invs = [
+      inv({
+        id: 'mr', supplierName: 'Gourmador (frigemo)', amountNet: 3004.04,
+        date: '2026-08-31', quelle: 'monatsrechnung', final: true,
+      }),
+      inv({ id: 'ls-juli', supplierName: 'Gourmador', amountNet: 3004.04, date: '2026-07-19' }),
+    ];
+    expect(findeDublettenGruppen(invs, [])).toHaveLength(0);
+  });
+
+  it('bietet gleichnamige Belege mit unterschiedlichen MWST-Nummern nie zum Löschen an', () => {
+    const invs = [
+      inv({
+        id: 'mr', supplierName: 'Gourmador (frigemo)', supplierVatId: '111111111',
+        amountNet: 3004.04, date: '2026-08-31', quelle: 'monatsrechnung', final: true,
+      }),
+      inv({
+        id: 'ls-fremd', supplierName: 'Gourmador', supplierVatId: '222222222',
+        amountNet: 3004.04, date: '2026-08-19',
+      }),
+    ];
+    expect(findeDublettenGruppen(invs, []).flatMap(g => g.loeschen)).toEqual([]);
+  });
+
   it('Referenz-Duplikat: FIBU-Splits behalten, Kreditoren-Übernahme löschen', () => {
     const invs = [
       inv({ supplierName: 'Ambro Food', amountNet: 8568.37, reference: '26214454', quelle: 'kreditoren_uebernahme' }),

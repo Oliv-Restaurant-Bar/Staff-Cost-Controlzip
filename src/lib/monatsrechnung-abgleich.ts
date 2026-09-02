@@ -20,7 +20,9 @@
  */
 import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
 import type { ParsedCsvRechnung } from '@/lib/waren-positionen';
-import { istErsetzt, kanonischerWarenLieferant } from '@/lib/waren-monatsabgleich';
+import {
+  gleicherWarenLieferant, istErsetzt, kanonischerWarenLieferant,
+} from '@/lib/waren-monatsabgleich';
 import type { TenantId } from '@/contexts/TenantContext';
 
 /**
@@ -115,13 +117,14 @@ export async function abgleicheMonatsrechnung(
   lieferant: string,
   lieferungen: ParsedCsvRechnung[],
   fensterTage = 0,
+  supplierVatId?: string,
 ): Promise<MonatsrechnungAbgleich> {
   const monate = new Set<string>();
   for (const l of lieferungen) for (const m of nachbarMonate(l.datum)) monate.add(m);
   const bestand: InvoiceEntry[] = [];
   for (const m of [...monate].sort()) bestand.push(...await loadMonthInvoices(tenantId, m));
-  const lief = kanonischerWarenLieferant(lieferant);
-  const kandidaten = bestand.filter(e => !istErsetzt(e) && kanonischerWarenLieferant(e.supplierName) === lief);
+  const ziel = { supplierName: lieferant, supplierVatId };
+  const kandidaten = bestand.filter(e => !istErsetzt(e) && gleicherWarenLieferant(e, ziel));
 
   const vergeben = new Set<string>();
   const eintraege: AbgleichEintrag[] = [];
