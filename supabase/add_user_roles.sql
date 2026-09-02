@@ -9,7 +9,8 @@
 CREATE TABLE IF NOT EXISTS public.user_profiles (
   id      UUID NOT NULL PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   role    TEXT NOT NULL DEFAULT 'admin'
-            CHECK (role IN ('admin', 'service_manager', 'kueche_manager')),
+            CHECK (role IN ('admin', 'service_manager', 'kueche_manager',
+                            'beaulieu_manager', 'beaulieu_viewer')),
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
