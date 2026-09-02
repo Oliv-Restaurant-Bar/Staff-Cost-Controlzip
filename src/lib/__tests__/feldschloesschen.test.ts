@@ -291,6 +291,7 @@ describe('parseFsSammelrechnung', () => {
     expect(kats.find(k => k.name === 'Bier')?.netto81).toBe(3923.92);
     expect(kats.find(k => k.name === 'Bier')?.mwst81).toBe(317.84);
     expect(kats.find(k => k.name === 'Zu-/Abschläge')?.nettoTotal).toBe(15);
+    expect(kats.find(k => k.name === 'Zu-/Abschläge')?.mwst81).toBe(1.22);
     // Endbetrag-/MwSt-/Total-Zeilen werden NICHT als Kategorien gesammelt
     expect(kats.some(k => /endbetrag|total|mwst/i.test(k.name))).toBe(false);
     // globale Kategorien bleiben unberührt (keine Pollution)

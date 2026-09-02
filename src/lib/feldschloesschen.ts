@@ -463,6 +463,8 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
   let pfandGeliefert = 0;               // Σ Pfand-Spalte der Positionszeilen
   let anhangModus: 'positionen' | 'leergutrueckgabe' | 'zuabschlaege' = 'positionen';
   let zsfModus = false;                 // «Zusammenfassung MwSt.» der aktuellen Einzel-Faktura
+  let aktiveKopfKategorie: FsKategorieSumme | null = null;
+  let aktiveFakturaKategorie: FsKategorieSumme | null = null;
 
   const pushLs = () => {
     if (aktLs) {
@@ -508,8 +510,21 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
         if (k.startsWith('endbetrag')) { sektion = 'kopf'; continue; }
       }
 
-      if (k.startsWith('zusammenfassungmwst')) { sektion = 'kategorien'; continue; }
+      if (k.startsWith('zusammenfassungmwst')) {
+        sektion = 'kategorien';
+        aktiveKopfKategorie = null;
+        continue;
+      }
       if (sektion === 'kategorien') {
+        if (k.startsWith('totalbrutto')) {
+          aktiveKopfKategorie = null;
+          sektion = 'kopf';
+          continue;
+        }
+        if (k.startsWith('endbetrag') || k.startsWith('total')) {
+          aktiveKopfKategorie = null;
+          continue;
+        }
         // «Bier | Nettowert | a | b | c | total», gefolgt von der gedruckten
         // «MwSt | a | b | c | total»-Zeile. Beide Zeilen gehören zusammen.
         const idxNetto = z.cells.findIndex(c => /^Nettowert$/i.test(c));
@@ -517,19 +532,20 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
           const name = z.cells.slice(0, idxNetto).join(' ').trim();
           const nums = z.cells.slice(idxNetto + 1).map(parseChf).filter((n): n is number => n !== null);
           if (nums.length >= 4 && name && !/^endbetrag$/i.test(name)) {
-            out.kategorien.push({ name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3] });
-          }
+            aktiveKopfKategorie = { name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3] };
+            out.kategorien.push(aktiveKopfKategorie);
+          } else aktiveKopfKategorie = null;
           continue;
         }
-        if (k.startsWith('mwst') && out.kategorien.length > 0) {
+        if (k.startsWith('mwst') && aktiveKopfKategorie) {
           const nums = z.cells.slice(1).map(parseChf).filter((n): n is number => n !== null);
           if (nums.length >= 3) {
-            const kat = out.kategorien.at(-1)!;
-            kat.mwst81 = nums[0]; kat.mwst26 = nums[1]; kat.mwst00 = nums[2];
+            aktiveKopfKategorie.mwst81 = nums[0];
+            aktiveKopfKategorie.mwst26 = nums[1];
+            aktiveKopfKategorie.mwst00 = nums[2];
           }
           continue;
         }
-        if (k.startsWith('totalbrutto')) { sektion = 'kopf'; continue; }
       }
 
       // Anhang beginnt mit der ersten Einzel-«Rechnung:»
@@ -546,32 +562,46 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
     if (k.includes('rechnung:') && !k.includes('sammelrechnung:')) {
       pushLs();
       zsfModus = false;
+      aktiveFakturaKategorie = null;
       aktFaktura = z.cells[z.cells.length - 1] ?? '';
       continue;
     }
     // «Zusammenfassung MwSt.» der Einzel-Faktura: Kategorien je Beleg-Nr sammeln
     // (massgeblich für die Kontierung — Werte wie auf der Rechnung ausgewiesen).
-    if (k.startsWith('zusammenfassungmwst')) { zsfModus = true; continue; }
+    if (k.startsWith('zusammenfassungmwst')) {
+      zsfModus = true;
+      aktiveFakturaKategorie = null;
+      continue;
+    }
     if (zsfModus) {
-      if (k.startsWith('totalbrutto')) { zsfModus = false; continue; }
+      if (k.startsWith('totalbrutto')) {
+        zsfModus = false;
+        aktiveFakturaKategorie = null;
+        continue;
+      }
       if (k.startsWith('endbetragchf')) {
         zsfModus = false; // echte «Endbetrag CHF»-Zeile den bestehenden Handlern überlassen
+        aktiveFakturaKategorie = null;
+      } else if (k.startsWith('endbetrag') || k.startsWith('total')) {
+        aktiveFakturaKategorie = null;
+        continue;
       } else {
         const idxNetto = z.cells.findIndex(c => /^Nettowert$/i.test(c));
         if (idxNetto > 0 && aktFaktura) {
           const name = z.cells.slice(0, idxNetto).join(' ').trim();
           const nums = z.cells.slice(idxNetto + 1).map(parseChf).filter((n): n is number => n !== null);
           if (nums.length >= 4 && name && !/^endbetrag$/i.test(name)) {
-            (out.fakturaKategorien[aktFaktura] ??= []).push({
+            aktiveFakturaKategorie = {
               name, netto81: nums[0], netto26: nums[1], netto00: nums[2], nettoTotal: nums[3],
-            });
-          }
-        } else if (k.startsWith('mwst') && aktFaktura) {
+            };
+            (out.fakturaKategorien[aktFaktura] ??= []).push(aktiveFakturaKategorie);
+          } else aktiveFakturaKategorie = null;
+        } else if (k.startsWith('mwst') && aktFaktura && aktiveFakturaKategorie) {
           const nums = z.cells.slice(1).map(parseChf).filter((n): n is number => n !== null);
-          const kats = out.fakturaKategorien[aktFaktura];
-          if (nums.length >= 3 && kats && kats.length > 0) {
-            const kat = kats.at(-1)!;
-            kat.mwst81 = nums[0]; kat.mwst26 = nums[1]; kat.mwst00 = nums[2];
+          if (nums.length >= 3) {
+            aktiveFakturaKategorie.mwst81 = nums[0];
+            aktiveFakturaKategorie.mwst26 = nums[1];
+            aktiveFakturaKategorie.mwst00 = nums[2];
           }
         }
         continue; // MwSt-/Total-/Kopfzeilen der Zusammenfassung überspringen
