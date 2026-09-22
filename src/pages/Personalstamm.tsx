@@ -1412,7 +1412,11 @@ const Personalstamm = () => {
 
         {/* ── Detailbereich (nur bei geöffnetem Detail — sonst volle Listenbreite) ── */}
         {detailOpen && (
-        <main className={cn(
+        <main
+          // Erzwingt Remount statt In-place-Patch bei Identitätswechsel — verhinderte einen
+          // "removeChild"-Absturz durch ein Radix-Select-Portal-Cleanup mitten im Wechsel.
+          key={`${selectedId ?? 'none'}|${editMode ? 'edit' : 'view'}`}
+          className={cn(
           'flex-1 overflow-y-auto bg-background',
           showMobile === 'list' ? 'hidden md:block' : 'block',
         )}>

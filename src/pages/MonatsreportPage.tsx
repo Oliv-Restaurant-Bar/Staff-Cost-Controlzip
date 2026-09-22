@@ -29,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel, applyRowOrder,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
@@ -999,6 +1000,16 @@ export default function MonatsreportPage() {
   const jahrDatenRef = useRef<JahresvergleichDaten | null>(null);
   const [pdfLaeuft, setPdfLaeuft] = useState(false);
 
+  // Cancelled guard for the multi-step PDF export flow (handlePdfExport /
+  // handleAuswahlExport): the handlers run with several awaits and, in
+  // part, poll off-screen state (warteAuf). If the user navigates away
+  // meanwhile (e.g. via the mobile "Mehr" nav), this page unmounts —
+  // without this guard, setPdfLaeuft/setExportVerlaufAktiv would still
+  // fire afterwards on the unmounted page. Same idea as the "alive" guard
+  // on the data-loading effects above, just as a reusable hook (event
+  // handler, not an effect) — see src/hooks/useMountedRef.ts.
+  const mountedRef = useMountedRef();
+
   // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
   //    Wochen (quer, Ist|Budget|Δ), optional Wochenverlauf als weitere Seite.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -1507,13 +1518,15 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       await naechsterFrame();
       await exportCockpitMixedPDF(parts, branding, fileName, heute);
     } catch (e) {
-      toast({
-        title: 'PDF-Export fehlgeschlagen',
-        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
-        variant: 'destructive',
-      });
+      if (mountedRef.current) {
+        toast({
+          title: 'PDF-Export fehlgeschlagen',
+          description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setPdfLaeuft(false);
+      if (mountedRef.current) setPdfLaeuft(false);
     }
   }, [activeTab, month, year, verlaufMeta, jahrMeta, heute, toast,
     tenantId, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil]);
@@ -1602,10 +1615,12 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         if (!verlaufDaten) {
           exportVerlaufMetaRef.current = null;
           exportVerlaufDatenRef.current = null;
-          setExportVerlaufAktiv(true);
+          if (mountedRef.current) setExportVerlaufAktiv(true);
           await naechsterFrame();
           await warteAuf(() =>
-            !!exportVerlaufDatenRef.current && !!exportVerlaufMetaRef.current);
+            !mountedRef.current ||
+            (!!exportVerlaufDatenRef.current && !!exportVerlaufMetaRef.current));
+          if (!mountedRef.current) return; // navigated away while waiting
           verlaufDaten = exportVerlaufDatenRef.current;
           meta = exportVerlaufMetaRef.current;
         }
@@ -1631,14 +1646,18 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         : `cockpit-report-${year}-${String(month).padStart(2, '0')}`;
       await exportCockpitMixedPDF(pages, branding, fileName, heute);
     } catch (e) {
-      toast({
-        title: 'PDF-Export fehlgeschlagen',
-        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
-        variant: 'destructive',
-      });
+      if (mountedRef.current) {
+        toast({
+          title: 'PDF-Export fehlgeschlagen',
+          description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setExportVerlaufAktiv(false);
-      setPdfLaeuft(false);
+      if (mountedRef.current) {
+        setExportVerlaufAktiv(false);
+        setPdfLaeuft(false);
+      }
     }
   }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
     heute, budgetModus, year, month, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil, verlaufMeta, toast]);

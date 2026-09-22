@@ -4,7 +4,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { MaisonProvider } from "@/contexts/MaisonContext";
@@ -188,6 +188,7 @@ const AppContent = () => {
   const { user, loading, roleResolved } = useAuth();
   const { canAccessSettings, canAccessModule, isBeaulieuManager, isAdmin } = usePermissions();
   const { tenantId } = useTenant();
+  const location = useLocation();
 
   // [AUTH] Debug-Logs für beaulieu_manager beim Mount
   useEffect(() => {
@@ -250,7 +251,7 @@ const AppContent = () => {
           {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
           <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto" key={tenantId}>
-          <ErrorBoundary label="Seite">
+          <ErrorBoundary label="Seite" resetKey={location.pathname}>
           <MwstRatesGate>
           <Routes>
             {/* Routen mit Rollenprüfung */}
