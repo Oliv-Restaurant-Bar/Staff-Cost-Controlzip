@@ -20,7 +20,7 @@ import {
   AccountMapping, AccountRange, PLSectionDef, PLCategoryDef,
   PLSection, PLCategory, AccountLookupResult,
 } from '@/types/account-mapping';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvSetConfirmed } from './supabase-kv';
 
 // ─── localStorage-Schlüssel ───────────────────────────────────────────────────
 
@@ -342,9 +342,15 @@ function loadCustomMappings(): Record<string, AccountMapping> {
 }
 
 function saveCustomMappings(data: Record<string, AccountMapping>): void {
+  // Kept optimistic-local: callers (CSVImport/PLView/AccountMapping) are
+  // synchronous UI actions that read back via loadCustomMappings() right
+  // after calling this, so localStorage is written immediately. The
+  // Supabase write is still fire-and-forget, but Issue #5 fixed the SILENT
+  // part of that: a failed write used to be swallowed with no visible
+  // signal at all (`kvSet(...).catch(() => {})`) — now it shows the same
+  // error toast/retry used elsewhere in the app.
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  // Supabase sync (fire-and-forget)
-  kvSet(STORAGE_KEY, data).catch(() => {});
+  void kvSetConfirmed(STORAGE_KEY, data, 'Kontenzuordnung').catch(() => { /* toast already shown */ });
 }
 
 /**
@@ -364,7 +370,7 @@ export async function loadCustomMappingsFromDB(): Promise<boolean> {
     const local = loadCustomMappings();
     if (Object.keys(local).length > 0) {
       console.log(`[Konten] Supabase leer – sync localStorage→Supabase: ${Object.keys(local).length} Mappings`);
-      kvSet(STORAGE_KEY, local).catch(() => {});
+      kvSetConfirmed(STORAGE_KEY, local, 'Kontenzuordnung').catch(() => { /* toast already shown */ });
     } else {
       console.log('[Konten] Keine Custom-Mappings in Supabase oder localStorage');
     }

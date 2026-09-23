@@ -16,7 +16,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 const RECIPE_KEY = 'produkte_rezeptur_v1';
 
@@ -223,9 +223,11 @@ export async function loadRezepturenFromDB(): Promise<RezepturenMap> {
 }
 
 export async function saveRezepturenToDB(map: RezepturenMap): Promise<void> {
-  localSave(map);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  // Kept non-throwing — existing callers (Produkte.tsx, BasiskomponentenManager)
+  // call this fire-and-forget without awaiting/catching.
   try {
-    await kvSet(RECIPE_KEY, map);
+    await kvSetConfirmed(RECIPE_KEY, map, 'Rezepturen');
   } catch (err) {
     console.error('[Rezeptur] saveRezepturenToDB Fehler:', err);
   }

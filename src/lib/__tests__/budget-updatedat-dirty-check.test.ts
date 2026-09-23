@@ -128,7 +128,7 @@ function loadStable(y: number, key: string = KEY): BudgetYear {
 }
 
 /** Ändert den Monatswert der Testposition und speichert über savePLLineItem. */
-function saveMarker(y: number, budget: BudgetYear, monthIdx: number, value: number, key: string = KEY): BudgetYear {
+function saveMarker(y: number, budget: BudgetYear, monthIdx: number, value: number, key: string = KEY): Promise<BudgetYear> {
   const item = budget.plLineItems!.find(i => i.id === 'pli_test')!;
   const vals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
   vals[monthIdx] = value;
@@ -172,7 +172,7 @@ describe('Runde 2.3: updatedAt nur bei echter Datenänderung', () => {
     const budget = loadStable(2027);
     const snapshot = localStorageStore[KEY];
 
-    const saved = saveBudgetYear(budget, KEY);
+    const saved = await saveBudgetYear(budget, KEY);
     await flushBudgetKVBackups();
 
     // Kein Bump, kein Write — der zurückgegebene Stand trägt den alten Zeitstempel
@@ -188,7 +188,7 @@ describe('Runde 2.3: updatedAt nur bei echter Datenänderung', () => {
     const snapshot = localStorageStore[KEY];
 
     const item = budget.plLineItems!.find(i => i.id === 'pli_test')!;
-    const saved = savePLLineItem(2027, { ...item }, KEY);
+    const saved = await savePLLineItem(2027, { ...item }, KEY);
     await flushBudgetKVBackups();
 
     expect(saved.updatedAt).toBe(OLD);
@@ -200,7 +200,7 @@ describe('Runde 2.3: updatedAt nur bei echter Datenänderung', () => {
     localStorageStore[KEY] = JSON.stringify({ 2027: realYear(2027, OLD, 111) });
     const budget = loadStable(2027);
 
-    const saved = saveMarker(2027, budget, 1, 999);
+    const saved = await saveMarker(2027, budget, 1, 999);
     await flushBudgetKVBackups();
 
     const stored = localAll()['2027'];

@@ -275,6 +275,30 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
 }
 
 /**
+ * Database-first replacement for the widespread
+ * `localStorage.setItem(key, ...); kvSet(key, ...).catch(...)` pattern
+ * (Issue #5: local writes counted as "done" before the database confirmed
+ * them). Writes to Supabase FIRST (awaited, throws on failure) and only
+ * caches locally afterward — if the call is interrupted before that (tab
+ * closed, connection lost), localStorage is left untouched instead of
+ * showing a value the database never confirmed.
+ */
+export async function kvSetConfirmed(key: string, value: unknown, label = 'Daten'): Promise<void> {
+  try {
+    await kvSetStrict(key, value);
+  } catch (err) {
+    await notifyKVBackupProblem(err, label, {
+      toastId: `kv-confirmed-${key}`,
+      retry: () => kvSetConfirmed(key, value, label),
+    });
+    throw err;
+  }
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* ignore */ }
+}
+
+/**
  * Sicherer Tages-Upsert für dailyBudgets.
  * =========================================
  * PROBLEM: Alle naiven Schreibpfade lesen aus localStorage, ergänzen Tage,
@@ -357,18 +381,26 @@ export async function safeUpsertDailyBudgets(
     base[date] = patched;
   }
 
-  // 5. Zurückschreiben: localStorage sofort (schnell), dann KV (persistent)
+  // 5. Write-back. Two distinct failure cases here, handled differently:
+  //    - Remote READ failed (no safe merge basis): the KV write is skipped
+  //      entirely (never write a blob without a remote basis), but the
+  //      user's own edit is still cached to localStorage below — this was
+  //      never actually attempted against the database, so there's nothing
+  //      to roll back to; it's the user's current input, not a rejected save.
+  //    - Remote WRITE failed (attempted, database rejected/unreachable —
+  //      Issue #5): localStorage is left untouched, keeping the last
+  //      CONFIRMED state, instead of caching a value the database never
+  //      actually accepted. See the catch block below.
   const merged = base;
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(merged));
-    // Alle abonnierten Views (PLView, Dashboard etc.) sofort benachrichtigen
-    window.dispatchEvent(new Event('store-synced'));
-  } catch { /* ignore */ }
 
   if (remoteReadError !== null) {
     // Remote-Basis fehlt → KV-Write überspringen (nie Blob ohne Remote-Basis
     // ersetzen). Retry führt den kompletten sicheren Upsert erneut aus.
     console.error(`[SAFE-UPSERT] KV-Lesefehler für ${storageKey} — KV-Write übersprungen:`, remoteReadError);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(merged));
+      window.dispatchEvent(new Event('store-synced'));
+    } catch { /* ignore */ }
     await notifyKVBackupProblem(remoteReadError, 'Umsatz', {
       toastId: 'kv-write-failed',
       retry: async () => { await safeUpsertDailyBudgets(storageKey, updates, onlyIfZero); },
@@ -378,11 +410,16 @@ export async function safeUpsertDailyBudgets(
 
   try {
     await kvSetStrict(storageKey, merged);
+    // Cache locally only after the KV write is confirmed.
+    localStorage.setItem(storageKey, JSON.stringify(merged));
+    window.dispatchEvent(new Event('store-synced'));
     console.log(
       `[SAFE-UPSERT] ${storageKey}: ${Object.keys(updates).length} Tage aktualisiert` +
       ` (total: ${Object.keys(merged).length}, onlyIfZero=${onlyIfZero}) ✓ KV gespeichert`,
     );
   } catch (kvError) {
+    // localStorage intentionally left untouched — keep the last confirmed
+    // state instead of caching a value the database never confirmed.
     console.error(`[SAFE-UPSERT] KV-Schreibfehler für ${storageKey}:`, kvError);
     await notifyKVBackupProblem(kvError, 'Umsatz', {
       toastId: 'kv-write-failed',

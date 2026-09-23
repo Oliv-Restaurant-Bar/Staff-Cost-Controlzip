@@ -30,6 +30,7 @@ vi.mock('../supabase-kv', () => ({
   kvGet:       vi.fn(async (k: string) => kv[k] ?? null),
   kvGetStrict: vi.fn(async (k: string) => kv[k] ?? null),
   kvSet:       vi.fn(async (k: string, v: unknown) => { kv[k] = v; }),
+  kvSetConfirmed: vi.fn(async (k: string, v: unknown) => { kv[k] = v; }),
   safeUpsertDailyBudgets: vi.fn(async (
     k: string,
     updates: Record<string, Record<string, unknown>>,

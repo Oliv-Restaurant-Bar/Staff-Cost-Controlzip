@@ -11,7 +11,7 @@
  */
 
 import type { TenantId } from '@/contexts/TenantContext';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, notifyKVBackupProblem } from './supabase-kv';
 import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 
 export const ZIEL_WARENQUOTE_KEY = 'ziel_warenquote_v1';
@@ -77,6 +77,17 @@ export async function saveZielWarenquote(tenantId: TenantId, pct: number): Promi
   try {
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ZIEL_WARENQUOTE_UPDATED_EVENT));
   } catch { /* Event darf Save nie brechen */ }
-  try { await kvSet(tenantKey(tenantId, ZIEL_WARENQUOTE_KEY), blob); } catch { /* localStorage bleibt primär */ }
+  // Issue #5: plain `kvSet` never throws (swallows errors internally), so
+  // this used to be a fully silent failure. Switched to `kvSetStrict` so it
+  // surfaces via the same toast+retry used elsewhere in the app.
+  try {
+    const { kvSetStrict } = await import('./supabase-kv');
+    await kvSetStrict(tenantKey(tenantId, ZIEL_WARENQUOTE_KEY), blob);
+  } catch (err) {
+    void notifyKVBackupProblem(err, 'Ziel-Warenquote', {
+      toastId: 'ziel-warenquote-backup',
+      retry: () => saveZielWarenquote(tenantId, pct).then(() => undefined),
+    });
+  }
   return blob;
 }

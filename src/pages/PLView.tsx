@@ -61,7 +61,7 @@ import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMont
 import { gruppiereWarenaufwandKonten, WARENAUFWAND_GRUPPE_LABEL, type WarenaufwandGruppe } from '@/lib/warenaufwand-gruppierung';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
-import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
+import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, savePLLineItems, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
 import { BudgetYear, BudgetPLCategory, BudgetPLLineItem, BUDGET_MONTH_NAMES_FULL } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
@@ -2059,7 +2059,7 @@ const AccountActionDialog = ({
     setManualIstInput(currentManualIst !== 0 ? String(currentManualIst) : '');
   }, [currentManualIst]);
 
-  const handleSaveManualIst = () => {
+  const handleSaveManualIst = async () => {
     if (!budgetItem) return;
     const val = parseFloat(manualIstInput.replace(',', '.'));
     if (isNaN(val)) return;
@@ -2067,7 +2067,10 @@ const AccountActionDialog = ({
     try {
       const newManualIst = [...(budgetItem.manualIstValues ?? Array(12).fill(0))];
       newManualIst[mIdx] = val;
-      savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
+      // Issue #5 follow-up: await before onRefresh(), which re-reads the
+      // budget from localStorage (via refreshKey → loadBudgetWithPL) — a
+      // fire-and-forget save would race the now-database-confirmed write.
+      await savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
       toast.success(`Manueller Ist-Wert für ${MONTH_NAMES_DE[mIdx]} gespeichert`);
       onRefresh();
       onClose();
@@ -2076,11 +2079,11 @@ const AccountActionDialog = ({
     }
   };
 
-  const handleClearManualIst = () => {
+  const handleClearManualIst = async () => {
     if (!budgetItem) return;
     const newManualIst = [...(budgetItem.manualIstValues ?? Array(12).fill(0))];
     newManualIst[mIdx] = 0;
-    savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
+    await savePLLineItem(year, { ...budgetItem, manualIstValues: newManualIst }, tenantKey(BUDGET_STORAGE_KEY));
     toast.success(`Manueller Ist-Wert für ${MONTH_NAMES_DE[mIdx]} gelöscht`);
     onRefresh();
     onClose();
@@ -2113,9 +2116,10 @@ const AccountActionDialog = ({
     onClose();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (isBudgetItem && row.itemId) {
-      deletePLLineItem(year, row.itemId, tenantKey(BUDGET_STORAGE_KEY));
+      // Issue #5 follow-up: await before onRefresh() re-reads from localStorage.
+      await deletePLLineItem(year, row.itemId, tenantKey(BUDGET_STORAGE_KEY));
     }
     onRefresh();
     onClose();
@@ -2362,7 +2366,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     setConflict(null);
   }
 
-  function handleSave() {
+  async function handleSave() {
     const num = accountNumber.trim();
     const lbl = label.trim();
     if (!num)                 { setError('Kontonummer ist erforderlich.'); return; }
@@ -2388,7 +2392,7 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     try {
       const storeKey = tenantKey(BUDGET_STORAGE_KEY);
       const zeroMonths: BudgetPLLineItem['monthlyValues'] = [0,0,0,0,0,0,0,0,0,0,0,0];
-      addCustomPLLineItem(year, {
+      await addCustomPLLineItem(year, {
         categoryId,
         accountNumber: num,
         label: lbl,
@@ -2411,14 +2415,14 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     }
   }
 
-  function handleShowExisting() {
+  async function handleShowExisting() {
     if (!conflict) return;
     const lbl = label.trim() || conflict.item.label;
     const cat = categoryId || conflict.item.categoryId;
     setIsSaving(true);
     try {
       const storeKey = tenantKey(BUDGET_STORAGE_KEY);
-      savePLLineItem(year, {
+      await savePLLineItem(year, {
         ...conflict.item,
         label: lbl,
         categoryId: cat,
@@ -2438,14 +2442,14 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
     }
   }
 
-  function handleUpdateExisting() {
+  async function handleUpdateExisting() {
     if (!conflict) return;
     const lbl = label.trim() || conflict.item.label;
     const cat = categoryId || conflict.item.categoryId;
     setIsSaving(true);
     try {
       const storeKey = tenantKey(BUDGET_STORAGE_KEY);
-      savePLLineItem(year, {
+      await savePLLineItem(year, {
         ...conflict.item,
         label: lbl,
         categoryId: cat,
@@ -3175,18 +3179,23 @@ const PLViewPage = () => {
     return bplTopDownMode === 'pct' ? val / 100 * bplBudgetRevenue : val;
   };
 
-  const restoreBplSnapshot = (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
+  const restoreBplSnapshot = async (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
     const freshItems = loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
-    for (const s of snapshot) {
-      const item = freshItems.find(i => i.id === s.itemId);
-      if (!item) continue;
-      savePLLineItem(year, { ...item, monthlyValues: s.monthlyValues }, tenantKey(BUDGET_STORAGE_KEY));
-    }
+    // Issue #5 follow-up: one batched read-modify-write instead of chained
+    // per-item saves (see savePLLineItems doc in budget-store.ts). Awaited
+    // before setRefreshKey, which re-reads via loadBudgetWithPL(localStorage).
+    const restored = snapshot
+      .map(s => {
+        const item = freshItems.find(i => i.id === s.itemId);
+        return item ? { ...item, monthlyValues: s.monthlyValues } : null;
+      })
+      .filter((i): i is BudgetPLLineItem => i !== null);
+    await savePLLineItems(year, restored, tenantKey(BUDGET_STORAGE_KEY));
     setRefreshKey(k => k + 1);
     toast.success('Änderung rückgängig gemacht');
   };
 
-  const applyBplTopDownMonth = () => {
+  const applyBplTopDownMonth = async () => {
     if (!bplTopDownDialog) return;
     const { catId, catLabel, monthIdx } = bplTopDownDialog;
     const targetCHF = calcBplTopDownTargetCHF();
@@ -3210,11 +3219,14 @@ const PLViewPage = () => {
 
     const factor = targetCHF / currentMonthTotal;
     const storeKey = tenantKey(BUDGET_STORAGE_KEY);
-    for (const item of affectedItems) {
+    // Issue #5 follow-up: one batched read-modify-write instead of chained
+    // per-item saves (see savePLLineItems doc in budget-store.ts).
+    const scaled = affectedItems.map(item => {
       const newVals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
       newVals[monthIdx] = Math.round((newVals[monthIdx] ?? 0) * factor);
-      savePLLineItem(year, { ...item, monthlyValues: newVals }, storeKey);
-    }
+      return { ...item, monthlyValues: newVals };
+    });
+    await savePLLineItems(year, scaled, storeKey);
     setRefreshKey(k => k + 1);
     setBplTopDownDialog(null);
     setBplTopDownInput('');
@@ -4186,8 +4198,8 @@ const PLViewPage = () => {
                   }
                 }}
                 compact={compact}
-                onDeleteItem={period === 'month' ? itemId => {
-                  deletePLLineItem(year, itemId, tenantKey(BUDGET_STORAGE_KEY));
+                onDeleteItem={period === 'month' ? async itemId => {
+                  await deletePLLineItem(year, itemId, tenantKey(BUDGET_STORAGE_KEY));
                   setRefreshKey(k => k + 1);
                 } : undefined}
                 month={month}
@@ -4211,14 +4223,14 @@ const PLViewPage = () => {
                   setBplTopDownMode('chf');
                 } : undefined}
                 isMobile={isMobile}
-                onToggleVisibility={itemId => {
+                onToggleVisibility={async itemId => {
                   // Dauerhafte Sichtbarkeit pro Konto (isForceVisible) — im Budget
                   // des Mandanten gespeichert, bleibt nach Neuladen erhalten.
                   const freshItems = loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
                   const item = freshItems.find(i => i.id === itemId);
                   if (!item) return;
                   const next = !item.isForceVisible;
-                  savePLLineItem(year, { ...item, isForceVisible: next }, tenantKey(BUDGET_STORAGE_KEY));
+                  await savePLLineItem(year, { ...item, isForceVisible: next }, tenantKey(BUDGET_STORAGE_KEY));
                   setRefreshKey(k => k + 1);
                   toast.success(next
                     ? `${item.label}: dauerhaft eingeblendet (auch wenn leer)`

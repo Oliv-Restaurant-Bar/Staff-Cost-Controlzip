@@ -12,7 +12,7 @@
  */
 
 import type { TenantId } from '@/contexts/TenantContext';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, notifyKVBackupProblem } from './supabase-kv';
 import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 import {
   SOCIAL_COST_RATES_KEY,
@@ -95,10 +95,18 @@ export async function saveSocialCostRates(tenantId: TenantId, rates: SocialCostR
   } catch {
     // Event-Dispatch darf das Speichern nie brechen.
   }
+  // Issue #5: plain `kvSet` never throws (swallows errors internally), so
+  // the previous try/catch around it never actually ran — a failed backup
+  // was completely invisible. Switched to `kvSetStrict` so failures surface
+  // via the same toast+retry used elsewhere in the app.
   try {
-    await kvSet(tenantKey(tenantId, SOCIAL_COST_RATES_KEY), blob);
-  } catch {
-    // Backup fehlgeschlagen — localStorage bleibt primärer Speicher.
+    const { kvSetStrict } = await import('./supabase-kv');
+    await kvSetStrict(tenantKey(tenantId, SOCIAL_COST_RATES_KEY), blob);
+  } catch (err) {
+    void notifyKVBackupProblem(err, 'Sozialabgaben-Sätze', {
+      toastId: 'social-cost-rates-backup',
+      retry: () => saveSocialCostRates(tenantId, rates).then(() => undefined),
+    });
   }
   return blob;
 }

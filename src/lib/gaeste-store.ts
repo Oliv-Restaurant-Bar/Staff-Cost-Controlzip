@@ -10,7 +10,7 @@
  * Schreiben ist ein Merge — bestehende andere Monate bleiben erhalten.
  */
 
-import { kvGet, kvGetStrict, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvGetStrict, kvSetConfirmed } from '@/lib/supabase-kv';
 
 type KeyFn = (k: string) => string;
 
@@ -46,8 +46,8 @@ async function saveMerged(key: string, incoming: Record<string, number>): Promis
     ? (remote as Record<string, number>)
     : {};
   const merged = { ...base, ...incoming };
-  localStorage.setItem(key, JSON.stringify(merged));
-  await kvSet(key, merged);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(key, merged, 'Gäste');
 }
 
 // ── Gäste ────────────────────────────────────────────────────────────────────
@@ -78,8 +78,8 @@ export async function saveGaesteDailyReplaceMonths(
     Object.entries(base).filter(([iso]) => !monthSet.has(iso.slice(0, 7))),
   );
   const merged = { ...kept, ...incoming };
-  localStorage.setItem(key, JSON.stringify(merged));
-  await kvSet(key, merged);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(key, merged, 'Gäste');
 }
 
 /** Diff-Vorschau «X neu · Y aktualisiert · Z unverändert (· W entfernt)». */

@@ -9,7 +9,7 @@
  * Persistence: localStorage (sofort) + Supabase app_settings (dauerhaft).
  */
 
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvGetStrict, kvSetConfirmed } from '@/lib/supabase-kv';
 
 // ── Schlüssel ─────────────────────────────────────────────────────────────────
 
@@ -39,8 +39,8 @@ export async function loadMaisonEnabled(tk: (k: string) => string): Promise<bool
 // ── Enabled: Schreiben ────────────────────────────────────────────────────────
 
 export async function saveMaisonEnabled(tk: (k: string) => string, enabled: boolean): Promise<void> {
-  localStorage.setItem(enabledKey(tk), String(enabled));
-  await kvSet(enabledKey(tk), enabled);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(enabledKey(tk), enabled, 'Maison');
 }
 
 // ── Monthly: Lesen ────────────────────────────────────────────────────────────
@@ -95,8 +95,8 @@ export async function saveMaisonDaily(
 ): Promise<void> {
   const current = getMaisonDailySync(tk);
   const merged  = { ...current, ...incoming };
-  localStorage.setItem(dailyKey(tk), JSON.stringify(merged));
-  await kvSet(dailyKey(tk), merged);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(dailyKey(tk), merged, 'Maison');
 }
 
 /**
@@ -113,14 +113,21 @@ export async function saveMaisonDailyMergeStrict(
   tk: (k: string) => string,
   incoming: Record<string, number>,
 ): Promise<void> {
-  const remote = await kvGet(dailyKey(tk)); // wirft bei KV-Fehler → kein Write
+  // Bugfix while touching this for Issue #5: the doc comment above already
+  // promised "Lesefehler ≠ leer / schlägt das Lesen fehl, wird NICHT
+  // geschrieben", but the code used `kvGet` (swallows errors, returns null)
+  // instead of `kvGetStrict` (throws) — a failed read silently looked like
+  // "remote is empty" and would have replaced the whole blob with just the
+  // incoming days, wiping every other day. Fixed to actually throw on a
+  // failed read, matching the comment's intent.
+  const remote = await kvGetStrict(dailyKey(tk));
   const base: Record<string, number> =
     remote && typeof remote === 'object' && !Array.isArray(remote)
       ? { ...(remote as Record<string, number>) }
       : {};
   const next = { ...base, ...incoming };
-  localStorage.setItem(dailyKey(tk), JSON.stringify(next));
-  await kvSet(dailyKey(tk), next);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(dailyKey(tk), next, 'Maison');
 }
 
 // ── Monthly: Schreiben ────────────────────────────────────────────────────────
@@ -134,6 +141,6 @@ export async function saveMaisonMonth(
   const updated = amount > 0
     ? { ...current, [yearMonth]: amount }
     : Object.fromEntries(Object.entries(current).filter(([k]) => k !== yearMonth));
-  localStorage.setItem(monthlyKey(tk), JSON.stringify(updated));
-  await kvSet(monthlyKey(tk), updated);
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  await kvSetConfirmed(monthlyKey(tk), updated, 'Maison');
 }

@@ -121,26 +121,36 @@ let kvBackupQueue: Promise<void> = Promise.resolve();
  *    nur einseitig vorhandene Jahre bleiben erhalten.
  *  - Backup-Probleme sind sichtbar: offline/nicht konfiguriert → dezenter
  *    Hinweis, echter Fehler → Fehler-Toast mit Retry (Befund 2).
+ *
+ * Rückgabe (Issue #5 follow-up — siehe `queueBudgetsBackup`):
+ *  - 'confirmed': Supabase hat geschrieben — der lokale Cache darf den neuen
+ *    Stand übernehmen.
+ *  - 'unavailable': Supabase ist offline/nicht konfiguriert (Fall A) — es
+ *    gibt keine Datenbank, die etwas anderes «bestätigt» hätte, also bleibt
+ *    das Gerät die einzig verfügbare Kopie. Der lokale Cache wird trotzdem
+ *    aktualisiert (analog zur bereits bestehenden Ausnahme in
+ *    `safeUpsertDailyBudgets`/supabase-kv.ts für genau denselben Fall).
+ *  - 'failed': Supabase ist erreichbar, aber der Write wurde abgelehnt/schlug
+ *    fachlich fehl (Fall B) — DAS ist der Fall, den Issue #5 verhindern soll:
+ *    der lokale Cache bleibt unverändert, statt einen von der Datenbank nie
+ *    bestätigten Stand zu zeigen.
  */
 async function backupBudgetsToKV(
   data: Record<number, StoredBudgetYear>,
   storeKey: string,
   action: BudgetSaveAction,
-): Promise<void> {
+): Promise<'confirmed' | 'unavailable' | 'failed'> {
   let notifyProblem: ((e: unknown) => Promise<void>) | null = null;
   try {
     const { kvGetStrict, kvSetStrict, notifyKVBackupProblem } = await import('./supabase-kv');
     notifyProblem = (e: unknown) =>
       notifyKVBackupProblem(e, 'Budget', {
         toastId: 'budget-kv-write-failed',
-        retry: () => {
-          // Beim Retry FRISCH aus localStorage lesen — der alte Snapshot könnte
-          // einen inzwischen erfolgreichen neueren Save rückgängig machen.
-          kvBackupQueue = kvBackupQueue.then(() =>
-            backupBudgetsToKV(loadAll(storeKey), storeKey, action),
-          );
-          return kvBackupQueue;
-        },
+        // Beim Retry FRISCH aus localStorage lesen — der alte Snapshot könnte
+        // einen inzwischen erfolgreichen neueren Save rückgängig machen. Geht
+        // über `queueBudgetsBackup` (nicht direkt `backupBudgetsToKV`), damit
+        // ein erfolgreicher Retry auch wieder den lokalen Cache aktualisiert.
+        retry: () => queueBudgetsBackup(loadAll(storeKey), storeKey, action).then(() => undefined),
       });
     // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
     // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
@@ -168,26 +178,61 @@ async function backupBudgetsToKV(
     }
 
     await kvSetStrict(storeKey, merged);
+    return 'confirmed';
   } catch (err) {
     console.error(`[BUDGET] KV-Backup fehlgeschlagen für ${storeKey}:`, err);
     if (notifyProblem) {
       await notifyProblem(err);
     }
+    const { isKvUnavailable } = await import('./supabase-kv');
+    return isKvUnavailable(err) ? 'unavailable' : 'failed';
   }
 }
 
-function saveAll(
+/**
+ * Database-first (Issue #5 follow-up): the write to Supabase is awaited
+ * BEFORE `localStorage` is updated, and both happen inside the SAME queued
+ * step (not two independent `.then()`s off the same promise) — otherwise
+ * `kvBackupQueue` could resolve one microtask before the local write runs,
+ * a real race for any caller (or test) that awaits the queue and then reads
+ * `localStorage` immediately. Used by both the normal save path (`saveAll`)
+ * and the backup-failure retry (`backupBudgetsToKV`'s `notifyProblem`
+ * above), so a successful retry also updates the local cache — not just the
+ * initial attempt. `backupBudgetsToKV` never throws (catches internally,
+ * shows a toast+retry), so the queue itself never breaks on a failure.
+ */
+function queueBudgetsBackup(
   data: Record<number, StoredBudgetYear>,
   storeKey: string,
   action: BudgetSaveAction,
-): void {
-  localStorage.setItem(storeKey, JSON.stringify(data));
+): Promise<void> {
   // Snapshot der Daten für die asynchrone Queue (data kann danach mutiert werden)
   const snapshot = JSON.parse(JSON.stringify(data)) as Record<number, StoredBudgetYear>;
-  kvBackupQueue = kvBackupQueue.then(() => backupBudgetsToKV(snapshot, storeKey, action));
+  const run = kvBackupQueue.then(async () => {
+    const outcome = await backupBudgetsToKV(snapshot, storeKey, action);
+    // Cache locally on 'confirmed' (database agrees) AND on 'unavailable'
+    // (no database reachable to disagree with — the device is the only copy,
+    // same exception already used for the read-failure case in
+    // safeUpsertDailyBudgets). Only 'failed' (reachable but rejected) skips
+    // the local write — that's the actual "device trusted over database"
+    // case Issue #5 targets.
+    if (outcome !== 'failed') {
+      localStorage.setItem(storeKey, JSON.stringify(data));
+    }
+  });
+  kvBackupQueue = run.then(() => undefined);
+  return run;
 }
 
-/** Für Tests: wartet, bis alle ausstehenden KV-Backups abgeschlossen sind. */
+async function saveAll(
+  data: Record<number, StoredBudgetYear>,
+  storeKey: string,
+  action: BudgetSaveAction,
+): Promise<void> {
+  await queueBudgetsBackup(data, storeKey, action);
+}
+
+/** Für Tests: wartet, bis alle ausstehenden KV-Backups (inkl. lokalem Write) abgeschlossen sind. */
 export function flushBudgetKVBackups(): Promise<void> {
   return kvBackupQueue;
 }
@@ -239,7 +284,7 @@ export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): Bu
  * Explizite Benutzeraktion — läuft über den normalen Save-Pfad (updatedAt wird
  * gesetzt, ein allfälliger Tombstone bewusst ersetzt, KV-Backup läuft).
  */
-export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYear {
+export async function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const seeded = storeKey === 'beaulieu:budget_v1'
     ? createSeededBeaulieuBudget2026()
     : createSeededBudget2026();
@@ -261,7 +306,7 @@ export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYea
  * @returns den tatsächlich persistierten Datensatz — bei unverändertem
  *          Inhalt der bestehende Record (alter updatedAt bleibt gültig).
  */
-export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const all = loadAll(storeKey);
   const rec: StoredBudgetYear = { ...data };
   // Explizites Speichern ersetzt einen allfälligen Tombstone (Jahr-Neuanlage)
@@ -278,7 +323,7 @@ export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY)
 
   rec.updatedAt = new Date().toISOString();
   all[data.year] = rec;
-  saveAll(all, storeKey, { year: data.year });
+  await saveAll(all, storeKey, { year: data.year });
   return rec;
 }
 
@@ -297,7 +342,7 @@ export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
 /**
  * Budgetjahr löschen.
  */
-export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
+export async function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): Promise<void> {
   const all = loadAll(storeKey);
   // Wiederholtes Löschen eines bereits getilgten Jahres ist keine fachliche
   // Änderung: der bestehende Tombstone (samt updatedAt) bleibt unangetastet,
@@ -316,7 +361,7 @@ export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): 
     updatedAt: now,
     deleted: true,
   };
-  saveAll(all, storeKey, { year, deleted: true });
+  await saveAll(all, storeKey, { year, deleted: true });
 }
 
 // ─── Jahr-Kopie ───────────────────────────────────────────────────────────────
@@ -339,12 +384,12 @@ export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): 
  * @param toYear    Ziel-Jahr  (z.B. 2027)
  * @param applyRules  Sollen die kopierten Regeln auf das neue Jahr angewendet werden?
  */
-export function copyBudgetYear(
+export async function copyBudgetYear(
   fromYear: number,
   toYear: number,
   applyRules: boolean = true,
   storeKey: string = STORAGE_KEY,
-): BudgetYear {
+): Promise<BudgetYear> {
   const source = loadBudgetYear(fromYear, storeKey);
   const now    = new Date().toISOString();
 
@@ -532,11 +577,11 @@ export function resolveBudgetYear(budget: BudgetYear): BudgetYearResolved {
 /**
  * Aktualisiert eine einzelne Position im Budgetjahr und speichert.
  */
-export function updateBudgetPosition(
+export async function updateBudgetPosition(
   year: number,
   updatedPosition: BudgetPosition,
   storeKey: string = STORAGE_KEY,
-): BudgetYear {
+): Promise<BudgetYear> {
   const budget = loadBudgetYear(year, storeKey);
   const positions = budget.positions.map(p =>
     p.id === updatedPosition.id ? updatedPosition : p,
@@ -549,7 +594,7 @@ export function updateBudgetPosition(
 /**
  * Fügt eine neue Regel zum Budgetjahr hinzu und speichert.
  */
-export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'createdAt'>, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'createdAt'>, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetYear(year, storeKey);
   const newRule: BudgetRule = {
     ...rule,
@@ -562,7 +607,7 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
 /**
  * Entfernt eine Regel aus dem Budgetjahr und speichert.
  */
-export function removeBudgetRule(year: number, ruleId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function removeBudgetRule(year: number, ruleId: string, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetYear(year, storeKey);
   return saveBudgetYear({ ...budget, rules: budget.rules.filter(r => r.id !== ruleId) }, storeKey);
 }
@@ -883,7 +928,7 @@ export async function syncBudgetFromSupabase(year: number, storeKey: string = ST
  * expliziten "Standardkonten sicherstellen"-Button im Budget).
  * Gibt die Anzahl der hinzugefügten Positionen zurück.
  */
-export function restoreMissingDefaultPLItems(year: number, storeKey: string = STORAGE_KEY): { budget: BudgetYear; added: number } {
+export async function restoreMissingDefaultPLItems(year: number, storeKey: string = STORAGE_KEY): Promise<{ budget: BudgetYear; added: number }> {
   const budget = loadBudgetWithPL(year, storeKey);
   const items = budget.plLineItems ?? [];
   const existingIds = new Set(items.map(i => i.id));
@@ -893,7 +938,7 @@ export function restoreMissingDefaultPLItems(year: number, storeKey: string = ST
     ...budget,
     plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
   };
-  return { budget: saveBudgetYear(updated, storeKey), added: missing.length };
+  return { budget: await saveBudgetYear(updated, storeKey), added: missing.length };
 }
 
 /**
@@ -901,7 +946,7 @@ export function restoreMissingDefaultPLItems(year: number, storeKey: string = ST
  * und DEFAULT_PL_LINE_ITEMS. Alle bestehenden Budgetwerte der P&L-Positionen
  * gehen verloren; Budgetpositionen, Regeln und Jahr bleiben erhalten.
  */
-export function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetYear(year, storeKey);
   const reset: BudgetYear = {
     ...budget,
@@ -914,7 +959,7 @@ export function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY):
 /**
  * Löscht eine P&L-Zeile (auch Standard-Positionen).
  */
-export function deletePLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function deletePLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetWithPL(year, storeKey);
   const updated = syncPLToLegacyPositions({
     ...budget,
@@ -993,7 +1038,7 @@ export function computePLResultTotals(
 /**
  * Speichert eine einzelne P&L-Zeile (update oder insert).
  */
-export function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetWithPL(year, storeKey);
   const exists = budget.plLineItems!.some(i => i.id === item.id);
   const lineItems = exists
@@ -1005,13 +1050,43 @@ export function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: s
 }
 
 /**
+ * Speichert MEHRERE P&L-Zeilen (update oder insert) in EINEM read-modify-write.
+ *
+ * Bugfix: bulk operations that update several line items in one user action
+ * (top-down allocation across accounts, undo/restore of a top-down snapshot)
+ * used to call `savePLLineItem` once per item in a loop. Each call re-reads
+ * the current budget synchronously via `loadAll`/localStorage, so the loop
+ * "worked" only because `saveAll` was fully synchronous — the next
+ * iteration's read happened after the previous iteration's write. That
+ * synchronicity is not a real guarantee to build on (and blocks ever making
+ * the write path database-first — see Issue #5). Batching into one
+ * read-modify-write removes the dependency on chained synchronous re-reads
+ * and produces exactly one save/backup for the whole user action instead of
+ * N separate ones.
+ */
+export async function savePLLineItems(
+  year: number,
+  items: BudgetPLLineItem[],
+  storeKey: string = STORAGE_KEY,
+): Promise<BudgetYear> {
+  const budget = loadBudgetWithPL(year, storeKey);
+  const byId = new Map(items.map(i => [i.id, i]));
+  const lineItems = budget.plLineItems!.map(i => byId.get(i.id) ?? i);
+  for (const item of items) {
+    if (!lineItems.some(i => i.id === item.id)) lineItems.push(item);
+  }
+  const updated = syncPLToLegacyPositions({ ...budget, plLineItems: lineItems });
+  return saveBudgetYear(updated, storeKey);
+}
+
+/**
  * Fügt eine neue benutzerdefinierte P&L-Zeile hinzu.
  */
-export function addCustomPLLineItem(
+export async function addCustomPLLineItem(
   year: number,
   item: Omit<BudgetPLLineItem, 'id' | 'isDefault'>,
   storeKey: string = STORAGE_KEY,
-): BudgetYear {
+): Promise<BudgetYear> {
   const budget = loadBudgetWithPL(year, storeKey);
   const newItem: BudgetPLLineItem = {
     ...item,
@@ -1029,7 +1104,7 @@ export function addCustomPLLineItem(
 /**
  * Entfernt eine benutzerdefinierte P&L-Zeile (nur nicht-Standard-Zeilen).
  */
-export function removeCustomPLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): BudgetYear {
+export async function removeCustomPLLineItem(year: number, itemId: string, storeKey: string = STORAGE_KEY): Promise<BudgetYear> {
   const budget = loadBudgetWithPL(year, storeKey);
   const item   = budget.plLineItems!.find(i => i.id === itemId);
   if (item?.isDefault) {

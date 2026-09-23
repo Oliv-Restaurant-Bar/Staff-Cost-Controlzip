@@ -272,8 +272,9 @@ async function restoreKvBlobEntries(
       else base[entryKey] = prior;
       restored++;
     }
-    try { localStorage.setItem(blob.key, JSON.stringify(base)); } catch { /* voll */ }
+    // Database-first (Issue #5): confirm the write before caching locally.
     await kvSetStrict(blob.key, base);
+    try { localStorage.setItem(blob.key, JSON.stringify(base)); } catch { /* voll */ }
   }
   try {
     window.dispatchEvent(new Event('store-synced'));

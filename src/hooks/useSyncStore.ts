@@ -4,8 +4,12 @@
  * Mandantenfähig: synct für den aktiven Mandanten (Oliv / Beaulieu).
  *
  * Ablauf (bei jedem Mandantenwechsel):
- * 1. Lokale Daten → Supabase (Backup / Erstbefüllung)
- * 2. Supabase → localStorage (Master-Stand in den lokalen Speicher)
+ * 1. Supabase → localStorage (Master-Stand zuerst holen — Issue #5: die
+ *    Datenbank ist die Quelle der Wahrheit, das Gerät wird zuerst auf
+ *    diesen Stand gebracht)
+ * 2. Lokale Daten → Supabase (Backup / Erstbefüllung — verliert nichts, da
+ *    dieser Schritt für die gemergten Keys mergt bzw. nur bei leerem
+ *    Remote-Stand hochlädt)
  *
  * Der Sync läuft bei JEDEM Mandantenwechsel — auch wenn der Mandant
  * zuvor schon einmal aktiv war. So sind die Zahlen immer aktuell.
@@ -41,9 +45,13 @@ export function useSyncStore(authenticated: boolean) {
 
     (async () => {
       try {
-        await syncLocalToSupabase(SYNC_KEYS, tenantId);
-
+        // Pull before push (Issue #5): bring the device up to the
+        // authoritative remote state first, then push local-only data.
+        // syncLocalToSupabase already merges (reporting_v1/dailyBudgets) or
+        // only uploads when remote is empty for a key, so pushing second
+        // never re-loses anything the pull just brought down.
         const changed = await syncSupabaseToLocal(SYNC_KEYS, tenantId);
+        await syncLocalToSupabase(SYNC_KEYS, tenantId);
         console.log(`[TENANT] useSyncStore: Sync abgeschlossen für "${tenantId}" (changed=${changed})`);
 
         // Immer Event auslösen damit alle Komponenten aktualisieren

@@ -33,7 +33,7 @@ import {
   loadBudgetWithPL, saveBudgetYear, availableBudgetYears,
   copyBudgetYear, applyRulesToBudget,
   addBudgetRule, removeBudgetRule, deleteBudgetYear,
-  savePLLineItem, addCustomPLLineItem, removeCustomPLLineItem,
+  savePLLineItem, savePLLineItems, addCustomPLLineItem, removeCustomPLLineItem,
   computePLCategoryTotals, computePLResultTotals,
   restoreMissingDefaultPLItems, resetPLToDefaults,
   syncBudgetFromSupabase,
@@ -313,12 +313,12 @@ function BudgetContent() {
 
   // ── Speichern / Bearbeitung ──────────────────────────────────────────────────
 
-  const commitMonth = (itemId: string, month: number, newVal: number) => {
+  const commitMonth = async (itemId: string, month: number, newVal: number) => {
     const item = lineItems.find(i => i.id === itemId);
     if (!item) return;
     const vals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
     vals[month] = newVal;
-    setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: vals }, tenantKey(BUDGET_STORAGE_KEY)));
+    setBudget(await savePLLineItem(selectedYear, { ...item, monthlyValues: vals }, tenantKey(BUDGET_STORAGE_KEY)));
     setEditCell(null);
   };
 
@@ -340,8 +340,8 @@ function BudgetContent() {
       description: `CHF ${CHF(yearly)} ÷ 12 = CHF ${CHF(Math.floor(yearly / 12))} pro Monat`,
       action: {
         label: 'Gleichmässig verteilen',
-        onClick: () => {
-          setBudget(savePLLineItem(selectedYear, { ...item, monthlyValues: distributed }, tenantKey(BUDGET_STORAGE_KEY)));
+        onClick: async () => {
+          setBudget(await savePLLineItem(selectedYear, { ...item, monthlyValues: distributed }, tenantKey(BUDGET_STORAGE_KEY)));
           toast.success(`CHF ${CHF(yearly)} auf alle Monate verteilt`);
         },
       },
@@ -366,7 +366,7 @@ function BudgetContent() {
     return topDownMode === 'pct' ? val / 100 * totalRevenue : val;
   };
 
-  const applyTopDown = () => {
+  const applyTopDown = async () => {
     if (!topDownDialog) return;
     const { cat } = topDownDialog;
     const targetCHF = calcTopDownTargetCHF();
@@ -395,14 +395,14 @@ function BudgetContent() {
     const snapshot = affectedItems.map(item => ({ itemId: item.id, monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'] }));
     const factor = targetCHF / currentTotal;
 
-    // Jedes betroffene Konto skalieren (chained savePLLineItem – liest jedes Mal aus localStorage)
-    let upd: BudgetYear = budget;
-    for (const item of affectedItems) {
-      const newVals = item.monthlyValues.map(v =>
-        Math.round(v * factor)
-      ) as BudgetPLLineItem['monthlyValues'];
-      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: newVals }, tenantKey(BUDGET_STORAGE_KEY));
-    }
+    // Alle betroffenen Konten in EINEM read-modify-write skalieren (Issue #5
+    // Follow-up: früher chained savePLLineItem-Aufrufe, die sich implizit auf
+    // synchrones Re-Read aus localStorage verliessen — siehe savePLLineItems-Doku).
+    const scaled = affectedItems.map(item => ({
+      ...item,
+      monthlyValues: item.monthlyValues.map(v => Math.round(v * factor)) as BudgetPLLineItem['monthlyValues'],
+    }));
+    const upd = await savePLLineItems(selectedYear, scaled, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     setTopDownDialog(null);
 
@@ -421,7 +421,7 @@ function BudgetContent() {
     return topDownMonthMode === 'pct' ? val / 100 * (revenueByMonth[monthIdx] ?? 0) : val;
   };
 
-  const applyTopDownMonth = () => {
+  const applyTopDownMonth = async () => {
     if (!topDownMonthDialog) return;
     const { cat, monthIdx } = topDownMonthDialog;
     const targetCHF = calcTopDownMonthTargetCHF(monthIdx);
@@ -441,12 +441,14 @@ function BudgetContent() {
     const snapshot = affectedItems.map(item => ({ itemId: item.id, monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'] }));
 
     const factor = targetCHF / currentMonthTotal;
-    let upd: BudgetYear = budget;
-    for (const item of affectedItems) {
+    // Issue #5 follow-up: one batched read-modify-write instead of chained
+    // per-item saves (see savePLLineItems doc).
+    const scaled = affectedItems.map(item => {
       const newVals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
       newVals[monthIdx] = Math.round((newVals[monthIdx] ?? 0) * factor);
-      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: newVals }, tenantKey(BUDGET_STORAGE_KEY));
-    }
+      return { ...item, monthlyValues: newVals };
+    });
+    const upd = await savePLLineItems(selectedYear, scaled, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     setTopDownMonthDialog(null);
     const revM = revenueByMonth[monthIdx] ?? 0;
@@ -457,23 +459,26 @@ function BudgetContent() {
     );
   };
 
-  const restoreTopDownSnapshot = (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
+  const restoreTopDownSnapshot = async (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
     const freshItems = loadBudgetWithPL(selectedYear, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
-    let upd: BudgetYear = budget;
-    for (const s of snapshot) {
-      const item = freshItems.find(i => i.id === s.itemId);
-      if (!item) continue;
-      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: s.monthlyValues }, tenantKey(BUDGET_STORAGE_KEY));
-    }
+    // Issue #5 follow-up: one batched read-modify-write instead of chained
+    // per-item saves (see savePLLineItems doc).
+    const restored = snapshot
+      .map(s => {
+        const item = freshItems.find(i => i.id === s.itemId);
+        return item ? { ...item, monthlyValues: s.monthlyValues } : null;
+      })
+      .filter((i): i is BudgetPLLineItem => i !== null);
+    const upd = await savePLLineItems(selectedYear, restored, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     toast.success('Änderung rückgängig gemacht');
   };
 
-  const handleApplyRules = () => {
+  const handleApplyRules = async () => {
     if (budget.rules.length === 0) { toast.info('Keine Regeln definiert.'); return; }
     // saveBudgetYear liefert den tatsächlich persistierten Stand zurück —
     // ohne fachliche Änderung bleibt updatedAt unverändert (kein Write).
-    const saved = saveBudgetYear(applyRulesToBudget(budget), tenantKey(BUDGET_STORAGE_KEY));
+    const saved = await saveBudgetYear(applyRulesToBudget(budget), tenantKey(BUDGET_STORAGE_KEY));
     setBudget(saved);
     if (saved.updatedAt === budget.updatedAt) {
       toast.info('Keine Änderungen — Regeln ergaben dieselben Werte.');
@@ -482,8 +487,8 @@ function BudgetContent() {
     }
   };
 
-  const handleRestoreDefaults = () => {
-    const { budget: upd, added } = restoreMissingDefaultPLItems(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
+  const handleRestoreDefaults = async () => {
+    const { budget: upd, added } = await restoreMissingDefaultPLItems(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     if (added === 0) {
       toast.info('Alle Standardkonten sind bereits vorhanden.');
@@ -492,8 +497,8 @@ function BudgetContent() {
     }
   };
 
-  const handleResetPL = () => {
-    const upd = resetPLToDefaults(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
+  const handleResetPL = async () => {
+    const upd = await resetPLToDefaults(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     setResetPLDialog(false);
     toast.success('Konten wurden vollständig zurückgesetzt — Struktur entspricht jetzt 1:1 der Erfolgsrechnung.');
@@ -875,9 +880,9 @@ function BudgetContent() {
                                 <button
                                   className="h-6 w-6 rounded hover:bg-red-100 flex items-center justify-center text-muted-foreground hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
                                   title="Position löschen"
-                                  onClick={() => {
+                                  onClick={async () => {
                                     try {
-                                      setBudget(removeCustomPLLineItem(selectedYear, item.id, tenantKey(BUDGET_STORAGE_KEY)));
+                                      setBudget(await removeCustomPLLineItem(selectedYear, item.id, tenantKey(BUDGET_STORAGE_KEY)));
                                       toast.success('Position entfernt');
                                     } catch { toast.error('Standard-Positionen können nicht gelöscht werden'); }
                                   }}
@@ -981,7 +986,7 @@ function BudgetContent() {
                         {rule.type === 'monthly_fixed_override' ? `CHF ${CHF(rule.value)}` : `${rule.value}%`}
                       </Badge>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:bg-red-50"
-                        onClick={() => { setBudget(removeBudgetRule(selectedYear, rule.id, tenantKey(BUDGET_STORAGE_KEY))); toast.success('Regel entfernt'); }}>
+                        onClick={async () => { setBudget(await removeBudgetRule(selectedYear, rule.id, tenantKey(BUDGET_STORAGE_KEY))); toast.success('Regel entfernt'); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -1292,8 +1297,12 @@ function BudgetContent() {
       <CopyYearDialog
         open={copyDialog} onClose={() => setCopyDialog(false)}
         currentYear={selectedYear} savedYears={savedYears}
-        onCopy={(from, to, ar) => {
-          copyBudgetYear(from, to, ar, tenantKey(BUDGET_STORAGE_KEY));
+        onCopy={async (from, to, ar) => {
+          // Issue #5 follow-up: copyBudgetYear is now database-confirmed
+          // before its localStorage write happens — must await it before
+          // reading `availableBudgetYears`/`reload`, which read localStorage
+          // synchronously, or they'd race and show the pre-copy state.
+          await copyBudgetYear(from, to, ar, tenantKey(BUDGET_STORAGE_KEY));
           setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
           setSelectedYear(to); reload(to);
           setCopyDialog(false);
@@ -1304,7 +1313,7 @@ function BudgetContent() {
       <AddRuleDialog
         open={ruleDialog} onClose={() => setRuleDialog(false)}
         positions={budget.positions}
-        onAdd={rule => { setBudget(addBudgetRule(selectedYear, rule, tenantKey(BUDGET_STORAGE_KEY))); setRuleDialog(false); toast.success('Regel hinzugefügt'); }}
+        onAdd={async rule => { setBudget(await addBudgetRule(selectedYear, rule, tenantKey(BUDGET_STORAGE_KEY))); setRuleDialog(false); toast.success('Regel hinzugefügt'); }}
       />
 
       {addItemDialog && (
@@ -1312,8 +1321,8 @@ function BudgetContent() {
           open categoryId={addItemDialog.categoryId}
           categories={categories}
           onClose={() => setAddItemDialog(null)}
-          onAdd={item => {
-            setBudget(addCustomPLLineItem(selectedYear, item, tenantKey(BUDGET_STORAGE_KEY)));
+          onAdd={async item => {
+            setBudget(await addCustomPLLineItem(selectedYear, item, tenantKey(BUDGET_STORAGE_KEY)));
             setAddItemDialog(null);
             toast.success('Unterkonto hinzugefügt');
           }}
@@ -1593,8 +1602,10 @@ function BudgetContent() {
           </Alert>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialog(false)}>Abbrechen</Button>
-            <Button variant="destructive" onClick={() => {
-              deleteBudgetYear(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
+            <Button variant="destructive" onClick={async () => {
+              // Issue #5 follow-up: same race as onCopy above — await before
+              // reading localStorage-derived state.
+              await deleteBudgetYear(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
               setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
               reload(selectedYear);
               setDeleteDialog(false);

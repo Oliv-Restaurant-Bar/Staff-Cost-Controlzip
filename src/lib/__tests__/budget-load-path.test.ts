@@ -394,7 +394,7 @@ describe('Runde 2.2: loadBudgetWithPL(2026) — View-Default statt persistiertem
   });
 
   it('S6: expliziter Reset auf Seed — echte Mutation, Remote wird bewusst aktualisiert', async () => {
-    const reset = resetBudget2026ToSeed(STORAGE_KEY);
+    const reset = await resetBudget2026ToSeed(STORAGE_KEY);
     await flushBudgetKVBackups();
 
     expect(janRevenue(reset)).toBe(240000);

@@ -20,7 +20,12 @@ vi.mock('../supabase-kv', () => ({
     if (kv.failGet) throw new Error('KV down');
     return kv.store[key] ?? null;
   }),
+  kvGetStrict: vi.fn(async (key: string) => {
+    if (kv.failGet) throw new Error('KV down');
+    return kv.store[key] ?? null;
+  }),
   kvSet: vi.fn(async (key: string, value: unknown) => { kv.store[key] = value; }),
+  kvSetConfirmed: vi.fn(async (key: string, value: unknown) => { kv.store[key] = value; }),
 }));
 
 import { saveMaisonDailyMergeStrict } from '../maison-store';

@@ -9,7 +9,7 @@
  * Pattern: localStorage (fast) → Supabase KV (persistent, cross-device).
  */
 
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -173,6 +173,8 @@ export async function loadStaffPortalSettings(): Promise<StaffPortalSettings> {
  * Call from admin Settings UI after every toggle.
  */
 export async function saveStaffPortalSettings(settings: StaffPortalSettings): Promise<void> {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(settings)); } catch { /* ignore */ }
-  await kvSet(KV_KEY, settings);
+  // Database-first (Issue #5): the caller (StaffPortalSettingsPanel) already
+  // awaits and shows an error toast on failure, so it's safe to throw here
+  // and only cache locally after Supabase confirms the write.
+  await kvSetConfirmed(KV_KEY, settings, 'Personal-Portal-Einstellungen');
 }

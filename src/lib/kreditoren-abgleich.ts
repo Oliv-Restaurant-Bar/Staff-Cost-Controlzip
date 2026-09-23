@@ -20,7 +20,7 @@
  * Debug-Logs: [KREDITOREN]
  */
 
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvSetConfirmed } from './supabase-kv';
 import { tenantKey } from './tenant-utils';
 import type { TenantId } from '@/contexts/TenantContext';
 import {
@@ -64,7 +64,10 @@ export async function loadKreditorZuordnung(tenantId: TenantId): Promise<Kredito
 }
 
 export async function saveKreditorZuordnung(tenantId: TenantId, map: KreditorZuordnungMap): Promise<void> {
-  await kvSet(tenantKey(tenantId, ZUORDNUNG_KEY), map);
+  // Issue #5: `kvSet` used to swallow write errors silently with no local
+  // cache and no visible signal at all. `kvSetConfirmed` throws on failure
+  // (caller already catches + toasts) and adds a localStorage cache.
+  await kvSetConfirmed(tenantKey(tenantId, ZUORDNUNG_KEY), map, 'Kreditoren-Zuordnung');
 }
 
 // ─── Ignorierte Buchungen («kein Wareneinkauf») ──────────────────────────────
@@ -105,7 +108,8 @@ export async function loadKreditorIgnoriert(tenantId: TenantId): Promise<Kredito
 }
 
 export async function saveKreditorIgnoriert(tenantId: TenantId, map: KreditorIgnoriertMap): Promise<void> {
-  await kvSet(tenantKey(tenantId, IGNORIERT_KEY), map);
+  // Issue #5: see saveKreditorZuordnung above.
+  await kvSetConfirmed(tenantKey(tenantId, IGNORIERT_KEY), map, 'Kreditoren-Ignoriert');
 }
 
 // ─── Lieferanten-Namens-Matching (Kreditor-Name ↔ erfasster supplierName) ───

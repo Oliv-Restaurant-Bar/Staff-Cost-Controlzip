@@ -106,8 +106,19 @@ export function clearManualUmsatzField(
   saved.updatedAt = new Date().toISOString();
   all[id] = saved;
   saveAll(all, storeKey);
+  // Note (Issue #5): this write stays optimistic-local — saveMonth/
+  // clearManualUmsatzField are synchronous APIs used throughout the app
+  // (callers read the return value immediately), so making them wait for
+  // Supabase confirmation would ripple through many call sites. What WAS a
+  // real gap here — a failed backup only logged to console.error with no
+  // signal to the user at all — is fixed below with the same visible
+  // toast+retry used elsewhere.
   safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
     console.error('[REPORTING] clearManualUmsatzField: safeUpsertReportingMonth fehlgeschlagen', err);
+    void notifyKVBackupProblem(err, 'Monatsreport', {
+      toastId: `reporting-backup-${id}`,
+      retry: () => clearManualUmsatzField(year, month, field, storeKey),
+    });
   });
 }
 
@@ -226,8 +237,18 @@ export function saveMonth(
   // (retryReportingMonthsBackup) — parallele Upserts desselben Blobs würden
   // sich gegenseitig mit veralteten Monatswerten überschreiben.
   if (!opts?.skipKvBackup) {
+    // Note (Issue #5): kept optimistic-local — saveMonth is a synchronous,
+    // widely-called API (callers use the returned record immediately), so
+    // making it wait for Supabase confirmation would ripple through many
+    // call sites. The real gap here — a failed backup only logged to
+    // console.error with no signal to the user — is fixed with the same
+    // visible toast+retry used elsewhere.
     safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
       console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
+      void notifyKVBackupProblem(err, 'Monatsreport', {
+        toastId: `reporting-backup-${id}`,
+        retry: () => { saveMonth(incoming, source, mode, opts, storeKey); },
+      });
     });
   }
   return saved;
@@ -936,8 +957,11 @@ export async function saveJournalEntriesStrict(
   tenantId: string = 'oliv',
 ): Promise<void> {
   const key = journalMonthKey(year, month, tenantId);
-  localStorage.setItem(key, JSON.stringify(entries));
+  // Database-first (Issue #5): confirm the write before caching locally —
+  // this variant already threw on backup failure, so ordering was the only
+  // remaining gap (it wrote localStorage before the write was confirmed).
   await kvSetStrict(key, entries);
+  localStorage.setItem(key, JSON.stringify(entries));
   console.log(`[Journal] Strikt wiederhergestellt: ${key} (${entries.length} Einträge)`);
 }
 

@@ -64,7 +64,7 @@ export async function loadImportSettings(tenantId: TenantId): Promise<ImportSett
 
 /** Speichern: lokal sofort, KV-Backup über read→merge→write. */
 export async function saveImportSettings(tenantId: TenantId, blob: ImportSettingsBlob): Promise<void> {
-  writeSettingsLocal(tenantId, blob);
+  // Database-first (Issue #5): local cache only written after confirmed write.
   const key = settingsKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);
@@ -120,7 +120,7 @@ export async function loadInventurChecks(tenantId: TenantId): Promise<InventurCh
 
 /** Speichern: lokal sofort, KV-Backup über read→merge→write. */
 export async function saveInventurChecks(tenantId: TenantId, blob: InventurChecksBlob): Promise<void> {
-  writeInventurLocal(tenantId, blob);
+  // Database-first (Issue #5): local cache only written after confirmed write.
   const key = inventurKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);
