@@ -21,6 +21,7 @@ import {
   buildMonatspruefung,
   type ExportChecklistItem,
 } from './buchhaltungs-export';
+import { swissApos } from './swiss-number-format';
 
 // ── Formatierung ─────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ export function monthKeyLabel(monthKey: string): string {
 
 function chf(v: number | null): string {
   if (v === null) return '—';
-  return new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  return swissApos(new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v));
 }
 
 /** yyyy-MM-dd → dd.MM.yyyy. */

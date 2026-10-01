@@ -60,6 +60,7 @@ import {
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
 import { usePermissions } from '@/hooks/usePermissions';
 import { CockpitKpiBoxenReihen } from '@/components/CockpitKpiBoxenReihen';
+import { swissApos } from '@/lib/swiss-number-format';
 // Mobile-Only-CSS (≤768px), rein additiv — Rückrollen: diese Zeile entfernen.
 import '@/styles/cockpit-mobile.css';
 
@@ -139,7 +140,7 @@ function parseWeekValue(v: string): WeekSelection {
 }
 
 const fmtNum = (v: number, dec = 2) =>
-  v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  swissApos(v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec }));
 
 /** Netto-Saldo mit Vorzeichen (typografisches Minus): +12 / −18 / 0. */
 const fmtSaldoNetto = (v: number) =>
@@ -480,7 +481,7 @@ function ReportTable({
                         <p className="mt-1">
                           Davon Marketing/Maison ({granularity === 'monat' ? 'Monat' : 'Woche'}):{' '}
                           <span className="tabular-nums font-medium">
-                            CHF {mkt.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            CHF {swissApos(mkt.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}
                           </span>
                         </p>
                         <p className="mt-1 text-muted-foreground">Betrag ist bereits im Netto-Umsatz enthalten (keine Doppelzählung).</p>
@@ -1320,7 +1321,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       toast({
         title: 'Monats-Budget überschrieben',
         description: `${def.label} · ${MONATE[month - 1]} ${year}: `
-          + (value === null ? 'geleert' : value.toLocaleString('de-CH'))
+          + (value === null ? 'geleert' : swissApos(value.toLocaleString('de-CH')))
           + ' — Wochen dieses Monats skalieren pro rata mit. «Rückgängig» oben verfügbar.',
       });
     } catch (e) {
@@ -1356,7 +1357,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       toast({
         title: 'Zurück auf abgeleitet/Ist',
         description: `${def.label} · ${MONATE[month - 1]} ${year}: manueller Monatswert entfernt`
-          + (abgeleitet !== null ? ` — abgeleiteter Wert ${abgeleitet.toLocaleString('de-CH')} wiederhergestellt.` : ' — Zeile folgt wieder der Ableitung bzw. bleibt leer.'),
+          + (abgeleitet !== null ? ` — abgeleiteter Wert ${swissApos(abgeleitet.toLocaleString('de-CH'))} wiederhergestellt.` : ' — Zeile folgt wieder der Ableitung bzw. bleibt leer.'),
       });
     } catch (e) {
       toast({ title: 'Reset fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
@@ -2677,7 +2678,7 @@ const CHART_METRICS = [
 function fmtAxisCompact(v: number, fmt: MrRow['fmt']): string {
   if (fmt === 'pct') return `${v.toFixed(0)}%`;
   const a = Math.abs(v);
-  if (a >= 1_000_000) return `${(v / 1_000_000).toLocaleString('de-CH', { maximumFractionDigits: 1 })}M`;
+  if (a >= 1_000_000) return `${swissApos((v / 1_000_000).toLocaleString('de-CH', { maximumFractionDigits: 1 }))}M`;
   if (a >= 1_000) return `${Math.round(v / 1_000)}k`;
   return fmtNum(v, 0);
 }

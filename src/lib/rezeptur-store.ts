@@ -222,13 +222,17 @@ export async function loadRezepturenFromDB(): Promise<RezepturenMap> {
   }
 }
 
-export async function saveRezepturenToDB(map: RezepturenMap): Promise<void> {
+export async function saveRezepturenToDB(map: RezepturenMap): Promise<boolean> {
   // Database-first (Issue #5): cache locally only after Supabase confirms.
-  // Kept non-throwing — existing callers (Produkte.tsx, BasiskomponentenManager)
-  // call this fire-and-forget without awaiting/catching.
+  // Returns whether the write succeeded — every caller now awaits this and
+  // gates its own success toast/UI state on it (2026-09-29 fix; this used to
+  // be fire-and-forget by design, which was the bug — see
+  // docs/personal-cost-tracker-issues.md #9).
   try {
     await kvSetConfirmed(RECIPE_KEY, map, 'Rezepturen');
+    return true;
   } catch (err) {
     console.error('[Rezeptur] saveRezepturenToDB Fehler:', err);
+    return false;
   }
 }

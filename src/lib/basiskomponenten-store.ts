@@ -154,12 +154,17 @@ export async function loadBasiskomponentenFromDB(): Promise<BaseComponentMap> {
   }
 }
 
-export async function saveBasiskomponentenToDB(map: BaseComponentMap): Promise<void> {
+export async function saveBasiskomponentenToDB(map: BaseComponentMap): Promise<boolean> {
   // Database-first (Issue #5): cache locally only after Supabase confirms.
+  // Returns whether the write actually succeeded — callers must await this
+  // and gate their own success toast/UI state on it instead of assuming
+  // success (2026-09-29 fix, see docs/personal-cost-tracker-issues.md #9).
   try {
     await kvSetConfirmed(STORE_KEY, map, 'Basiskomponenten');
+    return true;
   } catch (err) {
     console.error('[Basis] saveBasiskomponentenToDB Fehler:', err);
+    return false;
   }
 }
 

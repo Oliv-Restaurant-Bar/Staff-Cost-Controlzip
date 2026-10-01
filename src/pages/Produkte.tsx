@@ -246,7 +246,7 @@ export default function ProdukteSeite() {
     setTimeout(() => costEditRef.current?.select(), 30);
   };
 
-  const commitCostEdit = () => {
+  const commitCostEdit = async () => {
     if (!editingCost) return;
     const raw = editingValue.replace(/[^0-9.,]/g, '').replace(',', '.');
     const val = parseFloat(raw);
@@ -278,12 +278,14 @@ export default function ProdukteSeite() {
       updated.push(newEntry);
     }
 
-    saveProductCostsToDB(updated);
     setCosts(updated);
-    if (editingCost.field === 'wes' && val > 0) {
+    setEditingCost(null);
+    const ok = await saveProductCostsToDB(updated);
+    if (!ok) {
+      toast.error(`«${editingCost.name}» konnte nicht gespeichert werden — bitte erneut versuchen`);
+    } else if (editingCost.field === 'wes' && val > 0) {
       toast.success(`WES pro Stück für «${editingCost.name}» auf ${formatCHF(val)} gesetzt`);
     }
-    setEditingCost(null);
   };
 
   // Varianten für Produktdatenbank-Dialog (arbeiten mit expliziter Kategorie)
@@ -298,7 +300,7 @@ export default function ProdukteSeite() {
     setTimeout(() => costEditRef.current?.select(), 30);
   };
 
-  const commitCostEditForCategory = (name: string, cat: 'food' | 'beverage') => {
+  const commitCostEditForCategory = async (name: string, cat: 'food' | 'beverage') => {
     if (!editingCost) return;
     const raw = editingValue.replace(/[^0-9.,]/g, '').replace(',', '.');
     const val = parseFloat(raw);
@@ -325,37 +327,46 @@ export default function ProdukteSeite() {
         wesQ:        editingCost.field === 'wesQ'   ? val : 0,
       });
     }
-    saveProductCostsToDB(updated);
     setCosts(updated);
-    if (editingCost.field === 'wes' && val > 0) {
+    setEditingCost(null);
+    const ok = await saveProductCostsToDB(updated);
+    if (!ok) {
+      toast.error(`«${name}» konnte nicht gespeichert werden — bitte erneut versuchen`);
+    } else if (editingCost.field === 'wes' && val > 0) {
       toast.success(`WES pro Stück für «${name}» auf ${formatCHF(val)} gesetzt`);
     }
-    setEditingCost(null);
   };
 
   // ── Rezeptur speichern ───────────────────────────────────────────────────────
-  const handleSaveRecipe = (recipe: ProductRecipe) => {
+  const handleSaveRecipe = async (recipe: ProductRecipe) => {
     const newMap = { ...recipes, [recipe.id]: recipe };
     setRecipes(newMap);
-    saveRezepturenToDB(newMap);
 
     // WES im ProductCostEntry automatisch aktualisieren
     const cost = costs.find(
       c => c.name.toLowerCase() === recipe.productName.toLowerCase() && c.category === recipe.category,
     );
+    let updatedCosts: ProductCostEntry[] | null = null;
     if (cost) {
       const kpis = computeRecipeCosts(recipe, cost.nettoPrice, cost.bruttoPrice);
-      const updated = costs.map(c =>
+      updatedCosts = costs.map(c =>
         c.name.toLowerCase() === recipe.productName.toLowerCase() && c.category === recipe.category
           ? { ...c, wes: kpis.totalCost, wesQ: kpis.wesQ }
           : c,
       );
-      setCosts(updated);
-      saveProductCostsToDB(updated);
+      setCosts(updatedCosts);
     }
 
-    toast.success(`Kalkulation «${recipe.productName}» gespeichert`);
-    setEditRecipeCost(null);
+    const [recipeOk, costsOk] = await Promise.all([
+      saveRezepturenToDB(newMap),
+      updatedCosts ? saveProductCostsToDB(updatedCosts) : Promise.resolve(true),
+    ]);
+    if (recipeOk && costsOk) {
+      setEditRecipeCost(null);
+      toast.success(`Kalkulation «${recipe.productName}» gespeichert`);
+    } else {
+      toast.error(`Kalkulation «${recipe.productName}» konnte nicht gespeichert werden — bitte erneut versuchen`);
+    }
   };
 
   // ── Kalkulations-Tab: sortierte Kostenliste ──────────────────────────────────
@@ -608,8 +619,12 @@ export default function ProdukteSeite() {
         return;
       }
       const merged = mergeProductCosts(costs, parsed);
-      saveProductCostsToDB(merged);
       setCosts(merged);
+      const ok = await saveProductCostsToDB(merged);
+      if (!ok) {
+        toast.error('WES-Import konnte nicht gespeichert werden — bitte erneut versuchen');
+        return;
+      }
       const foodCount = parsed.filter(p => p.category === 'food').length;
       const bevCount  = parsed.filter(p => p.category === 'beverage').length;
       const parts = [];
@@ -1293,9 +1308,8 @@ export default function ProdukteSeite() {
             {/* Massen-Update + Rezepturprüfung */}
             <BulkRezepturUpdate
               recipes={recipes}
-              onSave={newMap => {
+              onSave={async newMap => {
                 setRecipes(newMap);
-                saveRezepturenToDB(newMap);
                 // WES-Werte in ProductCostEntry neu berechnen
                 const updated = costs.map(c => {
                   const id = makeRecipeId(c.name, c.category);
@@ -1305,7 +1319,11 @@ export default function ProdukteSeite() {
                   return { ...c, wes: kpis.totalCost, wesQ: kpis.wesQ };
                 });
                 setCosts(updated);
-                saveProductCostsToDB(updated);
+                const [recipeOk, costsOk] = await Promise.all([
+                  saveRezepturenToDB(newMap),
+                  saveProductCostsToDB(updated),
+                ]);
+                return recipeOk && costsOk;
               }}
             />
             <RezepturRealityCheck
@@ -1325,7 +1343,9 @@ export default function ProdukteSeite() {
                   return updated ?? c;
                 });
                 setCosts(mergedCosts);
-                saveProductCostsToDB(mergedCosts);
+                void saveProductCostsToDB(mergedCosts).then(ok => {
+                  if (!ok) toast.error('WES-Werte konnten nicht gespeichert werden — bitte erneut versuchen');
+                });
               }}
             />
 
@@ -1789,14 +1809,15 @@ export default function ProdukteSeite() {
                             <td className="px-2 py-2.5">
                               {hasWes && (
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
                                     const updated = costs.map(c =>
                                       c.name.toLowerCase() === name.toLowerCase() && c.category === pCat
                                         ? { ...c, bruttoPrice: 0, nettoPrice: 0, wes: 0, wesQ: 0 }
                                         : c
                                     );
-                                    saveProductCostsToDB(updated);
                                     setCosts(updated);
+                                    const ok = await saveProductCostsToDB(updated);
+                                    if (!ok) toast.error(`WES-Werte für «${name}» konnten nicht gelöscht werden — bitte erneut versuchen`);
                                   }}
                                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground"
                                   title="WES-Werte löschen">

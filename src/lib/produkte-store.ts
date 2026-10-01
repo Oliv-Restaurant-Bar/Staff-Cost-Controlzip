@@ -864,12 +864,23 @@ export async function loadProductGroupsFromDB(): Promise<ProductGroup[]> {
   } catch { return loadProductGroups(); }
 }
 
-export async function saveProductGroupsToDB(groups: ProductGroup[]): Promise<void> {
-  localStorage.setItem(GROUP_KEY, JSON.stringify(groups));
+export async function saveProductGroupsToDB(groups: ProductGroup[]): Promise<boolean> {
+  // Database-first (Issue #5 convention): write to Supabase first, cache to
+  // localStorage only after that's confirmed. Previously local-first with a
+  // swallowed error — a failed write looked identical to a successful one to
+  // every caller (2026-09-29 fix, see docs/personal-cost-tracker-issues.md #9).
   try {
     const err = await settingsSave(GROUP_KEY, groups);
-    if (err) console.error('[Produkte] saveProductGroupsToDB Fehler:', err);
-  } catch { /* localStorage bleibt Fallback */ }
+    if (err) {
+      console.error('[Produkte] saveProductGroupsToDB Fehler:', err);
+      return false;
+    }
+    localStorage.setItem(GROUP_KEY, JSON.stringify(groups));
+    return true;
+  } catch (err) {
+    console.error('[Produkte] saveProductGroupsToDB Fehler:', err);
+    return false;
+  }
 }
 
 // ── Gruppen-Lookup: Welcher Gruppe gehört ein Produkt an? ─────────────────────
@@ -1045,16 +1056,30 @@ export async function loadProductCostsFromDB(): Promise<ProductCostEntry[]> {
   }
 }
 
-export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<void> {
-  localStorage.setItem(DB_KV_KEY, JSON.stringify(costs));
+export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<boolean> {
+  // Database-first (Issue #5 convention): write to Supabase first, cache to
+  // localStorage only after that's confirmed (2026-09-29 fix — see
+  // docs/personal-cost-tracker-issues.md #9).
+  let ok: boolean;
   try {
     const err = await settingsSave(DB_KV_KEY, costs);
-    if (err) console.error('[Produkte] WES Speicherfehler:', err);
-  } catch { /* localStorage bleibt Fallback */ }
-  // Gleichzeitig in produkte_kosten synchronisieren (für VerkaufsDashboard)
+    if (err) {
+      console.error('[Produkte] WES Speicherfehler:', err);
+      ok = false;
+    } else {
+      localStorage.setItem(DB_KV_KEY, JSON.stringify(costs));
+      ok = true;
+    }
+  } catch (err) {
+    console.error('[Produkte] WES Speicherfehler:', err);
+    ok = false;
+  }
+  // Gleichzeitig in produkte_kosten synchronisieren (für VerkaufsDashboard) —
+  // best-effort, unrelated to the main write's success/failure signal.
   syncWesToProduktKosten(costs).catch(e =>
     console.warn('[Produkte] Sync zu produkte_kosten fehlgeschlagen:', e),
   );
+  return ok;
 }
 
 /**

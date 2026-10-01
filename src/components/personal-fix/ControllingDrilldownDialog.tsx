@@ -24,6 +24,7 @@ import { InfoTip } from '@/components/ui/info-tip';
 import { TONE_TEXT } from '@/components/ui/tones';
 import { TABLE, TH, TH_NUM, TD, TD_NUM, ROW_CLICKABLE } from '@/components/ui/table-style';
 import { cn } from '@/lib/utils';
+import { swissApos } from '@/lib/swiss-number-format';
 import {
   buildFactCells,
   buildDrilldownRows,
@@ -114,7 +115,7 @@ const PERIOD_LABEL: Record<DrilldownPeriod, string> = {
 type SortCol = 'label' | 'planH' | 'istH' | 'diffH' | 'planCHF' | 'istCHF' | 'diffCHF' | 'revenue' | 'pkqPct';
 
 const fmtH = (n: number) =>
-  n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  swissApos(n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
 const signH = (n: number) => `${n >= 0 ? '+' : '−'}${fmtH(Math.abs(n))}`;
 // fmtChfWhole liefert "CHF 1'234" mit geschütztem Leerzeichen (de-CH) — Präfix via Regex entfernen
 const chfNumber = (n: number) => fmtChfWhole(n).replace(/CHF\s*/u, '');

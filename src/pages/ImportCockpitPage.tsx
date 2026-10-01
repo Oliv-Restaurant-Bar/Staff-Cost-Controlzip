@@ -235,16 +235,21 @@ export default function ImportCockpitPage() {
   const handleSaveSettings = useCallback(
     async (next: ImportSettingsBlob) => {
       setSettingsSaving(true);
+      const previous = settingsBlob;
       try {
         setSettingsBlob(next);
-        await saveImportSettings(tenantId, next);
-        setSettingsOpen(false);
-        toast({ title: 'Import-Einstellungen gespeichert' });
+        const ok = await saveImportSettings(tenantId, next);
+        if (ok) {
+          setSettingsOpen(false);
+          toast({ title: 'Import-Einstellungen gespeichert' });
+        } else {
+          setSettingsBlob(previous);
+        }
       } finally {
         setSettingsSaving(false);
       }
     },
-    [tenantId, toast],
+    [tenantId, toast, settingsBlob],
   );
 
   // Inventur-Häkchen für den ANGEZEIGTEN Monat setzen/entfernen (Dirty-Check

@@ -1943,7 +1943,6 @@ const SchedulePlanner = () => {
             localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(next));
             return next;
           });
-          saveActualHourEntry(employeeId2, date2, null).catch(console.error);
           setPlanCopiedKeys(prev => {
             const next = new Set(prev);
             next.delete(cellKey);
@@ -1955,7 +1954,13 @@ const SchedulePlanner = () => {
             } catch { /* ignore */ }
             return next;
           });
-          toast.success('IST-Eintrag gelöscht');
+          // Result checked (saveActualHourEntry resolves {ok,error}, never
+          // throws) — a failed delete now surfaces, instead of only
+          // console.error while the UI unconditionally claimed success.
+          saveActualHourEntry(employeeId2, date2, null).then(result => {
+            if (result.ok) toast.success('IST-Eintrag gelöscht');
+            else toast.error('IST-Eintrag konnte nicht gelöscht werden — bitte erneut versuchen');
+          });
         },
       },
     });
@@ -2172,10 +2177,11 @@ const SchedulePlanner = () => {
     }
   };
 
-  const handleSave = async () => {
-    if (isSaving) return;
+  const handleSave = async (dataOverride?: Record<string, DaySchedule>): Promise<boolean> => {
+    if (isSaving) return false;
+    const dataToSave = dataOverride ?? scheduleData;
     const monthKey = format(currentMonth, 'yyyy-MM');
-    const entryCount = Object.keys(scheduleData).length;
+    const entryCount = Object.keys(dataToSave).length;
 
     const roleLabel = isAdmin ? 'admin' : isServiceManager ? 'service_manager' : 'kueche_manager';
     console.log(`[SCHEDULE-LAUNCH] handleSave – month=${monthKey} entries=${entryCount} role=${roleLabel} dept=${activeDepartment}`);
@@ -2185,7 +2191,7 @@ const SchedulePlanner = () => {
       const confirmed = window.confirm(
         'Der Dienstplan ist leer. Trotzdem speichern? (Einträge in der Datenbank werden NICHT gelöscht.)'
       );
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
 
     setIsSaving(true);
@@ -2193,12 +2199,12 @@ const SchedulePlanner = () => {
 
     try {
       // Safe upsert-only save (no delete-all)
-      await saveFullScheduleForMonth(currentMonth, scheduleData);
+      await saveFullScheduleForMonth(currentMonth, dataToSave);
       // upsertAllEmployees BLOCKIERT: employees-Schreibpfad ausschliesslich via Personalstamm.
       // await upsertAllEmployees(employees, tenantId);
 
       // localStorage backup
-      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(scheduleData));
+      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(dataToSave));
       localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(employees));
       // Sicherer Partial-Upsert: nur Lohnkosten-Felder für den aktuellen Monat schreiben.
       // Kein Blob-Overwrite — Revenue-Felder anderer Monate bleiben in KV unberührt.
@@ -2230,11 +2236,13 @@ const SchedulePlanner = () => {
       toast.success(`Dienstplan für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert (${entryCount} Einträge)`);
       console.log(`[SCHEDULE-LAUNCH] handleSave success – ${entryCount} entries persisted to Supabase`);
       if (tenantId === 'beaulieu') console.log(`[BEAULIEU-TEST] schedule save success – ${entryCount} entries, tenant=beaulieu isolated`);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSaveError(msg);
       toast.error(`Speichern fehlgeschlagen: ${msg}`);
       console.error('[SCHEDULE-LAUNCH] handleSave failed:', err);
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -2341,14 +2349,23 @@ const SchedulePlanner = () => {
     }
     const cellKey = `${employeeId}-${date}`;
 
+    // saveActualHourEntry never throws — it resolves { ok, error } — so the
+    // result must be checked explicitly, not just fired-and-forgotten, or a
+    // real write failure has zero signal anywhere (2026-09-29 fix, see
+    // docs/personal-cost-tracker-issues.md #9). Done outside the setState
+    // updater since it's an async side effect, not a state computation.
+    if (!opts?.skipSupabase) {
+      saveActualHourEntry(employeeId, date, entry).then(result => {
+        if (!result.ok) {
+          toast.error(`IST-Eintrag für ${date.slice(8)}.${date.slice(5, 7)}. konnte nicht gespeichert werden — bitte erneut versuchen`);
+        }
+      });
+    }
+
     setActualHoursData(prev => {
       if (entry === null) {
         const newState = { ...prev };
         delete newState[cellKey];
-
-        // Always delete from Supabase — absence_type column exists and loadActualHoursForMonth now reads it back.
-        if (!opts?.skipSupabase) saveActualHourEntry(employeeId, date, null);
-
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
         window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -2356,15 +2373,9 @@ const SchedulePlanner = () => {
       }
 
       const newState = { ...prev, [cellKey]: entry };
-
-      // Always persist to Supabase — including FE/FT/K/U/F absence entries.
-      // loadActualHoursForMonth now maps absence_type back, so absences survive
-      // browser cache clears and device switches without depending on localStorage.
       if (entry.absenceType) {
         console.log(`[FERIEN-IST] saving absence to Supabase: ${cellKey} type=${entry.absenceType}`);
       }
-      if (!opts?.skipSupabase) saveActualHourEntry(employeeId, date, entry);
-
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
       window.dispatchEvent(new CustomEvent('schedule-updated'));
@@ -2480,9 +2491,17 @@ const SchedulePlanner = () => {
     event.target.value = '';
   };
 
-  const applyImportResult = (newScheduleData: Record<string, DaySchedule>, newEmployees: Employee[]) => {
+  const applyImportResult = async (newScheduleData: Record<string, DaySchedule>, newEmployees: Employee[]) => {
     setScheduleData(newScheduleData);
-    saveFullScheduleForMonth(currentMonth, newScheduleData);
+    let saveFailed = false;
+    try {
+      await saveFullScheduleForMonth(currentMonth, newScheduleData);
+    } catch (err) {
+      saveFailed = true;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[IMPORT] saveFullScheduleForMonth failed:', err);
+      toast.error(`Dienstplan-Import konnte nicht gespeichert werden: ${msg}`);
+    }
 
     if (newEmployees && newEmployees.length > 0) {
       // Deduplicate: never create an employee whose name already exists (case-insensitive).
@@ -2515,13 +2534,13 @@ const SchedulePlanner = () => {
           localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
           toast.success(`${safeToSave.length} Mitarbeiter lokal hinzugefügt (nur diese Sitzung). Für dauerhafte Erfassung → Personalstamm`);
         } else {
-          toast.success('Dienstplan erfolgreich importiert');
+          if (!saveFailed) toast.success('Dienstplan erfolgreich importiert');
         }
       } else {
-        toast.success('Dienstplan erfolgreich importiert');
+        if (!saveFailed) toast.success('Dienstplan erfolgreich importiert');
       }
     } else {
-      toast.success('Dienstplan erfolgreich importiert');
+      if (!saveFailed) toast.success('Dienstplan erfolgreich importiert');
     }
   };
 
@@ -2562,19 +2581,21 @@ const SchedulePlanner = () => {
     toast.success(`Zielwerte für ${format(currentMonth, 'MMMM yyyy', { locale: de })} gespeichert`);
   };
 
-  const handleKüchenplanImport = (delta: Record<string, DaySchedule>, count: number) => {
+  const handleKüchenplanImport = async (delta: Record<string, DaySchedule>, count: number) => {
     // ERSETZEN statt mergen: jede importierte Zelle wird komplett überschrieben
     // (leere DaySchedule = Zelle leeren → 0 Planstunden). Vorher Backup für Undo.
     const merged = { ...scheduleDataRef.current };
     const backup: Record<string, DaySchedule | null> = {};
-    for (const [key, ds] of Object.entries(delta)) {
-      backup[key] = merged[key] ? { ...merged[key] } : null;
-      const isEmpty = !ds.früh && !ds.spät && !ds.frühAbsence && !ds.spätAbsence;
-      if (isEmpty) delete merged[key]; else merged[key] = ds;
-      const date = key.slice(-10);
-      const empId = key.slice(0, -11);
-      saveScheduleEntry(empId, date, isEmpty ? null : ds);
-    }
+    const saveResults = await Promise.allSettled(
+      Object.entries(delta).map(async ([key, ds]) => {
+        backup[key] = merged[key] ? { ...merged[key] } : null;
+        const isEmpty = !ds.früh && !ds.spät && !ds.frühAbsence && !ds.spätAbsence;
+        if (isEmpty) delete merged[key]; else merged[key] = ds;
+        const date = key.slice(-10);
+        const empId = key.slice(0, -11);
+        await saveScheduleEntry(empId, date, isEmpty ? null : ds);
+      })
+    );
     try {
       localStorage.setItem(
         tenantKey('kuechenplan_import_undo_v1'),
@@ -2587,10 +2608,17 @@ const SchedulePlanner = () => {
     const monthKey = format(currentMonth, 'yyyy-MM');
     localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
     window.dispatchEvent(new CustomEvent('schedule-updated'));
-    toast.success(`Küchenplan importiert: ${count} Einträge übernommen (Rückgängig im ⋮-Menü)`);
+
+    const failed = saveResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0) {
+      console.error('[KÜCHENPLAN-IMPORT] Speichern fehlgeschlagen:', failed.map(f => f.reason));
+      toast.error(`Küchenplan importiert, aber ${failed.length} von ${count} Einträgen konnten nicht gespeichert werden — bitte erneut versuchen`);
+    } else {
+      toast.success(`Küchenplan importiert: ${count} Einträge übernommen (Rückgängig im ⋮-Menü)`);
+    }
   };
 
-  const handleKüchenplanUndo = () => {
+  const handleKüchenplanUndo = async () => {
     let payload: { backup: Record<string, DaySchedule | null> } | null = null;
     try {
       const raw = localStorage.getItem(tenantKey('kuechenplan_import_undo_v1'));
@@ -2601,22 +2629,30 @@ const SchedulePlanner = () => {
       return;
     }
     const merged = { ...scheduleDataRef.current };
-    let restored = 0;
-    for (const [key, prev] of Object.entries(payload.backup)) {
-      const date = key.slice(-10);
-      const empId = key.slice(0, -11);
-      if (prev) merged[key] = prev; else delete merged[key];
-      saveScheduleEntry(empId, date, prev ?? null);
-      restored++;
-    }
+    const saveResults = await Promise.allSettled(
+      Object.entries(payload.backup).map(async ([key, prev]) => {
+        const date = key.slice(-10);
+        const empId = key.slice(0, -11);
+        if (prev) merged[key] = prev; else delete merged[key];
+        await saveScheduleEntry(empId, date, prev ?? null);
+      })
+    );
     scheduleDataRef.current = merged;
     setScheduleData(merged);
     const monthKey = format(currentMonth, 'yyyy-MM');
     localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
-    localStorage.removeItem(tenantKey('kuechenplan_import_undo_v1'));
-    setKüchenplanUndoAvailable(false);
     window.dispatchEvent(new CustomEvent('schedule-updated'));
-    toast.success(`Küchenplan-Import rückgängig gemacht: ${restored} Zellen wiederhergestellt`);
+
+    const failed = saveResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    const restored = saveResults.length - failed.length;
+    if (failed.length > 0) {
+      console.error('[KÜCHENPLAN-UNDO] Speichern fehlgeschlagen:', failed.map(f => f.reason));
+      toast.error(`Rückgängig teilweise fehlgeschlagen: ${restored} von ${saveResults.length} Zellen wiederhergestellt, ${failed.length} nicht gespeichert — bitte erneut versuchen`);
+    } else {
+      localStorage.removeItem(tenantKey('kuechenplan_import_undo_v1'));
+      setKüchenplanUndoAvailable(false);
+      toast.success(`Küchenplan-Import rückgängig gemacht: ${restored} Zellen wiederhergestellt`);
+    }
   };
 
   const handleConfirmImport = (overrides: NameMatchOverride[]) => {
@@ -2725,8 +2761,11 @@ const SchedulePlanner = () => {
   };
 
   const handleSaveShiftConfig = (newShifts: ShiftConfigItem[]) => {
+    // No toast here — ShiftConfigDialog already shows its own on save, and a
+    // real write failure still surfaces via kvSetConfirmed's own toast+retry
+    // inside updateShifts/saveShiftsToStorage. A second unconditional
+    // "success" here on top of the dialog's was a confusing double-signal.
     updateShifts(newShifts);
-    toast.success('Schichtkonfiguration gespeichert!');
   };
 
   const handleConfigureDaysOff = (employee: Employee) => {
@@ -2736,15 +2775,20 @@ const SchedulePlanner = () => {
 
   type DayOfWeek = 'montag' | 'dienstag' | 'mittwoch' | 'donnerstag' | 'freitag' | 'samstag' | 'sonntag';
 
-  const handleSaveDaysOff = (employeeId: string, daysOff: DayOfWeek[]) => {
+  const handleSaveDaysOff = async (employeeId: string, daysOff: DayOfWeek[]): Promise<boolean> => {
     const updatedEmployees = employees.map(emp =>
       emp.id === employeeId ? { ...emp, daysOff } : emp
     );
     setEmployees(updatedEmployees);
     const updated = updatedEmployees.find(e => e.id === employeeId);
-    if (updated) upsertEmployee(updated);
+    const ok = updated ? await upsertEmployee(updated) : false;
+    if (!ok) {
+      toast.error('Freie Tage konnten nicht gespeichert werden — bitte erneut versuchen');
+      return false;
+    }
     localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
     toast.success('Freie Tage gespeichert');
+    return true;
   };
 
   const handleOpen8HoursDialog = (employee: Employee) => {
@@ -2785,7 +2829,7 @@ const SchedulePlanner = () => {
     setEmployeeFormOpen(true);
   };
 
-  const handleEmployeeFormSubmit = (employeeData: Omit<Employee, 'id'> | Employee) => {
+  const handleEmployeeFormSubmit = async (employeeData: Omit<Employee, 'id'> | Employee) => {
     if ('id' in employeeData) {
       // Update existing employee
       const merged = { ...employees.find(e => e.id === employeeData.id)!, ...employeeData };
@@ -2793,7 +2837,11 @@ const SchedulePlanner = () => {
         emp.id === employeeData.id ? merged : emp
       );
       setEmployees(updatedEmployees);
-      upsertEmployee(merged);
+      const ok = await upsertEmployee(merged);
+      if (!ok) {
+        toast.error(`${employeeData.name} konnte nicht gespeichert werden — bitte erneut versuchen`);
+        return;
+      }
       localStorage.setItem(tenantKey('schedule-employees'), JSON.stringify(updatedEmployees));
       toast.success(`${employeeData.name} aktualisiert`);
     } else {
@@ -3473,11 +3521,28 @@ const SchedulePlanner = () => {
     handleSlotChange(empId, dateStr, slot, null, null);
   }, []);
 
-  /** Merge template delta into scheduleData, then save */
-  const handleApplyTemplate = useCallback((delta: Record<string, DaySchedule>) => {
-    setScheduleData(prev => ({ ...prev, ...delta }));
-    setTimeout(() => handleSave(), 200);
-  }, [handleSave]);
+  /**
+   * Merge template delta into scheduleData, then save.
+   * Bug fixed 2026-09-29: previously called `setScheduleData(...)` then
+   * `setTimeout(() => handleSave(), 200)` — since `handleSave` is not
+   * memoized, that timeout closure was bound to the `scheduleData` from
+   * BEFORE the merge (captured at the render this callback was created in),
+   * so it silently saved the pre-delta data to Supabase while the UI kept
+   * showing the merged result until the next reload. Now the merged data is
+   * computed explicitly and passed straight into `handleSave`, with no
+   * reliance on render timing.
+   *
+   * Returns the save outcome (resolves `false` on a failed write, never
+   * throws) so callers that show their own "applied" toast — e.g.
+   * `BulkActionsDialog`'s absence-fill/shift-fill/copy-week/auto-free
+   * actions — can await it and skip that toast on failure instead of
+   * claiming success regardless of whether the write actually landed.
+   */
+  const handleApplyTemplate = useCallback((delta: Record<string, DaySchedule>): Promise<boolean> => {
+    const merged = { ...scheduleData, ...delta };
+    setScheduleData(merged);
+    return handleSave(merged);
+  }, [handleSave, scheduleData]);
 
   const handleBulkApplyActual = useCallback((delta: Record<string, { hours: number; start?: string; end?: string }>) => {
     // Ist-Tagessperre: gesperrte Tage aus dem Bulk-Delta entfernen.
@@ -3495,9 +3560,10 @@ const SchedulePlanner = () => {
       Object.entries(delta).forEach(([key, entry]) => {
         const date = key.slice(-10);
         const empId = key.slice(0, -11);
-        saveActualHourEntry(empId, date, entry).catch(err =>
-          console.error('[SCHEDULE] bulkActual save error:', err)
-        );
+        saveActualHourEntry(empId, date, entry).catch(err => {
+          console.error('[SCHEDULE] bulkActual save error:', err);
+          toast.error(`Ist-Stunden für ${date} konnten nicht gespeichert werden — bitte erneut versuchen`);
+        });
       });
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return next;
@@ -3610,7 +3676,7 @@ const SchedulePlanner = () => {
                 <span>{scheduleSource === 'loading' ? '⏳' : scheduleSource === 'supabase' ? '☁' : '💾'}</span>
                 <span>{loadedEntryCount}</span>
               </span>
-              <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5 h-8">
+              <Button onClick={() => handleSave()} disabled={isSaving} size="sm" className="gap-1.5 h-8">
                 <Save className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{isSaving ? 'Speichert…' : 'Speichern'}</span>
               </Button>
@@ -5457,9 +5523,16 @@ const SchedulePlanner = () => {
         scheduleData={scheduleData}
         employeeIds={displayEmployees.map(e => e.id)}
         tenantKey={tenantKey}
-        onCopy={(newScheduleData) => {
+        onCopy={async (newScheduleData) => {
           setScheduleData(newScheduleData);
-          saveFullScheduleForMonth(currentMonth, newScheduleData);
+          try {
+            await saveFullScheduleForMonth(currentMonth, newScheduleData);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[COPY-WEEK] saveFullScheduleForMonth failed:', err);
+            toast.error(`Woche kopieren fehlgeschlagen: ${msg}`);
+            return;
+          }
           const monthKey = format(currentMonth, 'yyyy-MM');
           localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newScheduleData));
           toast.success('Woche erfolgreich kopiert und gespeichert!');

@@ -320,15 +320,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signIn = async (email: string, password: string): Promise<{ error: string | null }> => {
     console.log('[AUTH] signIn', email);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      if (error.message.includes('Invalid login credentials'))
-        return { error: 'E-Mail-Adresse oder Passwort ist falsch.' };
-      if (error.message.includes('Email not confirmed'))
-        return { error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' };
-      return { error: 'Anmeldung fehlgeschlagen: ' + error.message };
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        if (error.message.includes('Invalid login credentials'))
+          return { error: 'E-Mail-Adresse oder Passwort ist falsch.' };
+        if (error.message.includes('Email not confirmed'))
+          return { error: 'Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.' };
+        return { error: 'Anmeldung fehlgeschlagen: ' + error.message };
+      }
+      return { error: null };
+    } catch (err) {
+      // signInWithPassword can reject (not just resolve with {error}) on some
+      // network-level failures — without this catch, LoginPage's setIsLoading(false)
+      // never runs and the login button stays permanently disabled.
+      console.error('[AUTH] signIn exception:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      return { error: 'Anmeldung fehlgeschlagen: ' + msg };
     }
-    return { error: null };
   };
 
   const signOut = async () => {

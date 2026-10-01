@@ -63,8 +63,14 @@ export async function loadImportSettings(tenantId: TenantId): Promise<ImportSett
 }
 
 /** Speichern: lokal sofort, KV-Backup über read→merge→write. */
-export async function saveImportSettings(tenantId: TenantId, blob: ImportSettingsBlob): Promise<void> {
+export async function saveImportSettings(tenantId: TenantId, blob: ImportSettingsBlob): Promise<boolean> {
   // Database-first (Issue #5): local cache only written after confirmed write.
+  // Returns whether the write actually succeeded — notifyKVBackupProblem
+  // already shows its own error+retry toast on failure, but callers still
+  // need this to know whether to show their OWN success toast / close a
+  // dialog (2026-09-29 fix — this used to always resolve normally even on
+  // failure, so a caller couldn't tell success from failure and showed a
+  // success toast/closed regardless, see docs/personal-cost-tracker-issues.md #9).
   const key = settingsKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);
@@ -72,11 +78,13 @@ export async function saveImportSettings(tenantId: TenantId, blob: ImportSetting
     const merged = mergeImportSettings(remote, blob);
     await kvSetStrict(key, merged);
     writeSettingsLocal(tenantId, merged);
+    return true;
   } catch (err) {
     void notifyKVBackupProblem(err, 'Import-Einstellungen', {
       toastId: 'import-settings-backup',
-      retry: () => saveImportSettings(tenantId, loadImportSettingsLocal(tenantId)),
+      retry: async () => { await saveImportSettings(tenantId, loadImportSettingsLocal(tenantId)); },
     });
+    return false;
   }
 }
 

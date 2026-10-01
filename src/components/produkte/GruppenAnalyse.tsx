@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef } from 'react';
 import { format, parse } from 'date-fns';
 import { de } from 'date-fns/locale';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
@@ -350,7 +351,7 @@ export default function GruppenAnalyse({
   }, [perf, filterGroupId, sortMode, productSortAsc]);
 
   // ── Group assignment handler ──────────────────────────────────────────────
-  const assignProductGroup = (productName: string, newGroupId: string | null) => {
+  const assignProductGroup = async (productName: string, newGroupId: string | null) => {
     const updated = groups.map(g => {
       const pn = productName.toLowerCase();
       const without = g.productNames.filter(n => n !== pn);
@@ -358,7 +359,8 @@ export default function GruppenAnalyse({
       return { ...g, productNames: without };
     });
     onGroupsChange(updated);
-    saveProductGroupsToDB(updated);
+    const ok = await saveProductGroupsToDB(updated);
+    if (!ok) toast.error(`Gruppenzuordnung für "${productName}" konnte nicht gespeichert werden — bitte erneut versuchen`);
   };
 
   // ── Margin color ──────────────────────────────────────────────────────────
@@ -445,10 +447,11 @@ export default function GruppenAnalyse({
         <GroupManagerModal
           groups={groups}
           category={category}
-          onSave={updated => {
+          onSave={async updated => {
             onGroupsChange(updated);
-            saveProductGroupsToDB(updated);
-            setShowManager(false);
+            const ok = await saveProductGroupsToDB(updated);
+            if (ok) setShowManager(false);
+            else toast.error('Gruppen konnten nicht gespeichert werden — bitte erneut versuchen');
           }}
           onClose={() => setShowManager(false)}
         />

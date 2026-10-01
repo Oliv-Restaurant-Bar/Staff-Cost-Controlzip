@@ -12,6 +12,7 @@
  */
 
 import { useState, useMemo } from 'react';
+import { toast } from 'sonner';
 import {
   ChevronsUpDown, RefreshCw, CheckSquare, Square, ChevronRight, AlertTriangle, Check,
 } from 'lucide-react';
@@ -26,7 +27,7 @@ import type { RezepturenMap, ProductRecipe } from '@/lib/rezeptur-store';
 
 interface Props {
   recipes: RezepturenMap;
-  onSave: (newMap: RezepturenMap) => void;
+  onSave: (newMap: RezepturenMap) => Promise<boolean>;
 }
 
 interface AffectedRow {
@@ -116,7 +117,7 @@ export default function BulkRezepturUpdate({ recipes, onSave }: Props) {
   const isValid = !isNaN(newQty) && newQty > 0 && selectedIds.size > 0;
   const selectedRows = affected.filter(r => selectedIds.has(r.recipe.id));
 
-  function handleApply() {
+  async function handleApply() {
     if (!isValid) return;
     const updated: RezepturenMap = { ...recipes };
     for (const row of selectedRows) {
@@ -130,9 +131,13 @@ export default function BulkRezepturUpdate({ recipes, onSave }: Props) {
         updatedAt: new Date().toISOString(),
       };
     }
-    onSave(updated);
-    setDone(true);
     setConfirming(false);
+    const ok = await onSave(updated);
+    if (!ok) {
+      toast.error('Massen-Update konnte nicht gespeichert werden — bitte erneut versuchen');
+      return;
+    }
+    setDone(true);
     setTimeout(() => {
       setDone(false);
       setSelectedIngredientName('');

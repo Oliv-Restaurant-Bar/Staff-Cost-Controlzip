@@ -29,7 +29,7 @@ interface DaysOffConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   employee: Employee;
-  onSave: (employeeId: string, daysOff: DayOfWeek[]) => void;
+  onSave: (employeeId: string, daysOff: DayOfWeek[]) => Promise<boolean>;
 }
 
 export const DaysOffConfigDialog = ({
@@ -50,9 +50,9 @@ export const DaysOffConfigDialog = ({
     );
   };
 
-  const handleSave = () => {
-    onSave(employee.id, selectedDays);
-    onOpenChange(false);
+  const handleSave = async () => {
+    const ok = await onSave(employee.id, selectedDays);
+    if (ok) onOpenChange(false);
   };
 
   return (

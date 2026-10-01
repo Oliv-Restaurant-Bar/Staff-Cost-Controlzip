@@ -19,6 +19,8 @@
  *   - Stabile Sortierung (bei Gleichstand entscheidet der Monatsindex).
  */
 
+import { swissApos } from './swiss-number-format';
+
 // ─── Eingabe ──────────────────────────────────────────────────────────────────
 
 export interface YearSeries {
@@ -239,23 +241,23 @@ export const MAX_YEAR_SELECTION = 5;
 
 export function fmtChf(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `CHF ${Math.round(value).toLocaleString('de-CH')}`;
+  return `CHF ${swissApos(Math.round(value).toLocaleString('de-CH'))}`;
 }
 
 export function fmtMio(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `CHF ${(value / 1_000_000).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Mio.`;
+  return `CHF ${swissApos((value / 1_000_000).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} Mio.`;
 }
 
 export function fmtPct(value: number | null, digits = 1): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  const s = value.toLocaleString('de-CH', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const s = swissApos(value.toLocaleString('de-CH', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
   return `${value > 0 ? '+' : ''}${s} %`;
 }
 
 export function fmtDeltaChf(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  const s = Math.round(Math.abs(value)).toLocaleString('de-CH');
+  const s = swissApos(Math.round(Math.abs(value)).toLocaleString('de-CH'));
   return `${value < 0 ? '−' : '+'}${s}`;
 }
 

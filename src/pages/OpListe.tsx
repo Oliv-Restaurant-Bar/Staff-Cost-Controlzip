@@ -20,9 +20,10 @@ import {
 } from '@/lib/op-liste-compare';
 import { BUCKET_KEYS, BUCKET_LABELS } from '@/types/op-liste';
 import type { OpImportRecord, OpItemRecord } from '@/types/op-liste';
+import { swissApos } from '@/lib/swiss-number-format';
 
 const chf = (v: number) =>
-  v.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  swissApos(v.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
 const fmtDate = (iso: string | null) => {
   if (!iso) return '–';

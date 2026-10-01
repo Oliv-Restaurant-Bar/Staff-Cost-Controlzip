@@ -54,11 +54,14 @@ function normalizeName(s: string) {
 function matchEmployee(name: string, employees: Employee[]): Employee | undefined {
   const n = normalizeName(name);
   return (
-    employees.find(e => normalizeName(`${e.firstName} ${e.lastName}`) === n) ||
-    employees.find(e => normalizeName(`${e.lastName} ${e.firstName}`) === n) ||
-    employees.find(e => normalizeName(e.lastName) === n) ||
+    employees.find(e => normalizeName(e.name) === n) ||
     employees.find(e => {
-      const full = normalizeName(`${e.firstName} ${e.lastName}`);
+      // CSV name order may be reversed ("Nachname Vorname") vs. the stored name.
+      const parts = e.name.trim().split(/\s+/);
+      return parts.length > 1 && normalizeName([...parts].reverse().join(' ')) === n;
+    }) ||
+    employees.find(e => {
+      const full = normalizeName(e.name);
       return full.includes(n) || n.includes(full);
     })
   );
@@ -84,7 +87,7 @@ export function HoursCSVImportButton({ employees, selectedDate, onImport }: Hour
       const dateStr = format(day, 'yyyy-MM-dd');
       for (const emp of employees) {
         const dept = emp.department === 'küche' ? 'Küche' : 'Service';
-        lines.push(`${dateStr};${emp.firstName} ${emp.lastName};${dept};`);
+        lines.push(`${dateStr};${emp.name};${dept};`);
       }
     }
 
@@ -172,7 +175,7 @@ export function HoursCSVImportButton({ employees, selectedDate, onImport }: Hour
     const entries: MirusDailyImportEntry[] = rows
       .filter(r => r.status === 'ok' && r.matchedEmployee)
       .map(r => ({
-        name:       `${r.matchedEmployee!.firstName} ${r.matchedEmployee!.lastName}`,
+        name:       r.matchedEmployee!.name,
         department: r.matchedEmployee!.department,
         date:       r.date,
         hours:      r.hours,
@@ -292,7 +295,7 @@ export function HoursCSVImportButton({ employees, selectedDate, onImport }: Hour
                     <TableCell className="text-sm">{r.name}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {r.matchedEmployee
-                        ? `${r.matchedEmployee.firstName} ${r.matchedEmployee.lastName}`
+                        ? r.matchedEmployee.name
                         : r.error ?? '—'}
                     </TableCell>
                     <TableCell className="text-right text-sm font-medium">
