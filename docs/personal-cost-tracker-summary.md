@@ -140,10 +140,55 @@ it from both cost buckets. Functionally this doesn't change the Warenkosten-Quot
 it touches real cost classification, so it's flagged for a decision rather than guessed at. See
 issue tracker.
 
+## New finding — 19 database tables were never created in production
+
+Applying the 4 RLS migration files failed immediately: a table it expected (`imap_email_settings`)
+doesn't exist. Checking further found **19 tables this app's own code depends on were never
+actually created in the live database** — some as far back as January 2026. This is a separate,
+pre-existing gap, unrelated to the RLS/permissions work; it just happened to surface while
+applying those migrations.
+
+Of those 19, 6 are genuinely broken right now, in two groups:
+
+- **1 table shows up on a page reachable from the normal menu**: `capacity_settings` (Settings
+  page).
+- **5 tables are on pages that technically exist but have no menu entry pointing to them at
+  all** — `app_kv_store` (Produkte), `product_sales_reset_log` (Sales-Upload), and three tables
+  behind an old revenue-entry screen (`group_reservations`, `email_imported_reservations`,
+  `fortelable_settings` — superseded by the current home page, marked "Legacy" in code, zero links
+  anywhere in the app). Just as broken, but only reachable by typing the URL directly, not by
+  clicking around the app normally.
+
+(Artikel-Tracking and Artikel pages were checked too — they don't touch any of the 19 missing
+tables, they use a different, already-live storage mechanism. Not broken by this gap.)
+
+The other 13 are tables behind part of the Events/Reservations area that was built but never
+wired up to any page, plus a couple of other written-but-never-shipped tables — not a currently-
+broken screen, just unfinished work sitting dormant. Full breakdown and exact pages affected:
+`docs/personal-cost-tracker-missing-tables.md` (issue #11).
+
+**Update (2026-10-01):** checked both sides before deciding what to actually create — not just
+whether a page links to this code (frontend), but whether anything server-side still touches it
+(backend). 6 background jobs reference 10 of these 19 tables in their code, but you confirmed none
+of those jobs are actually scheduled or running. So of the 19 at that point: 10 looked like they
+were being created, 9 were not (the fully-dead Events/Reservations tables) — moved out of what
+gets applied.
+
+**Update (2026-10-14), after the client meeting confirmed scope — add only what's necessary, defer
+new/half-built work:** a closer look at those "10 being created" found 4 more with zero code
+reference anywhere, frontend or backend — `articles`, `daily_revenues`, `sales_upload_log`,
+`suppliers` — each one explicitly a not-yet-built future stage per its own migration file's
+header (e.g. "Stage 2 migration," "replaces the dailyBudgets JSON blob"), not something any live
+page currently needs. **Real count: 6 tables are being created, 13 are not.** Nothing user-facing
+changes from this; it only trims what gets built today to exactly what's load-bearing.
+
 ## Still pending (not part of this batch)
 
-- Applying the 4 database migration files to the live database (manual step in the Supabase
-  dashboard).
+- **Applying to production.** The 6 still-needed missing tables (5 migration files in
+  `supabase/migrations_pending/missing_tables/` — the 13 confirmed-dead/not-yet-built ones excluded
+  to that folder's `not_applying_confirmed_dead/` subfolder) plus the 4 RLS migration files were
+  applied and verified successfully on staging on 2026-10-14. Production has not been run yet —
+  same 9 files, same order, still a manual step in the Supabase dashboard.
 - A column-level fix to fully hide wage amounts from roles that can see the rest of an
   employee's row (currently those rows are correctly restricted by restaurant, but the wage
   columns aren't separately hidden within a row the role can otherwise see).

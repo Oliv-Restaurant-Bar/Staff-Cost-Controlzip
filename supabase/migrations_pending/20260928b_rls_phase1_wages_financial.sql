@@ -160,16 +160,13 @@ CREATE POLICY employee_wages_delete ON public.employee_wages
 
 REVOKE SELECT ON public.employee_wages FROM anon;
 
--- ── Warenrechnungen: suppliers, supplier_documents, supplier_document_splits ─
-
-DROP POLICY IF EXISTS "authenticated_read_suppliers"   ON public.suppliers;
-DROP POLICY IF EXISTS "authenticated_manage_suppliers" ON public.suppliers;
-CREATE POLICY authenticated_read_suppliers ON public.suppliers
-  FOR SELECT TO authenticated USING (public.role_can_view_warenrechnungen());
-CREATE POLICY authenticated_manage_suppliers ON public.suppliers
-  FOR ALL TO authenticated
-  USING (public.role_can_edit_warenrechnungen())
-  WITH CHECK (public.role_can_edit_warenrechnungen());
+-- ── Warenrechnungen: supplier_documents, supplier_document_splits ───────────
+-- `suppliers` itself is NOT RLS'd here: the table doesn't exist in production
+-- and isn't being created (zero code references it — see
+-- supabase/migrations_pending/missing_tables/not_applying_confirmed_dead/README.md
+-- and docs/personal-cost-tracker-missing-tables.md). A policy on a
+-- nonexistent table fails the whole migration, same failure mode that
+-- surfaced this entire investigation.
 
 DROP POLICY IF EXISTS "authenticated_read_supplier_documents"   ON public.supplier_documents;
 DROP POLICY IF EXISTS "authenticated_manage_supplier_documents" ON public.supplier_documents;

@@ -120,11 +120,16 @@ REVOKE ALL ON public.onboarding_submissions FROM anon;
 DO $$
 DECLARE polname text; t text;
 BEGIN
+  -- timesheet_month_exclusions/timesheet_month_inclusions REMOVED from this
+  -- array 2026-10-01: only consumer was timesheet-exclusions-store.ts ->
+  -- ArbeitszeitblaetterPage.tsx, confirmed dead (zero importers, not routed)
+  -- and moved to src/_deprecated/. Table creation correspondingly removed
+  -- from 20260528_timesheet_exclusions.sql in missing_tables/ — ALTER TABLE
+  -- against a nonexistent table fails. See src/_deprecated/README.md.
   FOREACH t IN ARRAY ARRAY[
     'employee_timesheet_confirmations', 'timesheet_employee_requests',
     'employee_time_balances', 'timesheet_import_history',
-    'timesheet_month_status', 'timesheet_month_snapshot',
-    'timesheet_month_exclusions', 'timesheet_month_inclusions'
+    'timesheet_month_status', 'timesheet_month_snapshot'
   ] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
     FOR polname IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=t LOOP
@@ -273,24 +278,12 @@ BEGIN
   END LOOP;
 END $$;
 
--- ══ Daily revenue — tenant-scoped, broad operational-role read/write (every
---    scheduling role needs to see/enter revenue for their own tenant) ══════
-
-DO $$
-DECLARE polname text; t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['daily_revenues', 'sales_upload_log'] LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
-    FOR polname IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=t LOOP
-      EXECUTE format('DROP POLICY %I ON public.%I;', polname, t);
-    END LOOP;
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (public.role_can_access_tenant(restaurant_id));', t || '_select', t);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR INSERT TO authenticated WITH CHECK (public.role_can_write_tenant_data(restaurant_id));', t || '_insert', t);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated USING (public.role_can_write_tenant_data(restaurant_id)) WITH CHECK (public.role_can_write_tenant_data(restaurant_id));', t || '_update', t);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING (public.role_can_write_tenant_data(restaurant_id));', t || '_delete', t);
-    EXECUTE format('REVOKE ALL ON public.%I FROM anon;', t);
-  END LOOP;
-END $$;
+-- ══ Daily revenue — NOT applied here. `daily_revenues`/`sales_upload_log`
+--    don't exist in production and aren't being created (zero code
+--    references either — see
+--    supabase/migrations_pending/missing_tables/not_applying_confirmed_dead/README.md
+--    and docs/personal-cost-tracker-missing-tables.md). A dynamic ALTER
+--    TABLE on a nonexistent table fails the whole DO block. ═════════════════
 
 -- ══ Statutory minimum-wage table — read stays open (public legal data,
 --    needed for payroll compliance calcs across roles), write restricted to

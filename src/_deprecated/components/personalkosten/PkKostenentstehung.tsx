@@ -6,7 +6,7 @@
  *  b) PKQ-Brücke (Wasserfall) aus buildPkqBruecke: Ziel → Umsatz-Effekt →
  *     Zwischen-PKQ → Personal-Effekt → PKQ-Hochrechnung.
  */
-import { PK_COLORS } from './pk-colors';
+import { PK_COLORS } from '@/components/personalkosten/pk-colors';
 import type { PkqBrueckeErgebnis } from '@/lib/personalkosten-darstellung';
 import { cn } from '@/lib/utils';
 

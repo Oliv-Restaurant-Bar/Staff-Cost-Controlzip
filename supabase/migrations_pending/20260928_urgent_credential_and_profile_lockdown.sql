@@ -21,44 +21,40 @@
 --
 -- Idempotent — safe to run more than once.
 
+-- `current_user_role()` is defined in 20260716_user_profiles_role_protection.sql,
+-- which predates this migration and should already exist on any database with
+-- the full history applied — but this staging database errored "function
+-- does not exist" on the RLS apply attempt (2026-10-14), the same gap pattern
+-- already hit once on update_updated_at_column() (see
+-- missing_tables/20260122162412_...sql). Redefined here (idempotent, identical
+-- body/signature) as a guard — every one of this file's own policies and all
+-- the role_can_* helper functions in 20260928b/20260929b depend on it.
+-- CREATE OR REPLACE is a safe no-op anywhere it already exists.
+CREATE OR REPLACE FUNCTION public.current_user_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.current_user_role() FROM anon;
+GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
+
 -- ── Part 1: credential tables — admin + beaulieu_manager only ──────────────
-
-DROP POLICY IF EXISTS "Allow public read access on imap_email_settings"   ON public.imap_email_settings;
-DROP POLICY IF EXISTS "Allow public insert access on imap_email_settings" ON public.imap_email_settings;
-DROP POLICY IF EXISTS "Allow public update access on imap_email_settings" ON public.imap_email_settings;
-DROP POLICY IF EXISTS "Allow public delete access on imap_email_settings" ON public.imap_email_settings;
-DROP POLICY IF EXISTS imap_email_settings_select ON public.imap_email_settings;
-DROP POLICY IF EXISTS imap_email_settings_insert ON public.imap_email_settings;
-DROP POLICY IF EXISTS imap_email_settings_update ON public.imap_email_settings;
-DROP POLICY IF EXISTS imap_email_settings_delete ON public.imap_email_settings;
-
-CREATE POLICY imap_email_settings_select ON public.imap_email_settings
-  FOR SELECT TO authenticated USING (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY imap_email_settings_insert ON public.imap_email_settings
-  FOR INSERT TO authenticated WITH CHECK (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY imap_email_settings_update ON public.imap_email_settings
-  FOR UPDATE TO authenticated
-  USING (public.current_user_role() IN ('admin', 'beaulieu_manager'))
-  WITH CHECK (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY imap_email_settings_delete ON public.imap_email_settings
-  FOR DELETE TO authenticated USING (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-
-DROP POLICY IF EXISTS "Allow all access to external_api_settings" ON public.external_api_settings;
-DROP POLICY IF EXISTS external_api_settings_select ON public.external_api_settings;
-DROP POLICY IF EXISTS external_api_settings_insert ON public.external_api_settings;
-DROP POLICY IF EXISTS external_api_settings_update ON public.external_api_settings;
-DROP POLICY IF EXISTS external_api_settings_delete ON public.external_api_settings;
-
-CREATE POLICY external_api_settings_select ON public.external_api_settings
-  FOR SELECT TO authenticated USING (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY external_api_settings_insert ON public.external_api_settings
-  FOR INSERT TO authenticated WITH CHECK (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY external_api_settings_update ON public.external_api_settings
-  FOR UPDATE TO authenticated
-  USING (public.current_user_role() IN ('admin', 'beaulieu_manager'))
-  WITH CHECK (public.current_user_role() IN ('admin', 'beaulieu_manager'));
-CREATE POLICY external_api_settings_delete ON public.external_api_settings
-  FOR DELETE TO authenticated USING (public.current_user_role() IN ('admin', 'beaulieu_manager'));
+--
+-- imap_email_settings and external_api_settings policies REMOVED 2026-10-01:
+-- both only ever fed the Events/Reservations settings module, confirmed dead
+-- (zero importers anywhere in src/, zero active Edge Function/cron trigger —
+-- confirmed with the client) and moved to src/_deprecated/. Their CREATE TABLE
+-- statements were correspondingly removed from the missing_tables/ migrations
+-- that created them, so neither table will exist — policy statements against
+-- a nonexistent table fail the same way the original imap_email_settings gap
+-- did. See docs/personal-cost-tracker-missing-tables.md Tier 3 and
+-- src/_deprecated/README.md. If the Events module is later revived, restore
+-- both blocks from git history (this commit) along with the table creation.
 
 DROP POLICY IF EXISTS "Allow all operations on fortelable_settings" ON public.fortelable_settings;
 DROP POLICY IF EXISTS fortelable_settings_select ON public.fortelable_settings;
