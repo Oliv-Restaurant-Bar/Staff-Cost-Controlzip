@@ -282,7 +282,7 @@ END $$;
 --    don't exist in production and aren't being created (zero code
 --    references either — see
 --    supabase/migrations_pending/missing_tables/not_applying_confirmed_dead/README.md
---    and docs/personal-cost-tracker-missing-tables.md). A dynamic ALTER
+--    and docs/dev/personal-cost-tracker-missing-tables.md). A dynamic ALTER
 --    TABLE on a nonexistent table fails the whole DO block. ═════════════════
 
 -- ══ Statutory minimum-wage table — read stays open (public legal data,

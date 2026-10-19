@@ -5,7 +5,7 @@ Everything under this folder has **zero importers anywhere in the live `src/` tr
 2026-10-01 by tracing exact `import ... from '<file>'` lines (not name-based grep) for every file,
 checked after the move via a full `tsc --noEmit -p tsconfig.app.json` (219 pre-existing errors,
 unchanged) and `npm run build` (succeeds, no new warnings). Full investigation and evidence:
-`docs/personal-cost-tracker-missing-tables.md` (issue #11 in `docs/personal-cost-tracker-issues.md`).
+`docs/dev/personal-cost-tracker-missing-tables.md` (issue #11 in `docs/dev/personal-cost-tracker-issues.md`).
 
 **If you're a future session (human or AI agent): do not import from this folder, do not treat
 these files as a starting point to extend, and do not assume the database tables they reference
@@ -55,7 +55,7 @@ here even though it has zero nav entry and zero in-app links (same "nobody can r
 clicking" profile as everything above) — because it still has a live, registered route in
 `App.tsx` and would render real, working UI once the missing tables exist. Moving it would mean
 deleting a working route, a feature-removal decision, not a dead-code cleanup. Left in place,
-flagged in `docs/personal-cost-tracker-missing-tables.md` Tier 2.
+flagged in `docs/dev/personal-cost-tracker-missing-tables.md` Tier 2.
 
 ### General dead-code sweep, 2026-10-14 (22 files, unrelated to the missing-tables tables above)
 
@@ -111,4 +111,4 @@ Was the Events/Reservations cluster abandoned mid-build (in which case: delete t
 permanently) or meant to be finished (restore its 9 tables into the migration — see
 `not_applying_confirmed_dead/README.md` — create the route, move the code back out)? Not something
 to guess at. Doesn't block anything in the meantime — its tables are already excluded from what
-gets applied either way. See `docs/personal-cost-tracker-missing-tables.md`.
+gets applied either way. See `docs/dev/personal-cost-tracker-missing-tables.md`.

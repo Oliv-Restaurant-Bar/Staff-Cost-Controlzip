@@ -64,4 +64,4 @@ were edited to drop those blocks — see the comments left at each removal site.
 **Combined: the 4 top-level RLS files in `supabase/migrations_pending/` were edited across both
 groups** — their policies for all 13 excluded tables were removed (would otherwise fail with
 "relation does not exist" against a table that never gets created). See
-`docs/personal-cost-tracker-changelog.md` for the full list of edits.
+`docs/dev/personal-cost-tracker-changelog.md` for the full list of edits.

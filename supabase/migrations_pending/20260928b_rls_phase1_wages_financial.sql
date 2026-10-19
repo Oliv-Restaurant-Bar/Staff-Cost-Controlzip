@@ -22,7 +22,7 @@
 -- The remaining ~40 lower-sensitivity tables found in the wider audit
 -- (reference/lookup data, notification logs, gn_* import tables, guest CRM,
 -- etc.) are intentionally deferred to a later pass — see
--- docs/personal-cost-tracker-issues.md issue #7 for the running list.
+-- docs/dev/personal-cost-tracker-issues.md issue #7 for the running list.
 --
 -- Idempotent — safe to run more than once.
 
@@ -164,7 +164,7 @@ REVOKE SELECT ON public.employee_wages FROM anon;
 -- `suppliers` itself is NOT RLS'd here: the table doesn't exist in production
 -- and isn't being created (zero code references it — see
 -- supabase/migrations_pending/missing_tables/not_applying_confirmed_dead/README.md
--- and docs/personal-cost-tracker-missing-tables.md). A policy on a
+-- and docs/dev/personal-cost-tracker-missing-tables.md). A policy on a
 -- nonexistent table fails the whole migration, same failure mode that
 -- surfaced this entire investigation.
 

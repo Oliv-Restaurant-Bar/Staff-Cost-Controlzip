@@ -1,6 +1,11 @@
 # Personal/Staff Cost Tracker — Phase 1 Changelog
 
-Tracks what's done vs. pending against `docs/personal-cost-tracker-issues.md` and CRM Task #38589.
+Tracks what's done vs. pending against `docs/dev/personal-cost-tracker-issues.md` and CRM Task #38589.
+
+Note: doc paths inside dated entries below reflect the `docs/` layout at the time they were written
+(before the 2026-10-16 `docs/dev/` + `docs/client/` split) — left as a historical record, not
+rewritten. Current paths: `docs/dev/personal-cost-tracker-issues.md`, `docs/dev/personal-cost-tracker-changelog.md`,
+`docs/dev/personal-cost-tracker-missing-tables.md`, `docs/client/personal-cost-tracker-summary.md`.
 
 ## 2026-09-08
 
@@ -225,3 +230,20 @@ After finding a second instance of the bulk-save bug in the same session (the `h
 - Confirmed none of the 22 import each other, and all reach live code only via absolute `@/...` aliases (unaffected by moving the file) — except `components/personalkosten/PkKostenentstehung.tsx`, which had one relative import (`./pk-colors`) that broke on the move since that file is a live sibling still used by `PkVerlaufChart.tsx`; fixed to `@/components/personalkosten/pk-colors`.
 - All 22 moved via `git mv` into `src/_deprecated/`, mirroring original structure. Verified: grepped all of `src/` outside `_deprecated/` for any of the 22 old paths — zero hits; `tsc --noEmit -p tsconfig.app.json` — same 219 pre-existing errors (caught and fixed one new error from the `pk-colors` relative-import break before landing on this, confirming the check actually works); `npm run build` — succeeds, same pre-existing chunk-size warning, nothing new.
 - Full file list and per-file evidence: `src/_deprecated/README.md`'s "General dead-code sweep" section.
+
+## 2026-10-16 — docs reorganized into `docs/dev/` + `docs/client/`; stale-dashboard issue removed
+
+- Split `docs/` by audience: internal engineering docs (issue tracker, dated changelog, missing-tables
+  investigation, feature/architecture notes) moved to `docs/dev/`; the plain-language client status
+  write-up (`personal-cost-tracker-summary.md`) moved to `docs/client/`, which now also carries its
+  own short README explaining the convention. All cross-references across the repo (README.md,
+  CLAUDE.md, `supabase/migrations_pending/*`, `src/_deprecated/README.md`, source-code comments
+  pointing at issue numbers) updated to the new paths.
+- `docs/dev/personal-cost-tracker-issues.md` reordered: the three client priorities from the
+  2026-09-28 meeting (issue #7 — logins/permissions, #9 — schedule-save reliability, #10 — WhatsApp
+  sharing) now lead the document under their own "Client priorities" section, ahead of the other
+  fixed/open items. Issue numbers themselves were kept stable (still referenced by number in code
+  comments and the changelog) — only the physical ordering in the file changed.
+- Issue #8 ("stale dashboard data") removed outright, per your 2026-10-14 call to skip it — it had
+  no specific screen/repro to act on anyway. Matching reference removed from
+  `docs/client/personal-cost-tracker-summary.md`'s "Still pending" section.

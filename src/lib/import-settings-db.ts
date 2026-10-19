@@ -70,7 +70,7 @@ export async function saveImportSettings(tenantId: TenantId, blob: ImportSetting
   // need this to know whether to show their OWN success toast / close a
   // dialog (2026-09-29 fix — this used to always resolve normally even on
   // failure, so a caller couldn't tell success from failure and showed a
-  // success toast/closed regardless, see docs/personal-cost-tracker-issues.md #9).
+  // success toast/closed regardless, see docs/dev/personal-cost-tracker-issues.md #9).
   const key = settingsKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);

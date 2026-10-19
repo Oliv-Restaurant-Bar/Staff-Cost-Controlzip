@@ -868,7 +868,7 @@ export async function saveProductGroupsToDB(groups: ProductGroup[]): Promise<boo
   // Database-first (Issue #5 convention): write to Supabase first, cache to
   // localStorage only after that's confirmed. Previously local-first with a
   // swallowed error — a failed write looked identical to a successful one to
-  // every caller (2026-09-29 fix, see docs/personal-cost-tracker-issues.md #9).
+  // every caller (2026-09-29 fix, see docs/dev/personal-cost-tracker-issues.md #9).
   try {
     const err = await settingsSave(GROUP_KEY, groups);
     if (err) {
@@ -1059,7 +1059,7 @@ export async function loadProductCostsFromDB(): Promise<ProductCostEntry[]> {
 export async function saveProductCostsToDB(costs: ProductCostEntry[]): Promise<boolean> {
   // Database-first (Issue #5 convention): write to Supabase first, cache to
   // localStorage only after that's confirmed (2026-09-29 fix — see
-  // docs/personal-cost-tracker-issues.md #9).
+  // docs/dev/personal-cost-tracker-issues.md #9).
   let ok: boolean;
   try {
     const err = await settingsSave(DB_KV_KEY, costs);

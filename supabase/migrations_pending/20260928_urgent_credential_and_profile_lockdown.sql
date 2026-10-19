@@ -52,7 +52,7 @@ GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
 -- statements were correspondingly removed from the missing_tables/ migrations
 -- that created them, so neither table will exist — policy statements against
 -- a nonexistent table fail the same way the original imap_email_settings gap
--- did. See docs/personal-cost-tracker-missing-tables.md Tier 3 and
+-- did. See docs/dev/personal-cost-tracker-missing-tables.md Tier 3 and
 -- src/_deprecated/README.md. If the Events module is later revived, restore
 -- both blocks from git history (this commit) along with the table creation.
 

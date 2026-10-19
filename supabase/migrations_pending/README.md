@@ -38,7 +38,7 @@ project's original history) that create 6 tables to apply now: `capacity_setting
 Several of the 4 RLS files below reference the 6 tables being applied directly, so this subfolder
 must go first. They were also edited to drop policies for the 13 tables not being created — see
 each file's inline comments at the removal site. Full breakdown:
-`docs/personal-cost-tracker-missing-tables.md`. Found when the first RLS migration below failed on
+`docs/dev/personal-cost-tracker-missing-tables.md`. Found when the first RLS migration below failed on
 `imap_email_settings` not existing — which, after this cleanup, is one of the tables no longer
 being created at all (see `not_applying_confirmed_dead/`).
 
@@ -67,7 +67,7 @@ being created at all (see `not_applying_confirmed_dead/`).
 
 All four were verified against this project's own database-setup history (every table confirmed
 to belong to this project, not another one sharing the same Supabase instance) and against each
-table's actual columns — see `docs/personal-cost-tracker-summary.md` for the plain-English
-version of what each one does and `docs/personal-cost-tracker-issues.md` issue #7 for the full
+table's actual columns — see `docs/client/personal-cost-tracker-summary.md` for the plain-English
+version of what each one does and `docs/dev/personal-cost-tracker-issues.md` issue #7 for the full
 technical audit. That verification was against this repo's migration *history*, not the live
 database's actual current state — which is what caught the `missing_tables/` gap above.

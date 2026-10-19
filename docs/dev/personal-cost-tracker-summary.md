@@ -2,8 +2,8 @@
 
 Quick-reference list of what was broken and what was fixed, for client/status updates.
 Each entry: the problem in plain terms, the fix, and how to verify it yourself in the app.
-For full technical detail see `personal-cost-tracker-issues.md` (issue list) and
-`personal-cost-tracker-changelog.md` (dated change log).
+For full technical detail see `../dev/personal-cost-tracker-issues.md` (issue list) and
+`../dev/personal-cost-tracker-changelog.md` (dated change log).
 
 ---
 
@@ -165,7 +165,7 @@ tables, they use a different, already-live storage mechanism. Not broken by this
 The other 13 are tables behind part of the Events/Reservations area that was built but never
 wired up to any page, plus a couple of other written-but-never-shipped tables — not a currently-
 broken screen, just unfinished work sitting dormant. Full breakdown and exact pages affected:
-`docs/personal-cost-tracker-missing-tables.md` (issue #11).
+`../dev/personal-cost-tracker-missing-tables.md` (issue #11).
 
 **Update (2026-10-01):** checked both sides before deciding what to actually create — not just
 whether a page links to this code (frontend), but whether anything server-side still touches it
@@ -192,8 +192,7 @@ changes from this; it only trims what gets built today to exactly what's load-be
 - A column-level fix to fully hide wage amounts from roles that can see the rest of an
   employee's row (currently those rows are correctly restricted by restaurant, but the wage
   columns aren't separately hidden within a row the role can otherwise see).
-- Three remaining access-design decisions flagged for a product call, not a code question (see
-  `personal-cost-tracker-issues.md` issue #7): the Gastronovi import-data tables, three
-  reservation tables with no restaurant tagging at all, and whether the shared product catalog
-  should be split per restaurant.
-- Client clarification on where exactly "stale dashboard data" (issue #8) is being seen.
+- Three access-design questions (Gastronovi import-data tables, reservation tables with no
+  restaurant tagging, shared product catalog split) were resolved 2026-10-14: confirmed as the
+  client's own original design, not oversights — no schema change needed. See
+  `../dev/personal-cost-tracker-issues.md` issue #7 for detail.

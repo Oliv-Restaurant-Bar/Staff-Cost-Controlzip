@@ -1,6 +1,6 @@
 # Issue #5 — App trusts the device more than the database
 
-Design for `docs/personal-cost-tracker-issues.md` issue #5. This is a Phase 1
+Design for `docs/dev/personal-cost-tracker-issues.md` issue #5. This is a Phase 1
 reliability fix on live production data (Oliv/Beaulieu), not a new feature —
 it gets a `feature-plans/` folder anyway because the blast radius and the
 design decisions are genuinely architectural (see "Blast radius" below), not
@@ -8,7 +8,7 @@ because it's introducing new product behavior.
 
 ## 1. Restating the problem
 
-`docs/personal-cost-tracker-issues.md` #5 says saves are "done" once they
+`docs/dev/personal-cost-tracker-issues.md` #5 says saves are "done" once they
 reach the device, before the database confirms them, and names this as the
 root cause behind issues #1–#3 (already patched individually). Confirmed by
 reading the actual code (not assumed):
@@ -166,7 +166,7 @@ Sequence:
 
 **Update (same day):** the user asked explicitly for the step-2–4 follow-up
 to be done as well, not just planned. It was completed in the same session —
-see `docs/personal-cost-tracker-issues.md` issue #5 and the 2026-09-23
+see `docs/dev/personal-cost-tracker-issues.md` issue #5 and the 2026-09-23
 changelog entry for the full per-file list of what was reordered, migrated
 to `kvSetConfirmed()`, fixed for silent failures, or deliberately left as-is
 with reasoning (synchronous high-blast-radius APIs, already-by-design local-
@@ -201,7 +201,7 @@ flips in two files) that it can go straight to implementation rather than
 through `planner` first — there's no multi-step sequencing ambiguity left
 to resolve. Next: implement Section 3 (`supabase-kv.ts`) and Section 4
 (`useSyncStore.ts`), add the regression test from Section 6, update
-`docs/personal-cost-tracker-issues.md` / `docs/personal-cost-tracker-changelog.md`
+`docs/dev/personal-cost-tracker-issues.md` / `docs/dev/personal-cost-tracker-changelog.md`
 per the existing #4b format, and explicitly log the Section 5 step 1-only
 scope decision there so a future session doesn't assume all ~50 call sites
 were migrated.

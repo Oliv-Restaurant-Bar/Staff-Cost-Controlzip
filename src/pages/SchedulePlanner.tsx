@@ -2352,7 +2352,7 @@ const SchedulePlanner = () => {
     // saveActualHourEntry never throws — it resolves { ok, error } — so the
     // result must be checked explicitly, not just fired-and-forgotten, or a
     // real write failure has zero signal anywhere (2026-09-29 fix, see
-    // docs/personal-cost-tracker-issues.md #9). Done outside the setState
+    // docs/dev/personal-cost-tracker-issues.md #9). Done outside the setState
     // updater since it's an async side effect, not a state computation.
     if (!opts?.skipSupabase) {
       saveActualHourEntry(employeeId, date, entry).then(result => {

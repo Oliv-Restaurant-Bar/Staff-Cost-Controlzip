@@ -158,7 +158,7 @@ export async function saveBasiskomponentenToDB(map: BaseComponentMap): Promise<b
   // Database-first (Issue #5): cache locally only after Supabase confirms.
   // Returns whether the write actually succeeded — callers must await this
   // and gate their own success toast/UI state on it instead of assuming
-  // success (2026-09-29 fix, see docs/personal-cost-tracker-issues.md #9).
+  // success (2026-09-29 fix, see docs/dev/personal-cost-tracker-issues.md #9).
   try {
     await kvSetConfirmed(STORE_KEY, map, 'Basiskomponenten');
     return true;
