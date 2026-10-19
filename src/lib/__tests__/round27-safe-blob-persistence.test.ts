@@ -156,20 +156,20 @@ describe('F01–F03: Reines Laden löst keinen Upsert aus', () => {
 
 describe('F02/F04–F06/F19: Dirty-Check und updatedAt (Budget-Einstiegspfad)', () => {
   it('F02+F05 identischer Save: kein weiterer Upsert, updatedAt unverändert', async () => {
-    const saved = saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 100), B_KEY);
+    const saved = await saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 100), B_KEY);
     await flush();
     const n = upsertCount(B_KEY);
     expect(n).toBe(1);
 
     await sleep(5);
-    const again = saveBudgetYear({ ...saved }, B_KEY);
+    const again = await saveBudgetYear({ ...saved }, B_KEY);
     await flush();
     expect(upsertCount(B_KEY)).toBe(n);          // kein zweiter Write
     expect(again.updatedAt).toBe(saved.updatedAt); // Zeitstempel identisch
   });
 
   it('F04+F06 echte Änderung: genau EIN weiterer Upsert, updatedAt neu', async () => {
-    const first = saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 100), B_KEY);
+    const first = await saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 100), B_KEY);
     await flush();
     const n = upsertCount(B_KEY);
 
@@ -177,18 +177,18 @@ describe('F02/F04–F06/F19: Dirty-Check und updatedAt (Budget-Einstiegspfad)', 
     const changed: BudgetYear = { ...first, plLineItems: first.plLineItems!.map(i => ({
       ...i, monthlyValues: [999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     })) };
-    const second = saveBudgetYear(changed, B_KEY);
+    const second = await saveBudgetYear(changed, B_KEY);
     await flush();
     expect(upsertCount(B_KEY)).toBe(n + 1);
     expect(second.updatedAt).not.toBe(first.updatedAt);
   });
 
   it('F19 Mehrfaches Speichern derselben Änderung erzeugt keinen weiteren Write', async () => {
-    const saved = saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 7), B_KEY);
+    const saved = await saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 7), B_KEY);
     await flush();
     const n = upsertCount(B_KEY);
     for (let i = 0; i < 3; i++) {
-      saveBudgetYear({ ...saved }, B_KEY);
+      await saveBudgetYear({ ...saved }, B_KEY);
       await flush();
     }
     expect(upsertCount(B_KEY)).toBe(n);
@@ -373,14 +373,17 @@ describe('F16/F17: Domänen-Merge-Regeln unverändert', () => {
 // ─── Fall 18: Keine Teilpersistenz ───────────────────────────────────────────
 
 describe('F18: Fehler nach Read, vor/beim Upsert → keine Teilpersistenz remote', () => {
-  it('Budget: Schreibfehler → Remote unverändert, Fehler sichtbar (Toast), localStorage intakt', async () => {
+  it('Budget: Schreibfehler → Remote unverändert, Fehler sichtbar (Toast), localStorage bleibt letzter bestätigter Stand', async () => {
     state.rows[B_KEY] = { 2030: budgetYear(2030, '2026-06-01T00:00:00.000Z', 42) };
     state.failWrite = true;
     saveBudgetYear(budgetYear(2025, '2026-01-01T00:00:00.000Z', 1), B_KEY);
     await flush();
     expect(Object.keys(state.rows[B_KEY] as object)).toEqual(['2030']); // nichts Halbes geschrieben
     expect(toast.error).toHaveBeenCalled();
-    expect(JSON.parse(localStorageStore[B_KEY])['2025']).toBeDefined(); // lokal bleibt gespeichert
+    // Issue #5: echter Schreibfehler trotz Verbindung (Fall B) — localStorage
+    // bleibt unverändert statt den nie bestätigten Stand vorzuspiegeln. Vor
+    // diesem Save lag hier nichts, also bleibt der Key unbeschrieben.
+    expect(localStorageStore[B_KEY]).toBeUndefined();
   });
 });
 

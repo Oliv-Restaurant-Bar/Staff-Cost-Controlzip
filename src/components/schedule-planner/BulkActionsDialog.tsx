@@ -27,7 +27,7 @@ interface Props {
   scheduleData: Record<string, DaySchedule>;
   actualHoursData: Record<string, ActualHourEntry>;
   currentMonth: Date;
-  onApply: (delta: Record<string, DaySchedule>) => void;
+  onApply: (delta: Record<string, DaySchedule>) => Promise<boolean>;
   onApplyActual: (delta: Record<string, ActualHourEntry>) => void;
 }
 
@@ -165,7 +165,13 @@ export default function BulkActionsDialog({
 
   // ── Apply handlers ────────────────────────────────────────────────────────
 
-  const applyAbsence = () => {
+  // Each apply* handler below awaits `onApply`/`onApplyActual` (which resolve
+  // `false` on a failed Supabase write, never throw — see SchedulePlanner's
+  // handleSave) before showing its own success toast, instead of claiming
+  // success unconditionally. On failure, handleSave has already shown the
+  // real error toast, so we just skip ours and leave the dialog open.
+
+  const applyAbsence = async () => {
     if (!absEmpId)  { toast.error('Bitte Mitarbeiter auswählen'); return; }
     if (!absCode)   { toast.error('Bitte Abwesenheitsart auswählen'); return; }
     try {
@@ -182,14 +188,15 @@ export default function BulkActionsDialog({
         delta[key] = entry;
       }
 
-      onApply(delta);
+      const ok = await onApply(delta);
+      if (!ok) return;
       const emp = employees.find(e => e.id === absEmpId);
       toast.success(`${active.length} Tag(e) als „${absCode}" eingetragen für ${emp?.name ?? absEmpId}`);
       onClose();
     } catch { toast.error('Fehler beim Anwenden der Abwesenheit'); }
   };
 
-  const applyShiftFill = () => {
+  const applyShiftFill = async () => {
     if (!sfEmpId) { toast.error('Bitte Mitarbeiter auswählen'); return; }
     if (!sfShift) { toast.error('Bitte Schicht auswählen'); return; }
     const cfg = shiftMap[sfShift];
@@ -241,14 +248,15 @@ export default function BulkActionsDialog({
         toast.info('Keine freien Slots gefunden – „Überschreiben" aktivieren?');
         return;
       }
-      onApply(delta);
+      const ok = await onApply(delta);
+      if (!ok) return;
       const emp = employees.find(e => e.id === sfEmpId);
       toast.success(`${count} Tag(e) mit „${sfShift}" eingetragen für ${emp?.name ?? sfEmpId}`);
       onClose();
     } catch { toast.error('Fehler beim Füllen der Schichten'); }
   };
 
-  const applyCopyWeek = () => {
+  const applyCopyWeek = async () => {
     if (!cpSrcEmp) { toast.error('Bitte Quell-Mitarbeiter auswählen'); return; }
     if (!cpTgtEmp) { toast.error('Bitte Ziel-Mitarbeiter auswählen'); return; }
     try {
@@ -278,7 +286,8 @@ export default function BulkActionsDialog({
       }
 
       if (count === 0) { toast.info('Quellwoche enthält keine Schichten'); return; }
-      onApply(delta);
+      const ok = await onApply(delta);
+      if (!ok) return;
       const src = employees.find(e => e.id === cpSrcEmp);
       const tgt = employees.find(e => e.id === cpTgtEmp);
       toast.success(`${count} Tag(e) von ${src?.name ?? 'Quelle'} nach ${tgt?.name ?? 'Ziel'} kopiert`);
@@ -286,7 +295,7 @@ export default function BulkActionsDialog({
     } catch { toast.error('Fehler beim Kopieren der Woche'); }
   };
 
-  const applyAutoFrei = () => {
+  const applyAutoFrei = async () => {
     try {
       const start      = startOfMonth(currentMonth);
       const cutoff     = afCutoff < monthStart ? monthStart : afCutoff > monthEnd ? monthEnd : afCutoff;
@@ -323,8 +332,11 @@ export default function BulkActionsDialog({
         toast.info('Alle Felder sind bereits gefüllt – nichts zu tun.');
         return;
       }
-      if (planCount > 0) onApply(planDelta);
+      // Ist-Zellen laufen über den separaten (bereits vorhandenen)
+      // Optimistic-local-Pfad von onApplyActual — eigener Fehler-Toast dort.
       if (istCount  > 0) onApplyActual(istDelta);
+      const planOk = planCount === 0 || await onApply(planDelta);
+      if (!planOk) return;
 
       const parts: string[] = [];
       if (planCount > 0) parts.push(`${planCount} Plan-Zelle(n) → F`);

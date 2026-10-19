@@ -736,7 +736,7 @@ describe('Merge-Schutz: manuell erfasste Konten überleben Re-Import', () => {
           mcat('4000', 'Wareneinsatz (alt)', 100, 'import'),
         ],
       },
-      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+      'manual', 'update', { note: 'Seed' }, TEST_KEY,
     );
   }
 
@@ -807,7 +807,7 @@ describe('Merge-Schutz: manuell erfasste Konten überleben Re-Import', () => {
     const rec = loadMonth(2025, 7, TEST_KEY);
     saveMonth(
       { ...rec, expenseCategories: [mcat('6000', 'Legacy ohne Flag', 111)] },
-      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+      'manual', 'update', { note: 'Seed' }, TEST_KEY,
     );
     replaceAnnualCostYear(2025, new Map([[7, [mcat('6000', 'Neu', 222, 'import')]]]), {}, TEST_KEY);
     expect(loadMonth(2025, 7, TEST_KEY).expenseCategories.find(c => c.categoryId === '6000')?.amount).toBe(222);
@@ -836,7 +836,7 @@ describe('removeAnnualCostYear — explizites Löschen entfernt auch manuelle Ko
           { categoryId: 'miete', label: 'Miete (nicht-numerisch)', amount: 900 },
         ],
       },
-      'manual_entry', 'update', { note: 'Seed' }, TEST_KEY,
+      'manual', 'update', { note: 'Seed' }, TEST_KEY,
     );
     removeAnnualCostYear(2025, {}, TEST_KEY);
     const cats = loadMonth(2025, 9, TEST_KEY).expenseCategories;

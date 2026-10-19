@@ -4,7 +4,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { MaisonProvider } from "@/contexts/MaisonContext";
@@ -40,8 +40,9 @@ import BudgetPage from "./pages/Budget";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
 import Settings from "./pages/Settings";
-import DepartmentSchedule from "./pages/DepartmentSchedule";
-import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
+// Guest-link feature disabled — kept for possible future use, see route comment below.
+// import DepartmentSchedule from "./pages/DepartmentSchedule";
+// import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
 import ImportHub from "./pages/ImportHub";
 import ImportCockpitPage from "./pages/ImportCockpitPage";
@@ -188,6 +189,7 @@ const AppContent = () => {
   const { user, loading, roleResolved } = useAuth();
   const { canAccessSettings, canAccessModule, isBeaulieuManager, isAdmin } = usePermissions();
   const { tenantId } = useTenant();
+  const location = useLocation();
 
   // [AUTH] Debug-Logs für beaulieu_manager beim Mount
   useEffect(() => {
@@ -201,7 +203,9 @@ const AppContent = () => {
   }, [isBeaulieuManager]);
 
   // Daten aus Supabase nach localStorage synchronisieren (einmalig nach Login)
-  useSyncStore(!!user);
+  // Finanzdaten (budget_v1/reporting_v1/etc.) nur für Rollen mit Finanzzugriff —
+  // siehe useSyncStore.ts für die genaue Schlüsselaufteilung.
+  useSyncStore(!!user, isAdmin || isBeaulieuManager);
 
 
   useEffect(() => {
@@ -250,7 +254,7 @@ const AppContent = () => {
           {/* Tenant-Lock für beaulieu_manager — läuft auf jeder Seite */}
           <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto" key={tenantId}>
-          <ErrorBoundary label="Seite">
+          <ErrorBoundary label="Seite" resetKey={location.pathname}>
           <MwstRatesGate>
           <Routes>
             {/* Routen mit Rollenprüfung */}
@@ -290,8 +294,10 @@ const AppContent = () => {
                 : <Navigate to="/personal" replace />}
             />
 
-            {/* Personalstamm: Admin + beaulieu_manager (tenant-gefiltert) */}
-            <Route path="/personal-stamm" element={<Personalstamm />} />
+            {/* Personalstamm: Admin + beaulieu_manager + kueche_manager (tenant-gefiltert) */}
+            <Route path="/personal-stamm"
+              element={canAccessModule('personalstamm') ? <Personalstamm /> : <Navigate to="/personal" replace />}
+            />
 
             {/* Personaleintritt (digitaler L-GAV-Eintrittsprozess):
                 PII-/Schreibfläche — Admin OHNE Gäste + beaulieu_manager */}
@@ -366,17 +372,18 @@ const AppContent = () => {
               element={<RequireAdmin path="/csv-import"><CSVImportPage /></RequireAdmin>}
             />
             <Route path="/import"
-              element={<ImportHub />}
+              element={<RequireAdmin path="/import" allowBeaulieu><ImportHub /></RequireAdmin>}
             />
             {/* Import-Cockpit: read-only Frische-/Fälligkeits-Übersicht — nur Admin, keine Gäste */}
             <Route path="/import-cockpit"
               element={isAdmin ? <ImportCockpitPage /> : <Navigate to="/" replace />}
             />
+            {/* Teil des Warenrechnungen-Moduls — gleiches Gate wie /warenrechnungen. */}
             <Route path="/lieferanten"
-              element={<SupplierDocumentsPage />}
+              element={canAccessModule('warenrechnungen') ? <SupplierDocumentsPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/lieferanten-vergleich"
-              element={<SupplierComparisonPage />}
+              element={canAccessModule('warenrechnungen') ? <SupplierComparisonPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/budget"
               element={<RequireAdmin path="/budget"><BudgetPage /></RequireAdmin>}
@@ -441,20 +448,24 @@ const AppContent = () => {
               element={<RequireAdmin path="/gaeste/:guestId" allowBeaulieu><GaesteDetailPage /></RequireAdmin>}
             />
             <Route path="/produkte"
-              element={<ProdukteSeite />}
+              element={<RequireAdmin path="/produkte" allowBeaulieu><ProdukteSeite /></RequireAdmin>}
             />
-            <Route path="/artikel"          element={<ArtikelPage />} />
-            <Route path="/artikel-tracking" element={<ArtikelTrackingPage />} />
+            <Route path="/artikel"
+              element={<RequireAdmin path="/artikel" allowBeaulieu><ArtikelPage /></RequireAdmin>}
+            />
+            <Route path="/artikel-tracking" element={<RequireAdmin path="/artikel-tracking" allowBeaulieu><ArtikelTrackingPage /></RequireAdmin>} />
             <Route path="/warenrechnungen"
               element={canAccessModule('warenrechnungen') ? <WarenrechnungenPage /> : <Navigate to="/personal" replace />}
             />
             <Route path="/wes-analyse"
-              element={<WesAnalysePage />}
+              element={<RequireAdmin path="/wes-analyse" allowBeaulieu><WesAnalysePage /></RequireAdmin>}
             />
             {/* Konsolidiert in die Produktanalyse — alte Routen als Redirect auf den Tab */}
             <Route path="/lunch-analyse"    element={<Navigate to="/produkt-analyse?tab=lunch" replace />} />
             <Route path="/takeaway-analyse" element={<Navigate to="/produkt-analyse?tab=takeaway" replace />} />
-            <Route path="/absenzen"         element={<AbsenzKostenPage />} />
+            <Route path="/absenzen"
+              element={<RequireAdmin path="/absenzen" allowBeaulieu><AbsenzKostenPage /></RequireAdmin>}
+            />
 
             {/* Verkaufsdaten & Produktanalyse */}
             <Route path="/tagesansicht"
@@ -471,21 +482,22 @@ const AppContent = () => {
               element={<RequireAdmin path="/forecast"><ForecastPlanung /></RequireAdmin>}
             />
             <Route path="/verkauf-dashboard"
-              element={<VerkaufsDashboard />}
+              element={<RequireAdmin path="/verkauf-dashboard" allowBeaulieu><VerkaufsDashboard /></RequireAdmin>}
             />
             <Route path="/sales-upload"
-              element={<SalesUpload />}
+              element={<RequireAdmin path="/sales-upload" allowBeaulieu><SalesUpload /></RequireAdmin>}
             />
-            <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
-            <Route path="/produkt-analyse/produkt" element={<ProduktDetail />} />
+            <Route path="/produkt-analyse"   element={<RequireAdmin path="/produkt-analyse" allowBeaulieu><ProduktAnalyse /></RequireAdmin>} />
+            <Route path="/produkt-analyse/produkt" element={<RequireAdmin path="/produkt-analyse/produkt" allowBeaulieu><ProduktDetail /></RequireAdmin>} />
             <Route path="/kategorien"        element={<Navigate to="/produkt-analyse?tab=kategorien" replace />} />
             <Route path="/produkt-stamm"
-              element={<ProduktStamm />}
+              element={<RequireAdmin path="/produkt-stamm" allowBeaulieu><ProduktStamm /></RequireAdmin>}
             />
 
-            {/* Abteilungs-Dienstpläne */}
+            {/* Department guest-link schedules — feature disabled, kept for possible future use.
             <Route path="/dienstplan/:department" element={<DepartmentSchedule />} />
             <Route path="/plan/:department"       element={<DepartmentPlannerWrapper />} />
+            */}
 
             {/* Legacy – beaulieu_manager darf nicht auf die Oliv-Overview */}
             <Route path="/overview"

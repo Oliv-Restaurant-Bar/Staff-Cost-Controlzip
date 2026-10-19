@@ -53,7 +53,7 @@ import {
   type ExclusionRecord, type InclusionRecord,
   getExclusionsForTenant, getInclusionsForMonth, isExcludedForMonth,
   excludeEmployee, reIncludeEmployeePermanent, reIncludeEmployeeMonth,
-} from '@/lib/timesheet-exclusions-store';
+} from '@/_deprecated/lib/timesheet-exclusions-store';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 

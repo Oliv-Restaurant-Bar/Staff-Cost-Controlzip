@@ -40,7 +40,7 @@ interface Props {
   scheduleData: Record<string, DaySchedule>;
   displayDays: Date[];
   activeDepartment: TemplateDept;
-  onApply: (delta: Record<string, DaySchedule>) => void;
+  onApply: (delta: Record<string, DaySchedule>) => Promise<boolean>;
 }
 
 // ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ function TemplateCard({
   employees: Employee[];
   displayDays: Date[];
   existing:  Record<string, DaySchedule>;
-  onApply:   (delta: Record<string, DaySchedule>) => void;
+  onApply:   (delta: Record<string, DaySchedule>) => Promise<boolean>;
   onDelete:  () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -218,10 +218,13 @@ function TemplateCard({
   const [mode, setMode]         = useState<ApplyMode>('merge');
   const [applied, setApplied]   = useState(false);
 
-  const handleApply = () => {
+  // "Angewendet"-Häkchen erscheint nur nach bestätigtem Speichern — bei einem
+  // fehlgeschlagenen Write zeigt handleSave bereits einen eigenen Fehler-Toast.
+  const handleApply = async () => {
     const opts: ApplyOptions = { department: dept, mode };
     const delta = applyTemplate(tpl, displayDays, employees, existing, opts);
-    onApply(delta);
+    const ok = await onApply(delta);
+    if (!ok) return;
     setApplied(true);
     setTimeout(() => setApplied(false), 2000);
   };
@@ -335,7 +338,7 @@ function WeekdayPatternTab({
   employees: Employee[];
   displayDays: Date[];
   existing: Record<string, DaySchedule>;
-  onApply: (delta: Record<string, DaySchedule>) => void;
+  onApply: (delta: Record<string, DaySchedule>) => Promise<boolean>;
 }) {
   const [selectedDay, setSelectedDay]  = useState<number>(1); // Mon
   const [selectedTpl, setSelectedTpl]  = useState<string>('');
@@ -346,12 +349,13 @@ function WeekdayPatternTab({
   // The weekday buttons for the displayed days
   const displayedWeekdays = displayDays.map(d => d.getDay());
 
-  const handleApply = () => {
+  const handleApply = async () => {
     const tpl = templates.find(t => t.id === selectedTpl);
     if (!tpl) return;
     const opts: ApplyOptions = { department: dept, mode, onlyDayOfWeek: selectedDay };
     const delta = applyTemplate(tpl, displayDays, employees, existing, opts);
-    onApply(delta);
+    const ok = await onApply(delta);
+    if (!ok) return;
     setApplied(true);
     setTimeout(() => setApplied(false), 2000);
   };
@@ -508,9 +512,11 @@ export function TemplateManagerDialog({
     refresh();
   };
 
-  const handleApply = (delta: Record<string, DaySchedule>) => {
-    onApply(delta);
+  const handleApply = async (delta: Record<string, DaySchedule>): Promise<boolean> => {
+    const ok = await onApply(delta);
+    if (!ok) return false; // keep dialog open — handleSave already showed the error toast
     onClose();
+    return true;
   };
 
   const periodLabel = useMemo(() => {

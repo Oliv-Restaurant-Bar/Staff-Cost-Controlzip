@@ -1,3 +1,18 @@
+-- update_updated_at_column() is defined in 20260121224141_...sql, which predates
+-- this migration and should already exist on any database with the full
+-- history applied. Redefined here (idempotent, identical body) as a guard —
+-- this staging/dev database errored "function does not exist" on first apply
+-- attempt (2026-10-14), meaning its applied-migration history has a gap
+-- somewhere before 2026-01-22 despite otherwise matching production's table
+-- list. CREATE OR REPLACE is a safe no-op anywhere it already exists.
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
 -- Table for group reservations (manual entries)
 CREATE TABLE public.group_reservations (
   id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -23,27 +38,21 @@ CREATE TABLE public.fortelable_settings (
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- Table for cached Fortelable reservations
-CREATE TABLE public.fortelable_reservations (
-  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
-  external_id TEXT,
-  date DATE NOT NULL,
-  shift TEXT NOT NULL CHECK (shift IN ('mittag', 'abend')),
-  guest_count INTEGER NOT NULL DEFAULT 1,
-  reservation_name TEXT,
-  synced_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
-);
+-- fortelable_reservations REMOVED 2026-10-01: only consumers were
+-- ReservationsOverview.tsx/ReservationsBudgetCalculator.tsx (zero importers,
+-- confirmed dead, moved to src/_deprecated/) and sync-fortelable Edge
+-- Function (confirmed not deployed/no active cron, per client). Does not
+-- affect group_reservations/fortelable_settings above, which are still
+-- queried live by /overview (Index.tsx -> RevenueTab -> SimpleRevenueInput.tsx).
+-- See src/_deprecated/README.md.
 
 -- Enable RLS
 ALTER TABLE public.group_reservations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fortelable_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.fortelable_reservations ENABLE ROW LEVEL SECURITY;
 
 -- Public access policies (no auth required for this app)
 CREATE POLICY "Allow all operations on group_reservations" ON public.group_reservations FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all operations on fortelable_settings" ON public.fortelable_settings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operations on fortelable_reservations" ON public.fortelable_reservations FOR ALL USING (true) WITH CHECK (true);
 
 -- Insert default settings
 INSERT INTO public.fortelable_settings (walk_in_percentage, default_revenue_per_person, is_enabled)

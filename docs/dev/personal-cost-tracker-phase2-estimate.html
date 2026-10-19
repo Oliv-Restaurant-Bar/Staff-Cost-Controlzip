@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phase 2 Feature Estimate</title>
+<style>
+  :root{ color-scheme: light; }
+  *{ margin:0; }
+  img{ max-width:100%; }
+  [hidden]{ display:none !important; }
+
+  /*
+    Layout concept: a plain scope-and-estimate memo — one feature
+    per section, neutral grayscale throughout, no color coding.
+  */
+  :root{
+    --bg: #FAFAFA;
+    --surface: #FFFFFF;
+    --border: #E3E3E3;
+    --ink: #1A1A1A;
+    --ink-soft: #6B6B6B;
+    --accent-bg: #2B5048;
+    --accent-ink: #F5F6F2;
+    --accent-text: #2B5048;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg: #17181A;
+      --surface: #1F2023;
+      --border: #34353A;
+      --ink: #ECECEC;
+      --ink-soft: #9A9A9E;
+      --accent-bg: #1E3A33;
+      --accent-ink: #F5F6F2;
+      --accent-text: #8FC3AE;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg: #17181A;
+    --surface: #1F2023;
+    --border: #34353A;
+    --ink: #ECECEC;
+    --ink-soft: #9A9A9E;
+    --accent-bg: #1E3A33;
+    --accent-ink: #F5F6F2;
+    --accent-text: #8FC3AE;
+    color-scheme: dark;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  h1,h2,h3{
+    font-family: "IBM Plex Sans", Arial, sans-serif;
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 0;
+  }
+  p, li{ font-weight: 400; }
+  .tabular{ font-variant-numeric: tabular-nums; }
+  a{ color: var(--accent-text); text-decoration: underline; }
+
+  .wrap{
+    max-width: 1120px;
+    margin: 0 auto;
+    padding-block: 28px 80px;
+  }
+
+  /* ---- language toggle ---- */
+  .langswitch{
+    display:flex; justify-content:flex-end; gap:6px;
+    margin-bottom: 14px;
+  }
+  .langswitch button{
+    font-family: "IBM Plex Sans", Arial, sans-serif;
+    font-size: 12px;
+    letter-spacing: .02em;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .langswitch button.active{
+    background: var(--accent-bg);
+    color: var(--accent-ink);
+    border-color: var(--accent-bg);
+  }
+  .langswitch button:hover{ color: var(--ink); }
+
+  /* ---- header ---- */
+  header.memo{
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--accent-bg);
+    color: var(--accent-ink);
+    padding: 28px clamp(20px, 4vw, 40px);
+    margin-bottom: 28px;
+  }
+  .memo-top{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    gap: 20px; flex-wrap: wrap;
+    margin-bottom: 18px;
+    border-bottom: 1px solid rgba(245,246,242,.22);
+    padding-bottom: 18px;
+  }
+  .eyebrow{
+    font-size: 12.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    opacity: .78;
+  }
+  header.memo h1{
+    font-size: clamp(24px, 3.4vw, 32px);
+    line-height: 1.15;
+    margin-top: 5px;
+    color: var(--accent-ink);
+  }
+  .memo-total{
+    text-align: right;
+    min-width: 150px;
+    border-left: 1px solid rgba(245,246,242,.22);
+    padding-left: 18px;
+  }
+  .memo-total .num{
+    font-size: clamp(26px, 4vw, 34px);
+    font-weight: 700;
+    color: var(--accent-ink);
+  }
+  .memo-total .lbl{
+    font-size: 12px;
+    color: var(--accent-ink);
+    opacity: .78;
+    margin-top: 2px;
+  }
+  .memo-intro{
+    font-size: 15px;
+    line-height: 1.65;
+    max-width: 72ch;
+    color: var(--accent-ink);
+    opacity: .94;
+  }
+
+  /* ---- feature list ---- */
+  .features{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 880px){
+    .features{ grid-template-columns: 1fr; }
+  }
+
+  .feature{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent-text);
+    border-radius: 6px;
+    padding: 20px 20px 22px;
+    display:flex; flex-direction:column; gap:14px;
+  }
+  .feature-head{
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .feature-label{
+    font-size: 12px;
+    letter-spacing: .02em;
+    color: var(--accent-text);
+    text-transform: uppercase;
+    display:block;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .feature h2{
+    font-size: 19px;
+    line-height: 1.25;
+  }
+  .feature p.desc{
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+  .feature p.desc b{ color: var(--ink); font-weight: 600; }
+
+  .mock{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 168px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  .feature-hours{
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    font-size: 14px;
+  }
+  .feature-hours .num{ font-weight: 700; }
+
+  .feature-note{
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+    margin: 0;
+  }
+  .feature-note b{ color: var(--accent-text); font-weight: 600; }
+
+  .options-intro{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+  .options{
+    display:flex; flex-direction:column; gap: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .option{
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+  }
+  .option:first-child{ border-top: none; padding-top: 0; }
+  .option-head{
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .option-name{
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-text);
+  }
+  .option-hours{
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .option-desc{
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  /* --- mock: phone / chat --- */
+  .phone{
+    width: 128px; height: 150px;
+    background: var(--ink);
+    border-radius: 16px;
+    padding: 8px 7px;
+    position: relative;
+  }
+  .phone .screen{
+    width:100%; height:100%;
+    background: var(--surface);
+    border-radius: 9px;
+    overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  .phone .bar{
+    background: var(--border);
+    height: 20px;
+    display:flex; align-items:center;
+    padding: 0 8px;
+    gap: 4px;
+  }
+  .phone .bar .dot{ width:5px; height:5px; border-radius:50%; background: var(--ink-soft); }
+  .phone .chat{ flex:1; padding: 7px; display:flex; flex-direction:column; gap:5px; justify-content:flex-end; }
+  .bubble{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px 8px 8px 2px;
+    font-size: 7.5px;
+    line-height: 1.35;
+    padding: 5px 6px;
+    color: var(--ink);
+    max-width: 92%;
+  }
+  .bubble.link{ text-decoration: underline; color: var(--accent-text); }
+  .bubble.out{
+    align-self: flex-end;
+    border-radius: 8px 8px 2px 8px;
+  }
+
+  /* --- mock: import before/after --- */
+  .imp-before{ display:grid; grid-template-columns: repeat(4,1fr); gap:5px; width:100%; }
+  .imp-btn{
+    border:1px solid var(--border); border-radius:6px; background:var(--surface);
+    font-size: 8px; line-height:1.3; text-align:center; padding:8px 3px;
+    color: var(--ink-soft);
+  }
+  .imp-arrow{ text-align:center; font-size:16px; color:var(--ink-soft); margin: 2px 0; }
+  .imp-after{
+    width:100%; border:2px dashed var(--border); border-radius:10px;
+    padding: 14px 10px; text-align:center; display:flex; flex-direction:column; gap:8px; align-items:center;
+  }
+  .imp-after .drop-lbl{ font-size:10px; color: var(--ink-soft); }
+  .chips{ display:flex; gap:5px; flex-wrap:wrap; justify-content:center; }
+  .chip{
+    font-size: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 3px 8px;
+    display:flex; align-items:center; gap:4px;
+    color: var(--ink);
+  }
+
+  /* --- mock: scan before/after --- */
+  .scan-row{ display:flex; gap:10px; width:100%; align-items:center; justify-content:center; }
+  .doc{
+    width: 70px; height: 92px;
+    border-radius: 6px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:4px;
+    font-size: 8px;
+    text-align:center;
+    padding: 6px;
+    color: var(--ink-soft);
+  }
+  .doc.bad{
+    background: repeating-linear-gradient(-8deg, var(--surface), var(--surface) 6px, var(--bg) 6px, var(--bg) 7px);
+    border: 1px solid var(--border);
+    transform: rotate(-4deg);
+  }
+  .doc.bad .x{ font-size: 14px; font-weight:700; color: var(--ink); }
+  .doc.good{
+    background: var(--surface);
+    border: 1px solid var(--ink);
+    color: var(--ink);
+  }
+  .doc.good .rows{ display:flex; flex-direction:column; gap:2px; width:100%; }
+  .doc.good .rows i{
+    display:block; height:3px; border-radius:2px; background: var(--border);
+  }
+  .doc.good .check{ font-size: 14px; font-weight:700; }
+  .scan-arrow{ font-size:16px; color:var(--ink-soft); }
+
+  /* ---- notes strip ---- */
+  .notes{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px clamp(18px,3vw,30px);
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px 36px;
+  }
+  @media (max-width: 720px){ .notes{ grid-template-columns: 1fr; } }
+  .notes h3{
+    font-size: 13px;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .notes ul{ margin:0; padding-left: 18px; }
+  .notes li{
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+  .notes li b{ color: var(--ink); font-weight: 600; }
+
+  footer{
+    text-align:center;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 28px;
+  }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="langswitch">
+    <button type="button" data-lang="de" class="active">DE</button>
+    <button type="button" data-lang="en">EN</button>
+  </div>
+
+  <header class="memo">
+    <div class="memo-top">
+      <div>
+        <div class="eyebrow" data-i18n="eyebrow">Oliv Staff Control — Phase 2 Umfang &amp; Schätzung</div>
+        <h1 data-i18n="h1">Vom Kunden angefragte Funktionen</h1>
+      </div>
+      <div class="memo-total">
+        <div class="num tabular">12–16</div>
+        <div class="lbl" data-i18n="total-lbl">geschätzte Stunden</div>
+      </div>
+    </div>
+    <p class="memo-intro" data-i18n="intro">
+      Die folgenden drei Funktionen wurden vom Kunden im Gespräch am 14.10.2026 angefragt.
+      Jede Funktion ist unabhängig umsetzbar und kann einzeln entwickelt, getestet und
+      ausgeliefert werden. Die unten angegebenen Stunden entsprechen dem geschätzten
+      Umsetzungsaufwand je Funktion <b>inklusive Testing</b>. Beim Foto-Import gibt es
+      mehrere Umsetzungswege zur Auswahl — die Gesamtsumme rechts geht vom empfohlenen Weg aus.
+    </p>
+  </header>
+
+  <div class="features">
+
+    <!-- Feature 1 — WhatsApp sharing -->
+    <div class="feature">
+      <div class="feature-head">
+        <span class="feature-label" data-i18n="f1-label">Dienstplan teilen</span>
+        <h2 data-i18n="f1-h2">Dienstplan per WhatsApp teilen</h2>
+      </div>
+      <p class="desc" data-i18n="f1-desc">
+        Ein <b>Veröffentlichen</b>-Button im Dienstplan erzeugt eine versandfertige
+        WhatsApp-Nachricht mit einem Link zum Dienstplan der jeweiligen Person (oder
+        Abteilung). Ein Klick öffnet WhatsApp mit bereits fertiger Nachricht, sodass nichts
+        kopiert oder abgetippt werden muss.
+      </p>
+      <div class="mock">
+        <div class="phone">
+          <div class="screen">
+            <div class="bar"><span class="dot"></span><span class="dot"></span></div>
+            <div class="chat">
+              <div class="bubble out">Dein Dienstplan ist da:</div>
+              <div class="bubble out link">oliv.app/plan/anna-w42</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="desc" style="font-size:12.5px;" data-i18n="f1-note">
+        Antworten funktionieren weiterhin genauso wie heute: Mitarbeitende antworten im
+        selben WhatsApp-Chat, und der Dienstplan wird auf Anfrage manuell angepasst. Diese
+        Funktion entfernt lediglich den manuellen Versand-Schritt.
+      </p>
+      <div class="feature-hours">
+        <span data-i18n="f1-hours-lbl">Geschätzte Stunden (inkl. Testing):</span> <span class="num tabular">4–6</span>
+      </div>
+    </div>
+
+    <!-- Feature 2 — Unified import -->
+    <div class="feature">
+      <div class="feature-head">
+        <span class="feature-label" data-i18n="f2-label">Einheitlicher Import</span>
+        <h2 data-i18n="f2-h2">Import-Buttons zusammenführen</h2>
+      </div>
+      <p class="desc" data-i18n="f2-desc">
+        Aktuell gibt es mehr als 7 einzelne Import-Buttons, einen pro Quelle. Diese Funktion
+        ersetzt sie durch eine einzige Ablagefläche: eine oder mehrere Dateien, auch
+        gemischte Typen, können gleichzeitig abgelegt werden; jede Datei wird automatisch
+        erkannt und an die bestehende Verarbeitung weitergeleitet.
+      </p>
+      <div class="mock" style="flex-direction:column; gap:8px;">
+        <div class="imp-before">
+          <div class="imp-btn">Umsatz</div><div class="imp-btn">Personal</div>
+          <div class="imp-btn">Sage</div><div class="imp-btn">Gastronovi</div>
+          <div class="imp-btn">Stunden</div><div class="imp-btn">Foratable</div>
+          <div class="imp-btn">CSV</div><div class="imp-btn">+ mehr</div>
+        </div>
+        <div class="imp-arrow">↓</div>
+        <div class="imp-after">
+          <div class="drop-lbl">Dateien hierher ziehen</div>
+          <div class="chips">
+            <span class="chip">Sage.pdf</span>
+            <span class="chip">Umsatz.xlsx</span>
+          </div>
+        </div>
+      </div>
+      <div class="feature-hours">
+        <span data-i18n="f2-hours-lbl">Geschätzte Stunden (inkl. Testing):</span> <span class="num tabular">4–5</span>
+      </div>
+    </div>
+
+    <!-- Feature 3 — Scanned/photo import -->
+    <div class="feature">
+      <div class="feature-head">
+        <span class="feature-label" data-i18n="f3-label">Foto-Import</span>
+        <h2 data-i18n="f3-h2">Fotografierte Dokumente unterstützen</h2>
+      </div>
+      <p class="desc" data-i18n="f3-desc">
+        Die aktuelle Erkennung liest die eingebettete Textebene eines PDFs; ein Handyfoto
+        hat keine solche Ebene, wodurch die Erkennung lautlos fehlschlägt. Diese Funktion
+        ergänzt einen Rückfallweg: Wird keine Textebene gefunden, wird das Dokument
+        stattdessen über ein <b>KI-Modell (Bilderkennung)</b> verarbeitet, mit einer kurzen
+        Prüfung der erkannten Werte vor dem Speichern.
+      </p>
+      <div class="mock">
+        <div class="scan-row">
+          <div class="doc bad">
+            <span class="x">✕</span>
+            <span>Handyfoto</span>
+          </div>
+          <span class="scan-arrow">→</span>
+          <div class="doc good">
+            <span class="check">✓</span>
+            <div class="rows">
+              <i style="width:80%"></i><i style="width:60%"></i><i style="width:90%"></i>
+            </div>
+            <span>erkannt</span>
+          </div>
+        </div>
+      </div>
+      <p class="options-intro" data-i18n="f3-options-intro">Drei mögliche Umsetzungswege — der Kunde entscheidet:</p>
+      <div class="options">
+        <div class="option">
+          <div class="option-head">
+            <span class="option-name" data-i18n="f3-opt-a-name">Option A — Klassische OCR</span>
+            <span class="option-hours tabular">3–4 Std.</span>
+          </div>
+          <p class="option-desc" data-i18n="f3-opt-a-desc">Texterkennung ohne KI-API, keine laufenden Kosten. Bei schiefen oder schlecht beleuchteten Handyfotos weniger zuverlässig.</p>
+        </div>
+        <div class="option">
+          <div class="option-head">
+            <span class="option-name" data-i18n="f3-opt-b-name">Option B — KI-Bilderkennung</span>
+            <span class="option-hours tabular">3–4 Std.</span>
+          </div>
+          <p class="option-desc" data-i18n="f3-opt-b-desc">Liest auch unscharfe oder schräge Fotos zuverlässig. Läuft über eine externe KI-API — laufende Kosten pro verarbeitetem Dokument.</p>
+        </div>
+        <div class="option">
+          <div class="option-head">
+            <span class="option-name" data-i18n="f3-opt-c-name">Option C — Kombiniert (empfohlen)</span>
+            <span class="option-hours tabular">4–5 Std.</span>
+          </div>
+          <p class="option-desc" data-i18n="f3-opt-c-desc">Nutzt die bestehende, kostenlose Erkennung für normale PDFs; die KI-Erkennung kommt nur bei Handyfotos ohne Textebene zum Einsatz. Laufende Kosten nur in diesem Fall.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="notes">
+    <div>
+      <h3 data-i18n="notes-h1">Noch nicht geschätzt</h3>
+      <ul>
+        <li data-i18n="notes-li1">Vereinfachung des Planungsprozesses selbst: Der Kunde hat noch keinen konkreten Schmerzpunkt genannt. Eine kurze Durchsprache mit dem Kunden ist erforderlich, bevor dies geschätzt werden kann.</li>
+        <li data-i18n="notes-li2">Echte Handyfotos als Beispiele: Die Schätzung für den Foto-Import geht von einem typischen Fall aus. 2–3 echte Beispielfotos vom Kunden würden diese Schätzung vor Beginn der Entwicklung bestätigen oder anpassen.</li>
+      </ul>
+    </div>
+    <div>
+      <h3 data-i18n="notes-h2">Mögliche spätere Phase</h3>
+      <ul>
+        <li data-i18n="notes-li3">Antworten direkt in der App über WhatsApp: Damit die WhatsApp-Antwort einer Person direkt den Dienstplan aktualisiert (statt nur im Chat gelesen zu werden), ist die WhatsApp Business API erforderlich, deren Freigabeprozess außerhalb unserer Kontrolle liegt. Dies könnte in Betracht gezogen werden, sobald die Dienstplan-Freigabe per WhatsApp im Einsatz ist. Es ist nicht Teil dieser Schätzung.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer data-i18n="footer">Oliv Staff Control — Phase 2 Umfang &amp; Schätzung — 19. Oktober 2026</footer>
+
+</div>
+
+<script>
+(function(){
+  var translations = {
+    "eyebrow": { en: "Oliv Staff Control — Phase 2 Scope &amp; Estimate" },
+    "h1": { en: "Features Requested by Client" },
+    "total-lbl": { en: "estimated hours" },
+    "intro": { en: 'The following three features were requested by the client during the meeting on 14 October 2026. Each feature is independent and can be developed, tested, and delivered separately. The hours below reflect the estimated implementation effort for each feature, <b>including testing</b>. The photo import feature has several possible approaches to choose from — the total on the right assumes the recommended one.' },
+    "f1-label": { en: "Schedule Sharing" },
+    "f1-h2": { en: "Share the Schedule via WhatsApp" },
+    "f1-desc": { en: 'A <b>Publish</b> button on the schedule will generate a ready-to-send WhatsApp message, pre-filled with a link to the employee’s (or department’s) schedule. One tap opens WhatsApp with the message already written, so nothing needs to be copied or re-typed.' },
+    "f1-note": { en: 'Replies will continue to work exactly as they do today: employees reply in the same WhatsApp chat, and the schedule is updated manually on request. This feature only removes the manual step of sending the schedule.' },
+    "f1-hours-lbl": { en: "Estimated hours (incl. testing):" },
+    "f2-label": { en: "Unified Import" },
+    "f2-h2": { en: "Combine Import Buttons into One" },
+    "f2-desc": { en: 'There are currently more than 7 separate import buttons, one for each file source. This feature replaces them with a single drop zone: one or multiple files, including mixed types, can be dropped at once, with each file automatically identified and routed to its existing handler.' },
+    "f2-hours-lbl": { en: "Estimated hours (incl. testing):" },
+    "f3-label": { en: "Photo Import" },
+    "f3-h2": { en: "Support Photographed Documents" },
+    "f3-desc": { en: 'The current import process reads a PDF’s embedded text layer, which a phone photo does not have, causing it to fail silently. This feature adds a fallback for when no text layer is found — there are a few ways to build that fallback, listed below.' },
+    "f3-options-intro": { en: "Three possible approaches — the client decides:" },
+    "f3-opt-a-name": { en: "Option A — Classic OCR" },
+    "f3-opt-a-desc": { en: "Text recognition with no AI API, so no ongoing cost. Less reliable on skewed or poorly lit phone photos." },
+    "f3-opt-b-name": { en: "Option B — AI Image Recognition" },
+    "f3-opt-b-desc": { en: "Reliably reads blurry or angled photos too. Runs through an external AI API — ongoing cost per document processed." },
+    "f3-opt-c-name": { en: "Option C — Combined (recommended)" },
+    "f3-opt-c-desc": { en: "Uses the existing, free recognition for normal PDFs; AI recognition only kicks in for phone photos with no text layer. Ongoing cost applies only in that case." },
+    "notes-h1": { en: "Not Yet Estimated" },
+    "notes-li1": { en: 'Simplifying the scheduling workflow itself: the client has not yet specified a concrete pain point. A short walkthrough with the client is needed before this can be estimated.' },
+    "notes-li2": { en: 'Real phone-photo samples: the estimate for the photo import feature assumes a typical case. 2–3 real sample photos from the client would confirm or adjust this estimate before development begins.' },
+    "notes-h2": { en: "Possible Future Phase" },
+    "notes-li3": { en: 'In-app replies via WhatsApp: having an employee’s WhatsApp reply update the schedule directly (rather than being read manually in the chat) requires WhatsApp’s Business API, which involves an approval process outside our control. This may be considered once the WhatsApp schedule-sharing feature is in use. It is not included in this estimate.' },
+    "footer": { en: "Oliv Staff Control — Phase 2 Scope &amp; Estimate — 19 October 2026" }
+  };
+  var deOriginal = {};
+  document.querySelectorAll("[data-i18n]").forEach(function(el){
+    deOriginal[el.getAttribute("data-i18n")] = el.innerHTML;
+  });
+
+  function applyLang(lang){
+    document.querySelectorAll("[data-i18n]").forEach(function(el){
+      var key = el.getAttribute("data-i18n");
+      if (lang === "en" && translations[key] && translations[key].en){
+        el.innerHTML = translations[key].en;
+      } else {
+        el.innerHTML = deOriginal[key];
+      }
+    });
+    document.querySelectorAll(".langswitch button").forEach(function(b){
+      b.classList.toggle("active", b.getAttribute("data-lang") === lang);
+    });
+    try { localStorage.setItem("phase2-lang", lang); } catch(e){}
+  }
+
+  document.querySelectorAll(".langswitch button").forEach(function(b){
+    b.addEventListener("click", function(){ applyLang(b.getAttribute("data-lang")); });
+  });
+
+  var saved = null;
+  try { saved = localStorage.getItem("phase2-lang"); } catch(e){}
+  if (saved === "en") applyLang("en");
+})();
+</script>
+
+</body>
+</html>

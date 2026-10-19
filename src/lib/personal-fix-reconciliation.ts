@@ -21,6 +21,8 @@
  * lädt Datensatz + PL-Ergebnis und reicht die Zahlen hier hinein.
  */
 
+import { swissApos } from './swiss-number-format';
+
 export type ComparisonTone = 'good' | 'warn' | 'critical' | 'neutral';
 
 /** Schwellen für die Abweichung Berechnet ↔ Erfolgsrechnung, in Prozentpunkten der PK-Quote. */
@@ -291,11 +293,11 @@ export function buildPkqBreakdown(i: PkqBreakdownInput): PkqBreakdown {
 
 /** Schweizer CHF-Format ohne Rappen (z. B. „CHF 2'761"). Node-Intl-fähig, DOM-frei. */
 export function fmtChfWhole(n: number): string {
-  return n.toLocaleString('de-CH', {
+  return swissApos(n.toLocaleString('de-CH', {
     style: 'currency',
     currency: 'CHF',
     maximumFractionDigits: 0,
-  });
+  }));
 }
 
 /** Kleinste relevante CHF-Differenz (Rundungsrauschen darunter = „gleich"). */

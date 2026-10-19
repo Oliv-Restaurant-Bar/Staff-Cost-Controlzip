@@ -27,6 +27,7 @@ import {
   type KpiTone,
 } from './kpi-catalog';
 import { getVisibleKpiComment, type KpiCommentsBlob } from './kpi-comments';
+import { swissApos } from './swiss-number-format';
 
 export type KpiExportProfile = 'geschaeftsleitung' | 'bank' | 'investoren';
 
@@ -76,8 +77,10 @@ export function filterRowsForProfile(
 
 // ─── Formatierung (nur Anzeige/PDF — Excel nutzt Zellformate) ───────────────
 
-const nf0 = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
-const nf2 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0Raw = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
+const nf2Raw = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = { format: (v: number) => swissApos(nf0Raw.format(v)) };
+const nf2 = { format: (v: number) => swissApos(nf2Raw.format(v)) };
 
 function fmtValue(def: KpiDefinition, v: number | null): string {
   if (v === null) return '—';

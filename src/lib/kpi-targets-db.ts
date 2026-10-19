@@ -66,7 +66,10 @@ export async function loadKpiTargets(tenantId: TenantId): Promise<KpiTargetsBlob
  * Stand bleibt in jedem Fall erhalten.
  */
 export async function saveKpiTargets(tenantId: TenantId, blob: KpiTargetsBlob): Promise<void> {
-  writeLocal(tenantId, blob);
+  // Database-first (Issue #5): local cache is only written AFTER the merged
+  // write is confirmed (previously written immediately, before the KV
+  // write even started — a reload after an interrupted save could show a
+  // value the database never confirmed).
   const key = storageKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);

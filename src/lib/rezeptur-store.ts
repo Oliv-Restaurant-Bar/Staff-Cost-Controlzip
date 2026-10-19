@@ -16,7 +16,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 const RECIPE_KEY = 'produkte_rezeptur_v1';
 
@@ -222,11 +222,17 @@ export async function loadRezepturenFromDB(): Promise<RezepturenMap> {
   }
 }
 
-export async function saveRezepturenToDB(map: RezepturenMap): Promise<void> {
-  localSave(map);
+export async function saveRezepturenToDB(map: RezepturenMap): Promise<boolean> {
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  // Returns whether the write succeeded — every caller now awaits this and
+  // gates its own success toast/UI state on it (2026-09-29 fix; this used to
+  // be fire-and-forget by design, which was the bug — see
+  // docs/dev/personal-cost-tracker-issues.md #9).
   try {
-    await kvSet(RECIPE_KEY, map);
+    await kvSetConfirmed(RECIPE_KEY, map, 'Rezepturen');
+    return true;
   } catch (err) {
     console.error('[Rezeptur] saveRezepturenToDB Fehler:', err);
+    return false;
   }
 }

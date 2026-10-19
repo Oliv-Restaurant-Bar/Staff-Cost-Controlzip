@@ -13,7 +13,7 @@
  *   Export dieser Tabelle und ist jederzeit rücksetzbar (Eintrag entfernen).
  */
 
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 export interface FlexIstOverride {
   /** Eingegebener CHF-Betrag. */
@@ -78,5 +78,7 @@ export async function saveFlexIstOverrides(
   month: number,
   data: FlexIstOverrides,
 ): Promise<void> {
-  await kvSet(tenantKey(flexOverridesKey(year, month)), sanitize(data));
+  // Issue #5: `kvSet` used to swallow write errors silently; the caller
+  // (PersonalFix.tsx) already catches and shows a toast on failure.
+  await kvSetConfirmed(tenantKey(flexOverridesKey(year, month)), sanitize(data), 'Flex-Ist-Override');
 }

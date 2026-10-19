@@ -69,7 +69,9 @@ export async function saveKpiComments(
   tenantId: TenantId,
   blob: KpiCommentsBlob,
 ): Promise<void> {
-  writeLocal(tenantId, blob);
+  // Database-first (Issue #5): local cache only written after the merged
+  // write is confirmed (was written immediately before, ahead of the KV
+  // write even starting).
   const key = storageKey(tenantId);
   try {
     const remoteRaw = await kvGetStrict(key);

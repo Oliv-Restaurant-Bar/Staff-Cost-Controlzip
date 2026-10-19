@@ -8,7 +8,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSet, kvSetConfirmed } from '@/lib/supabase-kv';
 import { supabase } from '@/integrations/supabase/client';
 
 // ── Konstanten ────────────────────────────────────────────────────────────────
@@ -175,9 +175,12 @@ export async function loadArtikelFromDB(): Promise<ArtikelStore> {
 }
 
 export async function saveArtikelToDB(store: ArtikelStore): Promise<void> {
-  localSave(store);
+  // Database-first (Issue #5): cache locally only after Supabase confirms —
+  // `kvSet` used to swallow write errors silently while localStorage was
+  // already updated, showing "saved" even when it wasn't. Kept non-throwing
+  // (same contract as before) since callers don't currently await/catch this.
   try {
-    await kvSet(STORAGE_KEY, store);
+    await kvSetConfirmed(STORAGE_KEY, store, 'Artikelstamm');
   } catch (err) {
     console.error('[Artikel] saveArtikelToDB Fehler:', err);
   }

@@ -92,20 +92,23 @@ function serializeForCompare(defs: SeasonDefinition[]): string {
 }
 
 /**
- * Speichert die Saisons eines Mandanten: localStorage sofort (optimistisch) + KV
- * (Master) mit Read-back-Verifikation. Wirft NICHT; gibt `false` zurück, wenn
- * die persistente Speicherung nicht bestätigt werden konnte.
+ * Speichert die Saisons eines Mandanten: KV (Master) mit Read-back-Verifikation
+ * zuerst, localStorage-Cache erst NACH bestätigtem Schreiben (Issue #5 — sonst
+ * würde ein Reload nach abgebrochenem Speichern einen nie bestätigten Stand
+ * zeigen). Wirft NICHT; gibt `false` zurück, wenn die persistente Speicherung
+ * nicht bestätigt werden konnte (Cache bleibt dann unverändert).
  */
 export async function saveSeasonDefinitions(
   tenantId: string,
   defs: SeasonDefinition[],
 ): Promise<boolean> {
   const key = reservationSeasonsKey(tenantId);
-  writeCache(key, defs);
   await kvSet(key, defs);
   try {
     const check = toSeasonDefinitions(await kvGet(key));
-    return serializeForCompare(check) === serializeForCompare(defs);
+    const confirmed = serializeForCompare(check) === serializeForCompare(defs);
+    if (confirmed) writeCache(key, defs);
+    return confirmed;
   } catch {
     return false;
   }

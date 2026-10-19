@@ -187,23 +187,27 @@ describe('budget_v1 KV-Backup — kein kompletter Blob-Replace', () => {
     // Remote unverändert — kein Write ohne verlässliche Remote-Basis
     const remote = state.rows[KEY] as Record<string, BudgetYear>;
     expect(Object.keys(remote)).toEqual(['2025']);
-    // localStorage hat das Zieljahr trotzdem (Primärspeicher)
-    const local = JSON.parse(localStorageStore[KEY]) as Record<string, BudgetYear>;
-    expect(local['2026']).toBeDefined();
+    // Issue #5: Supabase IST erreichbar, der Read wurde nur fachlich
+    // abgelehnt (Fall B) — der lokale Cache bleibt unverändert statt einen
+    // von der Datenbank nie bestätigten Stand zu zeigen. Da vor diesem Save
+    // nichts in localStorage lag, bleibt der Key komplett unbeschrieben.
+    expect(localStorageStore[KEY]).toBeUndefined();
   });
 
-  it('Schreibfehler: wirft nicht in den Aufrufer, localStorage bleibt intakt', async () => {
+  it('Schreibfehler: wirft nicht in den Aufrufer, localStorage bleibt unverändert', async () => {
     state.rows[KEY] = { 2025: year(2025, '2026-01-01T00:00:00.000Z') };
     state.failWrite = true;
 
     expect(() => saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY)).not.toThrow();
     await flushBudgetKVBackups();
 
-    // Remote unverändert (Schreiben schlug fehl), localStorage hat das Zieljahr
+    // Remote unverändert (Schreiben schlug fehl). Issue #5: der Write wurde
+    // fachlich abgelehnt trotz Verbindung (Fall B) — localStorage bleibt der
+    // letzte bestätigte Stand (hier: unbeschrieben) statt das nie bestätigte
+    // 2026 vorzuspiegeln.
     const remote = state.rows[KEY] as Record<string, BudgetYear>;
     expect(Object.keys(remote)).toEqual(['2025']);
-    const local = JSON.parse(localStorageStore[KEY]) as Record<string, BudgetYear>;
-    expect(local['2026']).toBeDefined();
+    expect(localStorageStore[KEY]).toBeUndefined();
   });
 
   it('copyBudgetYear erreicht das KV-Backup (Zieljahr wird remote geschrieben)', async () => {

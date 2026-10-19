@@ -70,6 +70,7 @@ export type PLCategory =
   | 'admin_costs'           // Verwaltungskosten (Buchhaltung, Beratung…)
   | 'office'                // Büro & Kommunikation
   | 'bank_fees'             // Bankgebühren & Zahlungsverkehr
+  | 'vehicle_costs'         // Fahrzeugaufwand
   | 'other_operating'       // Diverses Betrieblich
   // Abschreibungen
   | 'depreciation'          // Abschreibungen

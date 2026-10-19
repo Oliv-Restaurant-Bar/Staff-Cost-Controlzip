@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 export interface ShiftConfigItem {
   name: string;
@@ -530,8 +530,11 @@ function saveShiftsToStorage(shifts: ShiftConfigItem[], broadcast = true): void 
     if (broadcast) {
       window.dispatchEvent(new CustomEvent(SHIFT_CONFIG_CHANGED));
     }
-    // Supabase sync (fire-and-forget)
-    kvSet(STORAGE_KEY, shifts).catch(() => {});
+    // Issue #5: kept optimistic-local (synchronous API, called throughout the
+    // shift-config UI) — but `kvSet(...).catch(() => {})` was a fully silent
+    // failure. Switched to `kvSetConfirmed`, which shows the same
+    // toast+retry used elsewhere in the app on a real write failure.
+    void kvSetConfirmed(STORAGE_KEY, shifts, 'Schichtkonfiguration').catch(() => { /* toast already shown */ });
   } catch (e) {
     console.error('Failed to save shift config to localStorage:', e);
   }

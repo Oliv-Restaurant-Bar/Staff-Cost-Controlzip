@@ -20,7 +20,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSet, kvSetConfirmed } from '@/lib/supabase-kv';
 import type { RecipeIngredient, RezepturenMap, ProductRecipe } from '@/lib/rezeptur-store';
 
 const STORE_KEY = 'basis_komponenten_v1';
@@ -154,12 +154,17 @@ export async function loadBasiskomponentenFromDB(): Promise<BaseComponentMap> {
   }
 }
 
-export async function saveBasiskomponentenToDB(map: BaseComponentMap): Promise<void> {
-  localSave(map);
+export async function saveBasiskomponentenToDB(map: BaseComponentMap): Promise<boolean> {
+  // Database-first (Issue #5): cache locally only after Supabase confirms.
+  // Returns whether the write actually succeeded — callers must await this
+  // and gate their own success toast/UI state on it instead of assuming
+  // success (2026-09-29 fix, see docs/dev/personal-cost-tracker-issues.md #9).
   try {
-    await kvSet(STORE_KEY, map);
+    await kvSetConfirmed(STORE_KEY, map, 'Basiskomponenten');
+    return true;
   } catch (err) {
     console.error('[Basis] saveBasiskomponentenToDB Fehler:', err);
+    return false;
   }
 }
 

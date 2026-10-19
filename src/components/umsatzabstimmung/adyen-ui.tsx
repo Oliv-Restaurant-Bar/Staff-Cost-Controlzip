@@ -15,11 +15,12 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import type { AdyenComment, AdyenDiffStatus, EffectiveValue } from '@/lib/adyen-abstimmung';
+import { swissApos } from '@/lib/swiss-number-format';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
 export function fmtChf(n: number): string {
-  return new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  return swissApos(new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n));
 }
 
 export function fmtDiffChf(n: number): string {

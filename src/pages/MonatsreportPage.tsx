@@ -29,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel, applyRowOrder,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
@@ -59,6 +60,7 @@ import {
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
 import { usePermissions } from '@/hooks/usePermissions';
 import { CockpitKpiBoxenReihen } from '@/components/CockpitKpiBoxenReihen';
+import { swissApos } from '@/lib/swiss-number-format';
 // Mobile-Only-CSS (≤768px), rein additiv — Rückrollen: diese Zeile entfernen.
 import '@/styles/cockpit-mobile.css';
 
@@ -138,7 +140,7 @@ function parseWeekValue(v: string): WeekSelection {
 }
 
 const fmtNum = (v: number, dec = 2) =>
-  v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  swissApos(v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec }));
 
 /** Netto-Saldo mit Vorzeichen (typografisches Minus): +12 / −18 / 0. */
 const fmtSaldoNetto = (v: number) =>
@@ -479,7 +481,7 @@ function ReportTable({
                         <p className="mt-1">
                           Davon Marketing/Maison ({granularity === 'monat' ? 'Monat' : 'Woche'}):{' '}
                           <span className="tabular-nums font-medium">
-                            CHF {mkt.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            CHF {swissApos(mkt.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}
                           </span>
                         </p>
                         <p className="mt-1 text-muted-foreground">Betrag ist bereits im Netto-Umsatz enthalten (keine Doppelzählung).</p>
@@ -999,6 +1001,16 @@ export default function MonatsreportPage() {
   const jahrDatenRef = useRef<JahresvergleichDaten | null>(null);
   const [pdfLaeuft, setPdfLaeuft] = useState(false);
 
+  // Cancelled guard for the multi-step PDF export flow (handlePdfExport /
+  // handleAuswahlExport): the handlers run with several awaits and, in
+  // part, poll off-screen state (warteAuf). If the user navigates away
+  // meanwhile (e.g. via the mobile "Mehr" nav), this page unmounts —
+  // without this guard, setPdfLaeuft/setExportVerlaufAktiv would still
+  // fire afterwards on the unmounted page. Same idea as the "alive" guard
+  // on the data-loading effects above, just as a reusable hook (event
+  // handler, not an effect) — see src/hooks/useMountedRef.ts.
+  const mountedRef = useMountedRef();
+
   // ── PDF-Export-Auswahl (Tabs Monat/Woche): aktuelle Ansicht, letzte 4
   //    Wochen (quer, Ist|Budget|Δ), optional Wochenverlauf als weitere Seite.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -1309,7 +1321,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       toast({
         title: 'Monats-Budget überschrieben',
         description: `${def.label} · ${MONATE[month - 1]} ${year}: `
-          + (value === null ? 'geleert' : value.toLocaleString('de-CH'))
+          + (value === null ? 'geleert' : swissApos(value.toLocaleString('de-CH')))
           + ' — Wochen dieses Monats skalieren pro rata mit. «Rückgängig» oben verfügbar.',
       });
     } catch (e) {
@@ -1345,7 +1357,7 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       toast({
         title: 'Zurück auf abgeleitet/Ist',
         description: `${def.label} · ${MONATE[month - 1]} ${year}: manueller Monatswert entfernt`
-          + (abgeleitet !== null ? ` — abgeleiteter Wert ${abgeleitet.toLocaleString('de-CH')} wiederhergestellt.` : ' — Zeile folgt wieder der Ableitung bzw. bleibt leer.'),
+          + (abgeleitet !== null ? ` — abgeleiteter Wert ${swissApos(abgeleitet.toLocaleString('de-CH'))} wiederhergestellt.` : ' — Zeile folgt wieder der Ableitung bzw. bleibt leer.'),
       });
     } catch (e) {
       toast({ title: 'Reset fehlgeschlagen', description: e instanceof Error ? e.message : String(e), variant: 'destructive' });
@@ -1507,13 +1519,15 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
       await naechsterFrame();
       await exportCockpitMixedPDF(parts, branding, fileName, heute);
     } catch (e) {
-      toast({
-        title: 'PDF-Export fehlgeschlagen',
-        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
-        variant: 'destructive',
-      });
+      if (mountedRef.current) {
+        toast({
+          title: 'PDF-Export fehlgeschlagen',
+          description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setPdfLaeuft(false);
+      if (mountedRef.current) setPdfLaeuft(false);
     }
   }, [activeTab, month, year, verlaufMeta, jahrMeta, heute, toast,
     tenantId, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil]);
@@ -1602,10 +1616,12 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         if (!verlaufDaten) {
           exportVerlaufMetaRef.current = null;
           exportVerlaufDatenRef.current = null;
-          setExportVerlaufAktiv(true);
+          if (mountedRef.current) setExportVerlaufAktiv(true);
           await naechsterFrame();
           await warteAuf(() =>
-            !!exportVerlaufDatenRef.current && !!exportVerlaufMetaRef.current);
+            !mountedRef.current ||
+            (!!exportVerlaufDatenRef.current && !!exportVerlaufMetaRef.current));
+          if (!mountedRef.current) return; // navigated away while waiting
           verlaufDaten = exportVerlaufDatenRef.current;
           meta = exportVerlaufMetaRef.current;
         }
@@ -1631,14 +1647,18 @@ OK = Overrides entfernen (Monatswert gilt voll) · `
         : `cockpit-report-${year}-${String(month).padStart(2, '0')}`;
       await exportCockpitMixedPDF(pages, branding, fileName, heute);
     } catch (e) {
-      toast({
-        title: 'PDF-Export fehlgeschlagen',
-        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
-        variant: 'destructive',
-      });
+      if (mountedRef.current) {
+        toast({
+          title: 'PDF-Export fehlgeschlagen',
+          description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setExportVerlaufAktiv(false);
-      setPdfLaeuft(false);
+      if (mountedRef.current) {
+        setExportVerlaufAktiv(false);
+        setPdfLaeuft(false);
+      }
     }
   }, [expAktuell, expVierWochen, expVerlauf, activeTab, daten, rates, tenantId, tenantKey,
     heute, budgetModus, year, month, aktuelleAnsichtRaster, ladeMonatSeiteTeil, ladeWarenTeil, ladePersonalTeil, verlaufMeta, toast]);
@@ -2658,7 +2678,7 @@ const CHART_METRICS = [
 function fmtAxisCompact(v: number, fmt: MrRow['fmt']): string {
   if (fmt === 'pct') return `${v.toFixed(0)}%`;
   const a = Math.abs(v);
-  if (a >= 1_000_000) return `${(v / 1_000_000).toLocaleString('de-CH', { maximumFractionDigits: 1 })}M`;
+  if (a >= 1_000_000) return `${swissApos((v / 1_000_000).toLocaleString('de-CH', { maximumFractionDigits: 1 }))}M`;
   if (a >= 1_000) return `${Math.round(v / 1_000)}k`;
   return fmtNum(v, 0);
 }

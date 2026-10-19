@@ -14,7 +14,7 @@
  * (tenantKey(ANNUAL_COST_IMPORTS_KEY)).
  */
 
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvSetConfirmed } from './supabase-kv';
 import type { AnnualCostImportMode } from './annual-cost-preview';
 
 export const ANNUAL_COST_IMPORTS_KEY = 'annualCostImports_v1';
@@ -117,11 +117,13 @@ async function persistEntry(storeKey: string, entry: AnnualCostImportEntry): Pro
     // KV nicht erreichbar → lokal weiterarbeiten, Backup beim nächsten Save
   }
   blob.entries[String(entry.year)] = entry;
-  saveLocal(storeKey, blob);
+  // Database-first (Issue #5): kvSetConfirmed caches locally itself, only
+  // after the write is confirmed — no separate saveLocal() call needed.
   try {
-    await kvSet(storeKey, blob);
+    await kvSetConfirmed(storeKey, blob, 'Jahreskosten-Import-Registry');
   } catch (err) {
     console.error('[ANNUAL-IMPORTS] KV-Backup fehlgeschlagen', err);
+    throw err;
   }
 }
 

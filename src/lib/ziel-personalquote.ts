@@ -14,7 +14,7 @@
  */
 
 import type { TenantId } from '@/contexts/TenantContext';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, notifyKVBackupProblem } from './supabase-kv';
 import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 
 export const ZIEL_PERSONALQUOTE_KEY = 'ziel_personalquote_v1';
@@ -116,10 +116,17 @@ export async function saveZielPersonalquote(tenantId: TenantId, pct: number): Pr
   } catch {
     // Event-Dispatch darf das Speichern nie brechen.
   }
+  // Issue #5: plain `kvSet` never throws (swallows errors internally), so
+  // this used to be a fully silent failure. Switched to `kvSetStrict` so it
+  // surfaces via the same toast+retry used elsewhere in the app.
   try {
-    await kvSet(tenantKey(tenantId, ZIEL_PERSONALQUOTE_KEY), blob);
-  } catch {
-    // Backup fehlgeschlagen — localStorage bleibt primärer Speicher.
+    const { kvSetStrict } = await import('./supabase-kv');
+    await kvSetStrict(tenantKey(tenantId, ZIEL_PERSONALQUOTE_KEY), blob);
+  } catch (err) {
+    void notifyKVBackupProblem(err, 'Ziel-Personalquote', {
+      toastId: 'ziel-personalquote-backup',
+      retry: () => saveZielPersonalquote(tenantId, pct).then(() => undefined),
+    });
   }
   return blob;
 }

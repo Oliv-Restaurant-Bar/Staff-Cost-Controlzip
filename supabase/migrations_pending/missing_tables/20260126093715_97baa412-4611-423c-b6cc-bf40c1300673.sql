@@ -43,6 +43,20 @@ ON public.email_imported_reservations
 FOR DELETE
 USING (true);
 
+-- update_updated_at_column() should already exist (defined in 20260121224141_...sql
+-- and redefined idempotently in 20260122162412_...sql, which this file's
+-- filename-ordering applies before). Redefined here too as a standalone guard
+-- in case this file is ever applied on its own — CREATE OR REPLACE is a safe
+-- no-op anywhere it already exists. See that file's comment for why this
+-- guard exists (2026-10-14 staging apply failure).
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public;
+
 -- Add trigger for updated_at
 CREATE TRIGGER update_email_imported_reservations_updated_at
 BEFORE UPDATE ON public.email_imported_reservations

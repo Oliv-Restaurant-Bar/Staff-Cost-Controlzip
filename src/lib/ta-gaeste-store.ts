@@ -13,7 +13,7 @@
  * Schreiben ist ein Merge mit STRIKT gelesener Remote-Basis (Lesefehler ≠ leer).
  */
 
-import { kvGet, kvGetStrict, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvGetStrict, kvSetConfirmed } from '@/lib/supabase-kv';
 
 type KeyFn = (k: string) => string;
 
@@ -62,8 +62,10 @@ export async function writeTaGaesteMerged(
   incoming: Record<string, number>,
 ): Promise<void> {
   const merged = { ...base, ...incoming };
-  try { localStorage.setItem(key, JSON.stringify(merged)); } catch { /* Node/Test */ }
-  await kvSet(key, merged);
+  // Database-first (Issue #5): confirm the Supabase write before caching
+  // locally — `kvSet` used to swallow write errors silently while
+  // localStorage was already updated, showing "saved" even when it wasn't.
+  await kvSetConfirmed(key, merged, 'TA-Gäste');
 }
 
 /** Bequemer Einzel-Save (Strict-Read + Merge-Write in einem Schritt). */

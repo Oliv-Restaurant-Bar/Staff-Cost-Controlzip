@@ -352,7 +352,7 @@ export default function BasiskomponentenManager({
 
   // ── Speichern (neu / bearbeiten) ──────────────────────────────────────────
 
-  function handleEditorSave(state: EditorState) {
+  async function handleEditorSave(state: EditorState) {
     let bc: BaseComponent;
     if (state.id) {
       // Bearbeiten – erst Propagation anbieten
@@ -375,30 +375,33 @@ export default function BasiskomponentenManager({
         // Basis schon mal speichern
         const newMap = { ...baseComponents, [bc.id]: bc };
         onBaseComponentsChange(newMap);
-        saveBasiskomponentenToDB(newMap);
         setEditing(null);
+        const ok = await saveBasiskomponentenToDB(newMap);
+        if (!ok) toast.error(`«${bc.name}» konnte nicht gespeichert werden — bitte erneut versuchen`);
         return;
       }
       // Keine verlinkten oder Kosten unverändert → direkt speichern
       const newMap = { ...baseComponents, [bc.id]: bc };
       onBaseComponentsChange(newMap);
-      saveBasiskomponentenToDB(newMap);
-      toast.success(`«${bc.name}» gespeichert`);
       setEditing(null);
+      const ok = await saveBasiskomponentenToDB(newMap);
+      if (ok) toast.success(`«${bc.name}» gespeichert`);
+      else toast.error(`«${bc.name}» konnte nicht gespeichert werden — bitte erneut versuchen`);
     } else {
       // Neu
       bc = createBaseComponent(state.name, state.unit, state.note, state.ingredients);
       const newMap = { ...baseComponents, [bc.id]: bc };
       onBaseComponentsChange(newMap);
-      saveBasiskomponentenToDB(newMap);
-      toast.success(`«${bc.name}» erstellt`);
       setEditing(null);
+      const ok = await saveBasiskomponentenToDB(newMap);
+      if (ok) toast.success(`«${bc.name}» erstellt`);
+      else toast.error(`«${bc.name}» konnte nicht gespeichert werden — bitte erneut versuchen`);
     }
   }
 
   // ── Propagation bestätigen ────────────────────────────────────────────────
 
-  function handlePropagateConfirm() {
+  async function handlePropagateConfirm() {
     if (!pendingBc) return;
     const { updatedMap, affectedRecipeIds } = propagateBaseComponentChange(pendingBc, recipes);
 
@@ -421,15 +424,16 @@ export default function BasiskomponentenManager({
     });
 
     onRecipesChange(updatedMap, updatedCosts);
-    saveRezepturenToDB(updatedMap);
-    toast.success(`${affectedRecipeIds.length} Rezeptur${affectedRecipeIds.length !== 1 ? 'en' : ''} aktualisiert`);
     setPropagateId(null);
     setPendingBc(null);
+    const ok = await saveRezepturenToDB(updatedMap);
+    if (ok) toast.success(`${affectedRecipeIds.length} Rezeptur${affectedRecipeIds.length !== 1 ? 'en' : ''} aktualisiert`);
+    else toast.error('Rezepturen konnten nicht gespeichert werden — bitte erneut versuchen');
   }
 
   // ── Löschen ───────────────────────────────────────────────────────────────
 
-  function handleDelete(bc: BaseComponent) {
+  async function handleDelete(bc: BaseComponent) {
     const linked = getLinkedRecipes(bc.id, recipes).length;
     if (linked > 0) {
       toast.error(`«${bc.name}» wird noch in ${linked} Rezeptur${linked !== 1 ? 'en' : ''} verwendet. Bitte zuerst dort entfernen.`);
@@ -439,8 +443,9 @@ export default function BasiskomponentenManager({
     const newMap = { ...baseComponents };
     delete newMap[bc.id];
     onBaseComponentsChange(newMap);
-    saveBasiskomponentenToDB(newMap);
-    toast.success(`«${bc.name}» gelöscht`);
+    const ok = await saveBasiskomponentenToDB(newMap);
+    if (ok) toast.success(`«${bc.name}» gelöscht`);
+    else toast.error(`«${bc.name}» konnte nicht gelöscht werden — bitte erneut versuchen`);
   }
 
   // ── Collapsed trigger ─────────────────────────────────────────────────────

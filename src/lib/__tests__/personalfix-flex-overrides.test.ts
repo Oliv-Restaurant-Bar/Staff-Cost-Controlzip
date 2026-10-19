@@ -4,12 +4,13 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('@/lib/supabase-kv', () => ({
   kvGet: vi.fn(async () => null),
   kvSet: vi.fn(async () => {}),
+  kvSetConfirmed: vi.fn(async () => {}),
 }));
 
 import {
   effectiveFlexIst, flexOverridesKey, loadFlexIstOverrides, saveFlexIstOverrides,
 } from '@/lib/personalfix-flex-overrides';
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSetConfirmed } from '@/lib/supabase-kv';
 
 const tk = (k: string) => `beaulieu:${k}`;
 
@@ -35,10 +36,10 @@ describe('Persistenz (Mandant + Jahr + Monat)', () => {
       },
       total: { amount: 61000, addAg: false },
     });
-    expect(kvSet).toHaveBeenCalledWith('beaulieu:pfix-flex-ist-overrides-2026-08', {
+    expect(kvSetConfirmed).toHaveBeenCalledWith('beaulieu:pfix-flex-ist-overrides-2026-08', {
       employees: { a: { amount: 4200, addAg: true } },
       total: { amount: 61000, addAg: false },
-    });
+    }, 'Flex-Ist-Override');
   });
 
   it('load: fehlender/kaputter Blob → leere Overrides (nie werfen)', async () => {

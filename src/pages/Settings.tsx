@@ -19,7 +19,8 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DepartmentTokenManager } from '@/components/DepartmentTokenManager';
+// Guest-link feature disabled — kept for possible future use, see render comment below.
+// import { DepartmentTokenManager } from '@/components/DepartmentTokenManager';
 import { StaffPortalSettingsPanel } from '@/components/StaffPortalSettingsPanel';
 import { CronJobOverview } from '@/components/CronJobOverview';
 import { migrateLocalStorageToSupabase } from '@/hooks/useSupabaseSchedule';
@@ -1992,8 +1993,9 @@ const Settings = () => {
             </CardContent>
           </Card>
 
-          {/* Department Access Tokens */}
+          {/* Department Access Tokens — guest-link feature disabled, kept for possible future use.
           <DepartmentTokenManager />
+          */}
         </main>
       </div>
     </PasswordProtection>

@@ -22,6 +22,7 @@ import type { PersonaleintrittRecord } from './types';
 import {
   type BetriebRecord, betriebAnzeigename, SEM_KANTON_BERN, semBetreff,
 } from './betriebs-config';
+import { swissApos } from '../swiss-number-format';
 
 export interface SemFeld {
   /** Fachliches Label (für Warnungen). */
@@ -118,7 +119,7 @@ export function buildSemFillMap(
     ? (record.pensumProzent != null ? `${record.pensumProzent} %` : (fehlend.push('Pensum'), ''))
     : 'variabel (Stundenlohn)';
   const bruttolohn = record.lohnBerechnet != null
-    ? record.lohnBerechnet.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    ? swissApos(record.lohnBerechnet.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
     : (fehlend.push('Bruttolohn (Basislohn)'), '');
 
   const ws = wochenstundenFuerSem(record, betrieb.wochenstundenModell);

@@ -24,12 +24,13 @@ vi.mock('@/lib/supabase-kv', () => ({
   kvSet: vi.fn(async () => undefined),
   kvGetStrict: vi.fn(async () => null),
   kvSetStrict: vi.fn(async () => undefined),
+  kvSetConfirmed: vi.fn(async () => undefined),
   safeUpsertDailyBudgets: vi.fn(async () => undefined),
 }));
 
 import { getLockState } from '@/lib/prior-year-lock';
 import { loadVjDailyYearStrict, upsertVjDailyBatch } from '@/lib/vj-daily-supabase';
-import { kvGetStrict, kvSetStrict, kvSet, safeUpsertDailyBudgets } from '@/lib/supabase-kv';
+import { kvGetStrict, kvSetStrict, kvSet, kvSetConfirmed, safeUpsertDailyBudgets } from '@/lib/supabase-kv';
 import { isTakeAwayArticleName } from '@/lib/verkaufsdaten-import';
 import { sumTaGaesteRange } from '@/lib/ta-gaeste-store';
 
@@ -373,7 +374,7 @@ describe('commitVerkaufsdaten — ta-gaeste-daily-Store', () => {
       '2025-01-02': { foodCount: 295, taGuests: 0 }, // explizite 0 wird geschrieben
     }), 2025));
     expect(res.taGuestDays).toBe(2);
-    const taCall = vi.mocked(kvSet).mock.calls.find(([k]) => k === 'ta-gaeste-daily')!;
+    const taCall = vi.mocked(kvSetConfirmed).mock.calls.find(([k]) => k === 'ta-gaeste-daily')!;
     expect(taCall[1]).toEqual({ '2024-05-01': 12, '2025-01-01': 5, '2025-01-02': 0 });
   });
 

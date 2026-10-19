@@ -804,8 +804,23 @@ export const AppBottomNav = () => {
 
   const [open, setOpen] = useState(false);
 
-  // Sheet schließen bei Routenwechsel
+  // Close sheet on route change (fallback/safety net — the normal case is
+  // that every nav click already closes the sheet synchronously itself,
+  // see handleNavigate below; see the comment there for why).
   useEffect(() => { setOpen(false); }, [location.pathname]);
+
+  // Closes the sheet SYNCHRONOUSLY before navigating. Important: calling
+  // navigate() while the sheet (= Radix Dialog/Portal) is still open makes
+  // React unmount the old page (charts included) in the same commit where
+  // the sheet's portal is still attached to the DOM — that collides with
+  // Radix's own cleanup and can crash the app on navigation (one cause of
+  // "Seite konnte nicht geladen werden" when leaving a chart page via
+  // "Mehr"). The reactive useEffect above closes too late (only AFTER the
+  // route change), hence this extra synchronous close before navigate().
+  const handleNavigate = (path: string) => {
+    setOpen(false);
+    navigate(path);
+  };
 
   function isItemVisible(item: NavItem): boolean {
     if (item.adminOnly && !isAdmin) {
@@ -875,7 +890,7 @@ export const AppBottomNav = () => {
               return (
                 <button
                   key={DASHBOARD_ITEM.path}
-                  onClick={() => navigate(DASHBOARD_ITEM.path)}
+                  onClick={() => handleNavigate(DASHBOARD_ITEM.path)}
                   className={cn(
                     'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left',
                     active ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
@@ -898,7 +913,7 @@ export const AppBottomNav = () => {
                   items={visibleItems}
                   currentActivePath={currentActivePath}
                   pathname={location.pathname}
-                  onNavigate={navigate}
+                  onNavigate={handleNavigate}
                 />
               );
             })}

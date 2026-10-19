@@ -10,6 +10,7 @@ vi.mock('@/lib/supabase-kv', () => ({
   kvGet: vi.fn(async (key: string) => (kv.has(key) ? kv.get(key) : null)),
   kvGetStrict: vi.fn(async (key: string) => (kv.has(key) ? kv.get(key) : null)),
   kvSet: vi.fn(async (key: string, value: unknown) => { kv.set(key, JSON.parse(JSON.stringify(value))); }),
+  kvSetConfirmed: vi.fn(async (key: string, value: unknown) => { kv.set(key, JSON.parse(JSON.stringify(value))); }),
   kvRemove: vi.fn(async (key: string) => { kv.delete(key); }),
 }));
 

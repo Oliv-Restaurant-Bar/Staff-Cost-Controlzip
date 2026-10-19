@@ -8,7 +8,7 @@
  * können direkt in der Import-Vorschau zugeordnet werden — die Zuordnung wird
  * dauerhaft als Profil gespeichert und greift beim nächsten PDF automatisch.
  */
-import { kvGet, kvSet } from '@/lib/supabase-kv';
+import { kvGet, kvSetConfirmed } from '@/lib/supabase-kv';
 import { tenantKey } from '@/lib/tenant-utils';
 import type { TenantId } from '@/contexts/TenantContext';
 
@@ -193,7 +193,13 @@ export async function loadLieferantenProfile(tenantId: TenantId): Promise<Liefer
 }
 
 export async function saveLieferantenProfile(tenantId: TenantId, profile: LieferantenProfil[]): Promise<void> {
-  await kvSet(profileKey(tenantId), profile.map(p => ({ ...p, mwstNr: normalisiereMwstNr(p.mwstNr) })));
+  // Issue #5: `kvSet` used to swallow write errors silently; callers
+  // already catch and show a toast on failure.
+  await kvSetConfirmed(
+    profileKey(tenantId),
+    profile.map(p => ({ ...p, mwstNr: normalisiereMwstNr(p.mwstNr) })),
+    'Lieferanten-Profile',
+  );
 }
 
 /**

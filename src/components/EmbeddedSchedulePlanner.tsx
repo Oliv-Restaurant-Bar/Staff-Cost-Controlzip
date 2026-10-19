@@ -736,10 +736,15 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
 
   type DayOfWeek = 'montag' | 'dienstag' | 'mittwoch' | 'donnerstag' | 'freitag' | 'samstag' | 'sonntag';
 
-  const handleSaveDaysOff = async (employeeId: string, daysOff: DayOfWeek[]) => {
+  const handleSaveDaysOff = async (employeeId: string, daysOff: DayOfWeek[]): Promise<boolean> => {
     const emp = employees.find(e => e.id === employeeId);
-    if (emp) {
+    if (!emp) return false;
+    try {
       await updateSupabaseEmployee({ ...emp, daysOff } as any);
+      return true;
+    } catch (err) {
+      console.error('[EmbeddedSchedulePlanner] handleSaveDaysOff failed:', err);
+      return false;
     }
   };
 

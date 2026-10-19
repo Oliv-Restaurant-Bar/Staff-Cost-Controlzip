@@ -5,6 +5,16 @@ interface Props {
   fallback?: ReactNode;
   /** If provided, shown in the error card header */
   label?: string;
+  /**
+   * When this value changes (e.g. location.pathname) while an error is
+   * currently displayed, the boundary resets itself automatically.
+   * Prevents a navigation-time crash (e.g. from a race condition when
+   * leaving a chart/dialog page) from "trapping" the user on the error
+   * screen even though they've long since clicked through to a different,
+   * unaffected page — "Erneut versuchen" (Retry) also remains available
+   * as a manual fallback.
+   */
+  resetKey?: string;
 }
 
 interface State {
@@ -25,6 +35,12 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary] Uncaught error:', error.message);
     console.error('[ErrorBoundary] Component stack:', info.componentStack);
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null });
+    }
   }
 
   handleRetry = () => {

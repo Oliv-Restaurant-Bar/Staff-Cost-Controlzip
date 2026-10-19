@@ -107,6 +107,7 @@ export const PL_CATEGORY_TO_ROW_ID: Partial<Record<PLCategory, string>> = {
   admin_costs:       'admin',
   office:            'admin',
   bank_fees:         'admin',
+  vehicle_costs:     'other_operating',
   other_operating:   'other_operating',
   depreciation:      'depreciation',
   unmapped:          'other_operating',

@@ -15,6 +15,7 @@ import {
   type MaDokumentTyp, type PersonaleintrittRecord,
 } from './types';
 import { type BetriebRecord, betriebAnzeigename } from './betriebs-config';
+import { swissApos } from '../swiss-number-format';
 
 export interface DossierZeile {
   frage: string;
@@ -59,7 +60,7 @@ function datumCh(iso: string | undefined | null): string {
 
 function chf(betrag: number | undefined | null): string {
   if (betrag == null || !isFinite(betrag)) return LEER;
-  return `CHF ${betrag.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `CHF ${swissApos(betrag.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}`;
 }
 
 function text(v: string | undefined | null): string {
