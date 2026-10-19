@@ -5,7 +5,7 @@ Tracks what's done vs. pending against `docs/dev/personal-cost-tracker-issues.md
 Note: doc paths inside dated entries below reflect the `docs/` layout at the time they were written
 (before the 2026-10-16 `docs/dev/` + `docs/client/` split) — left as a historical record, not
 rewritten. Current paths: `docs/dev/personal-cost-tracker-issues.md`, `docs/dev/personal-cost-tracker-changelog.md`,
-`docs/dev/personal-cost-tracker-missing-tables.md`, `docs/client/personal-cost-tracker-summary.md`.
+`docs/dev/personal-cost-tracker-missing-tables.md`, `docs/dev/personal-cost-tracker-summary.md`.
 
 ## 2026-09-08
 
@@ -246,4 +246,31 @@ After finding a second instance of the bulk-save bug in the same session (the `h
   comments and the changelog) — only the physical ordering in the file changed.
 - Issue #8 ("stale dashboard data") removed outright, per your 2026-10-14 call to skip it — it had
   no specific screen/repro to act on anyway. Matching reference removed from
-  `docs/client/personal-cost-tracker-summary.md`'s "Still pending" section.
+  `docs/dev/personal-cost-tracker-summary.md`'s "Still pending" section.
+
+## 2026-10-19 — client meeting: production move is now the main blocker; three new-feature requests detailed
+
+**Production move:** the subdomain for production has been set up (client-side, via Sasha/HubSpot,
+outside this codebase). The only remaining step is moving the already-verified dev/staging changes
+(all 9 pending migrations from issues #7/#11, plus the Phase 1 code fixes) to production — waiting
+on the client's confirmation/manual apply. Nothing further needed from this codebase until that
+happens; `docs/dev/personal-cost-tracker-issues.md` issues #7 and #11 updated to reflect "done on
+dev/staging, production apply pending" instead of reading as still-open engineering work.
+
+**Three new-feature requests from the client, captured in detail for future research/estimate:**
+- **Schedule-planning ease-of-use + two-way WhatsApp distribution** (issue #10, expanded): client
+  wants the schedule-planner module itself made easier/faster to use first — no specific pain point
+  named yet, needs follow-up — as a precondition for the real ask, which is publishing schedules to
+  employees via WhatsApp and having employees reply back with change requests that the client then
+  applies. Not yet clear whether "two-way" needs any system-side handling of the employee's reply or
+  just needs WhatsApp as the channel both directions.
+- **Unified, auto-categorizing import screen** (new issue #12): client wants the several existing
+  per-document-type import buttons combined into one action where dropped files are automatically
+  routed to the right handler, instead of picking the right button per file type up front.
+- **Scanned/mobile-photographed document import** (new issue #13): the existing PDF/image import
+  pipeline only reliably works on computer-generated PDFs/images; it doesn't correctly extract data
+  from a document that was photographed on a phone and imported as a photo or a PDF built from one.
+  Needs research into the actual failure mode before scoping a fix.
+
+All three are explicitly deferred to a separately-estimated phase, after Phase 1 testing/production
+move — not started yet, tracked in `docs/dev/personal-cost-tracker-issues.md`'s new "Phase 2" section.

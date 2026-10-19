@@ -529,7 +529,7 @@ export function ManagementKpiSection({
         </div>
       </MoreKpis>
 
-      {/* Definitionen-Dialog (fester KPI-Katalog, docs/dev/kpi-inventar.md) */}
+      {/* Definitionen-Dialog (fester KPI-Katalog, docs/client/kpi-inventar.md) */}
       <Dialog open={defsOpen} onOpenChange={setDefsOpen}>
         <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
           <DialogHeader>

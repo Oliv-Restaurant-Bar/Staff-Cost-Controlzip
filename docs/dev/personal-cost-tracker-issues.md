@@ -10,8 +10,10 @@ Issue numbers are kept stable across sessions (referenced elsewhere in code comm
 
 ## Client priorities (per 2026-09-28 client meeting) — listed first
 
-### 7. User logins and permissions must be reliable (client priority #1) — OPEN
+### 7. User logins and permissions must be reliable (client priority #1) — DONE on dev/staging, production apply pending
 **What it means:** Client's top priority is that user logins work reliably and that role-based permissions/restrictions are applied correctly. An audit found the actual gap is much wider than the original wage-data scope: a 2026-08-05 migration applies a blanket "any logged-in user, any row" policy to almost every database table.
+
+**Status (2026-10-19):** all RLS/permissions migrations below (and the table-creation migrations from issue #11) have been applied and verified on the dev/staging database — route guards, RLS policies, and the two credential-leak fixes are all live there. **Production has not had these applied yet** — that's now a manual step on the client's side, expected to happen alongside the subdomain/production cutover (see the "Production move" note at the top of the changelog's 2026-10-19 entry). Nothing further is needed from this codebase until that apply happens; this item is not "open" from an engineering standpoint, it's waiting on the client's production step.
 
 **Status (2026-09-28 — first pass):**
 - Written, pending manual apply by the client/team in the Supabase SQL Editor: `supabase/migrations_pending/20260928_urgent_credential_and_profile_lockdown.sql` (3 credential tables restricted to admin/beaulieu_manager; `user_profiles` UPDATE/DELETE restricted to own row or admin) and `supabase/migrations_pending/20260928b_rls_phase1_wages_financial.sql` (`employee_wages` restricted to admin + beaulieu_manager with tenant scoping; Warenrechnungen module now matches its documented role matrix — `supplier_documents`/`supplier_document_splits`, not `suppliers` itself, which doesn't exist in production and isn't being created, see issue #11; `employees`/`schedule_extra_cost_people` gained real tenant-row scoping).
@@ -47,10 +49,13 @@ Issue numbers are kept stable across sessions (referenced elsewhere in code comm
 2. **Vorlagen (templates)**: save a week as a template, apply it (either "Auf aktuelle Woche anwenden" on a saved template, or the Wochentag-Muster tab), reload immediately — applied cells must persist.
 3. To specifically confirm the fix (not just that it still "looks" applied): apply a template/bulk action, then immediately open dev tools' network tab or just reload before any other save — data should reflect what's in the database, never silently reverting.
 
-### 10. WhatsApp schedule sharing/publishing (client priority #3) — OPEN
-**What it means:** Client wants to create schedules in the system and publish/share them with employees via WhatsApp as the main distribution process, with updates reliably visible to employees after changes. Currently this barely exists — `enableWhatsApp` in `staff-portal-settings.ts` is an inert "future" toggle with no real functionality behind it yet.
-**Plan:** This is a new feature build, not a bug fix — needs proper design (WhatsApp Business API vs. `wa.me` links vs. something else, how updates propagate) before implementation. Scope out with the client/architect before coding. Deferred to the new-features phase per the 2026-10-14 client meeting (separately estimated, after Phase 1 testing/production move is done).
-**How to test once built:** Publish a schedule via WhatsApp from the app, confirm employees receive/can view it; edit the schedule afterward and confirm the update is reliably reflected for employees.
+### 10. Easier schedule planning + two-way WhatsApp schedule sharing (client priority #3) — OPEN, research/estimate phase
+**What it means:** Client wants two things, in this order:
+1. **Make the schedule-planning module itself easier/faster to use** — raised as a precondition, not a separate ask: the WhatsApp distribution flow below is only worth building once creating/editing a schedule is simpler than it is today. No specific UX pain point named yet — needs follow-up with the client to pin down which part of `SchedulePlanner.tsx` is the friction (e.g. too many clicks for a routine edit, unclear bulk-actions flow, something else).
+2. **Two-way WhatsApp distribution:** publish/share a finished schedule with employees via WhatsApp as the main distribution channel. If an employee has a change request, they reply via WhatsApp, and the client updates the schedule based on that reply — client did not describe this as an automated round-trip (employee reply directly editing the schedule), but as the client seeing the WhatsApp reply and then making the change manually in the app. Needs confirming whether any automation is wanted on the reply side or whether "two-way" just means "the employee can message back" with no system-side handling of that message.
+Currently this barely exists in code — `enableWhatsApp` in `staff-portal-settings.ts` is an inert "future" toggle with no real functionality behind it yet.
+**Plan:** This is a new feature build, not a bug fix — needs proper design (WhatsApp Business API vs. `wa.me` links vs. something else, how updates propagate, and how much of the "employee replies, client updates" loop is meant to be software-assisted vs. just WhatsApp-as-a-channel) before implementation. Scope out with the client/architect before coding, starting with clarifying the two open questions above. Deferred to the new-features phase per the 2026-10-14 client meeting (separately estimated, after Phase 1 testing/production move is done) — see the "Phase 2" section below for the other two new-feature asks from the same meeting.
+**How to test once built:** Publish a schedule via WhatsApp from the app, confirm employees receive/can view it; edit the schedule afterward and confirm the update is reliably reflected for employees; confirm an employee's reply reaches the client in a usable way.
 
 ---
 
@@ -143,6 +148,8 @@ Of those 19, 6 are genuinely broken, in two tiers by how you'd actually encounte
 **Status (2026-10-14), after client meeting confirmed "only necessary tables, defer new/half-built work":** re-checked the remaining 10 against that rule and found `articles`, `daily_revenues`, `sales_upload_log`, `suppliers` also have zero code reference anywhere — each is an unimplemented future stage per its own migration file's header, not something any live page needs today. Moved those 3 more files to `not_applying_confirmed_dead/` and edited the 2 RLS files that referenced them. **Real apply set: 5 files, 6 tables** (`capacity_settings`, `group_reservations`, `email_imported_reservations`, `fortelable_settings`, `app_kv_store`, `product_sales_reset_log`), in `supabase/migrations_pending/missing_tables/`, to apply before the 4 RLS migrations. 13 of the original 19 tables are now excluded, 6 remain to create.
 
 **Status (2026-10-14, later same day) — applied and verified on staging.** All 5 table-creation files plus all 4 RLS files ran successfully on staging, after fixing two pre-existing-but-missing function gaps hit mid-apply (`update_updated_at_column()`, `current_user_role()` — both defined in old migrations that predate everything here, but apparently missing on this staging database; redefined idempotently inline, safe no-ops anywhere they already exist). **Production has not been run yet** — same 9 files, same order, still pending (client's own manual step, not this codebase's).
+
+**Status (2026-10-19) — still the only thing outstanding on this issue.** Nothing further to do from the engineering side; this is fully done on dev/staging and is now just waiting on the client's manual production apply, same as issue #7, expected to happen alongside the subdomain/production cutover.
 **Open, not blocking:** delete the deprecated code permanently, or keep it in `src/_deprecated/` as reference in case the module gets revived? Doesn't affect the migrations above either way.
 
 **Status (2026-10-14) — repo-wide sweep, 22 more dead files found and moved:** separate from the table-driven findings above, a full reachability sweep of `src/` (not just the files tied to missing tables) found 22 more files — components, hooks, lib — with zero importers anywhere, unrelated to each other. Moved to `src/_deprecated/`, verified zero regressions (`tsc`/`build` both clean against baseline). Full list: `src/_deprecated/README.md`.
@@ -150,7 +157,44 @@ Of those 19, 6 are genuinely broken, in two tiers by how you'd actually encounte
 
 ---
 
+## Phase 2 — new features requested (2026-10-14 client meeting; research & estimate pending)
+
+Not Phase 1 bug fixes — separate new-feature requests the client raised, explicitly deferred until
+Phase 1 testing/production move is done and until each has its own effort estimate. See issue #10
+above for the schedule-ease-of-use + WhatsApp request; the other two are below.
+
+### 12. Combine multiple import buttons into one auto-categorizing import screen
+**What it means:** The app currently has several separate import entry points, one per document
+type/source the client uploads from other systems (exact current buttons/pages to confirm against
+`src/components/import-center/` and the various `*ImportPage.tsx` files — not yet inventoried here).
+Client wants a single import action where multiple files can be dropped in at once, with the system
+automatically detecting each file's type and routing it to the right handler/module — rather than
+the user having to pick the correct button per document type up front.
+**Open questions before this can be scoped:** which import entry points exist today and what
+distinguishes their file formats (so "auto-categorize" has something reliable to detect on); whether
+mixed-type batches (e.g. one MIRUS file + one Adyen file in the same drop) need to be split and
+routed individually in one action, which is what "combine... import multiple files" implies.
+**Status:** not started — needs a research/architecture pass over the existing import code before an
+estimate can be given.
+
+### 13. Import/PDF parsing fails on mobile-photographed documents (only works on computer-generated PDFs/images today)
+**What it means:** The existing PDF/image-to-data import pipeline (`src/lib/schedule-pdf-parser.ts`-style
+parsers and whichever OCR/extraction path the live import flows use — to confirm exactly which) only
+reliably handles documents that were generated digitally (e.g. exported as PDF from another system).
+When a user takes a photo of a physical document on their phone and that photo (or a PDF built from
+it) is imported instead, extraction doesn't work correctly — skewed/rotated pages, lighting/shadow,
+lower and inconsistent image quality compared to a digital export.
+**Open questions before this can be scoped:** which import flow(s) this affects (all of them, or a
+specific document type the client actually photographs in practice); what the current failure mode
+actually is (nothing extracted vs. wrong data extracted silently); whether this needs a different
+OCR approach/library entirely or just pre-processing (deskew, contrast) ahead of the existing
+pipeline.
+**Status:** not started — needs a research pass to reproduce the failure against a real
+phone-photographed sample before an estimate can be given.
+
+---
+
 ## Out of scope for Phase 1
 
 - **Offline capability** (optional enhancement, ~10–12 additional hours per the roadmap doc) — depends on issue #5 being fixed first, tracked separately as a future phase.
-- **WhatsApp schedule sharing, scanned-PDF parsing, unified import screen** — new features requested at the 2026-10-14 client meeting, explicitly deferred to a later, separately-estimated phase (see issue #10 above for WhatsApp specifically).
+- **Issues #10, #12, #13 above** — new features requested at the 2026-10-14 client meeting, explicitly deferred to a later, separately-estimated phase.

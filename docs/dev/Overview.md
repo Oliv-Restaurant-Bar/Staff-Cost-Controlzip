@@ -20,7 +20,7 @@ If you're testing a bug fix and unsure which page to check, start from the [feat
 
 This project was originally generated with **Lovable** (an AI app-builder — the `lovable-tagger` dev dependency in `package.json` and Lovable references in the old `README.md` are remnants of that), and the entire UI, plus most code comments, are in **German**, because the client is German-speaking. This is intentional, not a partial translation — don't "fix" it by translating UI strings.
 
-This documentation set (this file plus everything under `docs/dev/features/`) exists because the codebase was handed over for a bug-fix/audit engagement with **no existing handover documentation**. It's built to let any developer (regardless of German fluency) understand what a page does and manually verify a fix actually works, not just that it compiles. For the specific issues being tracked and fixed in that engagement, see `docs/dev/personal-cost-tracker-issues.md` (issue list + test steps) and `docs/dev/personal-cost-tracker-changelog.md` (what's been done).
+This documentation set (this file plus everything under `docs/client/features/`) exists because the codebase was handed over for a bug-fix/audit engagement with **no existing handover documentation**. It's built to let any developer (regardless of German fluency) understand what a page does and manually verify a fix actually works, not just that it compiles. For the specific issues being tracked and fixed in that engagement, see `docs/dev/personal-cost-tracker-issues.md` (issue list + test steps) and `docs/dev/personal-cost-tracker-changelog.md` (what's been done).
 
 ## Tech stack
 
@@ -94,8 +94,8 @@ Route access is **not** centralized — it's checked inline, per-route, in `src/
 
 ## Other docs in this repo worth knowing about
 
-- `docs/dev/kpi-inventar.md` — the canonical (German) reference for the 16-KPI management cockpit's exact formulas, tone/color rules, and export profiles. `features/finance-cockpit.md` summarizes it in English but this is the source of truth for exact calculation rules.
-- `docs/dev/navigations-inventar.md` — a (German) inventory of every KPI/dashboard page's navigation classification (stays in nav / drilldown-only / removed), from a past navigation-consolidation pass.
+- `docs/client/kpi-inventar.md` — the canonical (German) reference for the 16-KPI management cockpit's exact formulas, tone/color rules, and export profiles. `features/finance-cockpit.md` summarizes it in English but this is the source of truth for exact calculation rules.
+- `docs/client/navigations-inventar.md` — a (German) inventory of every KPI/dashboard page's navigation classification (stays in nav / drilldown-only / removed), from a past navigation-consolidation pass.
 - `docs/dev/personal-cost-tracker-issues.md` / `docs/dev/personal-cost-tracker-changelog.md` — the live bug-fix tracking for the current client engagement (issue list with test steps, and a done/pending log). Check these before assuming a known issue is still open or already fixed.
 
 ## What this documentation could not verify

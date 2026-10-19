@@ -67,7 +67,7 @@ being created at all (see `not_applying_confirmed_dead/`).
 
 All four were verified against this project's own database-setup history (every table confirmed
 to belong to this project, not another one sharing the same Supabase instance) and against each
-table's actual columns — see `docs/client/personal-cost-tracker-summary.md` for the plain-English
+table's actual columns — see `docs/dev/personal-cost-tracker-summary.md` for the plain-English
 version of what each one does and `docs/dev/personal-cost-tracker-issues.md` issue #7 for the full
 technical audit. That verification was against this repo's migration *history*, not the live
 database's actual current state — which is what caught the `missing_tables/` gap above.

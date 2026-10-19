@@ -2,8 +2,8 @@
 
 Quick-reference list of what was broken and what was fixed, for client/status updates.
 Each entry: the problem in plain terms, the fix, and how to verify it yourself in the app.
-For full technical detail see `../dev/personal-cost-tracker-issues.md` (issue list) and
-`../dev/personal-cost-tracker-changelog.md` (dated change log).
+For full technical detail see `personal-cost-tracker-issues.md` (issue list) and
+`personal-cost-tracker-changelog.md` (dated change log).
 
 ---
 
@@ -165,7 +165,7 @@ tables, they use a different, already-live storage mechanism. Not broken by this
 The other 13 are tables behind part of the Events/Reservations area that was built but never
 wired up to any page, plus a couple of other written-but-never-shipped tables — not a currently-
 broken screen, just unfinished work sitting dormant. Full breakdown and exact pages affected:
-`../dev/personal-cost-tracker-missing-tables.md` (issue #11).
+`personal-cost-tracker-missing-tables.md` (issue #11).
 
 **Update (2026-10-01):** checked both sides before deciding what to actually create — not just
 whether a page links to this code (frontend), but whether anything server-side still touches it
@@ -182,17 +182,29 @@ header (e.g. "Stage 2 migration," "replaces the dailyBudgets JSON blob"), not so
 page currently needs. **Real count: 6 tables are being created, 13 are not.** Nothing user-facing
 changes from this; it only trims what gets built today to exactly what's load-bearing.
 
-## Still pending (not part of this batch)
+## Status update (2026-10-19)
 
-- **Applying to production.** The 6 still-needed missing tables (5 migration files in
-  `supabase/migrations_pending/missing_tables/` — the 13 confirmed-dead/not-yet-built ones excluded
-  to that folder's `not_applying_confirmed_dead/` subfolder) plus the 4 RLS migration files were
-  applied and verified successfully on staging on 2026-10-14. Production has not been run yet —
-  same 9 files, same order, still a manual step in the Supabase dashboard.
+Everything above is done and verified on the dev/staging environment. The only thing left for
+Phase 1 is **moving these already-verified changes to production** — the 6 missing tables plus
+all 4 RLS/permissions migration files — which is a manual step on your side, expected alongside
+the subdomain/production cutover (subdomain is already set up). Nothing further is needed from
+us for Phase 1 until that production apply happens.
+
+Three new requests came up at the 2026-10-14 meeting, separate from Phase 1 and now being
+scoped/estimated:
+1. Making the schedule-planning screen easier/faster to use, then publishing schedules to staff
+   via WhatsApp (with staff able to reply back with change requests).
+2. Combining the several separate import buttons into one, where dropped files are automatically
+   recognized and routed to the right place.
+3. Improving document import so it also works correctly on documents photographed with a phone,
+   not just computer-generated PDFs/images.
+
+## Other pending items (not part of this batch)
+
 - A column-level fix to fully hide wage amounts from roles that can see the rest of an
   employee's row (currently those rows are correctly restricted by restaurant, but the wage
-  columns aren't separately hidden within a row the role can otherwise see).
+  columns aren't separately hidden within a row the role can otherwise see). Deprioritized per
+  your call — not scheduled.
 - Three access-design questions (Gastronovi import-data tables, reservation tables with no
-  restaurant tagging, shared product catalog split) were resolved 2026-10-14: confirmed as the
-  client's own original design, not oversights — no schema change needed. See
-  `../dev/personal-cost-tracker-issues.md` issue #7 for detail.
+  restaurant tagging, shared product catalog split) were resolved 2026-10-14: confirmed as your
+  own original design, not oversights — no schema change needed.
