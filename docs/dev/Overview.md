@@ -28,7 +28,7 @@ This documentation set (this file plus everything under `docs/client/features/`)
 - **UI:** shadcn/ui components on top of Radix UI primitives, styled with Tailwind CSS.
 - **Backend:** Supabase (hosted Postgres + Auth). The client is initialized in `src/integrations/supabase/client.ts` from `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` environment variables — set those in a local `.env` (not committed) before running the app; ask the client or check the deployment platform for the actual values, don't guess them.
 - **State:** no global store (no Redux/Zustand) — React Context for auth/tenant/UI-preference concerns (`src/contexts/`), TanStack Query for server-cache concerns, and a large amount of hand-written `localStorage` + Supabase-KV caching in `src/lib/*-store.ts` files (a "device-vs-database" pattern that was itself the subject of a recent bug-fix pass — see this repo's `CLAUDE.md` "Important Notes").
-- **Deployment:** static build deployed on Replit (`VITE_PUBLIC_URL` in `.env` points at a `*.replit.app` domain) — not Vercel/Netlify, despite this being a Vite app.
+- **Deployment:** deployed on Vercel for both dev and production (`VITE_PUBLIC_URL` points at the deployed Vercel domain).
 
 ## Running it locally
 

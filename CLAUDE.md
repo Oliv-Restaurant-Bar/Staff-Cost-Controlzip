@@ -1,6 +1,6 @@
 # Project
 
-Personal/Staff Cost Tracker for Oliv (restaurant & bar) and Beaulieu — a multi-tenant staff scheduling, payroll-cost, and P&L cockpit. Vite + React SPA (`vite_react_shadcn_ts`), Supabase (Postgres + Auth) backend, deployed as a static build (Replit deploy target — `VITE_PUBLIC_URL` in `.env` points at the `*.replit.app` domain). Originally generated with Lovable (`lovable-tagger` dev dependency still wired into `vite.config.ts`).
+Personal/Staff Cost Tracker for Oliv (restaurant & bar) and Beaulieu — a multi-tenant staff scheduling, payroll-cost, and P&L cockpit. Vite + React SPA (`vite_react_shadcn_ts`), Supabase (Postgres + Auth) backend, deployed on Vercel (dev and production both; static build plus `api/` functions and cron jobs where needed — `VITE_PUBLIC_URL` should point at the deployed Vercel domain). Originally generated with Lovable (`lovable-tagger` dev dependency still wired into `vite.config.ts`).
 
 UI language is German throughout (labels, comments, toasts) — the client is German-speaking; this is not a partial translation, it's the intended language for both code comments and the live app.
 

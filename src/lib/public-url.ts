@@ -3,14 +3,14 @@
  * guest links, department tokens).
  *
  * Priority:
- *  1. VITE_PUBLIC_URL env var (set in .replit → always points to the deployed domain)
+ *  1. VITE_PUBLIC_URL env var (set in the Vercel project's environment variables →
+ *     always points to the stable deployed domain)
  *  2. window.location.origin  (fallback — only correct when already on the deployed domain)
  *
  * Why this matters:
- *  - In the Replit editor the preview runs on *.riker.replit.dev which is ONLY
- *    reachable while the workspace is active.  Links copied from there show
- *    "Run this app to see the results here." on mobile.
- *  - The deployed static site runs on *.replit.app which is always reachable.
+ *  - Local dev (localhost) and per-deployment Vercel preview URLs are not stable
+ *    or not reachable from an employee's phone, so links copied from there break.
+ *  - The project's Vercel domain is always reachable.
  */
 export function getPublicBaseUrl(): string {
   const fromEnv = import.meta.env.VITE_PUBLIC_URL as string | undefined;
