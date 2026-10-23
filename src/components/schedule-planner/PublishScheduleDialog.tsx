@@ -51,6 +51,10 @@ interface PublishScheduleDialogProps {
   displayDays: Date[];
   /** Abteilungen, die die Rolle veröffentlichen darf */
   allowedDepartments: ShareDepartment[];
+  /** true, solange Änderungen im Planer noch nicht (bestätigt) gespeichert sind */
+  hasUnsavedChanges: boolean;
+  /** Speichert den Dienstplan; liefert true bei Erfolg */
+  onSaveNow: () => Promise<boolean>;
 }
 
 interface WeekRow {
@@ -87,7 +91,9 @@ function countShifts(p: WeekPayload): number {
 
 export function PublishScheduleDialog({
   open, onOpenChange, tenantId, employees, scheduleData, displayDays, allowedDepartments,
+  hasUnsavedChanges, onSaveNow,
 }: PublishScheduleDialogProps) {
+  const [savingNow, setSavingNow] = useState(false);
   const [department, setDepartment] = useState<ShareDepartment>(allowedDepartments[0] ?? 'service');
   const [records, setRecords] = useState<Record<string, PublishedWeekRecord | null>>({});
   const [loading, setLoading] = useState(false);
@@ -170,7 +176,24 @@ export function PublishScheduleDialog({
       return next;
     });
 
+  const handleSaveNow = async () => {
+    setSavingNow(true);
+    try {
+      await onSaveNow();
+    } finally {
+      setSavingNow(false);
+    }
+  };
+
   const handlePublish = async () => {
+    // Nur gespeicherte Stände veröffentlichen — sonst sieht das Team etwas anderes,
+    // als nach einem Neuladen im Planer steht.
+    if (hasUnsavedChanges) {
+      toast.error('Nicht gespeicherte Änderungen — bitte zuerst speichern, danach erneut veröffentlichen.', {
+        duration: 8000,
+      });
+      return;
+    }
     const toPublish = rows.filter(r => selected.has(r.weekKey));
     if (toPublish.length === 0) return;
     setPublishing(true);
@@ -339,6 +362,23 @@ export function PublishScheduleDialog({
               </li>
             ))}
           </ul>
+        )}
+
+        {hasUnsavedChanges && (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm space-y-2"
+          >
+            <p className="font-medium text-destructive">Es gibt nicht gespeicherte Änderungen.</p>
+            <p className="text-muted-foreground">
+              Bitte zuerst den Dienstplan speichern, danach erneut veröffentlichen. So sehen Mitarbeitende
+              genau den Stand, der auch im Planer gespeichert ist.
+            </p>
+            <Button size="sm" variant="outline" onClick={handleSaveNow} disabled={savingNow}>
+              {savingNow ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+              Jetzt speichern
+            </Button>
+          </div>
         )}
 
         {!loading && !loadError && rows.length > 0 && (

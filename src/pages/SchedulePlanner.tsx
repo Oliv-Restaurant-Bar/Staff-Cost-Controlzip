@@ -5571,6 +5571,10 @@ const SchedulePlanner = () => {
           scheduleData={scheduleData}
           displayDays={displayDays}
           allowedDepartments={allowedShareDepartments}
+          hasUnsavedChanges={
+            isDirty || !!saveError || (queueSnap?.pendingCount ?? 0) > 0 || (queueSnap?.errorCount ?? 0) > 0
+          }
+          onSaveNow={() => handleSave()}
         />
       )}
 
