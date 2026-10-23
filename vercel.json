@@ -1,4 +1,17 @@
 {
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(s|staff-schedule)/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ],
   "crons": [
     { "path": "/api/keepalive", "schedule": "0 6 * * *" }
   ]

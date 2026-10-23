@@ -35,7 +35,7 @@ import { loadIstDayLocks, saveIstDayLocks } from '@/lib/ist-day-locks';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, CalendarClock, TriangleAlert, LogOut, User, ClipboardPaste, Wand2, Loader2, Pin, PinOff, ShieldCheck, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, CalendarClock, TriangleAlert, LogOut, User, ClipboardPaste, Wand2, Loader2, Pin, PinOff, ShieldCheck, RefreshCw, Send } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
@@ -49,6 +49,8 @@ import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHour
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
+import { PublishScheduleDialog } from '@/components/schedule-planner/PublishScheduleDialog';
+import type { ShareDepartment } from '@/lib/schedule-publish-payload';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
 import { IstDayDetailDialog } from '@/components/schedule-planner/IstDayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
@@ -305,6 +307,14 @@ const SchedulePlanner = () => {
     start2?: string; end2?: string; absenceCode?: string;
   } | null>(null);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  // Abteilungen, die diese Rolle veröffentlichen darf (Spiegel von
+  // schedule_share_assert_allowed in der DB — dort wird es erzwungen).
+  const allowedShareDepartments: ShareDepartment[] =
+    isAdmin || isBeaulieuManager ? ['service', 'kueche']
+    : isServiceManager ? ['service']
+    : isKuecheManager ? ['kueche']
+    : [];
   const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
   const [dayDetailDialogOpen, setDayDetailDialogOpen] = useState(false);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -3685,6 +3695,18 @@ const SchedulePlanner = () => {
                   <Settings className="h-4 w-4" />
                 </Button>
               </Link>
+              {allowedShareDepartments.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  title="Dienstplan veröffentlichen und per WhatsApp teilen"
+                  onClick={() => setPublishDialogOpen(true)}
+                >
+                  <Send className="h-4 w-4" />
+                  <span className="hidden sm:inline">Veröffentlichen</span>
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -5538,6 +5560,19 @@ const SchedulePlanner = () => {
           toast.success('Woche erfolgreich kopiert und gespeichert!');
         }}
       />
+
+      {/* Dienstplan veröffentlichen / per WhatsApp teilen */}
+      {allowedShareDepartments.length > 0 && (
+        <PublishScheduleDialog
+          open={publishDialogOpen}
+          onOpenChange={setPublishDialogOpen}
+          tenantId={tenantId}
+          employees={roleScopedEmployees}
+          scheduleData={scheduleData}
+          displayDays={displayDays}
+          allowedDepartments={allowedShareDepartments}
+        />
+      )}
 
       {/* Print Dialog */}
       <PrintScheduleDialog

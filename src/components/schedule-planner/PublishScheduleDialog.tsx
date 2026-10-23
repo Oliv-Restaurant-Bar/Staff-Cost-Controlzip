@@ -1,0 +1,411 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { addDays, format, getISOWeek } from 'date-fns';
+import { de } from 'date-fns/locale';
+import { Copy, Loader2, MessageCircle, RefreshCw, Send } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
+import { getPublicBaseUrl } from '@/lib/public-url';
+import {
+  SHARE_DEPARTMENT_LABEL,
+  buildPublicScheduleLink,
+  buildWeekPayload,
+  buildWhatsAppMessage,
+  buildWhatsAppUrl,
+  computeStatus,
+  fullyCoveredWeekStarts,
+  type PublishStatus,
+  type ShareDepartment,
+  type ShareSourceDay,
+  type ShareSourceEmployee,
+  type WeekPayload,
+} from '@/lib/schedule-publish-payload';
+import {
+  getPublishedWeek,
+  getShareToken,
+  publishWeek,
+  rotateShareToken,
+  type PublishedWeekRecord,
+} from '@/lib/schedule-publish-db';
+
+type PublishEmployee = ShareSourceEmployee & {
+  employmentEndDate?: string | null;
+  contractStart?: string | null;
+  isActive?: boolean;
+};
+
+interface PublishScheduleDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  tenantId: string;
+  /** Rollen-gefilterte Mitarbeiterliste des Planers */
+  employees: PublishEmployee[];
+  scheduleData: Record<string, ShareSourceDay | undefined>;
+  /** Aktuell im Planer sichtbare Tage (Wochen- oder Monatsansicht) */
+  displayDays: Date[];
+  /** Abteilungen, die die Rolle veröffentlichen darf */
+  allowedDepartments: ShareDepartment[];
+}
+
+interface WeekRow {
+  weekStart: Date;
+  weekKey: string;
+  kw: number;
+  record: PublishedWeekRecord | null;
+  payload: WeekPayload;
+  status: PublishStatus;
+  changedDays: number;
+  shiftCount: number;
+}
+
+const STATUS_LABEL: Record<PublishStatus, string> = {
+  draft: 'Nicht veröffentlicht',
+  published: 'Veröffentlicht',
+  changed: 'Geändert seit Veröffentlichung',
+};
+
+function activeInWeek(e: PublishEmployee, weekStart: Date): boolean {
+  const weekEnd = addDays(weekStart, 6);
+  return (
+    isEmployeeActiveInMonth(e, weekStart.getFullYear(), weekStart.getMonth() + 1) ||
+    isEmployeeActiveInMonth(e, weekEnd.getFullYear(), weekEnd.getMonth() + 1)
+  );
+}
+
+function countShifts(p: WeekPayload): number {
+  return p.employees.reduce(
+    (sum, e) => sum + e.days.filter(d => d.früh || d.spät || d.frühAbsence || d.spätAbsence).length,
+    0,
+  );
+}
+
+export function PublishScheduleDialog({
+  open, onOpenChange, tenantId, employees, scheduleData, displayDays, allowedDepartments,
+}: PublishScheduleDialogProps) {
+  const [department, setDepartment] = useState<ShareDepartment>(allowedDepartments[0] ?? 'service');
+  const [records, setRecords] = useState<Record<string, PublishedWeekRecord | null>>({});
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [publishing, setPublishing] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  const [customMessage, setCustomMessage] = useState<string | null>(null);
+  /** Wochen, die in dieser Dialog-Sitzung veröffentlicht wurden (für Nachrichtentext) */
+  const [justPublished, setJustPublished] = useState<{ weekKeys: string[]; wasUpdate: boolean } | null>(null);
+
+  const weekStarts = useMemo(() => fullyCoveredWeekStarts(displayDays), [displayDays]);
+  const weekKeysSig = weekStarts.map(w => format(w, 'yyyy-MM-dd')).join(',');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const keys = weekKeysSig ? weekKeysSig.split(',') : [];
+      const [tok, recs] = await Promise.all([
+        getShareToken(tenantId, department),
+        Promise.all(keys.map(k => getPublishedWeek(tenantId, department, k))),
+      ]);
+      setToken(tok);
+      setRecords(Object.fromEntries(keys.map((k, i) => [k, recs[i]])));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Laden fehlgeschlagen');
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, department, weekKeysSig]);
+
+  useEffect(() => {
+    if (!open) return;
+    setJustPublished(null);
+    setConfirmRotate(false);
+    setCustomMessage(null);
+    void load();
+  }, [open, load]);
+
+  const rows: WeekRow[] = useMemo(
+    () =>
+      weekStarts.map(weekStart => {
+        const weekKey = format(weekStart, 'yyyy-MM-dd');
+        const record = records[weekKey] ?? null;
+        const { payload, changedDays } = buildWeekPayload({
+          department,
+          weekStart,
+          employees: employees.filter(e => activeInWeek(e, weekStart)),
+          scheduleData,
+          previous: record?.payload ?? null,
+        });
+        return {
+          weekStart,
+          weekKey,
+          kw: getISOWeek(weekStart),
+          record,
+          payload,
+          status: computeStatus(record?.payload ?? null, payload),
+          changedDays,
+          shiftCount: countShifts(payload),
+        };
+      }),
+    [weekStarts, records, department, employees, scheduleData],
+  );
+
+  // Vorauswahl: alles, was veröffentlicht werden muss und Schichten enthält.
+  useEffect(() => {
+    setSelected(new Set(rows.filter(r => r.status !== 'published' && r.shiftCount > 0).map(r => r.weekKey)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, department, weekKeysSig]);
+
+  const link = token ? buildPublicScheduleLink(getPublicBaseUrl(), token) : null;
+
+  const toggle = (key: string) =>
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+
+  const handlePublish = async () => {
+    const toPublish = rows.filter(r => selected.has(r.weekKey));
+    if (toPublish.length === 0) return;
+    setPublishing(true);
+    const done: string[] = [];
+    try {
+      for (const row of toPublish) {
+        const revision = await publishWeek(tenantId, department, row.weekKey, row.payload);
+        // Gegenprobe: Was gespeichert wurde, muss auch lesbar sein.
+        const check = await getPublishedWeek(tenantId, department, row.weekKey);
+        // >=: eine parallele Veröffentlichung durch eine andere Person ist kein Fehler.
+        if (!check || check.revision < revision) {
+          throw new Error(`KW ${row.kw}: Veröffentlichung konnte nicht bestätigt werden`);
+        }
+        done.push(row.weekKey);
+      }
+      setJustPublished({
+        weekKeys: done,
+        wasUpdate: toPublish.some(r => r.record !== null),
+      });
+      toast.success(`${done.length === 1 ? 'Woche' : `${done.length} Wochen`} veröffentlicht`);
+    } catch (e) {
+      toast.error(
+        `Veröffentlichen fehlgeschlagen${done.length ? ` (${done.length} Woche(n) bereits gespeichert)` : ''}: ${
+          e instanceof Error ? e.message : 'Unbekannter Fehler'
+        }`,
+        { duration: 8000 },
+      );
+    } finally {
+      setPublishing(false);
+      await load();
+    }
+  };
+
+  const messageWeeks = useMemo(() => {
+    const keys = justPublished
+      ? justPublished.weekKeys
+      : rows.filter(r => r.record !== null).map(r => r.weekKey);
+    return rows.filter(r => keys.includes(r.weekKey)).map(r => ({ kw: r.kw, weekStart: r.weekStart }));
+  }, [rows, justPublished]);
+
+  const defaultMessage =
+    link && messageWeeks.length > 0
+      ? buildWhatsAppMessage({
+          department,
+          weeks: messageWeeks,
+          isUpdate: justPublished ? justPublished.wasUpdate : rows.some(r => r.status === 'changed'),
+          link,
+        })
+      : null;
+
+  // Eigener Text überschreibt den Standardtext; null = Standardtext verwenden.
+  const messageText = customMessage ?? defaultMessage ?? '';
+  const linkMissing = !!link && !messageText.includes(link);
+
+  const handleWhatsApp = () => {
+    if (!messageText.trim()) return;
+    window.open(buildWhatsAppUrl(messageText), '_blank', 'noopener,noreferrer');
+  };
+
+  const handleCopyLink = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast.success('Link kopiert');
+    } catch {
+      toast.error('Kopieren nicht möglich — Link bitte manuell markieren');
+    }
+  };
+
+  const handleRotate = async () => {
+    if (!confirmRotate) {
+      setConfirmRotate(true);
+      return;
+    }
+    try {
+      setToken(await rotateShareToken(tenantId, department));
+      toast.success('Neuer Link erzeugt — der alte Link funktioniert nicht mehr');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Zurücksetzen fehlgeschlagen');
+    } finally {
+      setConfirmRotate(false);
+    }
+  };
+
+  const anyPublished = rows.some(r => r.record !== null);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* [&>*]:min-w-0 — das Dialog-Grid darf nicht durch den langen Link-Token breiter werden */}
+      <DialogContent className="max-w-lg overflow-hidden [&>*]:min-w-0">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Send className="h-4 w-4" /> Dienstplan veröffentlichen
+          </DialogTitle>
+          <DialogDescription>
+            Mitarbeitende sehen nur veröffentlichte Wochen. Nach Änderungen erneut veröffentlichen —
+            der Link bleibt gleich.
+          </DialogDescription>
+        </DialogHeader>
+
+        {allowedDepartments.length > 1 && (
+          <div className="flex gap-2">
+            {allowedDepartments.map(d => (
+              <Button
+                key={d}
+                size="sm"
+                variant={d === department ? 'default' : 'outline'}
+                onClick={() => { setDepartment(d); setCustomMessage(null); }}
+                disabled={publishing}
+              >
+                {SHARE_DEPARTMENT_LABEL[d]}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+            <Loader2 className="h-4 w-4 animate-spin" /> Lade Veröffentlichungsstand…
+          </div>
+        )}
+
+        {loadError && !loading && (
+          <div className="text-sm text-destructive space-y-2">
+            <p>{loadError}</p>
+            <Button size="sm" variant="outline" onClick={() => void load()}>Erneut versuchen</Button>
+          </div>
+        )}
+
+        {!loading && !loadError && rows.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Im aktuellen Zeitraum ist keine vollständige Woche sichtbar. Bitte die Wochenansicht
+            oder eine Monatsansicht mit vollständigen Wochen (Mo–So) wählen.
+          </p>
+        )}
+
+        {!loading && !loadError && rows.length > 0 && (
+          <ul className="space-y-2">
+            {rows.map(r => (
+              <li key={r.weekKey} className="flex items-start gap-3 rounded-md border p-3">
+                <Checkbox
+                  checked={selected.has(r.weekKey)}
+                  onCheckedChange={() => toggle(r.weekKey)}
+                  disabled={publishing || r.shiftCount === 0}
+                  className="mt-0.5"
+                  aria-label={`KW ${r.kw} auswählen`}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">
+                    KW {r.kw} · {format(r.weekStart, 'd. MMM', { locale: de })} –{' '}
+                    {format(addDays(r.weekStart, 6), 'd. MMM yyyy', { locale: de })}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {r.shiftCount === 0
+                      ? 'Keine Schichten eingetragen'
+                      : r.status === 'changed'
+                        ? `${r.changedDays} Tag(e) geändert seit der letzten Veröffentlichung`
+                        : r.status === 'published'
+                          ? `Stand Revision ${r.record?.revision}`
+                          : 'Noch nicht für Mitarbeitende sichtbar'}
+                  </div>
+                </div>
+                <Badge variant={r.status === 'published' ? 'secondary' : r.status === 'changed' ? 'default' : 'outline'}>
+                  {STATUS_LABEL[r.status]}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!loading && !loadError && rows.length > 0 && (
+          <Button onClick={handlePublish} disabled={publishing || selected.size === 0}>
+            {publishing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+            {selected.size === 0
+              ? 'Keine Woche ausgewählt'
+              : `${selected.size} ${selected.size === 1 ? 'Woche' : 'Wochen'} veröffentlichen`}
+          </Button>
+        )}
+
+        {!loading && !loadError && link && anyPublished && defaultMessage && (
+          <div className="space-y-3 border-t pt-4">
+            <div className="text-sm font-medium">Mit Abteilung teilen ({SHARE_DEPARTMENT_LABEL[department]})</div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="share-message" className="text-xs text-muted-foreground">
+                  Nachricht — kann vor dem Senden angepasst werden
+                </label>
+                {customMessage !== null && (
+                  <button
+                    type="button"
+                    className="text-xs underline text-muted-foreground hover:text-foreground"
+                    onClick={() => setCustomMessage(null)}
+                  >
+                    Standardtext wiederherstellen
+                  </button>
+                )}
+              </div>
+              <Textarea
+                id="share-message"
+                value={messageText}
+                onChange={e => setCustomMessage(e.target.value)}
+                rows={5}
+                className="text-sm break-all"
+              />
+              {linkMissing && (
+                <p className="text-xs text-destructive">
+                  Der Link fehlt in der Nachricht — Mitarbeitende können den Dienstplan sonst nicht öffnen.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleWhatsApp} disabled={!messageText.trim()} className="bg-green-600 hover:bg-green-700 text-white">
+                <MessageCircle className="h-4 w-4 mr-2" /> Per WhatsApp teilen
+              </Button>
+              <Button variant="outline" onClick={handleCopyLink}>
+                <Copy className="h-4 w-4 mr-2" /> Link kopieren
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleRotate} className="text-muted-foreground">
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                {confirmRotate ? 'Wirklich zurücksetzen? Alter Link wird ungültig' : 'Link zurücksetzen'}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Der Link zeigt den Dienstplan der gesamten Abteilung und kann weitergeleitet werden.
+              Krankheit und Unfall erscheinen darin nur als „Abwesend“.
+            </p>
+            {/localhost|127\.0\.0\.1/.test(link) && (
+              <p className="text-xs text-destructive">
+                Achtung: Dieser Link zeigt auf eine lokale Adresse und funktioniert nicht auf Handys.
+                Bitte VITE_PUBLIC_URL in Vercel setzen oder die Veröffentlichung auf der Vercel-Domain vornehmen.
+              </p>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -39,6 +39,7 @@ import SupplierComparisonPage from "./pages/SupplierComparison";
 import BudgetPage from "./pages/Budget";
 import Index from "./pages/Index";
 import SchedulePlanner from "./pages/SchedulePlanner";
+import StaffSchedulePage from "./pages/StaffSchedulePage";
 import Settings from "./pages/Settings";
 // Guest-link feature disabled — kept for possible future use, see route comment below.
 // import DepartmentSchedule from "./pages/DepartmentSchedule";
@@ -531,7 +532,12 @@ const App = () => {
                 <LogoutStateBridge />
                 <BrowserRouter>
                   <Routes>
-                    {/* KEINE öffentlichen Routen — alles hinter dem Auth-Check. */}
+                    {/* Einzige öffentliche Route: Dienstplan-Link aus der WhatsApp-Nachricht.
+                        Zugriff nur per zufälligem Token über die RPC schedule_public_get
+                        (supabase/migrations/20261023_schedule_share.sql). Alles andere
+                        liegt hinter dem Auth-Check. */}
+                    <Route path="/s/:token" element={<StaffSchedulePage />} />
+                    <Route path="/staff-schedule/:token" element={<StaffSchedulePage />} />
                     <Route path="/*" element={<AppContent />} />
                   </Routes>
                 </BrowserRouter>
