@@ -5570,6 +5570,7 @@ const SchedulePlanner = () => {
           employees={roleScopedEmployees}
           scheduleData={scheduleData}
           displayDays={displayDays}
+          plannerMonth={format(currentMonth, 'yyyy-MM')}
           allowedDepartments={allowedShareDepartments}
           hasUnsavedChanges={
             isDirty || !!saveError || (queueSnap?.pendingCount ?? 0) > 0 || (queueSnap?.errorCount ?? 0) > 0

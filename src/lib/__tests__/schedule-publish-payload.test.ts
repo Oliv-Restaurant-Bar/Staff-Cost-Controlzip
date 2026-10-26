@@ -183,7 +183,13 @@ describe('WhatsApp-Nachricht', () => {
       isUpdate: true,
       link,
     });
-    expect(msg.startsWith('Dienstplan Küche KW 43, KW 44 wurde aktualisiert:')).toBe(true);
+    expect(msg.startsWith('Dienstplan Küche KW 43–44 wurden aktualisiert:')).toBe(true);
+  });
+
+  it('fasst aufeinanderfolgende Wochen zu einem Bereich zusammen', () => {
+    const w = (n: number) => ({ kw: 43 + n, weekStart: new Date(2026, 9, 19 + 7 * n) });
+    const msg = buildWhatsAppMessage({ department: 'service', weeks: [w(0), w(1), w(2), w(4)], isUpdate: false, link });
+    expect(msg.startsWith('Dienstplan Service KW 43–45, KW 47 sind online:')).toBe(true);
   });
 
   it('kodiert die wa.me-URL korrekt', () => {

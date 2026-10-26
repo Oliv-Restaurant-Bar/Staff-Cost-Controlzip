@@ -237,6 +237,21 @@ export interface ShareWeekInfo {
   weekStart: Date;
 }
 
+/** Aufeinanderfolgende Wochen als Bereich: „KW 44–48“, sonst „KW 43, KW 45–46“. */
+function formatKwRuns(weeks: ShareWeekInfo[]): string {
+  const sorted = [...weeks].sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
+  const runs: ShareWeekInfo[][] = [];
+  for (const w of sorted) {
+    const run = runs[runs.length - 1];
+    const prev = run?.[run.length - 1];
+    if (prev && format(addDays(prev.weekStart, 7), DATE_FMT) === format(w.weekStart, DATE_FMT)) run.push(w);
+    else runs.push([w]);
+  }
+  return runs
+    .map(r => (r.length === 1 ? `KW ${r[0].kw}` : `KW ${r[0].kw}–${r[r.length - 1].kw}`))
+    .join(', ');
+}
+
 /**
  * WhatsApp-Text. Beispiel:
  *   "Dienstplan Service KW 43 (20.10.–26.10.2026) ist online:\nhttps://…"
@@ -249,7 +264,8 @@ export function buildWhatsAppMessage(opts: {
 }): string {
   const { department, weeks, isUpdate, link } = opts;
   const label = SHARE_DEPARTMENT_LABEL[department];
-  const verb = isUpdate ? 'wurde aktualisiert' : 'ist online';
+  const plural = weeks.length > 1;
+  const verb = isUpdate ? (plural ? 'wurden aktualisiert' : 'wurde aktualisiert') : plural ? 'sind online' : 'ist online';
 
   let what: string;
   if (weeks.length === 1) {
@@ -257,7 +273,7 @@ export function buildWhatsAppMessage(opts: {
     const end = addDays(start, 6);
     what = `KW ${weeks[0].kw} (${format(start, 'dd.MM.')}–${format(end, 'dd.MM.yyyy')})`;
   } else {
-    what = weeks.map(w => `KW ${w.kw}`).join(', ');
+    what = formatKwRuns(weeks);
   }
   return `Dienstplan ${label} ${what} ${verb}:\n${link}`;
 }

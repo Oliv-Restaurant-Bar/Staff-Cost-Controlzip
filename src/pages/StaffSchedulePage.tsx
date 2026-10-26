@@ -13,6 +13,7 @@ import { format, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { CalendarDays, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { nextShiftFor } from '@/lib/staff-next-shift';
 import { fetchPublicSchedule, type PublicScheduleResponse } from '@/lib/schedule-publish-db';
 import {
   SHARE_DEPARTMENT_LABEL,
@@ -114,6 +115,25 @@ function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
+const personKey = (token: string) => `staff-schedule:person:${token}`;
+
+function readPerson(token: string): string {
+  try {
+    return localStorage.getItem(personKey(token)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writePerson(token: string, name: string) {
+  try {
+    if (name) localStorage.setItem(personKey(token), name);
+    else localStorage.removeItem(personKey(token));
+  } catch {
+    /* Speicher nicht verfügbar (z. B. privater Modus) — Auswahl gilt dann nur bis zum Neuladen */
+  }
+}
+
 /** Defekte Wochen überspringen, statt die ganze Seite abstürzen zu lassen. */
 function isRenderableWeek(w: PublicScheduleResponse['weeks'][number]): boolean {
   const p = w?.payload as Partial<WeekPayload> | undefined;
@@ -129,6 +149,8 @@ const StaffSchedulePage = () => {
   const [weekKey, setWeekKey] = useState<string | null>(null);
   const [dayKey, setDayKey] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('day');
+  // Namensfilter: '' = ganze Abteilung. Wird pro Link auf dem Gerät gemerkt.
+  const [person, setPersonState] = useState<string>(() => readPerson(token));
 
   // Schriften + noindex nur für diese Seite laden (kein globaler Eingriff).
   useEffect(() => {
@@ -215,6 +237,33 @@ const StaffSchedulePage = () => {
     setWeekKey((current ?? upcoming ?? weeks[weeks.length - 1]).week_start);
   }, [weeks, weekKey]);
 
+  const people = useMemo(() => {
+    const names = new Set<string>();
+    weeks.forEach(w => w.payload.employees.forEach(e => names.add(e.name)));
+    return [...names].sort((a, b) => a.localeCompare(b, 'de'));
+  }, [weeks]);
+
+  // Gemerkter Name, der nicht (mehr) im Plan steht, wird ignoriert statt eine leere Seite zu zeigen.
+  const activePerson = person && people.includes(person) ? person : '';
+  const setPerson = (name: string) => {
+    setPersonState(name);
+    writePerson(token, name);
+  };
+
+  // Aktive Woche in der Wochenleiste sichtbar halten (Leiste scrollt auf dem Handy seitlich).
+  useEffect(() => {
+    if (!weekKey) return;
+    document
+      .querySelector(`[data-week="${weekKey}"]`)
+      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [weekKey, weeks.length]);
+
+  // Nächste Schicht der gewählten Person über alle veröffentlichten Wochen (Minutentakt reicht).
+  const nextShift = useMemo(
+    () => (activePerson ? nextShiftFor(weeks.map(w => w.payload), activePerson, new Date()) : null),
+    [weeks, activePerson],
+  );
+
   const week = weeks.find(w => w.week_start === weekKey) ?? null;
   const payload = week?.payload ?? null;
   const todayKey = format(new Date(), 'yyyy-MM-dd');
@@ -225,11 +274,12 @@ const StaffSchedulePage = () => {
     return Array.from({ length: 7 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
   }, [payload]);
 
-  useEffect(() => {
-    if (weekDates.length === 0) return;
+  // Der Tag wird synchron abgeleitet (kein Effekt): so gibt es beim Wochenwechsel
+  // keinen Zwischenzustand ohne Tag, der kurz „kein Dienst“ aufblitzen lässt.
+  const dayKeyResolved = useMemo(() => {
     const keys = weekDates.map(d => format(d, 'yyyy-MM-dd'));
-    if (dayKey && keys.includes(dayKey)) return;
-    setDayKey(keys.includes(todayKey) ? todayKey : keys[0]);
+    if (dayKey && keys.includes(dayKey)) return dayKey;
+    return keys.includes(todayKey) ? todayKey : (keys[0] ?? null);
   }, [weekDates, dayKey, todayKey]);
 
   const changedDays = useMemo(() => {
@@ -239,16 +289,17 @@ const StaffSchedulePage = () => {
   }, [payload]);
 
   const dayEntries = useMemo(() => {
-    if (!payload || !dayKey) return { working: [], off: [] as string[] };
+    if (!payload || !dayKeyResolved) return { working: [], off: [] as string[] };
     const working: Array<{ name: string; day: PublicDay }> = [];
     const off: string[] = [];
     for (const emp of payload.employees) {
-      const day = emp.days.find(d => d.date === dayKey);
+      if (activePerson && emp.name !== activePerson) continue;
+      const day = emp.days.find(d => d.date === dayKeyResolved);
       if (day && hasEntry(day)) working.push({ name: emp.name, day });
       else off.push(emp.name);
     }
     return { working, off };
-  }, [payload, dayKey]);
+  }, [payload, dayKeyResolved, activePerson]);
 
   const departmentLabel = state.kind === 'ok' ? SHARE_DEPARTMENT_LABEL[state.data.department] : '';
   const onDutyCount = dayEntries.working.filter(w => shifts(w.day).length > 0).length;
@@ -342,25 +393,98 @@ const StaffSchedulePage = () => {
         {state.kind === 'ok' && weeks.length > 0 && payload && (
           <>
             {weeks.length > 1 && (
-              <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+              <div className="mb-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {weeks.map(w => {
                   const active = w.week_start === weekKey;
                   return (
                     <button
                       key={w.week_start}
+                      data-week={w.week_start}
                       type="button"
-                      onClick={() => { setWeekKey(w.week_start); setDayKey(null); }}
-                      className="shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors"
+                      onClick={() => {
+                        // gleichen Wochentag in der neuen Woche behalten
+                        const i = Math.max(0, weekDates.findIndex(d => format(d, 'yyyy-MM-dd') === dayKeyResolved));
+                        const ws = parseISO(w.payload.weekStart);
+                        setDayKey(format(new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i), 'yyyy-MM-dd'));
+                        setWeekKey(w.week_start);
+                      }}
+                      className="relative shrink-0 rounded-xl border px-3.5 py-1.5 text-center transition-colors"
+                      aria-pressed={active}
                       style={
                         active
                           ? { background: theme.brand, borderColor: theme.brand, color: '#fff' }
                           : { background: theme.surface, borderColor: theme.line, color: theme.ink }
                       }
                     >
-                      KW {w.payload.kw}
+                      <div className="text-sm font-semibold leading-tight">KW {w.payload.kw}</div>
+                      <div className="text-[0.68rem] leading-tight tabular-nums opacity-80">
+                        {format(parseISO(w.payload.weekStart), 'd.M.')}–{format(parseISO(w.payload.weekEnd), 'd.M.')}
+                      </div>
+                      {w.payload.weekStart <= todayKey && todayKey <= w.payload.weekEnd && (
+                        <span
+                          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full"
+                          style={{ background: theme.accent }}
+                          title="Aktuelle Woche"
+                        />
+                      )}
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Wer ist angezeigt: ganze Abteilung oder nur die eigenen Schichten */}
+            {people.length > 1 && (
+              <div className="mb-4 flex items-center gap-2">
+                <label htmlFor="person-filter" className="shrink-0 text-sm font-medium">
+                  Anzeigen für
+                </label>
+                <select
+                  id="person-filter"
+                  value={activePerson}
+                  onChange={e => setPerson(e.target.value)}
+                  className="min-w-0 flex-1 rounded-xl border px-3 py-2 text-sm"
+                  style={{ background: theme.surface, borderColor: theme.line, color: theme.ink }}
+                >
+                  <option value="">Alle – ganze Abteilung</option>
+                  {people.map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {activePerson && (
+              <div
+                className="mb-4 rounded-2xl border p-3.5"
+                style={{ background: theme.tint, borderColor: theme.line }}
+                aria-live="polite"
+              >
+                <div className="text-xs font-medium uppercase tracking-wide" style={{ color: theme.muted }}>
+                  Nächste Schicht
+                </div>
+                {nextShift ? (
+                  <button
+                    type="button"
+                    className="mt-1 flex w-full flex-wrap items-baseline justify-between gap-x-3 text-left"
+                    onClick={() => {
+                      const target = weeks.find(w => w.payload.weekStart === nextShift.weekStart);
+                      if (!target) return;
+                      setWeekKey(target.week_start);
+                      setDayKey(nextShift.date);
+                      setView('day');
+                    }}
+                  >
+                    <span className="text-base font-semibold" style={headingStyle}>
+                      {nextShift.isToday ? 'Heute' : format(parseISO(nextShift.date), 'EEEE, d. MMMM', { locale: de })}
+                    </span>
+                    <span className="text-[1.05rem] font-semibold tabular-nums">{nextShift.times.join(' · ')}</span>
+                  </button>
+                ) : (
+                  <p className="mt-1 text-sm" style={{ color: theme.muted }}>
+                    In den veröffentlichten Wochen ist keine weitere Schicht eingetragen.
+                  </p>
+                )}
               </div>
             )}
 
@@ -385,13 +509,14 @@ const StaffSchedulePage = () => {
               ))}
             </div>
 
+            <div key={weekKey} className="animate-in fade-in-0 slide-in-from-bottom-1 duration-300">
             {view === 'day' && (
               <>
                 {/* Tagesleiste */}
                 <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5">
                   {weekDates.map(date => {
                     const key = format(date, 'yyyy-MM-dd');
-                    const active = key === dayKey;
+                    const active = key === dayKeyResolved;
                     return (
                       <button
                         key={key}
@@ -428,10 +553,10 @@ const StaffSchedulePage = () => {
                   })}
                 </div>
 
-                {dayKey && (
+                {dayKeyResolved && (
                   <div className="mt-6 mb-3 flex items-baseline justify-between gap-3">
                     <h2 className="text-xl font-semibold" style={headingStyle}>
-                      {format(parseISO(dayKey), 'EEEE, d. MMMM', { locale: de })}
+                      {format(parseISO(dayKeyResolved), 'EEEE, d. MMMM', { locale: de })}
                     </h2>
                     <span className="text-sm" style={{ color: theme.muted }}>
                       {onDutyCount} im Dienst
@@ -536,7 +661,7 @@ const StaffSchedulePage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {payload.employees.map((emp, idx) => (
+                    {payload.employees.filter(e => !activePerson || e.name === activePerson).map((emp, idx) => (
                       <tr key={`${idx}-${emp.name}`} className="border-t" style={{ borderColor: theme.line }}>
                         <td
                           className="sticky left-0 z-10 w-[6.75rem] min-w-[6.75rem] px-2.5 py-2.5 font-medium leading-tight sm:w-auto sm:min-w-0 sm:whitespace-nowrap sm:px-3.5"
@@ -564,6 +689,14 @@ const StaffSchedulePage = () => {
               </div>
               </>
             )}
+
+            {activePerson && !payload.employees.some(e => e.name === activePerson) && (
+              <p className="mt-4 text-sm" style={{ color: theme.muted }}>
+                {activePerson} ist in dieser Woche nicht im Dienstplan eingetragen.
+              </p>
+            )}
+
+            </div>
 
             {changedDays.size > 0 && (
               <p

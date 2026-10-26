@@ -16,6 +16,9 @@ const db = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/schedule-publish-db', () => db);
 
+// Folgemonate lädt der Dialog selbst aus der DB — hier leer.
+vi.mock('@/lib/supabase-db', () => ({ loadScheduleForMonth: vi.fn(async () => ({})) }));
+
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 
@@ -32,6 +35,7 @@ function renderDialog(over: { hasUnsavedChanges: boolean; onSaveNow?: () => Prom
       employees={[{ id: 'a', name: 'Anna', department: 'service' }]}
       scheduleData={{ 'a-2026-10-19': { früh: { start: '10:00', end: '16:00' } } }}
       displayDays={DAYS}
+      plannerMonth="2026-10"
       allowedDepartments={['service']}
       hasUnsavedChanges={over.hasUnsavedChanges}
       onSaveNow={over.onSaveNow ?? (async () => true)}
@@ -41,6 +45,9 @@ function renderDialog(over: { hasUnsavedChanges: boolean; onSaveNow?: () => Prom
 
 beforeEach(() => {
   cleanup();
+  // Der Dialog beginnt bei der aktuellen Woche: Datum fest auf KW 43/2026 setzen.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 19, 9, 0));
   vi.clearAllMocks();
   db.getShareToken.mockResolvedValue('AbCdEfGhIjKl');
   db.getPublishedWeek.mockResolvedValue(null);

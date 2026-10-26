@@ -1041,8 +1041,15 @@ export const TimeInputCell = ({
           </button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-80 p-0 z-50" align="center">
-          <div className="max-h-[85vh] overflow-y-auto p-3">
+        {/* Höhe an den freien Platz im Fenster koppeln (Radix-Variable), sonst ragt das hohe
+            Formular bei Zellen weiter unten über den Bildschirmrand hinaus. */}
+        <PopoverContent
+          className="w-80 max-w-[calc(100vw-1.5rem)] p-0 z-50"
+          align="center"
+          collisionPadding={12}
+          sticky="always"
+        >
+          <div className="max-h-[min(85vh,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain p-3">
           <div className="space-y-2">
 
             {/* ── Wunschfrei warning ── */}

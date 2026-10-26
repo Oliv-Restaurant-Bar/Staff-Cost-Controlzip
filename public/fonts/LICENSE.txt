@@ -1,0 +1,3 @@
+Jost (c) The Jost Project Authors, Cormorant Garamond (c) The Cormorant Project Authors.
+Both are licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+Used for the schedule PDF; CormorantGaramond_700Bold-latin.ttf is a Latin-only subset.
