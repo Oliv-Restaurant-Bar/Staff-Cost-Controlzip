@@ -238,7 +238,7 @@ export interface ShareWeekInfo {
 }
 
 /** Aufeinanderfolgende Wochen als Bereich: „KW 44–48“, sonst „KW 43, KW 45–46“. */
-function formatKwRuns(weeks: ShareWeekInfo[]): string {
+export function formatKwRuns(weeks: ShareWeekInfo[]): string {
   const sorted = [...weeks].sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
   const runs: ShareWeekInfo[][] = [];
   for (const w of sorted) {

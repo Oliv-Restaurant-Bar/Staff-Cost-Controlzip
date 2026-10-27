@@ -22,6 +22,13 @@ vi.mock('@/lib/supabase-db', () => ({ loadScheduleForMonth: vi.fn(async () => ({
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 
+// PDF-Erzeugung bleibt „hängen“, bis der Test sie freigibt.
+const pdf = vi.hoisted(() => ({ release: null as null | (() => void), download: vi.fn() }));
+vi.mock('@/lib/schedule-pdf', () => ({
+  PDF_THEMES: { oliv: {} },
+  downloadSchedulePdf: pdf.download,
+}));
+
 import { PublishScheduleDialog } from '../PublishScheduleDialog';
 
 const DAYS = Array.from({ length: 7 }, (_, i) => new Date(2026, 9, 19 + i));
@@ -86,5 +93,36 @@ describe('PublishScheduleDialog – ungespeicherte Änderungen', () => {
     await clickPublish();
     await waitFor(() => expect(db.publishWeek).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Es gibt nicht gespeicherte Änderungen.')).toBeNull();
+  });
+});
+
+describe('PublishScheduleDialog – Aktionen schließen sich aus', () => {
+  it('während das PDF erzeugt wird, ist „veröffentlichen“ gesperrt', async () => {
+    pdf.download.mockImplementation(() => new Promise<void>(res => { pdf.release = res; }));
+    renderDialog({ hasUnsavedChanges: false });
+
+    const publishBtn = await screen.findByRole('button', { name: /Woche veröffentlichen/ });
+    const pdfBtn = screen.getByRole('button', { name: /PDF/ });
+    expect((publishBtn as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(pdfBtn);
+    await waitFor(() => expect((publishBtn as HTMLButtonElement).disabled).toBe(true));
+    expect((pdfBtn as HTMLButtonElement).disabled).toBe(true);
+
+    pdf.release?.();
+    await waitFor(() => expect((publishBtn as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('während veröffentlicht wird, ist „PDF“ gesperrt', async () => {
+    let release: () => void = () => {};
+    db.publishWeek.mockImplementation(() => new Promise<number>(res => { release = () => res(1); }));
+    renderDialog({ hasUnsavedChanges: false });
+
+    const publishBtn = await screen.findByRole('button', { name: /Woche veröffentlichen/ });
+    const pdfBtn = screen.getByRole('button', { name: /PDF/ });
+    fireEvent.click(publishBtn);
+    await waitFor(() => expect((pdfBtn as HTMLButtonElement).disabled).toBe(true));
+    expect(pdf.download).not.toHaveBeenCalled();
+    release();
   });
 });

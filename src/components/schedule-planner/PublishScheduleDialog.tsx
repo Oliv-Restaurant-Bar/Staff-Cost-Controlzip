@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addDays, addWeeks, format, getISOWeek, startOfWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { Copy, FileDown, Loader2, MessageCircle, RefreshCw, Send } from 'lucide-react';
+import { Check, Copy, FileDown, Loader2, MessageCircle, RefreshCw, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
@@ -21,6 +21,7 @@ import {
   buildWhatsAppMessage,
   buildWhatsAppUrl,
   computeStatus,
+  formatKwRuns,
   type PublishStatus,
   type ShareDepartment,
   type ShareSourceDay,
@@ -110,6 +111,7 @@ export function PublishScheduleDialog({
   const [otherMonths, setOtherMonths] = useState<Record<string, ShareSourceDay | undefined>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [publishing, setPublishing] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [shown, setShown] = useState(PAGE_SIZE);
   const [token, setToken] = useState<string | null>(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
@@ -223,7 +225,8 @@ export function PublishScheduleDialog({
   /** PDF (A4 quer, eine Woche pro Seite) der angehakten Wochen — aktueller Planer-Stand. */
   const handlePdf = async () => {
     const chosen = rows.filter(r => selected.has(r.weekKey));
-    if (chosen.length === 0) return;
+    if (chosen.length === 0 || publishing || pdfBusy) return;
+    setPdfBusy(true);
     try {
       const { downloadSchedulePdf, PDF_THEMES } = await import('@/lib/schedule-pdf');
       await downloadSchedulePdf(
@@ -232,6 +235,8 @@ export function PublishScheduleDialog({
       );
     } catch (e) {
       toast.error(`PDF konnte nicht erstellt werden: ${e instanceof Error ? e.message : 'Unbekannter Fehler'}`);
+    } finally {
+      setPdfBusy(false);
     }
   };
 
@@ -254,7 +259,7 @@ export function PublishScheduleDialog({
       return;
     }
     const toPublish = rows.filter(r => selected.has(r.weekKey));
-    if (toPublish.length === 0) return;
+    if (toPublish.length === 0 || pdfBusy) return;
     setPublishing(true);
     const done: string[] = [];
     try {
@@ -389,11 +394,22 @@ export function PublishScheduleDialog({
         )}
 
         {!loading && !loadError && relevantRows.length > 0 && (
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>Wochen mit Dienstplan — mehrere auf einmal möglich</span>
-            <button type="button" className="underline hover:text-foreground" onClick={toggleAll} disabled={publishing}>
-              {allSelected ? 'Keine auswählen' : 'Alle auswählen'}
-            </button>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium">1 · Wochen veröffentlichen</div>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+                onClick={toggleAll}
+                disabled={publishing || pdfBusy}
+              >
+                {allSelected ? 'Keine auswählen' : 'Alle auswählen'}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Wochen anhaken, um sie (erneut) zu veröffentlichen oder als PDF zu speichern.
+              Bereits veröffentlichte Wochen sind für Mitarbeitende sichtbar — auch ohne Haken.
+            </p>
           </div>
         )}
 
@@ -404,7 +420,7 @@ export function PublishScheduleDialog({
                 <Checkbox
                   checked={selected.has(r.weekKey)}
                   onCheckedChange={() => toggle(r.weekKey)}
-                  disabled={publishing || r.shiftCount === 0}
+                  disabled={publishing || pdfBusy || r.shiftCount === 0}
                   className="mt-0.5"
                   aria-label={`KW ${r.kw} auswählen`}
                 />
@@ -419,11 +435,15 @@ export function PublishScheduleDialog({
                       : r.status === 'changed'
                         ? `${r.changedDays} Tag(e) geändert seit der letzten Veröffentlichung`
                         : r.status === 'published'
-                          ? `Stand Revision ${r.record?.revision}`
+                          ? `Für Mitarbeitende sichtbar · Revision ${r.record?.revision}`
                           : 'Noch nicht für Mitarbeitende sichtbar'}
                   </div>
                 </div>
-                <Badge variant={r.status === 'published' ? 'secondary' : r.status === 'changed' ? 'default' : 'outline'}>
+                <Badge
+                  variant={r.status === 'published' ? 'secondary' : r.status === 'changed' ? 'default' : 'outline'}
+                  className="shrink-0 gap-1"
+                >
+                  {r.status === 'published' && <Check className="h-3 w-3" />}
                   {STATUS_LABEL[r.status]}
                 </Badge>
               </li>
@@ -456,21 +476,34 @@ export function PublishScheduleDialog({
 
         {!loading && !loadError && relevantRows.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            <Button onClick={handlePublish} disabled={publishing || selected.size === 0} className="flex-1 min-w-[12rem]">
+            <Button onClick={handlePublish} disabled={publishing || pdfBusy || selected.size === 0} className="flex-1 min-w-[12rem]">
               {publishing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
               {selected.size === 0
                 ? 'Keine Woche ausgewählt'
                 : `${selected.size} ${selected.size === 1 ? 'Woche' : 'Wochen'} veröffentlichen`}
             </Button>
-            <Button variant="outline" onClick={handlePdf} disabled={selected.size === 0}>
-              <FileDown className="h-4 w-4 mr-2" /> PDF
+            <Button variant="outline" onClick={handlePdf} disabled={publishing || pdfBusy || selected.size === 0}>
+              {pdfBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
+              PDF
             </Button>
           </div>
         )}
 
         {!loading && !loadError && link && anyPublished && defaultMessage && (
           <div className="space-y-3 border-t pt-4">
-            <div className="text-sm font-medium">Mit Abteilung teilen ({SHARE_DEPARTMENT_LABEL[department]})</div>
+            <div>
+              <div className="text-sm font-medium">2 · Link teilen ({SHARE_DEPARTMENT_LABEL[department]})</div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Für Mitarbeitende sichtbar: {formatKwRuns(rows.filter(r => r.record !== null).map(r => ({ kw: r.kw, weekStart: r.weekStart })))}
+              </p>
+            </div>
+            {rows.some(r => r.status === 'changed') && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
+                {formatKwRuns(rows.filter(r => r.status === 'changed').map(r => ({ kw: r.kw, weekStart: r.weekStart })))}{' '}
+                {rows.filter(r => r.status === 'changed').length > 1 ? 'haben' : 'hat'} Änderungen, die noch nicht
+                veröffentlicht sind — Mitarbeitende sehen dort noch die letzte Version.
+              </p>
+            )}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <label htmlFor="share-message" className="text-xs text-muted-foreground">
@@ -500,7 +533,7 @@ export function PublishScheduleDialog({
               )}
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={handleWhatsApp} disabled={!messageText.trim()} className="bg-green-600 hover:bg-green-700 text-white">
+              <Button onClick={handleWhatsApp} disabled={!messageText.trim() || publishing || pdfBusy} className="bg-green-600 hover:bg-green-700 text-white">
                 <MessageCircle className="h-4 w-4 mr-2" /> Per WhatsApp teilen
               </Button>
               <Button variant="outline" onClick={handleCopyLink}>
