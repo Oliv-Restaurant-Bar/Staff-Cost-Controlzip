@@ -18,6 +18,7 @@ import {
 } from '@/lib/name-matching';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { tr } from '@/lib/unified-import/strings';
 
 // Generic NameMatchInfo interface that works with both schedule and employee imports
 export interface NameMatchInfo {
@@ -346,7 +347,7 @@ export function ImportMatchPreviewDialog({
           isError && isResolved && "border-green-500/50 bg-green-50 dark:bg-green-900/20"
         )}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
           {isError && !isResolved && (
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           )}
@@ -357,7 +358,7 @@ export function ImportMatchPreviewDialog({
             <History className="h-4 w-4 text-purple-600 shrink-0" />
           )}
           <span className={cn(
-            "font-medium min-w-[100px] truncate",
+            "font-medium truncate sm:w-44 sm:shrink-0",
             isError && !isResolved && "text-destructive"
           )}>
             {match.importedName}
@@ -380,13 +381,13 @@ export function ImportMatchPreviewDialog({
               Vorschlag: {smartResult.suggestedEmployee.name}
             </Badge>
           )}
-          <span className="text-muted-foreground">→</span>
+          <span className="hidden text-muted-foreground sm:inline">→</span>
           <Select 
             value={currentValue} 
             onValueChange={(v) => handleOverrideChange(match.importedName, v)}
           >
             <SelectTrigger className={cn(
-              "h-8 flex-1 min-w-[180px]",
+              "h-9 w-full sm:flex-1 sm:min-w-[220px] [&>span]:truncate [&>span]:text-left",
               isError && !isResolved && "border-destructive"
             )}>
               <SelectValue />
@@ -396,21 +397,21 @@ export function ImportMatchPreviewDialog({
                 <SelectItem value="park" className="text-sky-700">
                   <span className="flex items-center gap-2">
                     <Inbox className="h-3 w-3" />
-                    Als offene Stunden parken (Standard, später zuweisen)
+                    {tr('Als offene Stunden parken (Standard)', 'Park as open hours (default)')}
                   </span>
                 </SelectItem>
               )}
               <SelectItem value="skip" className="text-muted-foreground">
                 <span className="flex items-center gap-2">
                   <X className="h-3 w-3" />
-                  Überspringen (Stunden werden NICHT importiert)
+                  {tr('Überspringen (nicht importieren)', 'Skip (do not import)')}
                 </span>
               </SelectItem>
               {allowPark ? (
                 <SelectItem value="create" className="text-amber-600">
                   <span className="flex items-center gap-2">
                     <UserPlus className="h-3 w-3" />
-                    Neuen Mitarbeiter anlegen (Stunden werden geparkt)
+                    {tr('Neuen Mitarbeiter anlegen (geparkt)', 'Create employee (hours parked)')}
                   </span>
                 </SelectItem>
               ) : (
@@ -486,7 +487,7 @@ export function ImportMatchPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link2 className="h-5 w-5" />
@@ -497,12 +498,19 @@ export function ImportMatchPreviewDialog({
         <div className="flex-1 overflow-auto space-y-4 py-2">
           {/* Error Alert for unmatched names */}
           {newEmployees.length > 0 && (
-            <Alert variant="destructive" className="border-destructive/50">
-              <AlertTriangle className="h-4 w-4" />
+            <Alert
+              variant={unresolvedNewEmployees.length > 0 ? 'destructive' : 'default'}
+              className={unresolvedNewEmployees.length > 0
+                ? 'border-destructive/50'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200'}
+            >
+              {unresolvedNewEmployees.length > 0
+                ? <AlertTriangle className="h-4 w-4" />
+                : <Check className="h-4 w-4 !text-emerald-600" />}
               <AlertTitle>
                 {unresolvedNewEmployees.length > 0 
-                  ? `${unresolvedNewEmployees.length} Namen nicht gefunden!`
-                  : 'Alle nicht gefundenen Namen wurden zugeordnet'}
+                  ? tr(`${unresolvedNewEmployees.length} Namen nicht gefunden!`, `${unresolvedNewEmployees.length} name(s) not found!`)
+                  : tr('Alle nicht gefundenen Namen wurden zugeordnet', 'All unmatched names have been handled')}
               </AlertTitle>
               <AlertDescription className="mt-2">
                 {unresolvedNewEmployees.length > 0 ? (
@@ -568,8 +576,8 @@ export function ImportMatchPreviewDialog({
                     </div>
                   </>
                 ) : (
-                  <p className="text-sm text-green-700 dark:text-green-400">
-                    ✓ Alle nicht gefundenen Namen wurden einem bestehenden Mitarbeiter zugeordnet oder übersprungen.
+                  <p className="text-sm">
+                    {tr('Alle nicht gefundenen Namen wurden einem bestehenden Mitarbeiter zugeordnet, geparkt oder übersprungen.', 'Every unmatched name was assigned to an employee, parked or skipped.')}
                   </p>
                 )}
               </AlertDescription>
@@ -633,9 +641,12 @@ export function ImportMatchPreviewDialog({
           {/* Unmatched employees - shown first as errors */}
           {newEmployees.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium flex items-center gap-2 mb-2 text-destructive">
-                <AlertTriangle className="h-4 w-4" />
-                Nicht gefunden - Manuelle Zuordnung erforderlich ({newEmployees.length})
+              <h4 className={cn('text-sm font-medium flex items-center gap-2 mb-2',
+                unresolvedNewEmployees.length > 0 ? 'text-destructive' : 'text-sky-700 dark:text-sky-400')}>
+                {unresolvedNewEmployees.length > 0 ? <AlertTriangle className="h-4 w-4" /> : <Inbox className="h-4 w-4" />}
+                {unresolvedNewEmployees.length > 0
+                  ? tr(`Nicht gefunden - Manuelle Zuordnung erforderlich (${newEmployees.length})`, `Not found - manual assignment required (${newEmployees.length})`)
+                  : tr(`Nicht gefunden - bereits behandelt (${newEmployees.length})`, `Not found - already handled (${newEmployees.length})`)}
               </h4>
               <div className="space-y-1">
                 {newEmployees.map(match => renderMatchRow(match, "bg-amber-50 dark:bg-amber-900/20", true))}

@@ -12,6 +12,8 @@
  */
 
 import { useState, useRef } from 'react';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
+import { tr } from '@/lib/unified-import/strings';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -184,6 +186,19 @@ export const ActualHoursImportButton = ({
     const file = event.target.files?.[0];
     if (!file) return;
     if (inputRef.current) inputRef.current.value = '';
+    await processFile(file);
+  };
+
+  // Unified import: a Mirus file handed over from the drop zone is HELD until the user has chosen the import
+  // mode in this dialog (the client's own order: mode first, then file), then runs the normal path below.
+  const [heldFile, setHeldFile] = useState<File | null>(null);
+  useIncomingImportFiles('ist-stunden', files => {
+    if (!files[0]) return;
+    setHeldFile(files[0]);
+    setIsOpen(true);
+  });
+
+  const processFile = async (file: File) => {
     setIsProcessing(true);
     try {
       const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -562,6 +577,33 @@ export const ActualHoursImportButton = ({
               </div>
 
               {/* ── Upload-Bereich ── */}
+              {/* ── Datei aus dem Import-Bereich (Unified Import): wartet auf die Modus-Wahl ── */}
+              {heldFile && (
+                <div
+                  className="flex flex-col gap-3 rounded-lg border border-green-500/40 bg-green-50 p-4 dark:bg-green-950/20 sm:flex-row sm:items-center"
+                  data-testid="mirus-held-file"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700">
+                    <FileSpreadsheet className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium" title={heldFile.name}>{heldFile.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {tr('Datei aus dem Import-Bereich. Wähle oben den Modus und fahre dann fort.', 'File from the import area. Choose the mode above, then continue.')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={isProcessing}
+                      onClick={() => { const f = heldFile; setHeldFile(null); void processFile(f); }}>
+                      {tr('Mit gewähltem Modus fortfahren', 'Continue with the chosen mode')}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setHeldFile(null)}>
+                      {tr('Andere Datei', 'Other file')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {!heldFile && (
               <div className="border-2 border-dashed border-green-500/25 rounded-lg p-6 text-center bg-green-50 dark:bg-green-950/20">
                 <FileSpreadsheet className="h-10 w-10 mx-auto mb-3 text-green-600" />
                 <p className="text-sm font-medium mb-1">Mirus XLS-Datei hochladen</p>
@@ -598,6 +640,7 @@ export const ActualHoursImportButton = ({
                   </Button>
                 </div>
               </div>
+              )}
             </div>
           )}
 

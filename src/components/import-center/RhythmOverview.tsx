@@ -13,7 +13,7 @@
  * bestehenden Sektionen/Seiten — die Buttons springen nur dorthin.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,12 +25,16 @@ import {
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import {
-  loadWeeklyFreshness, summarizeReadiness, fmtIsoShort,
+  loadWeeklyFreshness, summarizeReadiness, fmtIsoShort, WEEKLY_SOURCES,
   type SourceFreshness, type WeeklySourceId,
 } from '@/lib/import-freshness';
 import { getLockState, lockYear, unlockYear, formatLockedAt, type PriorYearLockState } from '@/lib/prior-year-lock';
 import { usePermissions } from '@/hooks/usePermissions';
 import { IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
+import { UnifiedImportDropZone } from '@/components/import-center/UnifiedImportDropZone';
+import { getEntries, subscribe } from '@/lib/unified-import/queue-store';
+import { weeklyCoverage, type WeeklySourceKey } from '@/lib/unified-import/weekly-sources';
+import { tr } from '@/lib/unified-import/strings';
 
 /** Sektion aufklappen + hinscrollen (gleicher Mechanismus wie die Gruppen-Karten). */
 function openSection(anchor: string) {
@@ -42,17 +46,6 @@ function openSection(anchor: string) {
 
 /** Ziel eines Zeilen-Buttons: Anker auf der Seite ODER eigene Route. */
 type RowAction = { anchor: string } | { route: string };
-
-const WEEKLY_ACTIONS: Record<WeeklySourceId, RowAction> = {
-  umsatz:        { anchor: 'umsatz-ist' },
-  gaeste:        { anchor: 'umsatz-ist' },
-  avgcheck:      { anchor: 'umsatz-ist' },
-  verkauf:       { route: '/sales-upload' },
-  mirus:         { anchor: 'ist-stunden' },
-  reservationen: { route: '/foratable-import' },
-  rezensionen:   { route: '/rezensionen' },
-  umsatzkategorien: { route: '/produkt-analyse?tab=umsatzkategorien' },
-};
 
 function ActionButton({ action, label = 'Import' }: { action: RowAction; label?: string }) {
   if ('route' in action) {
@@ -73,6 +66,24 @@ function ActionButton({ action, label = 'Import' }: { action: RowAction; label?:
       <Upload className="h-3 w-3" />
       {label}
     </Button>
+  );
+}
+
+function CoverageChip({ info }: { info?: { state: 'ready' | 'handed'; names: string[] } }) {
+  if (!info) return null;
+  const handed = info.state === 'handed';
+  return (
+    <span
+      data-testid="coverage-chip"
+      title={info.names.join(', ')}
+      className={cn(
+        'inline-flex max-w-[11rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
+        handed ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-sky-300 bg-sky-50 text-sky-700',
+      )}
+    >
+      <span aria-hidden>{handed ? '✓' : '•'}</span>
+      <span className="truncate">{info.names[0]}{info.names.length > 1 ? ` +${info.names.length - 1}` : ''}</span>
+    </span>
   );
 }
 
@@ -110,6 +121,9 @@ export function CockpitReadinessCard() {
   useEffect(() => { setRows(null); void reload(); }, [reload]);
 
   const summary = rows ? summarizeReadiness(rows) : null;
+  // One upload for all weekly sources: the rows show what the dropped files cover instead of one button each.
+  const queued = useSyncExternalStore(subscribe, getEntries, getEntries);
+  const coverage = weeklyCoverage(queued.map(e => ({ typeId: e.typeId, tagesdatenTyp: e.result.tagesdatenTyp, state: e.state, name: e.file.name })));
 
   return (
     <Card className="border-border bg-card shadow-sm" data-testid="cockpit-readiness-card">
@@ -130,49 +144,67 @@ export function CockpitReadinessCard() {
         </div>
         {/* Kopfzeile: Gesamtstatus über alle Wochenquellen. */}
         {summary && (
-          <p className="text-xs" data-testid="readiness-summary">
+          <div
+            data-testid="readiness-summary"
+            className={cn(
+              'mt-1 rounded-md border px-3 py-2 text-xs',
+              summary.allCurrent
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : summary.behind.length > 0
+                  ? 'border-amber-200 bg-amber-50 text-amber-900'
+                  : 'border-border bg-muted/40 text-muted-foreground',
+            )}
+          >
             {summary.allCurrent ? (
-              <span className="text-emerald-700 dark:text-emerald-400 font-medium">
-                Alle Wochenquellen aktuell bis {fmtIsoShort(summary.currentUntil, false)}
+              <span className="font-medium">
+                {tr('Alle Wochenquellen aktuell bis', 'All weekly sources current until')} {fmtIsoShort(summary.currentUntil, false)}
               </span>
             ) : summary.behind.length > 0 ? (
-              <span className="text-amber-700 dark:text-amber-400 font-medium">
-                Rückstand bei: {summary.behind.join(', ')}
-              </span>
+              <>
+                <span className="font-medium">
+                  {tr(`Rückstand bei ${summary.behind.length} von ${WEEKLY_SOURCES.length} Quellen`, `Behind on ${summary.behind.length} of ${WEEKLY_SOURCES.length} sources`)}
+                </span>
+                <span className="block text-[11px] opacity-80">{summary.behind.join(' · ')}</span>
+              </>
             ) : (
-              <span className="text-muted-foreground">Noch keine Daten importiert.</span>
+              <span>{tr('Noch keine Daten importiert.', 'No data imported yet.')}</span>
             )}
             {summary.never.length > 0 && summary.behind.length > 0 && (
-              <span className="text-muted-foreground"> · Noch nie: {summary.never.join(', ')}</span>
+              <span className="block text-[11px] opacity-80">{tr('Noch nie:', 'Never:')} {summary.never.join(' · ')}</span>
             )}
-          </p>
+          </div>
         )}
       </CardHeader>
       <CardContent className="pt-0">
+        <div className="mb-3">
+          <UnifiedImportDropZone embedded />
+        </div>
         {!rows ? (
           <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Datenstand wird geladen …
           </div>
         ) : (
-          <div className="divide-y divide-border/60">
+          <div className="divide-y divide-border/60 rounded-lg border">
             {rows.map(r => (
-              <div key={r.id} className="flex items-center gap-2.5 py-1.5" data-testid={`readiness-row-${r.id}`}>
+              <div key={r.id} className="flex items-center gap-3 px-3 py-2.5" data-testid={`readiness-row-${r.id}`}>
                 <AmpelDot status={r.status} />
-                <span className="text-xs font-medium flex-1 min-w-0 truncate">{r.label}</span>
-                <span className="text-[11px] tabular-nums text-right" data-testid={`readiness-until-${r.id}`}>
-                  {r.status === 'gray' ? (
-                    <span className="text-muted-foreground">noch nie importiert</span>
-                  ) : (
-                    <>
-                      <span className="text-muted-foreground">vollständig bis </span>
-                      <span className="font-medium">{fmtIsoShort(r.completeUntil)}</span>
-                      {r.status === 'orange' && r.missingDays > 0 && (
-                        <span className="text-amber-700 dark:text-amber-400"> · es {r.missingDays === 1 ? 'fehlt 1 Tag' : `fehlen ${r.missingDays} Tage`}</span>
-                      )}
-                    </>
-                  )}
-                </span>
-                <ActionButton action={WEEKLY_ACTIONS[r.id]} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{r.label}</p>
+                  <p className="text-[11px] tabular-nums" data-testid={`readiness-until-${r.id}`}>
+                    {r.status === 'gray' ? (
+                      <span className="text-muted-foreground">{tr('noch nie importiert', 'never imported')}</span>
+                    ) : (
+                      <>
+                        <span className="text-muted-foreground">{tr('vollständig bis', 'complete until')} </span>
+                        <span className="font-medium">{fmtIsoShort(r.completeUntil)}</span>
+                        {r.status === 'orange' && r.missingDays > 0 && (
+                          <span className="text-amber-700 dark:text-amber-400"> · {tr(r.missingDays === 1 ? 'es fehlt 1 Tag' : `es fehlen ${r.missingDays} Tage`, r.missingDays === 1 ? '1 day missing' : `${r.missingDays} days missing`)}</span>
+                        )}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <CoverageChip info={coverage.get(r.id as WeeklySourceKey)} />
               </div>
             ))}
           </div>

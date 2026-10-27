@@ -22,6 +22,7 @@
  *   [VJ-SUPABASE] source of truth: supabase
  */
 
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -353,6 +354,9 @@ export function VjDailyImportSection() {
       setParsing(false);
     }
   };
+
+  // Unified import: a handed-over file takes the same path as a chosen one.
+  useIncomingImportFiles('vj-daily', files => void handleFile(files[0]));
 
   const handleSave = async () => {
     if (!preview) return;

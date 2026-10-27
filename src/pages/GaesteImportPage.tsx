@@ -22,6 +22,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
+import { tr } from '@/lib/unified-import/strings';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -127,6 +129,14 @@ export default function GaesteImportPage(
       setParseError('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [tenantId]);
+
+  // Unified import: a handed-over file takes the same path as a dropped one (processCSV).
+  // Kept above the permission redirect so the hook order never changes.
+  useIncomingImportFiles('foratable-gaeste', files => {
+    const f = files[0];
+    if (f.name.toLowerCase().endsWith('.csv')) void processCSV(f);
+    else setParseError(tr('Bitte eine CSV-Datei auswählen.', 'Please choose a CSV file.'));
+  });
 
   if (!canImport) return <Navigate to="/" replace />;
 

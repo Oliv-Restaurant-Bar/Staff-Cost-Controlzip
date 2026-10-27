@@ -16,6 +16,7 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -119,6 +120,12 @@ const PL_SECTION_LABELS: Record<string, string> = {
 
 // ─── Upload-Zone ──────────────────────────────────────────────────────────────
 
+/** Same rule for a manually chosen file and a file handed over from the unified import. */
+function fileKindFromName(name: string): FileKind {
+  const ext = name.split('.').pop()?.toLowerCase();
+  return ext === 'pdf' ? 'pdf' : (ext === 'xlsx' || ext === 'xls') ? 'excel' : 'csv';
+}
+
 interface UploadZoneProps {
   onFile: (name: string, kind: FileKind, buffer: ArrayBuffer) => void;
   parsing: boolean;
@@ -129,10 +136,7 @@ function UploadZone({ onFile, parsing }: UploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file: File) => {
-    const ext  = file.name.split('.').pop()?.toLowerCase();
-    const kind: FileKind =
-      ext === 'pdf'  ? 'pdf'  :
-      (ext === 'xlsx' || ext === 'xls') ? 'excel' : 'csv';
+    const kind = fileKindFromName(file.name);
     const reader = new FileReader();
     reader.onload = e => {
       const buf = e.target?.result as ArrayBuffer;
@@ -867,6 +871,12 @@ export default function CSVImportPage() {
     for (const es of multiParse.journalByMonth.values()) n += splitWarenJournal(es, warenGrenze).nichtWaren.length;
     return n;
   }, [multiParse, warenGrenze]);
+
+  // Unified import: a handed-over file takes the same path as a chosen one (handleFile is hoisted).
+  useIncomingImportFiles('kontoblatt', files => {
+    const f = files[0];
+    void f.arrayBuffer().then(buf => handleFile(f.name, fileKindFromName(f.name), buf));
+  });
 
   if (!isAdmin) {
     return (

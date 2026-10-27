@@ -230,10 +230,14 @@ interface Props {
   onCellChange: (employeeId: string, date: string, entry: ActualHoursEntry | null, opts?: { skipSupabase?: boolean }) => void;
   /** Meldet persistierte erfassungsart-Defaults zurück (lokalen Employee-State aktualisieren). */
   onErfassungsartPersisted?: (updates: Record<string, 'MIRUS' | 'MANUELL'>) => void;
+  /** Unified import: a file handed over from the import drop zone; runs the same path as a chosen file. */
+  incomingFile?: File | null;
+  onIncomingConsumed?: () => void;
 }
 
 export function MirusReconcileImportButton({
   employees, actualHoursData, scheduleData, currentMonth, onCellChange, onErfassungsartPersisted,
+  incomingFile, onIncomingConsumed,
 }: Props) {
   const { tenantId, tenantKey } = useTenant();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -314,6 +318,18 @@ export function MirusReconcileImportButton({
     const file = event.target.files?.[0];
     if (!file) return;
     if (inputRef.current) inputRef.current.value = '';
+    await processFile(file);
+  };
+
+  // Hand-over from the unified import drop zone (the planner has already switched to the file's month).
+  useEffect(() => {
+    if (!incomingFile) return;
+    onIncomingConsumed?.();
+    void processFile(incomingFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingFile]);
+
+  const processFile = async (file: File) => {
     setBusy(true);
     try {
       const result = await parseMirusDailyExcel(file);

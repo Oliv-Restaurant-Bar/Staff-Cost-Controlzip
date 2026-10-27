@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -168,6 +169,12 @@ const VALIDATION_TONES: Record<GnValidationStatus, string> = {
 export default function GastronoviZBerichtPage() {
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
+
+  // Unified import: registered above the permission redirect so the hook order never changes; the real
+  // handlers are assigned further down (ref, not state).
+  const handover = useRef<Record<'zbericht' | 'kpi', (files: File[]) => void>>({ zbericht: () => {}, kpi: () => {} });
+  useIncomingImportFiles('zbericht-pdf', files => handover.current.zbericht(files));
+  useIncomingImportFiles('gn-kpi-pdf', files => handover.current.kpi(files));
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -567,6 +574,20 @@ export default function GastronoviZBerichtPage() {
     e.preventDefault(); setIsDragging(false);
     handleFilesSelected(Array.from(e.dataTransfer.files));
   };
+
+  // Unified import: switch to the matching mode first (it resets the wizard), then run the normal
+  // file-selected path once the new mode is rendered — otherwise it would still see the old mode.
+  const [incoming, setIncoming] = useState<{ mode: ImportType; files: File[] } | null>(null);
+  handover.current = {
+    zbericht: files => { handleTypeChange('zbericht'); setIncoming({ mode: 'zbericht', files }); },
+    kpi: files => { handleTypeChange('kpi'); setIncoming({ mode: 'kpi', files }); },
+  };
+  useEffect(() => {
+    if (!incoming || incoming.mode !== importType) return;
+    handleFilesSelected(incoming.files);
+    setIncoming(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleFilesSelected is recreated every render
+  }, [incoming, importType]);
 
   // ── Import-Abgleich Tagesabschluss (manuelle Korrekturen vs. Import) ───────
 

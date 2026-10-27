@@ -28,6 +28,14 @@ export type TagesdatenTyp = 'gaeste' | 'durchschnitt' | 'umsatzprogast' | 'umsat
 /** Zellwert robust in Text wandeln (RichText-/Formel-/NBSP-tolerant). */
 function cellToString(val: unknown): string {
   if (val === null || val === undefined) return '';
+  // Real Excel date cell (ExcelJS delivers a Date at UTC midnight): «TT.MM.» like the client's text headers.
+  // No year on purpose — the year always comes from the UI dropdown.
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) return '';
+    const dd = String(val.getUTCDate()).padStart(2, '0');
+    const mm = String(val.getUTCMonth() + 1).padStart(2, '0');
+    return `${dd}.${mm}.`;
+  }
   if (typeof val === 'object') {
     const o = val as { richText?: { text: string }[]; result?: unknown; text?: string };
     if (Array.isArray(o.richText)) return o.richText.map(t => t.text ?? '').join('');

@@ -19,6 +19,10 @@ import {
   Info, Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
+import { salesUploadSlotFromName } from '@/lib/unified-import/sales-upload-slots';
+import { toast } from 'sonner';
+import { tr } from '@/lib/unified-import/strings';
 import { useTenant } from '@/contexts/TenantContext';
 import { ResetProductMonthDialog } from '@/components/ResetProductMonthDialog';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
@@ -351,6 +355,21 @@ export default function SalesUpload() {
   // Datei-Zustand
   const [foodFiles, setFoodFiles]       = useState<SectionFiles>({ anzahl: null, umsatz: null });
   const [beverageFiles, setBeverageFiles] = useState<SectionFiles>({ anzahl: null, umsatz: null });
+
+  // Unified import: place handed-over files into the four slots by the client's file-name rule.
+  // Files that do not match exactly one slot are left out and reported (never guessed).
+  useIncomingImportFiles('sales-upload', files => {
+    const unplaced: string[] = [];
+    for (const f of files) {
+      const slot = f.name.toLowerCase().endsWith('.csv') ? salesUploadSlotFromName(f.name) : null;
+      if (!slot) { unplaced.push(f.name); continue; }
+      const set = slot.category === 'food' ? setFoodFiles : setBeverageFiles;
+      set(p => ({ ...p, [slot.kind]: f }));
+    }
+    if (unplaced.length > 0) {
+      toast.warning(tr(`Nicht zugeordnet (Dateiname muss «Anzahl/Umsatz» und «Food/Beverage» enthalten): ${unplaced.join(', ')}`, `Not assigned (file name must contain «Anzahl/Umsatz» and «Food/Beverage»): ${unplaced.join(', ')}`));
+    }
+  });
 
   // Formular-Metadaten
   const [year, setYear]         = useState(String(new Date().getFullYear()));

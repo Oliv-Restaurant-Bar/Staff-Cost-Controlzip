@@ -20,6 +20,7 @@ import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -59,6 +60,11 @@ export default function ReservationenImportPage(
 ) {
   const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
+
+  // Unified import: registered above the permission redirect so the hook order never changes;
+  // the real handler is assigned further down (ref, not state).
+  const handover = useRef<(files: File[]) => void>(() => {});
+  useIncomingImportFiles('foratable-reservationen', files => handover.current(files));
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -192,6 +198,9 @@ export default function ReservationenImportPage(
     setIsDragging(false);
     handleFileSelect(e.dataTransfer.files[0]);
   };
+
+  // Unified import: a handed-over file takes the same path as a dropped one.
+  handover.current = files => handleFileSelect(files[0]);
 
   // ── Speichern ─────────────────────────────────────────────────────────────
   const handleConfirm = async () => {

@@ -108,6 +108,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, getEmployeeDisplayName, isEmployeeActiveInMonth } from '@/lib/personnel-utils';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { socialCostFactorFromRates, EMPLOYER_COST_INFO } from '@/lib/social-costs';
@@ -369,6 +370,29 @@ const SchedulePlanner = () => {
   const [zielwertEditOpen, setZielwertEditOpen]               = useState(false);
   const [zielwertDraft, setZielwertDraft]                     = useState<{ service: string; küche: string; global: string; autoGlobal: boolean }>({ service: '20.0', küche: '20.0', global: '40.0', autoGlobal: true });
   const [legendSidebarOpen, setLegendSidebarOpen]             = useState(true);
+
+  // Unified import: a Mirus «Tägliche Stunden» file handed over from the import drop zone. Switch to the Ist view and
+  // to the month of the file (the reconcile import only writes the shown month), then give the file to the button,
+  // which runs its normal path (plan preview first, nothing written before «Bestätigen»).
+  const [incomingMirus, setIncomingMirus] = useState<File | null>(null);
+  useIncomingImportFiles('mirus-schedule', files => {
+    const file = files[0];
+    if (!file) return;
+    void (async () => {
+      try {
+        const { parseMirusDailyExcel } = await import('@/lib/mirus-parser');
+        const parsed = await parseMirusDailyExcel(file);
+        const dates = (parsed.dateRange.length > 0 ? parsed.dateRange : parsed.entries.map(e => e.date))
+          .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+        const counts = new Map<string, number>();
+        dates.forEach(d => counts.set(d.slice(0, 7), (counts.get(d.slice(0, 7)) ?? 0) + 1));
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (top) setCurrentMonth(new Date(Number(top.slice(0, 4)), Number(top.slice(5, 7)) - 1, 1));
+      } catch { /* the button reports unreadable files itself */ }
+      setScheduleMode('ist');
+      setIncomingMirus(file);
+    })();
+  });
   const [empTypeFilter, setEmpTypeFilter]                     = useState<'vollzeit' | 'teilzeit' | 'stundenlohn' | null>(null);
   const [hintsCollapsed, setHintsCollapsed]                   = useState(false);
   const [lastGlobalError, setLastGlobalError]                 = useState<string | null>(null);
@@ -4878,6 +4902,8 @@ const SchedulePlanner = () => {
                         setEmployees(prev => prev.map(e =>
                           updates[e.id] ? { ...e, erfassungsart: updates[e.id] } : e));
                       }}
+                      incomingFile={scheduleSource !== 'loading' && !dataLoading ? incomingMirus : null}
+                      onIncomingConsumed={() => setIncomingMirus(null)}
                     />
                   </div>
 

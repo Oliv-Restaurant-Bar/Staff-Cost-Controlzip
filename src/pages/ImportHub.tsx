@@ -112,8 +112,11 @@ import { type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
 import ZberichtInboxCard from '@/components/ZberichtInboxCard';
 import { IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
+import { UnifiedImportDropZone } from '@/components/import-center/UnifiedImportDropZone';
+import { tr } from '@/lib/unified-import/strings';
 import { CockpitReadinessCard, MonthlyBlockCard, RareBlockCard } from '@/components/import-center/RhythmOverview';
 import { visibleCategories } from '@/lib/import-center';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 
 const currentYear = new Date().getFullYear();
 
@@ -912,6 +915,9 @@ const AnnualRevenueImportSection = () => {
     }
   };
 
+  // Unified import: a handed-over file takes the same path as a dropped one.
+  useIncomingImportFiles('annual-revenue', files => void handleFile(files[0]));
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -1347,6 +1353,9 @@ const AnnualCostImportSection = () => {
       setParsing(false);
     }
   };
+
+  // Unified import: a handed-over file takes the same path as a dropped one.
+  useIncomingImportFiles('annual-cost', files => void handleFile(files[0]));
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -2945,6 +2954,24 @@ function TagesdatenImportSection() {
     }
   };
 
+  /** A file was chosen — by hand or handed over from the unified import zone: same path for both. */
+  const chooseFile = (f: File) => {
+    setFile(f); setStatus('idle'); setPreview(null); setError(''); setWarn('');
+    setTypWahl(''); setTypVorschlag(null); setMismatchOk(false);
+    void suggestFor(f, year);
+  };
+
+  // Unified import: the first handed-over file behaves exactly like a manually chosen one.
+  useIncomingImportFiles('tagesdaten', files => {
+    chooseFile(files[0]);
+    // Show the file name in the native field too (cosmetic only; the state above is what is used).
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(files[0]);
+      if (fileRef.current) fileRef.current.files = dt.files;
+    } catch { /* unsupported browser: the section still works without the label */ }
+  });
+
   const monthLabel = (ym: string) => {
     const [y, m] = ym.split('-').map(Number);
     return format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
@@ -3529,11 +3556,7 @@ function TagesdatenImportSection() {
               accept=".xlsx,.xls"
               onChange={e => {
                 const f = e.target.files?.[0];
-                if (f) {
-                  setFile(f); setStatus('idle'); setPreview(null); setError(''); setWarn('');
-                  setTypWahl(''); setTypVorschlag(null); setMismatchOk(false);
-                  void suggestFor(f, year);
-                }
+                if (f) chooseFile(f);
               }}
               className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-sky-100 file:text-sky-700 dark:file:bg-sky-900/40 dark:file:text-sky-300 cursor-pointer"
             />
@@ -4017,6 +4040,9 @@ const AnnualPersonnelCostImportSection = () => {
     }
   };
 
+  // Unified import: a handed-over file takes the same path as a dropped one.
+  useIncomingImportFiles('annual-personnel-cost', files => void handleFile(files[0]));
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -4340,6 +4366,43 @@ const PREFILL_TARGET_ANCHORS: Record<string, string> = {
   maison: 'umsatz-ist',
 };
 
+/**
+ * «Einzelimporte»: the previous single import sections, collapsed under one header now that the drop zone
+ * above recognises files itself. Children stay MOUNTED (only hidden) so each Section still hears
+ * IMPORT_SECTION_OPEN_EVENT / #anchor links; the group opens itself on the same signals.
+ */
+const EinzelimportGroup = ({ children }: { children: React.ReactNode }) => {
+  const [open, setOpen] = useState(
+    () => typeof window !== 'undefined' && window.location.hash.length > 1,
+  );
+  useEffect(() => {
+    const openIt = () => setOpen(true);
+    const onHash = () => { if (window.location.hash.length > 1) setOpen(true); };
+    window.addEventListener(IMPORT_SECTION_OPEN_EVENT, openIt);
+    window.addEventListener('hashchange', onHash);
+    return () => {
+      window.removeEventListener(IMPORT_SECTION_OPEN_EVENT, openIt);
+      window.removeEventListener('hashchange', onHash);
+    };
+  }, []);
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        data-testid="einzelimporte-toggle"
+        className="flex w-full items-center gap-2 rounded-md border bg-card px-4 py-3 text-left"
+      >
+        <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', !open && '-rotate-90')} />
+        <span className="text-sm font-semibold">{tr('Einzelimporte', 'Single imports')}</span>
+        <span className="text-xs text-muted-foreground">{tr('Jeden Import einzeln starten (wie bisher)', 'Start each import on its own (as before)')}</span>
+      </button>
+      <div className={cn('space-y-4', !open && 'hidden')}>{children}</div>
+    </div>
+  );
+};
+
 const ImportHub = () => {
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer } = usePermissions();
   const { tenant } = useTenant();
@@ -4413,6 +4476,7 @@ const ImportHub = () => {
         {/* ── Import-Bereiche (Karten-Übersicht) ────────────────────────── */}
         {/* Nicht-Admins: kompaktes Karten-Grid (Routen funktionieren ohne
             die Admin-Sektionen). Admins sehen die 3 Rhythmus-Blöcke. */}
+        {!showAdminSections && <UnifiedImportDropZone />}
         {!showAdminSections && <ImportCenterGrid />}
 
         {showAdminSections && (
@@ -4432,6 +4496,7 @@ const ImportHub = () => {
         {/* ── Datenstand Vorjahr (je Jahr, Default 2024) ────────────────── */}
         <JahresDatenstandCard />
 
+        <EinzelimportGroup>
         {/* ── 1. Tagesdaten-Import (Auto-Typerkennung) ─────────────────── */}
         <Section
           id="umsatz-ist"
@@ -4628,6 +4693,7 @@ const ImportHub = () => {
             <BeaulieuBudgetImportSection />
           </Section>
         )}
+        </EinzelimportGroup>
         </>
         )}
 

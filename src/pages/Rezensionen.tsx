@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import {
   fetchReviewsData, upsertSingleReview, deleteSingleReview,
   uploadReviewScreenshot, getReviewScreenshotUrl, deleteReviewScreenshot,
@@ -235,6 +236,17 @@ export default function Rezensionen() {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
+
+  // Unified import: a CSV handed over from the drop zone waits until the reviews are loaded, then takes the same
+  // path as a manually chosen file (preview first, nothing saved).
+  const [incomingCsv, setIncomingCsv] = useState<File | null>(null);
+  useIncomingImportFiles('rezensionen', files => setIncomingCsv(files[0] ?? null));
+  useEffect(() => {
+    if (!incomingCsv || !data) return;
+    setIncomingCsv(null);
+    void handleImportFile(incomingCsv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingCsv, data]);
 
   async function handleConfirmImport() {
     if (!importState || importing || !canEdit) return;

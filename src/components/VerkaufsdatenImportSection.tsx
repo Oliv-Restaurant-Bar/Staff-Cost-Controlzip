@@ -11,6 +11,7 @@
  */
 
 import { useMemo, useRef, useState } from 'react';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
@@ -61,7 +62,7 @@ export function VerkaufsdatenImportSection() {
   }, [files]);
   const okFiles = files.filter(f => f.ok);
 
-  const handleFiles = async (list: FileList | null) => {
+  const handleFiles = async (list: FileList | File[] | null) => {
     if (!list || list.length === 0) return;
     setBusy(true); setPlan(null);
     try {
@@ -80,6 +81,9 @@ export function VerkaufsdatenImportSection() {
       if (inputRef.current) inputRef.current.value = '';
     }
   };
+
+  // Unified import: handed-over files take the same path as files chosen by hand.
+  useIncomingImportFiles('verkaufsdaten', files => void handleFiles(files));
 
   const buildPreview = async () => {
     if (okFiles.length === 0 || duplicateSlots.size > 0) return;

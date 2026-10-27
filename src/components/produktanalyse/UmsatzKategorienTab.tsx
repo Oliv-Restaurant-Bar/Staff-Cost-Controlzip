@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useIncomingImportFiles } from '@/hooks/useIncomingImportFiles';
 import { Upload, Undo2, FileDown, Utensils, Wine } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -80,6 +81,9 @@ export default function UmsatzKategorienTab() {
     if (tenantRef.current !== tid) return; // Wechsel während des Parsens
     setVorschau({ parse, fileName: file.name, tenantId: tid });
   }, [tenantId]);
+
+  // Unified import: file handed over from the drop zone → same path as a chosen file (preview only).
+  useIncomingImportFiles('umsatzkategorien', files => { if (files[0]) void handleFile(files[0]); });
 
   const vorschauStats = useMemo(() => {
     if (!vorschau || vorschau.parse.failureReason) return null;
