@@ -10,12 +10,15 @@ import type { UnifiedImportTypeId } from './types';
 
 export const HANDOVER_EVENT = 'unified-import:handover';
 
-const pending = new Map<UnifiedImportTypeId, File[]>();
+/** A hand-over nobody picked up (target never mounted, redirect, …) must not surprise a later manual visit. */
+export const PENDING_TTL_MS = 2 * 60 * 1000;
+
+const pending = new Map<UnifiedImportTypeId, { files: File[]; at: number }>();
 
 /** Stores files for a flow (replacing older ones) and tells already-mounted flows to pick them up. */
 export function setPending(id: UnifiedImportTypeId, files: File[]): void {
   if (files.length === 0) return;
-  pending.set(id, files);
+  pending.set(id, { files, at: Date.now() });
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(HANDOVER_EVENT, { detail: { id } }));
   }
@@ -23,13 +26,14 @@ export function setPending(id: UnifiedImportTypeId, files: File[]): void {
 
 /** Removes and returns the files waiting for a flow (empty array when none). */
 export function takePending(id: UnifiedImportTypeId): File[] {
-  const files = pending.get(id) ?? [];
+  const item = pending.get(id);
   pending.delete(id);
-  return files;
+  return item && Date.now() - item.at <= PENDING_TTL_MS ? item.files : [];
 }
 
 export function hasPending(id: UnifiedImportTypeId): boolean {
-  return (pending.get(id)?.length ?? 0) > 0;
+  const item = pending.get(id);
+  return !!item && item.files.length > 0 && Date.now() - item.at <= PENDING_TTL_MS;
 }
 
 /** Drops everything (tenant switch, drop zone reset): files must never reach a flow of another tenant. */

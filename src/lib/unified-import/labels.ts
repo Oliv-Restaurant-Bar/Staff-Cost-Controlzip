@@ -10,7 +10,7 @@ export const STATUS_LABEL: Record<ClassifyStatus | 'handed' | 'forbidden', strin
   confirm: tr('Bitte bestätigen', 'Please confirm'),
   unknown: tr('Nicht erkannt', 'Not recognised'),
   unsupported: tr('Nicht unterstützt', 'Not supported'),
-  handed: tr('Übergeben', 'Handed over'),
+  handed: tr('Geöffnet — noch nicht importiert', 'Opened — not imported yet'),
   forbidden: tr('Keine Berechtigung', 'No permission'),
 };
 
@@ -36,10 +36,11 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
   'tab-file-totals-and-products': tr('Enthält Summenzeile und viele Artikelzeilen — bitte Typ wählen.', 'Contains a totals row and many product rows — please choose the type.'),
   'tab-file-totals-only': tr('Summenzeilen Food/Beverage erkannt.', 'Food/Beverage totals rows recognised.'),
   'tab-file-products': tr('Artikelzeilen erkannt.', 'Product rows recognised.'),
-  'mirus-title-found': tr('Mirus-Export «Tägliche Stunden» erkannt — Ziel wählen: Dienstplan oder Import-Center.', 'Mirus export «Tägliche Stunden» recognised — choose the target: Schedule or Import Center.'),
+  'mirus-title-found': tr('Mirus-Export «Tägliche Stunden» — Ziel wählen: Dienstplan oder Import-Center.', 'Mirus export «Tägliche Stunden» — choose the target: Schedule or Import Center.'),
   'category-sheet-found': tr('Umsatzanalyse Kategorien erkannt.', 'Revenue analysis categories recognised.'),
   'feedback-csv-found': tr('Rezensionen-CSV erkannt.', 'Reviews CSV recognised.'),
-  'nothing-recognised': tr('Keine bekannte Struktur erkannt — bitte Typ wählen.', 'No known structure recognised — please choose the type.'),
+  'kpi-csv-found': tr('Gastronovi-Bericht (CSV) erkannt.', 'Gastronovi report (CSV) recognised.'),
+  'nothing-recognised': tr('Bitte den Typ selbst wählen.', 'Please choose the type yourself.'),
 };
 
 /** Reasons worth showing under a row (the positive «recognised because…» ones are shown only on hover). */

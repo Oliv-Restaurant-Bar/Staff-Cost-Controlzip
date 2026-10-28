@@ -19,6 +19,7 @@ import { parseReservationsCsv } from '@/lib/reservation-import-parser';
 import { parseForatableGuestsCsv } from '@/lib/foratable-guest-import-parser';
 import { isDateColumn } from '@/lib/gastronovi-csv-parser';
 import { parseFeedbackCsv } from '@/lib/feedback-import';
+import { parseGnKpiCsv } from '@/lib/gn-kpi-csv-parser';
 import { handlersForExtension, SUPPORTED_EXTENSIONS } from './handlers';
 import type {
   ClassifyResult, FileProbe, ReasonCode, UnifiedImportTypeId,
@@ -204,6 +205,18 @@ function classifyText(p: FileProbe, text: string): ClassifyResult {
     }
   }
 
+  // Gastronovi KPI CSVs (Anzahl Personen / Umsatz pro Person / Durchschnittsbon): the import's own parser decides,
+  // so recognition equals what the existing KPI import accepts (it rejects instead of guessing the report kind).
+  if (p.ext === 'csv' && tabHeaderHasDays(text)) {
+    try {
+      const kpi = parseGnKpiCsv(text, p.name);
+      if (!kpi.debug.failureReason && kpi.kind) {
+        return { ...base(), status: 'recognised', typeId: 'gn-kpi-pdf',
+          alternatives: pickList(p.ext, 'gn-kpi-pdf'), reasons: ['kpi-csv-found'], meta: { kpiKind: kpi.kind } };
+      }
+    } catch { /* fall through to the other rules */ }
+  }
+
   // Tab-separated sales exports: «Gesamt - Food/Beverage» totals (Verkaufsdaten) vs per-product rows (Sales Upload).
   if (tabHeaderHasDays(text)) {
     const totals = parseVerkaufsdatenFile(text, p.name).ok;
@@ -250,6 +263,7 @@ function classifyPdf(p: FileProbe, lines: GnPdfLine[], hasTextLayer: boolean): C
     ...base(), status: fromTitle ? 'recognised' : 'confirm', typeId,
     alternatives: pickList(p.ext, typeId),
     reasons: [fromTitle ? 'pdf-kind-from-title' : 'pdf-kind-from-body-only'],
+    meta: kind === 'zbericht' ? undefined : { kpiKind: kind },
   };
 }
 

@@ -36,12 +36,16 @@ export function getEntries(): QueueEntry[] { return entries; }
 
 export function getListTenant(): string | null { return tenantOfList; }
 
-export function addEntries(tenantId: string, items: Array<{ file: File; result: ClassifyResult }>): void {
+const sameFile = (a: File, b: File) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+
+/** Adds files to the list; a file that is already in the list (same name, size, date) is skipped. Returns how many were added. */
+export function addEntries(tenantId: string, items: Array<{ file: File; result: ClassifyResult }>): number {
   if (tenantOfList !== null && tenantOfList !== tenantId) entries = []; // never mix tenants in one list
   tenantOfList = tenantId;
+  const fresh = items.filter(i => !entries.some(e => sameFile(e.file, i.file)));
   entries = [
     ...entries,
-    ...items.map(({ file, result }) => ({
+    ...fresh.map(({ file, result }) => ({
       id: `f${++counter}`,
       file,
       result,
@@ -51,6 +55,7 @@ export function addEntries(tenantId: string, items: Array<{ file: File; result: 
     })),
   ];
   emit();
+  return fresh.length;
 }
 
 export function setEntryType(id: string, typeId: UnifiedImportTypeId | null): void {

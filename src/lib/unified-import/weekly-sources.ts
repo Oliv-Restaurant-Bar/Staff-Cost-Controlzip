@@ -8,11 +8,17 @@
 import type { TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import type { UnifiedImportTypeId } from './types';
 
+export type KpiKind = 'anzahl_personen' | 'umsatz_pro_person' | 'durchschnittsbon';
+
 export type WeeklySourceKey =
   | 'umsatz' | 'gaeste' | 'avgcheck' | 'verkauf' | 'mirus' | 'reservationen' | 'rezensionen' | 'umsatzkategorien';
 
 /** Weekly sources a file of this type (and, for daily data, sub-type) delivers. Empty = not a weekly source. */
-export function weeklySourcesFor(typeId: UnifiedImportTypeId | null, tagesdatenTyp: TagesdatenTyp | null): WeeklySourceKey[] {
+export function weeklySourcesFor(
+  typeId: UnifiedImportTypeId | null,
+  tagesdatenTyp: TagesdatenTyp | null,
+  kpiKind?: KpiKind | null,
+): WeeklySourceKey[] {
   switch (typeId) {
     case 'tagesdaten':
       if (tagesdatenTyp === 'umsatz') return ['umsatz'];
@@ -20,7 +26,12 @@ export function weeklySourcesFor(typeId: UnifiedImportTypeId | null, tagesdatenT
       if (tagesdatenTyp === 'durchschnitt' || tagesdatenTyp === 'umsatzprogast') return ['avgcheck'];
       return [];
     case 'zbericht-pdf': return ['umsatz'];
-    case 'gn-kpi-pdf': return ['gaeste', 'avgcheck'];
+    case 'gn-kpi-pdf':
+      // Each KPI report feeds ONE source; «Umsatz pro Person» feeds none of the 8. Kind unknown (user-picked) = either.
+      if (kpiKind === 'anzahl_personen') return ['gaeste'];
+      if (kpiKind === 'durchschnittsbon') return ['avgcheck'];
+      if (kpiKind === 'umsatz_pro_person') return [];
+      return ['gaeste', 'avgcheck'];
     case 'verkaufsdaten':
     case 'sales-upload': return ['verkauf'];
     case 'mirus-schedule':
@@ -35,6 +46,7 @@ export function weeklySourcesFor(typeId: UnifiedImportTypeId | null, tagesdatenT
 export interface CoverageEntry {
   typeId: UnifiedImportTypeId | null;
   tagesdatenTyp: TagesdatenTyp | null;
+  kpiKind?: KpiKind | null;
   state: 'ready' | 'handed';
   name: string;
 }
@@ -45,7 +57,7 @@ export interface Coverage { state: 'ready' | 'handed'; names: string[] }
 export function weeklyCoverage(entries: CoverageEntry[]): Map<WeeklySourceKey, Coverage> {
   const out = new Map<WeeklySourceKey, Coverage>();
   for (const e of entries) {
-    for (const k of weeklySourcesFor(e.typeId, e.tagesdatenTyp)) {
+    for (const k of weeklySourcesFor(e.typeId, e.tagesdatenTyp, e.kpiKind)) {
       const cur = out.get(k);
       out.set(k, {
         state: cur?.state === 'handed' || e.state === 'handed' ? 'handed' : 'ready',

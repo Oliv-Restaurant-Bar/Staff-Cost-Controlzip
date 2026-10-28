@@ -123,7 +123,7 @@ export function CockpitReadinessCard() {
   const summary = rows ? summarizeReadiness(rows) : null;
   // One upload for all weekly sources: the rows show what the dropped files cover instead of one button each.
   const queued = useSyncExternalStore(subscribe, getEntries, getEntries);
-  const coverage = weeklyCoverage(queued.map(e => ({ typeId: e.typeId, tagesdatenTyp: e.result.tagesdatenTyp, state: e.state, name: e.file.name })));
+  const coverage = weeklyCoverage(queued.map(e => ({ typeId: e.typeId, tagesdatenTyp: e.result.tagesdatenTyp, kpiKind: e.result.meta?.kpiKind ?? null, state: e.state, name: e.file.name })));
 
   return (
     <Card className="border-border bg-card shadow-sm" data-testid="cockpit-readiness-card">

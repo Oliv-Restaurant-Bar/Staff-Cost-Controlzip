@@ -231,3 +231,27 @@ describe('classifyProbe — weekly sources', () => {
     expect(classifyProbe(text('res.csv', RES_CSV)).typeId).toBe('foratable-reservationen');
   });
 });
+
+describe('Gastronovi KPI CSV exports (same files the existing KPI import accepts)', () => {
+  const header = '"Bezeichnung"\t"Zeitraum"\t"01.06."\t"02.06."';
+  it('Anzahl Personen CSV is recognised via the «P.» unit', () => {
+    const body = `${header}\n"Gesamt"\t"558 P."\t"263 P."\t"295 P."\n`;
+    expect(classifyProbe(text('Anzahl_Personen.csv', body))).toMatchObject({ status: 'recognised', typeId: 'gn-kpi-pdf' });
+  });
+  it('Durchschnittsbon CSV is recognised via the Gastronovi file name', () => {
+    const body = `${header}\n"Durchschnitt"\t"CHF 54,07"\t"CHF 45,22"\t"CHF 55,52"\n`;
+    expect(classifyProbe(text('Durchschnittsbon.csv', body))).toMatchObject({ status: 'recognised', typeId: 'gn-kpi-pdf' });
+  });
+  it('a CHF CSV with an ambiguous name stays unrecognised (never guessed)', () => {
+    const body = `${header}\n"Durchschnitt"\t"CHF 54,07"\t"CHF 45,22"\t"CHF 55,52"\n`;
+    expect(classifyProbe(text('export.csv', body)).status).not.toBe('recognised');
+  });
+});
+
+describe('KPI kind is carried so the weekly card can show the right file per row', () => {
+  const header = '"Bezeichnung"\t"Zeitraum"\t"01.06."\t"02.06."';
+  it('CSV: Anzahl Personen / Durchschnittsbon', () => {
+    expect(classifyProbe(text('Anzahl_Personen.csv', `${header}\n"Gesamt"\t"558 P."\t"263 P."\t"295 P."\n`)).meta?.kpiKind).toBe('anzahl_personen');
+    expect(classifyProbe(text('Durchschnittsbon.csv', `${header}\n"Durchschnitt"\t"CHF 54,07"\t"CHF 45,22"\t"CHF 55,52"\n`)).meta?.kpiKind).toBe('durchschnittsbon');
+  });
+});

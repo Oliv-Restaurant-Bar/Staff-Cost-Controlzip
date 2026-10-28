@@ -54,6 +54,7 @@ export type ReasonCode =
   | 'mirus-title-found'          // «Tägliche Stunden» title row: Mirus hours export
   | 'category-sheet-found'       // «> Kategorie» rows with day columns
   | 'feedback-csv-found'         // Lunchgate/Google feedback CSV header
+  | 'kpi-csv-found'              // Gastronovi KPI CSV (Anzahl Personen / Umsatz pro Person / Durchschnittsbon)
   | 'nothing-recognised';
 
 /**
@@ -81,7 +82,8 @@ export interface ClassifyResult {
    */
   fallbackEligible: boolean;
   /** Facts the hand-over needs (e.g. the month of a Mirus file, so the schedule opens on it). */
-  meta?: { mirusMonth?: string };
+  /** `kpiKind`: which Gastronovi KPI report a KPI file is (decides which weekly source it covers). */
+  meta?: { mirusMonth?: string; kpiKind?: 'anzahl_personen' | 'umsatz_pro_person' | 'durchschnittsbon' };
 }
 
 /** What was read from a file; produced by `readFileProbe`, consumed by the pure `classifyProbe`. */

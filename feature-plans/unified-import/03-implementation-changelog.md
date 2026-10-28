@@ -138,3 +138,20 @@ matching rows (Mirus, Reservationen, Rezensionen). tsc 219 = baseline.
 - Not restyled (cannot be viewed without writing data): the Mirus reconcile plan preview and report dialogs — confirming the name
   dialog parks hours and saves name aliases.
 - `UI_LANG` is back to `'de'` (commit state). All feature strings go through `tr()`; flip to `'en'` only while developing.
+
+### Round 4 — re-open, duplicates, expiry (found while testing every file type end to end)
+- **Bug:** after opening a file and coming back without importing, the file stayed in the list but its open button vanished.
+  Now an opened file stays openable: its row has «Öffnen» / «Erneut öffnen», and a type with only opened files shows
+  «<Typ> erneut öffnen» in the panel (`open-groups.ts`, pure + tested). Status text: «Geöffnet — noch nicht importiert».
+- Dropping the same file twice is skipped with a message (same name, size and date).
+- A hand-over nobody picked up expires after 2 minutes, so it cannot surprise a later manual visit to that screen.
+- A tenant switched on another page while files waited now clears the list when /import is opened again (was only caught on /import).
+- Gastronovi KPI CSVs (Anzahl Personen, Umsatz pro Person, Durchschnittsbon) are recognised via the import's own CSV parser.
+- Verified in the browser per file type (Tagesdaten, KPI CSVs, Z-Bericht PDF, Reservationen, sales upload ×4, category analysis,
+  Mirus, reviews): file arrives in the target screen; nothing imported.
+- Weekly card chips: a Gastronovi KPI file now covers only the source it feeds (Anzahl Personen → Gäste/Anzahl, Durchschnittsbon →
+  Durchschnittsverkauf, Umsatz pro Person → none of the 8). Before, any KPI file showed on both rows with «+2».
+- File rows redesigned: icon + name + status | type dropdown (the app's own Select, fixed width) | Öffnen | remove, with no overlap;
+  on narrow screens the dropdown takes its own line. Status texts shortened («Bitte den Typ selbst wählen.», no repeated «erkannt»).
+- One action per thing: the panel «Bereit zum Öffnen» is the main way to open files. Rows get a small «Nur diese öffnen» button only when
+  several files of the same type wait (so one of them can be picked); single-file types are opened from the panel only.
