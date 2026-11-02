@@ -24,3 +24,23 @@ describe('salesUploadSlotFromName (client file-name convention of the Sales Uplo
     expect(salesUploadSlotFromName(name)).toBeNull();
   });
 });
+
+describe('client two-letter codes (real weekly exports: FA / FU / BA / BU KW38.csv)', () => {
+  it.each([
+    ['FA KW38.csv', { category: 'food', kind: 'anzahl' }],
+    ['FU KW38.csv', { category: 'food', kind: 'umsatz' }],
+    ['BA KW38.csv', { category: 'beverage', kind: 'anzahl' }],
+    ['BU KW38.csv', { category: 'beverage', kind: 'umsatz' }],
+    ['bu_kw38.csv', { category: 'beverage', kind: 'umsatz' }],
+  ])('%s', (name, slot) => {
+    expect(salesUploadSlotFromName(name)).toEqual(slot);
+  });
+
+  it.each([
+    'FA BU KW38.csv',   // two different codes
+    'Fabrik KW38.csv',  // «fa» only inside a word
+    'Bundle.csv',
+  ])('%s is not placed', name => {
+    expect(salesUploadSlotFromName(name)).toBeNull();
+  });
+});

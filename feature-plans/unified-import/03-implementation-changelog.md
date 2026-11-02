@@ -155,3 +155,9 @@ matching rows (Mirus, Reservationen, Rezensionen). tsc 219 = baseline.
   on narrow screens the dropdown takes its own line. Status texts shortened («Bitte den Typ selbst wählen.», no repeated «erkannt»).
 - One action per thing: the panel «Bereit zum Öffnen» is the main way to open files. Rows get a small «Nur diese öffnen» button only when
   several files of the same type wait (so one of them can be picked); single-file types are opened from the panel only.
+
+### Round 5 — tested with the client's real weekly files (client_docs/, git-ignored)
+- 10 files (FA/FU/BA/BU, Personen, Umsatz, Umsatz Pro Person, DB Bons, Feedback, Reservationen): all recognised or asked for confirmation
+  (Reservationen = both Foratable formats; DB Bons = Ø pro Bon vs pro Person); each opened in its target screen and showed a correct preview. Nothing imported.
+- Fix: the Sales Upload page needs «Anzahl/Umsatz + Food/Beverage» in the name, the client's files are named FA/FU/BA/BU. Those codes are now accepted (tests added).
+- Reservationen are a Beaulieu export: Oliv correctly blocks them ("Datei gehört zu Beaulieu"), Beaulieu accepts them.
