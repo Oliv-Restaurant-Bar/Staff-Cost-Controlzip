@@ -70,6 +70,10 @@ import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImpor
 import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
 import { ManuelleBuchungenImport } from '@/components/waren/ManuelleBuchungenImport';
 import { klassifiziereWarenDateien, type UploadRouting } from '@/components/waren/WarenUniversalUpload';
+import { leseRechnungPerKi } from '@/lib/invoice-ai/client';
+import { isImageFile } from '@/lib/invoice-ai/prepare';
+import type { KiRechnung } from '@/lib/invoice-ai/schema';
+import { tr } from '@/lib/unified-import/strings';
 import { WarenLieferantenUebersicht } from '@/components/waren/WarenLieferantenUebersicht';
 import KreditorenCockpit from '@/components/waren/KreditorenCockpit';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
@@ -459,6 +463,9 @@ export default function WarenrechnungenPage() {
   const amountInputRef = useRef<HTMLInputElement>(null);
   // Einspeise-Kanal in die Lieferanten-PDF-Vorschau (Caporaso-Umleitung).
   const profilImportRef = useRef<((files: File[]) => void) | null>(null);
+  // Entry point of the profile-PDF preview for documents read by the AI.
+  const kiImportRef = useRef<((items: Array<{ file: File; daten: KiRechnung }>) => void) | null>(null);
+  const [kiBusy, setKiBusy] = useState(false);
   // Einspeise-Kanäle des universellen Uploads (CSV / Feldschlösschen).
   const csvImportRef = useRef<((files: File[]) => void) | null>(null);
   const fsImportRef  = useRef<((files: File[]) => void) | null>(null);
@@ -2439,6 +2446,18 @@ export default function WarenrechnungenPage() {
 
   /** Ein PDF analysieren und die erkannten Werte ins Formular vorfüllen. */
   const processPdf = useCallback(async (file: File) => {
+    if (isImageFile(file)) {
+      // Photo of an invoice: there is no text to recognise for free — offer the AI button instead.
+      setReceiptFile(file);
+      setAliasLernen(false);
+      setErkennung({
+        fileName: file.name, supplierRaw: null, supplierMatched: false,
+        felder: { date: null, dateSicher: false, amount: null, amountSicher: false, vatRate: null, reference: null },
+        textLayer: false, ocrFehler: 'image',
+      });
+      toast.info(tr('Foto geladen — «Mit KI lesen» füllt den Beleg aus, oder bitte manuell erfassen.', 'Photo loaded — «Read with AI» fills in the document, or enter it manually.'));
+      return;
+    }
     setPdfBusy(true);
     try {
       const { text, textLayer, ocrFehler } = await extractPdfInvoiceText(file);
@@ -2569,11 +2588,37 @@ export default function WarenrechnungenPage() {
   /** Upload-Handler: mehrere PDFs → Stapel; erstes sofort verarbeiten. */
   function handlePdfErkennungFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
-    const pdfs = Array.from(files).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-    if (pdfs.length === 0) { toast.error('Bitte PDF-Dateien wählen.'); return; }
+    const pdfs = Array.from(files).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name) || isImageFile(f));
+    if (pdfs.length === 0) { toast.error(tr('Bitte PDF- oder Bilddateien wählen.', 'Please choose PDF or image files.')); return; }
     const [first, ...rest] = pdfs;
     setPdfQueue(rest);
     void processPdf(first);
+  }
+
+  /** "Mit KI lesen": explicit click only. Result goes into the profile-PDF preview, never saved here. */
+  async function handleKiLesen() {
+    if (!receiptFile || kiBusy) return;
+    if (granular === 'jahr') { toast.error(tr('Imports nur in der Monats-/Wochenansicht möglich.', 'Imports are only possible in the month/week view.')); return; }
+    setKiBusy(true);
+    try {
+      const r = await leseRechnungPerKi(receiptFile);
+      if (r.ok === false) { toast.error(r.message); return; }
+      if (!kiImportRef.current) { toast.error(tr('Import-Vorschau nicht verfügbar.', 'Import preview not available.')); return; }
+      kiImportRef.current([{ file: receiptFile, daten: r.daten }]);
+      setSpezialOpen(true); setImportRouted(true); setNeuOpen(true);
+      toast.success(tr('Beleg gelesen — bitte die Vorschau prüfen.', 'Document read — please check the preview.'));
+      // The free text/OCR recognition may have pre-filled the manual form with (unreliable) values for this
+      // file. The AI result now lives in the preview, so drop those values to avoid a second, wrong booking.
+      setForm(f => ({
+        ...f,
+        date: EMPTY_FORM.date, supplierName: EMPTY_FORM.supplierName, amount: EMPTY_FORM.amount,
+        vatIncluded: EMPTY_FORM.vatIncluded, vatRate: EMPTY_FORM.vatRate, reference: EMPTY_FORM.reference,
+        warenkonto: EMPTY_FORM.warenkonto, kategorie: EMPTY_FORM.kategorie,
+      }));
+      resetErkennung();
+    } finally {
+      setKiBusy(false);
+    }
   }
 
   /** Erkennung abbrechen: Vorschau + Beleg verwerfen, Stapel bleibt. */
@@ -3438,7 +3483,7 @@ export default function WarenrechnungenPage() {
                   onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setNeuOpen(false); } }}
                 >
                 <section ref={neuPanelRef} tabIndex={-1}
-                  className="bg-card border border-border rounded-xl overflow-hidden w-full max-w-3xl mx-auto shadow-xl focus:outline-none">
+                  className="bg-card border border-border rounded-xl overflow-hidden w-full max-w-6xl mx-auto shadow-xl focus:outline-none">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
                     <Plus className="h-4 w-4" style={{ color: tenant.color }} />
                     <h2 className="text-sm font-semibold">Neue Rechnung erfassen</h2>
@@ -3483,7 +3528,7 @@ export default function WarenrechnungenPage() {
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
                       {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (beide Mandanten) ── */}
-                      <BeaulieuPdfImport tenantId={tenantId} externalFilesRef={profilImportRef}
+                      <BeaulieuPdfImport tenantId={tenantId} externalFilesRef={profilImportRef} externalKiRef={kiImportRef}
                         uploadUiVersteckt={!importRouted}
                         onImported={() => { void loadData(); void ladePreisHinweise(); }} />
                     </div>
@@ -3514,7 +3559,7 @@ export default function WarenrechnungenPage() {
                           : <ScanSearch className="h-4 w-4" style={{ color: tenant.color }} />}
                         {pdfBusy ? 'PDF wird gelesen…' : 'PDF-Rechnung erkennen (Lieferant, Datum, Betrag)'}
                         <input
-                          type="file" accept="application/pdf" multiple className="hidden"
+                          type="file" accept="application/pdf,image/*,.heic,.heif" multiple className="hidden"
                           data-testid="input-pdf-erkennung"
                           disabled={pdfBusy}
                           onChange={e => { handlePdfErkennungFiles(e.target.files); e.target.value = ''; }}
@@ -3545,7 +3590,7 @@ export default function WarenrechnungenPage() {
                         </div>
                         {erkennung.ocrFehler ? (
                           <p className="text-amber-600 dark:text-amber-400">
-                            Keine automatische Erkennung möglich — bitte Felder manuell ausfüllen. Das PDF wird beim Speichern als Beleg angehängt.
+                            Keine automatische Erkennung möglich — bitte Felder manuell ausfüllen. Der Beleg wird beim Speichern angehängt.
                           </p>
                         ) : (
                           <p className="flex flex-wrap gap-x-4 gap-y-1">
@@ -3563,6 +3608,20 @@ export default function WarenrechnungenPage() {
                             <span>MWST: {erkennung.felder.vatRate !== null ? `${erkennung.felder.vatRate} %` : '—'}</span>
                             {erkennung.felder.reference && <span>Ref.: {erkennung.felder.reference}</span>}
                           </p>
+                        )}
+                        {!erkennung.textLayer && receiptFile && canCreate && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button type="button" size="sm" variant="outline" className="h-7 px-3 text-xs"
+                              disabled={kiBusy} onClick={() => { void handleKiLesen(); }}
+                              data-testid="button-mit-ki-lesen">
+                              {kiBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="mr-1 h-3.5 w-3.5" />}
+                              {kiBusy ? tr('KI liest den Beleg …', 'AI is reading the document …') : tr('Mit KI lesen', 'Read with AI')}
+                            </Button>
+                            <span className="text-[11px] text-muted-foreground">
+                              {tr('Der Beleg wird zum Lesen an einen KI-Dienst gesendet. Nichts wird ohne Ihre Bestätigung gespeichert.',
+                                'The document is sent to an AI service to be read. Nothing is saved without your confirmation.')}
+                            </span>
+                          </div>
                         )}
                         {/* Alias nur mit expliziter Zustimmung lernen */}
                         {!erkennung.supplierMatched && erkennung.supplierRaw && !erkennung.ocrFehler && (

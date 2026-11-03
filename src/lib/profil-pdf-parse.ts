@@ -60,6 +60,8 @@ export interface ProfilPdfErgebnis {
    */
   dokumenttyp: 'monatsrechnung' | 'lieferschein' | null;
   hinweise: string[];
+  /** true = produced by AI reading (scan/photo), not parsed from PDF text. */
+  perKi?: boolean;
 }
 
 /** Belegart aus der Belegüberschrift: «Rechnung» vs «(Verkauf) Auftrags-

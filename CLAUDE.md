@@ -2,7 +2,7 @@
 
 Personal/Staff Cost Tracker for Oliv (restaurant & bar) and Beaulieu — a multi-tenant staff scheduling, payroll-cost, and P&L cockpit. Vite + React SPA (`vite_react_shadcn_ts`), Supabase (Postgres + Auth) backend, deployed on Vercel (dev and production both; static build plus `api/` functions and cron jobs where needed — `VITE_PUBLIC_URL` should point at the deployed Vercel domain). Originally generated with Lovable (`lovable-tagger` dev dependency still wired into `vite.config.ts`).
 
-UI language is German throughout (labels, comments, toasts) — the client is German-speaking; this is not a partial translation, it's the intended language for both code comments and the live app.
+Client-visible app strings (labels, toasts, messages) are German — the client is German-speaking; this is not a partial translation. **Everything else is English: code comments, JSDoc, docs, plans, changelogs, commit messages and chat.** Do not write new German comments, and do not add German to doc blocks of existing German-commented files; new German text belongs only in user-visible strings (via `tr(de, en)` where that helper applies). Older files still contain German comments — leave them, don't mass-translate.
 
 ## Code Style
 

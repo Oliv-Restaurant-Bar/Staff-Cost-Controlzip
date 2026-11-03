@@ -42,9 +42,12 @@ import {
 import { loadWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
 import {
   DEFAULT_WARENGRUPPEN_MAPPING,
-  type ArtikelKontenMapping, type ParsedCsvRechnung, type WarengruppenMapping,
+  type ArtikelKontenMapping, type ParsedCsvRechnung, type WarenPosition, type WarengruppenMapping,
 } from '@/lib/waren-positionen';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Sparkles } from 'lucide-react';
+import { tr } from '@/lib/unified-import/strings';
+import { mappeKiRechnung, type KiPruefung } from '@/lib/invoice-ai/map';
+import type { KiRechnung } from '@/lib/invoice-ai/schema';
 import type { TenantId } from '@/contexts/TenantContext';
 import {
   hatZaehlendeLieferantenReferenz, kanonischerWarenLieferant,
@@ -84,6 +87,73 @@ interface VorschauZeile {
   mandantFremd?: 'oliv' | 'beaulieu';
   /** Dublette lt. Bestand (Mandant+Lieferant+Referenz): Re-Import ERSETZT. */
   dublette?: boolean;
+  /** AI reading only: check findings and the lines read (for the "AI reading" box). */
+  kiPruefungen?: KiPruefung[];
+  kiZeilen?: Array<{ pos: WarenPosition; warn: boolean }>;
+}
+
+/** Box shown on rows read by the AI: what was read, whether the sums match, every warning, the lines. */
+function KiLesungBox({ i, row }: { i: number; row: VorschauZeile }) {
+  const pr = row.kiPruefungen ?? [];
+  const zeilen = row.kiZeilen ?? [];
+  const fehler = pr.filter(p => p.level === 'error').length;
+  const hinweise = pr.length - fehler;
+  const ok = pr.length === 0;
+  const f2 = (n: number) => n.toFixed(2);
+  return (
+    <div className={`rounded-md border p-2 space-y-1.5 text-[11px] ${
+      fehler > 0 ? 'border-destructive/50 bg-destructive/5' : ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-amber-500/50 bg-amber-500/5'}`}
+      data-ki-box data-testid={`beaulieu-pdf-ki-box-${i}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <Sparkles className="h-3.5 w-3.5 shrink-0" />
+        <span className="font-semibold">{tr('Per KI gelesen', 'Read by AI')}</span>
+        <span className="text-muted-foreground">
+          {tr(`${zeilen.length} Positionen`, `${zeilen.length} lines`)}
+        </span>
+        <span className={fehler > 0 ? 'font-medium text-destructive' : ok ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'font-medium text-amber-700 dark:text-amber-400'}>
+          {ok
+            ? tr('Summen stimmen mit dem Beleg überein', 'Sums match the document')
+            : tr(`${fehler} Abweichung(en), ${hinweise} Hinweis(e)`, `${fehler} mismatch(es), ${hinweise} note(s)`)}
+        </span>
+      </div>
+      <div className="text-muted-foreground">
+        {tr('Bitte alle Werte gegen das Original prüfen, bevor importiert wird.', 'Please check all values against the original before importing.')}
+      </div>
+      {pr.length > 0 && (
+        <ul className="space-y-0.5">
+          {pr.map((p, j) => (
+            <li key={j} className={p.level === 'error' ? 'text-destructive' : 'text-amber-700 dark:text-amber-400'}>· {p.text}</li>
+          ))}
+        </ul>
+      )}
+      {zeilen.length > 0 && (
+        <div className="max-h-56 overflow-auto rounded border border-border/60 bg-background">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-muted/60 text-left text-muted-foreground">
+              <tr>
+                <th className="px-1.5 py-1 font-medium">{tr('Artikel', 'Item')}</th>
+                <th className="px-1.5 py-1 text-right font-medium">{tr('Menge', 'Qty')}</th>
+                <th className="px-1.5 py-1 text-right font-medium">{tr('Preis', 'Price')}</th>
+                <th className="px-1.5 py-1 text-right font-medium">{tr('Betrag', 'Amount')}</th>
+                <th className="px-1.5 py-1 text-right font-medium">{tr('MwSt', 'VAT')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {zeilen.map((z, j) => (
+                <tr key={j} className={z.warn ? 'bg-amber-500/15' : j % 2 ? 'bg-muted/20' : ''}>
+                  <td className="px-1.5 py-0.5">{z.warn && <AlertTriangle className="mr-1 inline h-3 w-3 text-amber-600" />}{z.pos.bezeichnung}</td>
+                  <td className="px-1.5 py-0.5 text-right tabular-nums">{z.pos.menge} {z.pos.einheit}</td>
+                  <td className="px-1.5 py-0.5 text-right tabular-nums">{f2(z.pos.preis)}</td>
+                  <td className="px-1.5 py-0.5 text-right tabular-nums">{f2(z.pos.positionspreis)}</td>
+                  <td className="px-1.5 py-0.5 text-right tabular-nums">{z.pos.mwstSatz !== undefined ? `${z.pos.mwstSatz} %` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Sammelvorschau-Status je Beleg. */
@@ -111,11 +181,15 @@ function num(s: string): number | null {
 
 const R2 = (n: number) => Math.round(n * 100) / 100;
 
-export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uploadUiVersteckt }: {
+export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, externalKiRef, uploadUiVersteckt }: {
   tenantId: TenantId; onImported: () => void;
   /** Optionaler Einspeise-Kanal: die Seite kann erkannte Profil-PDFs (z.B.
    *  Caporaso aus der Schnellerfassung) direkt in diese Vorschau umleiten. */
   externalFilesRef?: { current: ((files: File[]) => void) | null };
+  /** Second entry point for documents read by the AI ("Mit KI lesen"): the
+   *  caller hands over the validated reading, the preview is built exactly like
+   *  for a parsed PDF (supplier lookup, duplicate check, confirm). */
+  externalKiRef?: { current: ((items: Array<{ file: File; daten: KiRechnung }>) => void) | null };
   /** true = Datei-Auswahl & Drag-Drop ausblenden (Import nur pro Lieferant
    *  via «Upload nur für …»); Vorschau & Undo bleiben sichtbar. */
   uploadUiVersteckt?: boolean;
@@ -123,6 +197,9 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
   const [profile, setProfile] = useState<LieferantenProfil[]>([]);
   const [zeilen, setZeilen] = useState<VorschauZeile[]>([]);
   const [busy, setBusy] = useState(false);
+  // true only while the import itself runs: then ONLY the clicked import button shows a spinner
+  // (busy still disables the other controls, but must not make every button look like it is loading).
+  const [importing, setImporting] = useState(false);
   const importInFlight = useRef(false);
   const [undoRefresh, setUndoRefresh] = useState(0);
   // Positions-Kontierung direkt in der Vorschau: Warengruppen-Tabelle des
@@ -142,6 +219,116 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
   }, [tenantId]);
 
   const profilById = useMemo(() => new Map(profile.map(p => [p.id, p])), [profile]);
+
+  /** Builds one preview row from a parsed result (shared by PDF text parsing and AI reading). */
+  const baueVorschauZeile = useCallback(async (
+    f: File, erg: ProfilPdfErgebnis, text: string, aktuelleProfile: LieferantenProfil[],
+    bestandCache: Map<string, InvoiceEntry[]>,
+  ): Promise<VorschauZeile> => {
+      // Dual-Lieferant: Dokumenttyp INHALTSBASIERT (Belegüberschrift).
+      // «Sammelrechnung/Monatsrechnung» = massgeblich/final — auch mit nur
+      // EINER Lieferung. «Lieferschein»/AB/Offerte = provisorisch — auch
+      // wenn er in mehrere «LS-Nr…vom»-Blöcke zerfällt. Ohne eindeutiges
+      // Kopf-Signal ist lieferungen.length>1 nur ZUSAMMEN mit
+      // belegart==='rechnung' ein Monatsrechnungs-Indiz, nie allein.
+      const istDual = erg.profil?.belegtyp === 'dual';
+      // Belegtyp 'monatsrechnung' (z.B. Ambro): die Rechnung ist IMMER die
+      // massgebliche Quelle — jede Rechnung mit erkannten Lieferungen final.
+      // STUFE-1-MONATSRECHNUNG (Dual OHNE Positions-Parser, z.B. Gourmador):
+      // eindeutiger «Sammel-/Monatsrechnung»-Kopf + vollständige Kopf-Daten
+      // ⇒ die Rechnung wird als EINE Gesamt-Lieferung abgeglichen und
+      // ersetzt die provisorischen Lieferscheine (Einzelbestätigung).
+      const kopfMr = istDual && !erg.positionenErkannt && erg.belegart === 'rechnung'
+        && erg.dokumenttyp === 'monatsrechnung' && erg.profil
+        ? kopfAlsLieferung(erg, erg.profil) : null;
+      const modus: VorschauZeile['modus'] =
+        erg.profil?.belegtyp === 'monatsrechnung' && erg.positionenErkannt && erg.belegart === 'rechnung'
+          ? 'monatsrechnung'
+          : istDual && erg.positionenErkannt
+          ? (erg.dokumenttyp === 'monatsrechnung' ? 'monatsrechnung'
+            : erg.dokumenttyp === 'lieferschein' ? 'lieferschein'
+            : (erg.belegart === 'rechnung' && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein'))
+          : kopfMr
+          ? 'monatsrechnung'
+          : 'lieferschein';
+      // MANDANTEN-GEGENPROBE nach Beleg-Adresse: falscher Mandant ⇒ Sperre.
+      const belegMandant = erkenneMandantImText(text);
+      const mandantFremd = belegMandant !== null && belegMandant !== tenantId ? belegMandant : undefined;
+      if (mandantFremd) {
+        erg.hinweise.unshift(`Beleg gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
+      }
+      const abgleich = modus === 'monatsrechnung' && erg.profil
+        ? await abgleicheMonatsrechnung(tenantId, erg.profil.name,
+            erg.lieferungen.length > 0 ? erg.lieferungen : (kopfMr ? [kopfMr] : []),
+            erg.profil.abAlsLieferschein ? 3 : 0, erg.profil.mwstNr)
+        : undefined;
+      // Dubletten-Check für die Sammelvorschau (Mandant+Lieferant+Referenz,
+      // Monate ±1): LS-Nrn UND Rechnungs-Nr prüfen — der Import kann je nach
+      // Deckung/Korrekturen auf Stufe 2 (LS) ODER Stufe 1 (Rechnungs-Nr)
+      // buchen. NUR Anzeige (NEU/ERSETZT) — massgeblich bleibt der
+      // Kern-Upsert. BEST-EFFORT: ein Lesefehler darf die Vorschau NIE
+      // beeinflussen (dann dublette=false, Zeile bleibt erhalten).
+      let dublette = false;
+      if (erg.profil && !mandantFremd) {
+        try {
+          const refs = new Set([...erg.lieferungen.map(l => l.rechnungsNr), erg.rechnungsNr ?? '']
+            .filter(Boolean).map(r => r.trim().toLowerCase()));
+          const daten = [
+            ...erg.lieferungen.map(l => l.datum),
+            ...[erg.lieferdatum ?? erg.rechnungsdatum].filter((d): d is string => !!d),
+          ];
+          const monate = new Set<string>();
+          for (const d of daten) {
+            const base = new Date(`${d}T00:00:00Z`);
+            if (Number.isNaN(base.getTime())) continue;
+            for (const off of [-1, 0, 1]) {
+              const x = new Date(base); x.setUTCMonth(x.getUTCMonth() + off);
+              monate.add(x.toISOString().slice(0, 7));
+            }
+          }
+          const name = kanonischerWarenLieferant(erg.profil.name);
+          for (const m of monate) {
+            if (dublette) break;
+            let bestand = bestandCache.get(m);
+            if (!bestand) { bestand = await loadMonthInvoices(tenantId, m); bestandCache.set(m, bestand); }
+            dublette = hatZaehlendeLieferantenReferenz(
+              bestand, name, refs, kanonischerWarenLieferant, erg.profil.mwstNr,
+            );
+          }
+        } catch (e) {
+          console.warn('[BEAULIEU-PDF] Dubletten-Check fehlgeschlagen (nur Anzeige, ignoriert):', e);
+          dublette = false;
+        }
+      }
+      // REINER ERSTIMPORT (keine provisorischen Lieferscheine, nichts
+      // Erfasstes, nichts Manuelles): Default «Alle übernehmen» VORSCHLAGEN —
+      // die Monatsrechnung ist massgeblich. Nur Vorbelegung: jede Zeile
+      // bleibt einzeln umstellbar, und der Import selbst braucht weiterhin
+      // den Klick auf «… importieren». Stale-Recheck im Import-Pfad setzt
+      // die Entscheide unverändert fail-closed zurück.
+      const erstimport = !!abgleich && abgleich.ueberschrieben === 0
+        && abgleich.unveraendert === 0 && abgleich.manuell === 0
+        && abgleich.nichtInMr.length === 0;
+      const neuEntscheidDefault = erstimport
+        ? Object.fromEntries(abgleich!.eintraege
+            .filter(e => e.status === 'neu')
+            .map(e => [`${e.lieferung.rechnungsNr}|${e.lieferung.datum}`, 'uebernehmen' as const]))
+        : undefined;
+      return {
+        dublette,
+        modus, abgleich, mandantFremd,
+        ...(neuEntscheidDefault && Object.keys(neuEntscheidDefault).length > 0
+          ? { neuEntscheid: neuEntscheidDefault } : {}),
+        fileName: f.name, datei: f, ergebnis: erg,
+        lieferant: erg.profil?.id ?? '',
+        konto: erg.profil?.konto ?? '',
+        rechnungsNr: erg.rechnungsNr ?? '',
+        datum: erg.lieferdatum ?? erg.rechnungsdatum ?? '',
+        netto: erg.netto !== null ? String(erg.netto) : '',
+        mwst: erg.mwst !== null ? String(erg.mwst) : '',
+        neuName: '', neuKonto: '4060', neuKategorie: '',
+      };
+  }, [tenantId]);
 
   const handleFiles = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
@@ -177,109 +364,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           if (ausOcr) {
             erg.hinweise.unshift('Text per OCR aus Scan gewonnen — Beleg-Nr, Datum und Betrag bitte gegen das Original prüfen.');
           }
-          // Dual-Lieferant: Dokumenttyp INHALTSBASIERT (Belegüberschrift).
-          // «Sammelrechnung/Monatsrechnung» = massgeblich/final — auch mit nur
-          // EINER Lieferung. «Lieferschein»/AB/Offerte = provisorisch — auch
-          // wenn er in mehrere «LS-Nr…vom»-Blöcke zerfällt. Ohne eindeutiges
-          // Kopf-Signal ist lieferungen.length>1 nur ZUSAMMEN mit
-          // belegart==='rechnung' ein Monatsrechnungs-Indiz, nie allein.
-          const istDual = erg.profil?.belegtyp === 'dual';
-          // Belegtyp 'monatsrechnung' (z.B. Ambro): die Rechnung ist IMMER die
-          // massgebliche Quelle — jede Rechnung mit erkannten Lieferungen final.
-          // STUFE-1-MONATSRECHNUNG (Dual OHNE Positions-Parser, z.B. Gourmador):
-          // eindeutiger «Sammel-/Monatsrechnung»-Kopf + vollständige Kopf-Daten
-          // ⇒ die Rechnung wird als EINE Gesamt-Lieferung abgeglichen und
-          // ersetzt die provisorischen Lieferscheine (Einzelbestätigung).
-          const kopfMr = istDual && !erg.positionenErkannt && erg.belegart === 'rechnung'
-            && erg.dokumenttyp === 'monatsrechnung' && erg.profil
-            ? kopfAlsLieferung(erg, erg.profil) : null;
-          const modus: VorschauZeile['modus'] =
-            erg.profil?.belegtyp === 'monatsrechnung' && erg.positionenErkannt && erg.belegart === 'rechnung'
-              ? 'monatsrechnung'
-              : istDual && erg.positionenErkannt
-              ? (erg.dokumenttyp === 'monatsrechnung' ? 'monatsrechnung'
-                : erg.dokumenttyp === 'lieferschein' ? 'lieferschein'
-                : (erg.belegart === 'rechnung' && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein'))
-              : kopfMr
-              ? 'monatsrechnung'
-              : 'lieferschein';
-          // MANDANTEN-GEGENPROBE nach Beleg-Adresse: falscher Mandant ⇒ Sperre.
-          const belegMandant = erkenneMandantImText(text);
-          const mandantFremd = belegMandant !== null && belegMandant !== tenantId ? belegMandant : undefined;
-          if (mandantFremd) {
-            erg.hinweise.unshift(`Beleg gehört zu Mandant «${mandantFremd === 'oliv' ? 'Oliv' : 'Beaulieu'}» — wird hier NICHT gebucht. Bitte im richtigen Mandanten importieren.`);
-          }
-          const abgleich = modus === 'monatsrechnung' && erg.profil
-            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name,
-                erg.lieferungen.length > 0 ? erg.lieferungen : (kopfMr ? [kopfMr] : []),
-                erg.profil.abAlsLieferschein ? 3 : 0, erg.profil.mwstNr)
-            : undefined;
-          // Dubletten-Check für die Sammelvorschau (Mandant+Lieferant+Referenz,
-          // Monate ±1): LS-Nrn UND Rechnungs-Nr prüfen — der Import kann je nach
-          // Deckung/Korrekturen auf Stufe 2 (LS) ODER Stufe 1 (Rechnungs-Nr)
-          // buchen. NUR Anzeige (NEU/ERSETZT) — massgeblich bleibt der
-          // Kern-Upsert. BEST-EFFORT: ein Lesefehler darf die Vorschau NIE
-          // beeinflussen (dann dublette=false, Zeile bleibt erhalten).
-          let dublette = false;
-          if (erg.profil && !mandantFremd) {
-            try {
-              const refs = new Set([...erg.lieferungen.map(l => l.rechnungsNr), erg.rechnungsNr ?? '']
-                .filter(Boolean).map(r => r.trim().toLowerCase()));
-              const daten = [
-                ...erg.lieferungen.map(l => l.datum),
-                ...[erg.lieferdatum ?? erg.rechnungsdatum].filter((d): d is string => !!d),
-              ];
-              const monate = new Set<string>();
-              for (const d of daten) {
-                const base = new Date(`${d}T00:00:00Z`);
-                if (Number.isNaN(base.getTime())) continue;
-                for (const off of [-1, 0, 1]) {
-                  const x = new Date(base); x.setUTCMonth(x.getUTCMonth() + off);
-                  monate.add(x.toISOString().slice(0, 7));
-                }
-              }
-              const name = kanonischerWarenLieferant(erg.profil.name);
-              for (const m of monate) {
-                if (dublette) break;
-                let bestand = bestandCache.get(m);
-                if (!bestand) { bestand = await loadMonthInvoices(tenantId, m); bestandCache.set(m, bestand); }
-                dublette = hatZaehlendeLieferantenReferenz(
-                  bestand, name, refs, kanonischerWarenLieferant, erg.profil.mwstNr,
-                );
-              }
-            } catch (e) {
-              console.warn('[BEAULIEU-PDF] Dubletten-Check fehlgeschlagen (nur Anzeige, ignoriert):', e);
-              dublette = false;
-            }
-          }
-          // REINER ERSTIMPORT (keine provisorischen Lieferscheine, nichts
-          // Erfasstes, nichts Manuelles): Default «Alle übernehmen» VORSCHLAGEN —
-          // die Monatsrechnung ist massgeblich. Nur Vorbelegung: jede Zeile
-          // bleibt einzeln umstellbar, und der Import selbst braucht weiterhin
-          // den Klick auf «… importieren». Stale-Recheck im Import-Pfad setzt
-          // die Entscheide unverändert fail-closed zurück.
-          const erstimport = !!abgleich && abgleich.ueberschrieben === 0
-            && abgleich.unveraendert === 0 && abgleich.manuell === 0
-            && abgleich.nichtInMr.length === 0;
-          const neuEntscheidDefault = erstimport
-            ? Object.fromEntries(abgleich!.eintraege
-                .filter(e => e.status === 'neu')
-                .map(e => [`${e.lieferung.rechnungsNr}|${e.lieferung.datum}`, 'uebernehmen' as const]))
-            : undefined;
-          neu.push({
-            dublette,
-            modus, abgleich, mandantFremd,
-            ...(neuEntscheidDefault && Object.keys(neuEntscheidDefault).length > 0
-              ? { neuEntscheid: neuEntscheidDefault } : {}),
-            fileName: f.name, datei: f, ergebnis: erg,
-            lieferant: erg.profil?.id ?? '',
-            konto: erg.profil?.konto ?? '',
-            rechnungsNr: erg.rechnungsNr ?? '',
-            datum: erg.lieferdatum ?? erg.rechnungsdatum ?? '',
-            netto: erg.netto !== null ? String(erg.netto) : '',
-            mwst: erg.mwst !== null ? String(erg.mwst) : '',
-            neuName: '', neuKonto: '4060', neuKategorie: '',
-          });
+          neu.push(await baueVorschauZeile(f, erg, text, aktuelleProfile, bestandCache));
         } catch (e) {
           console.error('[BEAULIEU-PDF] Lesen fehlgeschlagen:', f.name, e);
           toast.error(`${f.name}: PDF konnte nicht gelesen werden.`);
@@ -287,7 +372,35 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       }
       setZeilen(z => [...z, ...neu]);
     } finally { setBusy(false); }
-  }, [tenantId]);
+  }, [tenantId, baueVorschauZeile]);
+
+  const handleKi = useCallback(async (items: Array<{ file: File; daten: KiRechnung }>) => {
+    setBusy(true);
+    try {
+      const aktuelleProfile = await loadLieferantenProfile(tenantId);
+      setProfile(aktuelleProfile);
+      const bestandCache = new Map<string, InvoiceEntry[]>();
+      const neu: VorschauZeile[] = [];
+      for (const { file, daten } of items) {
+        const { ergebnis, pruefungen, zeilen: kiZeilen } = mappeKiRechnung(daten, aktuelleProfile);
+        // The tenant check reads the recipient name the AI extracted (there is no PDF text).
+        const row = await baueVorschauZeile(file, ergebnis, daten.empfaenger ?? '', aktuelleProfile, bestandCache);
+        neu.push({ ...row, kiPruefungen: pruefungen, kiZeilen });
+      }
+      setZeilen(z => [...z, ...neu]);
+      // The popup lists several import boxes above the preview: bring the new result into view.
+      setTimeout(() => {
+        const boxes = document.querySelectorAll('[data-ki-box]');
+        boxes[boxes.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 150);
+    } finally { setBusy(false); }
+  }, [tenantId, baueVorschauZeile]);
+
+  useEffect(() => {
+    if (!externalKiRef) return;
+    externalKiRef.current = (items) => { void handleKi(items); };
+    return () => { externalKiRef.current = null; };
+  }, [externalKiRef, handleKi]);
 
   // Einspeise-Kanal für die Seite: erkannte Profil-PDFs (z.B. Caporaso aus der
   // Schnellerfassung) landen direkt in dieser Vorschau statt im Formular.
@@ -393,6 +506,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
     importInFlight.current = true;
     let recovery: { vorher: Awaited<ReturnType<typeof erstelleWarenImportSnapshot>>; monate: string[] } | null = null;
     setBusy(true);
+    setImporting(true);
     try {
       // Buchungen pro Profil UND Quelle sammeln (provisorische Quellen —
       // Monatsrechnungs-Lückenfüller bzw. Auftragsbestätigungen — laufen als
@@ -710,6 +824,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
     } finally {
       importInFlight.current = false;
       setBusy(false);
+      setImporting(false);
     }
   }
 
@@ -738,7 +853,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
       <div className="flex flex-wrap items-center gap-3">
         {!uploadUiVersteckt && (
         <label className="inline-flex items-center gap-2 text-xs font-medium rounded-lg border border-dashed px-3 py-2 cursor-pointer hover:bg-muted/40 transition-colors">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileScan className="h-4 w-4 text-primary" />}
+          {busy && !importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileScan className="h-4 w-4 text-primary" />}
           Lieferanten-PDFs importieren — Mehrfachauswahl/Drag&amp;Drop (Erkennung über MWST-Nr-Profile)
           <input type="file" accept="application/pdf" multiple className="hidden" disabled={busy}
             data-testid="input-beaulieu-pdf"
@@ -832,7 +947,6 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
               disabled={busy || offeneMonatsrechnungsZeilen === 0}
               data-testid="beaulieu-pdf-global-alle-uebernehmen"
               onClick={() => entscheideAlleMonatsrechnungen('uebernehmen')}>
-              {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
               Alle übernehmen ({offeneMonatsrechnungsZeilen} fehlende)
             </Button>
             <Button size="sm" variant="secondary" className="h-7 px-3 text-xs"
@@ -871,12 +985,12 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
             }
             return (
               <div key={`${row.fileName}-${i}`}
-                className={`rounded-md border p-2 space-y-2 ${istOffen ? 'border-amber-500/60 bg-amber-500/5' : 'border-border/50'}`}>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="font-medium truncate max-w-[220px]" title={row.fileName}>{row.fileName}</span>
+                className={`rounded-lg border p-3 space-y-3 ${istOffen ? 'border-amber-500/60 bg-amber-500/5' : 'border-border/60 bg-card'}`}>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+                  <span className="text-sm font-semibold truncate max-w-[420px]" title={row.fileName}>{row.fileName}</span>
                   {istOffen
-                    ? <span className="text-amber-600 font-medium">Lieferant offen{erg.mwstNrn[0] ? ` · CHE-${erg.mwstNrn[0]}` : ''}</span>
-                    : <span className="text-muted-foreground">
+                    ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-700 dark:text-amber-400 font-medium">Lieferant offen{erg.mwstNrn[0] ? ` · CHE-${erg.mwstNrn[0]}` : ''}</span>
+                    : <span className="order-last basis-full text-[11px] text-muted-foreground">
                         {istAb
                           ? 'Auftragsbestätigung → provisorische Lieferung (Monatsrechnung überschreibt sie final)'
                           : row.modus === 'monatsrechnung'
@@ -914,15 +1028,15 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-                  <label className="space-y-0.5">
+                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-x-3 gap-y-2 text-xs">
+                  <label className="col-span-2 space-y-1">
                     <span className="text-muted-foreground">Lieferant</span>
                     <Select value={row.lieferant || undefined}
                       onValueChange={v => {
                         const p = profilById.get(v);
                         patch(i, { lieferant: v, konto: p?.konto ?? row.konto });
                       }}>
-                      <SelectTrigger className="h-7 text-xs" data-testid={`beaulieu-pdf-lieferant-${i}`}>
+                      <SelectTrigger className="h-8 text-xs" data-testid={`beaulieu-pdf-lieferant-${i}`}>
                         <SelectValue placeholder="wählen…" />
                       </SelectTrigger>
                       <SelectContent>
@@ -930,26 +1044,26 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                       </SelectContent>
                     </Select>
                   </label>
-                  <label className="space-y-0.5">
+                  <label className="space-y-1">
                     <span className="text-muted-foreground">Konto</span>
-                    <Input className="h-7 text-xs" value={row.konto} onChange={e => patch(i, { konto: e.target.value })} />
+                    <Input className="h-8 text-xs" value={row.konto} onChange={e => patch(i, { konto: e.target.value })} />
                   </label>
-                  <label className="space-y-0.5">
+                  <label className="space-y-1">
                     <span className="text-muted-foreground">Rechnungs-Nr</span>
-                    <Input className="h-7 text-xs" value={row.rechnungsNr} onChange={e => patch(i, { rechnungsNr: e.target.value })} />
+                    <Input className="h-8 text-xs" value={row.rechnungsNr} onChange={e => patch(i, { rechnungsNr: e.target.value })} />
                   </label>
-                  <label className="space-y-0.5">
+                  <label className="space-y-1">
                     <span className="text-muted-foreground">{erg.positionenErkannt ? 'Rechnungsdatum' : 'Buchungs-/Lieferdatum'}</span>
-                    <Input className="h-7 text-xs" type="date" value={row.datum} onChange={e => patch(i, { datum: e.target.value })} />
+                    <Input className="h-8 text-xs" type="date" value={row.datum} onChange={e => patch(i, { datum: e.target.value })} />
                   </label>
-                  <label className="space-y-0.5">
+                  <label className="space-y-1">
                     <span className="text-muted-foreground">Netto CHF</span>
-                    <Input className="h-7 text-xs" inputMode="decimal" value={row.netto}
+                    <Input className="h-8 text-xs" inputMode="decimal" value={row.netto}
                       onChange={e => patch(i, { netto: e.target.value })} data-testid={`beaulieu-pdf-netto-${i}`} />
                   </label>
-                  <label className="space-y-0.5">
+                  <label className="space-y-1">
                     <span className="text-muted-foreground">MwSt CHF{erg.mwstSatz !== null ? ` (${erg.mwstSatz}%)` : ''}</span>
-                    <Input className="h-7 text-xs" inputMode="decimal" value={row.mwst} onChange={e => patch(i, { mwst: e.target.value })} />
+                    <Input className="h-8 text-xs" inputMode="decimal" value={row.mwst} onChange={e => patch(i, { mwst: e.target.value })} />
                   </label>
                 </div>
 
@@ -1121,7 +1235,8 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
                   </div>
                 )}
 
-                {erg.hinweise.length > 0 && row.modus !== 'monatsrechnung' && (
+                {erg.perKi && <KiLesungBox i={i} row={row} />}
+                {erg.hinweise.length > 0 && row.modus !== 'monatsrechnung' && !erg.perKi && (
                   <div className="text-[11px] text-amber-600 space-y-0.5">
                     {erg.hinweise.map((h, j) => <div key={j}>· {h}</div>)}
                   </div>
@@ -1133,7 +1248,7 @@ export function BeaulieuPdfImport({ tenantId, onImported, externalFilesRef, uplo
           <div className="flex items-center gap-3">
             <Button size="sm" disabled={busy || bereit.length === 0} onClick={() => void handleImport()}
               data-testid="beaulieu-pdf-import-button">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+              {importing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
               {bereit.length} Rechnung{bereit.length === 1 ? '' : 'en'} importieren
             </Button>
             {offen > 0 && <span className="text-[11px] text-amber-600">{offen} noch nicht importierbar (Zuordnung/Datum/Betrag fehlt)</span>}
