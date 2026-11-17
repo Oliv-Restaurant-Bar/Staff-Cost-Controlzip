@@ -705,3 +705,27 @@ describe('Espro/Amarx (Deko → 4701): Monats-Sammelrechnung mit Tageslieferunge
     expect(Math.round(((r.netto ?? 0) + (r.mwst ?? 0)) * 100) / 100).toBe(238.70);
   });
 });
+
+describe('Spahni Lieferschein mit Transportzuschlag (2 MwSt-Zeilen: 2.6% Ware + 8.1% Zuschlag)', () => {
+  it.each([
+    ['spahni-ls-5229105-transport.txt', 529.80, 521.95, 7.85, 13.55, 0.65],
+    ['spahni-ls-5228713-transport.txt', 45.10, 44.45, 0.65, 1.15, 0.05],
+  ])('%s: Klassen aus Zuschlag verifiziert, Positionen = Netto, kein Fail-closed', (file, netto, ware, zuschlag, mwst26, mwst81) => {
+    const r = parse(file);
+    expect(r.profil?.id).toBe('spahni');
+    expect(r.netto).toBe(netto);
+    expect(r.mwst).toBe(Math.round((mwst26 + mwst81) * 100) / 100);
+    expect(r.mwstKlassen).toEqual([
+      { satz: 2.6, basis: ware, betrag: mwst26 },
+      { satz: 8.1, basis: zuschlag, betrag: mwst81 },
+    ]);
+    expect(r.positionenErkannt).toBe(true);
+    expect(r.lieferungen[0].nettoTotal).toBe(netto);
+    expect(r.lieferungen[0].positionen.some(p => p.bezeichnung === 'Transportzuschlag' && p.mwstSatz === 8.1)).toBe(true);
+    expect(r.hinweise).toEqual([]);
+  });
+  it('Zuschlag passt nicht zur 8.1%-MwSt-Zeile → bleibt fail-closed (keine geschätzten Klassen)', () => {
+    const text = fx('spahni-ls-5229105-transport.txt').replace('2 MWST 8.10 %  0.65', '2 MWST 8.10 %  3.00');
+    expect(parseProfilPdf(text, P).mwstKlassen).toEqual([]);
+  });
+});

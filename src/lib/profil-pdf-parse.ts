@@ -253,6 +253,13 @@ function parseSpahniLieferungen(lines: string[], profil: LieferantenProfil, mwst
       positionen.push(position(profil.kategorie, mwstSatz,
         { artNr: m[1], bezeichnung: m[2].trim(), menge, einheit: m[4].toUpperCase(), preis, positionspreis: total }));
     }
+    // Transport surcharge (8.1%) as its own position, otherwise it is missing from the line sum.
+    // Only for documents with the class breakdown (second MWST line) — otherwise unchanged.
+    const zuschlag = spahniTransportSumme(b.zeilen.join('\n'));
+    if (zuschlag > 0 && positionen.length > 0 && /\b2\s+MWST\s+8\.10\s*%/i.test(lines.join('\n'))) {
+      positionen.push(position(profil.kategorie, 8.1,
+        { artNr: '', bezeichnung: 'Transportzuschlag', menge: 0, einheit: '', preis: 0, positionspreis: zuschlag }));
+    }
     return baueLieferung(profil.name, b.nr, b.datum, positionen, mwstSatz);
   }).filter(l => l.positionen.length > 0);
 }
@@ -652,6 +659,47 @@ function generischeMwstKlassen(text: string): MwstKlasse[] {
   return result.sort((a, b) => a.satz - b.satz);
 }
 
+/** Spahni «Transportzuschlag 1.5% max. 10 CHF pro Lieferung  7.85» (Betrag am Zeilenende). */
+const SPAHNI_TRANSPORT_RE = /Transportzuschlag[^\n]*?(-?[\d\u2019'.,]*\d)\s*$/gim;
+
+/** Summe aller Transportzuschläge im Text (0 ohne Zuschlag). */
+function spahniTransportSumme(text: string): number {
+  let sum = 0;
+  for (const m of text.matchAll(SPAHNI_TRANSPORT_RE)) sum += parseBetrag(m[1]) ?? 0;
+  return rundung2(sum);
+}
+
+/**
+ * Spahni documents with a transport surcharge print TWO VAT lines
+ * («1 MWST 2.60 % 13.55» for goods, «2 MWST 8.10 % 0.65» for the surcharge).
+ * The bases are not printed but are verifiable: 8.1% base = transport surcharge
+ * (amount ≈ base × 8.1%), 2.6% base = net − surcharge. Classes are returned only
+ * if that reconciles — otherwise the document stays fail-closed (no guessed mixed rate).
+ */
+function spahniTransportKlassen(text: string):
+  { mwst: number; mwstSatz: null; mwstKlassen: MwstKlasse[]; gemischteMwstSaetze: true } | Record<string, never> {
+  const betragRe = BETRAG_RE.source;
+  const m1 = new RegExp(`\\b1\\s+MWST\\s+2\\.60\\s*%\\s+(${betragRe})\\s*$`, 'im').exec(text);
+  const m2 = new RegExp(`\\b2\\s+MWST\\s+8\\.10\\s*%\\s+(${betragRe})\\s*$`, 'im').exec(text);
+  const netto = sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${betragRe})\\s*$`, 'im')]);
+  const transport = spahniTransportSumme(text);
+  const b1 = m1 ? parseBetrag(m1[1]) : null;
+  const b2 = m2 ? parseBetrag(m2[1]) : null;
+  if (b1 === null || b2 === null || netto === null || transport <= 0) return {};
+  // Printed VAT is rounded to 5 Rappen, so allow 0.05.
+  if (Math.abs(transport * 0.081 - b2) > 0.05) return {};
+  if (Math.abs((netto - transport) * 0.026 - b1) > 0.05) return {};
+  return {
+    mwst: rundung2(b1 + b2),
+    mwstSatz: null,
+    gemischteMwstSaetze: true,
+    mwstKlassen: [
+      { satz: 2.6, basis: rundung2(netto - transport), betrag: rundung2(b1) },
+      { satz: 8.1, basis: transport, betrag: rundung2(b2) },
+    ],
+  };
+}
+
 function generischerKopf(text: string): KopfFelder {
   const rechnungsNr = suche(text, [
     /Rechnung[s]?-?\s?(?:Nr|nummer)\.?\s*:?\s*([A-Z]?\d{3,12})/i,
@@ -836,6 +884,7 @@ const KOPF_PARSER: Record<string, KopfParser> = {
       netto: sucheBetrag(text, [new RegExp(`Total\\s*CHF\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
       mwst: sucheBetrag(text, [new RegExp(`MWST\\s+[\\d.]+\\s*%\\s+(${BETRAG_RE.source})\\s*$`, 'im')]),
       mwstSatz: 2.6,
+      ...spahniTransportKlassen(text),
     };
   },
   fideco: (text, lines) => {
@@ -1351,7 +1400,10 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
     if (!profil) hinweise.push('Lieferant nicht erkannt — bitte in der Vorschau zuordnen (wird dauerhaft gespeichert).');
     if (netto === null) hinweise.push('Netto-Betrag nicht erkannt — bitte in der Vorschau erfassen.');
     if (!rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');
-    if (!kopf.rechnungsdatum) hinweise.push('Rechnungsdatum nicht erkannt.');
+    // Delivery notes carry a delivery date, not an invoice date — no hint then.
+    if (!kopf.rechnungsdatum && !(lieferdatum && erkenneDokumenttyp(text, belegart) === 'lieferschein')) {
+      hinweise.push('Rechnungsdatum nicht erkannt.');
+    }
   }
 
   return {
